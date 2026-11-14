@@ -115,7 +115,7 @@ function NewCollectionDialog({ open, onOpenChange }: { open: boolean; onOpenChan
           {type === "tag" && valueOptions.length === 0 ? (
             <Input value={value} onChange={(e) => setValue(e.target.value)} />
           ) : (
-            <Select value={value || undefined} placeholder={t("collections.valuePlaceholder")} onValueChange={setValue} options={valueOptions} />
+            <Select value={value} placeholder={t("collections.valuePlaceholder")} onValueChange={setValue} options={valueOptions} />
           )}
         </FormField>
       </Stack>
@@ -171,7 +171,7 @@ function CollectionDetail({ id }: { id: string }) {
             <Button icon="arrow-left" variant="ghost" onClick={() => void navigate({ page: "collections" })}>
               {t("collections.back")}
             </Button>
-            <Button icon="trash-2" variant="danger" onClick={() => void remove()}>
+            <Button icon="trash-2" variant="secondary" onClick={() => void remove()}>
               {t("collections.delete")}
             </Button>
           </Stack>

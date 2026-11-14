@@ -20,6 +20,7 @@ import {
   Stack,
   Table,
   Text,
+  TextLink,
   useTheme,
   useToast,
   type Density,
@@ -30,7 +31,6 @@ import { errorInfo, formatDateTime, snapshotTime } from "../format";
 import { useAsync, useKernelTick } from "../hooks";
 import { t } from "../i18n";
 import { useShell } from "../shell-context";
-import { PluginLoadErrors } from "./plugins-page";
 
 function Appearance() {
   const { theme, density, setTheme, setDensity } = useTheme();
@@ -491,12 +491,19 @@ function SecretsSection() {
   );
 }
 
+/** One line here; the full list lives on the plugins page only. */
 function PluginErrorsSection() {
-  const { kernel } = useShell();
+  const { kernel, navigate } = useShell();
   useKernelTick(kernel, ["plugin.changed"]);
+  const count = kernel.plugins.loadErrors().length;
   return (
-    <Section title={t("settings.pluginErrors")} description={t("plugins.errorsDescription")}>
-      <PluginLoadErrors errors={kernel.plugins.loadErrors()} />
+    <Section title={t("settings.pluginErrors")}>
+      <Text as="p" tone={count ? "danger" : "muted"}>
+        {count ? t("settings.pluginErrorsSome", { count }) : t("settings.pluginErrorsNone")}{" "}
+        <TextLink href="#plugins" onOpen={() => void navigate({ page: "plugins" })}>
+          {t("settings.gotoPlugins")}
+        </TextLink>
+      </Text>
     </Section>
   );
 }

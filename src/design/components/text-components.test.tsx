@@ -3,6 +3,7 @@ import "../testing/jsdom-setup";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { KeyValueList } from "./key-value-list";
+import { Markdown } from "./markdown";
 import { Select } from "./select";
 import { Sidebar } from "./sidebar";
 import { TextBlock } from "./text-block";
@@ -45,6 +46,17 @@ describe("TextBlock", () => {
     expect(pre).toHaveClass("od-text-block--code", "od-text-block--danger");
     expect(pre).toHaveAttribute("aria-label", "正文");
     expect(pre?.querySelector("code")?.textContent).toBe(text);
+  });
+});
+
+describe("Markdown headings", () => {
+  it("move one level down (h1→h2 … h6 stays h6) but keep the author's level as class", () => {
+    const { container } = render(<Markdown>{"# 一\n\n## 二\n\n###### 六"}</Markdown>);
+    expect(container.querySelector("h1")).toBeNull();
+    expect(container.querySelector("h2")).toHaveClass("od-markdown__h1");
+    expect(container.querySelector("h3")).toHaveClass("od-markdown__h2");
+    expect(container.querySelector("h6")).toHaveClass("od-markdown__h6");
+    expect(screen.getByRole("heading", { level: 2, name: "一" })).toBeInTheDocument();
   });
 });
 

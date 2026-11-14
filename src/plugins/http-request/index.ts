@@ -132,7 +132,9 @@ export default definePlugin({
           });
         } catch (e) {
           const reason = e instanceof Error ? e.message : String(e);
-          throw new OneDeskError("unavailable", `请求失败：${reason}`, { hint: "检查网址、网络连接或超时设置", cause: e });
+          // Host messages are Chinese and may already say what failed ("请求超时…"): no "请求失败：请求…".
+          const message = reason.startsWith("请求") ? reason : `请求失败：${reason}`;
+          throw new OneDeskError("unavailable", message, { hint: "检查网址、网络连接或超时设置", cause: e });
         }
 
         const truncated = res.body.length > MAX_BODY_CHARS;

@@ -48,6 +48,8 @@ export interface CommandPaletteProps {
   /** Shows a spinner while results load. */
   loading?: boolean;
   loadingLabel?: string;
+  /** Accessible name of the result list (cmdk defaults to the English "Suggestions"). */
+  listLabel?: string;
   /** Footer hint row, e.g. key legends. */
   footer?: ReactNode;
   /** Close after an item is selected (default true). */
@@ -70,6 +72,7 @@ export function CommandPalette({
   filter = true,
   loading = false,
   loadingLabel,
+  listLabel,
   footer,
   closeOnSelect = true,
 }: CommandPaletteProps) {
@@ -85,7 +88,7 @@ export function CommandPalette({
               <Command.Input className="od-palette__input" placeholder={placeholder} value={search} onValueChange={onSearchChange} />
               {loading && <Spinner size="sm" label={loadingLabel} />}
             </div>
-            <Command.List className="od-palette__list" aria-busy={loading || undefined}>
+            <Command.List className="od-palette__list" label={listLabel} aria-busy={loading || undefined}>
               {!loading && <Command.Empty className="od-palette__empty">{emptyText}</Command.Empty>}
               {groups
                 .filter((g) => g.items.length > 0)

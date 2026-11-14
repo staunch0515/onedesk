@@ -121,7 +121,7 @@ export function NewResourceDialog({ open, onOpenChange, preset }: NewResourceDia
             <FormField label={t("new.kind")} required requiredMark={t("common.requiredMark")} error={errors.kind}>
               <Select
                 options={kinds.map((k) => ({ value: k.id, label: k.name, icon: k.icon }))}
-                value={kind || undefined}
+                value={kind}
                 placeholder={t("new.kindPlaceholder")}
                 onValueChange={setKind}
               />
