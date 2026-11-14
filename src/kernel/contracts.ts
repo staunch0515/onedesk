@@ -70,7 +70,11 @@ export interface Platform {
     copyText(text: string): Promise<void>;
   };
   network: {
-    fetch(url: string, init?: NetworkRequestInit): Promise<NetworkResponse>;
+    /**
+     * `redirect: "manual"` → return 3xx responses as-is (with `location` header) so the host can re-check each hop
+     * against the plugin's network allowlist (D13); default `"follow"`.
+     */
+    fetch(url: string, init?: NetworkRequestInit & { redirect?: "manual" | "follow" }): Promise<NetworkResponse>;
   };
   secrets: {
     list(): Promise<string[]>;

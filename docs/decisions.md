@@ -131,3 +131,11 @@
 - **D103** 危险（danger）吐司默认不自动消失。每个 Tooltip 自带 Provider。Checkbox、Progress 用原生元素（不新增依赖）。Icon 按 lucide 名字解析（含旧名别名），未知名字显示占位图标。
 - **D104** CommandPalette 默认按标签/描述/关键词过滤；外部结果（内核搜索）时传 `filter={false}`，加载中 `aria-busy`。Dialog `dismissible={false}` 时遮罩和 Esc 都不关闭。
 - **D105** 额外的布局组件 `Stack`、`Text`、`Section`，让页面排版不需要一次性 CSS。组件展示页保留，外壳接管后通过 `?gallery` 打开。
+
+## 内核加固（2026-11-14，主会话汇总内核第二轮）
+
+- **D110** 接口补充（主会话）：`Platform.network.fetch` 的 init 增加 `redirect?: "manual" | "follow"`。白名单不含 `*` 的插件不自动跟随重定向，宿主逐跳复查 `Location`（最多 5 跳，跨源去掉 Authorization/Cookie）；浏览器预览遇到重定向直接拒绝。Tauri 下 `maxRedirections: 0` 的实际行为在联调时确认。
+- **D111** 全局动作（kinds 为空）收到 resourceId 时，动作所属插件必须能读该 kind，否则 `permission`；读取范围不在插件之间传递。
+- **D112** 插件 `activate()` 10 秒未完成记为激活错误，不阻塞其他插件和启动。
+- **D113** 标签不得包含 `"` 或 `\`（新建/更新校验；导入暂不检查）。`requires.network` 条目格式错误是加载错误；不带端口只匹配 80/443；不支持 IPv6 字面量。
+- **D114** 重新安装：清除卸载标记、按来源加载、保持停用；其 kind 已被占用时返回 `conflict`。
