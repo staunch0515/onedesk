@@ -19,7 +19,7 @@
     "lint": "node scripts/check-arch.mjs && node scripts/check-ui.mjs",
     "test": "vitest run",
     "coverage": "vitest run --coverage",
-    "test:rust": "cargo test --manifest-path src-tauri/Cargo.toml",
+    "test:rust": "ONEDESK_TEST_DB=1 cargo test --manifest-path src-tauri/Cargo.toml",
     "clippy": "cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings",
     "e2e": "playwright test",
     "check": "pnpm typecheck && pnpm lint && pnpm coverage && pnpm test:rust && pnpm clippy && pnpm e2e"
