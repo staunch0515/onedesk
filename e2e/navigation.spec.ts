@@ -63,9 +63,7 @@ test.describe("command palette", () => {
     await expect(main(app).getByRole("heading", { level: 1, name: "读书笔记" }).first()).toBeVisible();
   });
 
-  // KNOWN SHELL BUG (docs/handoff/phase2-e2e.md, bug 2): remove test.fail() once the shell fix is merged.
   test("find a resource by body text", async ({ app }) => {
-    test.fail();
     for (const query of ["每周读完", "关键观点", "完美"]) {
       await openPalette(app);
       await app.getByRole("combobox", { name: t("palette.label") }).fill(query);
@@ -78,9 +76,7 @@ test.describe("command palette", () => {
     await expect(main(app).getByRole("heading", { level: 1, name: "读书笔记" }).first()).toBeVisible();
   });
 
-  // KNOWN SHELL BUG (docs/handoff/phase2-e2e.md, bug 2): remove test.fail() once the shell fix is merged.
   test("find a resource by tag", async ({ app }) => {
-    test.fail();
     await openPalette(app);
     await app.getByRole("combobox", { name: t("palette.label") }).fill("接口");
     await expect(app.getByRole("option", { name: /获取示例数据/ }).first()).toBeVisible();
@@ -234,9 +230,7 @@ test("shortcut: Cmd/Ctrl+N opens the new-resource dialog", async ({ app }) => {
   await expect(app.getByRole("dialog", { name: t("new.title") })).toBeVisible();
 });
 
-// KNOWN SHELL BUG (docs/handoff/phase2-e2e.md, bug 3): remove test.fail() once the shell fix is merged.
 test("disable plugin, open its resource, enable from the page, then navigate freely", async ({ app }) => {
-  test.fail();
   await gotoPage(app, "nav.plugins");
   await main(app).getByRole("switch", { name: t("plugins.toggle", { name: "HTTP 请求" }) }).click();
   await gotoPage(app, "nav.allResources");
