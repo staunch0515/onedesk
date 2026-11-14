@@ -1,0 +1,29 @@
+.od-text-link {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  max-width: 100%;
+  border-radius: var(--radius-xs);
+  color: var(--accent-text);
+  text-decoration: none;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+
+.od-text-link:hover .od-text-link__text {
+  text-decoration: underline;
+  text-underline-offset: var(--space-0-5);
+}
+
+.od-text-link:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
+}
+
+.od-text-link__text {
+  min-width: 0;
+}
+
+.od-text-link__icon {
+  flex: none;
+}

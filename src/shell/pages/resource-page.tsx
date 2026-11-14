@@ -14,12 +14,16 @@ import {
   Page,
   PageBody,
   PageHeader,
+  KeyValueList,
+  Section,
   Stack,
+  Text,
+  TextBlock,
   Tabs,
   useToast,
 } from "../../design";
 import { CORE_EDIT_VIEW, type RegisteredAction } from "../../kernel/contracts";
-import type { FormNode, Resource, ViewNode } from "../../plugin-api";
+import type { FormNode, Resource } from "../../plugin-api";
 import { ActionResultPanel } from "../action-ui";
 import { EditView, useEditDraft } from "../edit-view";
 import { errorInfo, formatDateTime, groupLabel } from "../format";
@@ -27,38 +31,48 @@ import { useAsync, useKernelTick } from "../hooks";
 import { t } from "../i18n";
 import { useShell } from "../shell-context";
 import { kindLabel } from "../resource-table";
-import { ViewTree } from "../view-tree";
+import { FormValue, ViewTree } from "../view-tree";
+import { useDeleteResource } from "../delete-resource";
+import { KIND_CACHE_PREF, normalizeKindCache } from "../kind-cache";
 
-function bodyValue(v: unknown): FormNode["fields"][number]["value"] {
-  if (v === null || v === undefined) return null;
-  if (typeof v === "string" || typeof v === "number" || typeof v === "boolean") return v;
-  return JSON.stringify(v, null, 2);
+function bodyValue(v: unknown): FormNode["fields"][number] {
+  if (v === null || v === undefined) return { label: "", value: null };
+  if (typeof v === "string" || typeof v === "number" || typeof v === "boolean") return { label: "", value: v };
+  return { label: "", value: JSON.stringify(v, null, 2), format: "code" };
 }
 
-/** Read-only data for resources whose plugin is disabled or missing. */
-export function readOnlyNodes(resource: Resource, labels?: Record<string, string>): ViewNode[] {
-  return [
-    {
-      type: "form",
-      title: t("resource.fieldsTitle"),
-      fields: [
-        { label: t("edit.name"), value: resource.name },
-        { label: t("edit.group"), value: groupLabel(resource.group) },
-        { label: t("edit.tags"), value: resource.tags.join(", ") || null },
-        { label: t("edit.description"), value: resource.description || null },
-        { label: t("all.col.updated"), value: formatDateTime(resource.updatedAt) },
-      ],
-    },
-    {
-      type: "form",
-      title: t("resource.readonlyData"),
-      fields: Object.entries(resource.body).map(([k, v]) => ({
-        label: labels?.[k] ?? k,
-        value: bodyValue(v),
-        format: typeof v === "object" && v !== null ? ("code" as const) : undefined,
-      })),
-    },
-  ];
+/**
+ * Read-only data for resources whose plugin is disabled or missing. Field labels come from the kind cache
+ * (remembered while the plugin was enabled); without it the raw body keys are shown, with a note.
+ */
+export function ReadOnlyData({ resource, labels }: { resource: Resource; labels?: Record<string, string> }) {
+  const entries = Object.entries(resource.body);
+  const ordered = labels ? [...entries].sort(([a], [b]) => (Object.keys(labels).indexOf(a) + 1 || 999) - (Object.keys(labels).indexOf(b) + 1 || 999)) : entries;
+  return (
+    <Stack gap="lg">
+      <Section title={t("resource.fieldsTitle")}>
+        <KeyValueList
+          items={[
+            { key: "name", label: t("edit.name"), value: resource.name },
+            { key: "group", label: t("edit.group"), value: groupLabel(resource.group) },
+            { key: "tags", label: t("edit.tags"), value: resource.tags.join(", ") || t("common.empty") },
+            { key: "description", label: t("edit.description"), value: resource.description ? <TextBlock>{resource.description}</TextBlock> : t("common.empty") },
+            { key: "updated", label: t("all.col.updated"), value: <Text tabular>{formatDateTime(resource.updatedAt)}</Text> },
+          ]}
+        />
+      </Section>
+      <Section title={t("resource.readonlyData")} description={labels ? undefined : t("resource.rawKeysNote")}>
+        <KeyValueList
+          items={ordered.map(([k, v]) => ({
+            key: k,
+            label: labels?.[k] ?? k,
+            monoLabel: !labels?.[k],
+            value: <FormValue field={bodyValue(v)} />,
+          }))}
+        />
+      </Section>
+    </Stack>
+  );
 }
 
 function PluginView({ viewKey, resource }: { viewKey: string; resource: Resource }) {
@@ -83,7 +97,7 @@ function PluginView({ viewKey, resource }: { viewKey: string; resource: Resource
 }
 
 export function ResourcePage({ id, tab }: { id: string; tab?: string }) {
-  const { kernel, navigate, confirm, runAction, setLeaveGuard, openExternal } = useShell();
+  const { kernel, navigate, runAction, setLeaveGuard, openExternal } = useShell();
   const { toast } = useToast();
   const tick = useKernelTick(kernel, ["resource.updated", "resource.deleted", "plugin.changed"]);
   useKernelTick(kernel, ["action.started", "action.completed"]);
@@ -103,6 +117,8 @@ export function ResourcePage({ id, tab }: { id: string; tab?: string }) {
   const [activeTab, setActiveTab] = useState<string | undefined>(tab);
   const [moreOpen, setMoreOpen] = useState(false);
   const draft = useEditDraft(kernel, resource, schema);
+  const deleteResource = useDeleteResource();
+  const kindCache = useAsync(async () => normalizeKindCache(await kernel.prefs.get(KIND_CACHE_PREF)), [kernel, tick]);
   const needsReferences = schema.some((f) => f.type === "reference");
   const references = useAsync(() => (needsReferences ? kernel.resources.list() : Promise.resolve([])), [kernel, needsReferences, tick]);
 
@@ -153,24 +169,8 @@ export function ResourcePage({ id, tab }: { id: string; tab?: string }) {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  const remove = async () => {
-    if (!resource) return;
-    const ok = await confirm({
-      title: t("resource.deleteTitle", { name: resource.name }),
-      description: t("resource.deleteBody"),
-      confirmLabel: t("common.delete"),
-      danger: true,
-    });
-    if (!ok) return;
-    try {
-      await kernel.resources.delete(resource.id);
-      setLeaveGuard(null);
-      toast({ title: t("resource.deleted", { name: resource.name }), tone: "success" });
-      await navigate({ page: "all" });
-    } catch (e) {
-      const info = errorInfo(e);
-      toast({ title: info.message, description: info.hint, tone: "danger" });
-    }
+  const remove = () => {
+    if (resource) void deleteResource(resource);
   };
 
   const enableOwner = async () => {
@@ -238,7 +238,7 @@ export function ResourcePage({ id, tab }: { id: string; tab?: string }) {
           disabled={Boolean(running)}
           loading={running?.key === defaultAction.key}
           onClick={() => run(defaultAction)}
-          title={`${defaultAction.label}（⌘↵）`}
+          title={t("action.defaultShortcut", { label: defaultAction.label })}
         >
           {defaultAction.label}
         </Button>
@@ -265,7 +265,7 @@ export function ResourcePage({ id, tab }: { id: string; tab?: string }) {
 
   let content;
   if (!kindDef) {
-    const labels = Object.fromEntries(schema.map((f) => [f.name, f.label]));
+    const labels = kindCache.data?.[kind]?.fields;
     content = (
       <Stack gap="lg">
         {owner ? (
@@ -285,7 +285,7 @@ export function ResourcePage({ id, tab }: { id: string; tab?: string }) {
             {t("resource.orphanBody")}
           </Banner>
         )}
-        <ViewTree nodes={readOnlyNodes(resource, labels)} onOpenLink={openExternal} />
+        <ReadOnlyData resource={resource} labels={labels} />
       </Stack>
     );
   } else {
@@ -304,6 +304,7 @@ export function ResourcePage({ id, tab }: { id: string; tab?: string }) {
             onCancel={(runId) => kernel.actions.cancel(runId)}
             onDismiss={() => setDismissed(shownResult?.runId ?? null)}
             onOpenLink={openExternal}
+            compact={views.some((v) => v.key !== CORE_EDIT_VIEW)}
           />
         )}
         {currentTab === CORE_EDIT_VIEW ? (

@@ -15,32 +15,25 @@ import {
 import { SortableContext, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { useEffect, useMemo, useState } from "react";
-import { DragHandle, DropdownMenu, EmptyState, IconButton, LoadingState, NavGroup, NavItem, Sidebar, Stack, Text } from "../design";
+import { DragHandle, DropdownMenu, EmptyState, ErrorState, IconButton, LoadingState, NavGroup, NavItem, Sidebar, Stack, Text } from "../design";
 import type { Resource } from "../plugin-api";
 import { errorInfo, groupLabel } from "./format";
 import { useAsync, useKernelTick } from "./hooks";
 import { t } from "./i18n";
 import { buildMenu, MENU_PREFS_KEY, moveGroup, moveItem, normalizeMenuPrefs, setCollapsed, type MenuGroup, type MenuPrefs } from "./menu-model";
 import { useShell, type Route } from "./shell-context";
+import { useDeleteResource } from "./delete-resource";
 
 let menuReadyLogged = false;
 
 function SortableResourceItem({ resource, selected, onSelect }: { resource: Resource; selected: boolean; onSelect: () => void }) {
-  const { kernel, confirm } = useShell();
+  const { kernel } = useShell();
+  const deleteResource = useDeleteResource();
   const { attributes, listeners, setNodeRef, setActivatorNodeRef, transform, transition, isDragging } = useSortable({ id: resource.id });
   const [menuOpen, setMenuOpen] = useState(false);
   const kind = kernel.registry.kind(resource.kind);
   const invalid = Object.keys(kernel.resources.validate(resource.kind, resource.body)).length > 0;
   const style = { transform: CSS.Translate.toString(transform), transition, zIndex: isDragging ? 1 : undefined };
-  const remove = async () => {
-    const ok = await confirm({
-      title: t("resource.deleteTitle", { name: resource.name }),
-      description: t("resource.deleteBody"),
-      confirmLabel: t("common.delete"),
-      danger: true,
-    });
-    if (ok) await kernel.resources.delete(resource.id);
-  };
   return (
     <NavItem
       ref={setNodeRef}
@@ -59,7 +52,7 @@ function SortableResourceItem({ resource, selected, onSelect }: { resource: Reso
           onOpenChange={setMenuOpen}
           align="start"
           trigger={<IconButton icon="ellipsis" label={t("nav.itemActions", { name: resource.name })} size="sm" />}
-          items={[{ key: "delete", label: t("common.delete"), icon: "trash-2", danger: true, onSelect: () => void remove() }]}
+          items={[{ key: "delete", label: t("common.delete"), icon: "trash-2", danger: true, onSelect: () => void deleteResource(resource) }]}
         />
       }
     />
@@ -142,7 +135,7 @@ function MenuGroupView({
 }
 
 export function SidebarMenu() {
-  const { kernel, route, navigate } = useShell();
+  const { kernel, route, navigate, openNewResource } = useShell();
   const tick = useKernelTick(kernel, ["resource.created", "resource.updated", "resource.deleted", "plugin.changed"]);
   const data = useAsync(async () => {
     const [resources, stored] = await Promise.all([kernel.resources.list(), kernel.prefs.get(MENU_PREFS_KEY)]);
@@ -180,7 +173,17 @@ export function SidebarMenu() {
 
   let body;
   if (data.status === "error" && !data.data) {
-    body = <EmptyState layout="inline" icon="circle-alert" message={errorInfo(data.error).message} />;
+    const info = errorInfo(data.error);
+    body = (
+      <ErrorState
+        layout="inline"
+        title={t("nav.loadFailed")}
+        reason={info.message}
+        resolution={info.hint}
+        onRetry={data.reload}
+        retryLabel={t("common.retry")}
+      />
+    );
   } else if (!resources || !prefs) {
     body = <LoadingState layout="inline" label={t("common.loading")} />;
   } else if (groups.length === 0) {
@@ -204,7 +207,13 @@ export function SidebarMenu() {
   return (
     <Sidebar
       label={t("app.sidebarLabel")}
-      header={<Text weight="semibold">{t("app.name")}</Text>}
+      headerJustify="between"
+      header={
+        <>
+          <Text weight="semibold">{t("app.name")}</Text>
+          <IconButton icon="plus" size="sm" label={t("new.title")} shortcut={["⌘", "N"]} onClick={() => openNewResource()} />
+        </>
+      }
       footer={footer}
     >
       {body}

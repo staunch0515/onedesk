@@ -9,16 +9,18 @@ export interface SidebarProps {
   label: string;
   /** Top area (app name, workspace switcher). Same height as the top bar. */
   header?: ReactNode;
+  /** `between` spreads the header children to both ends (e.g. app name left, a button right). */
+  headerJustify?: "start" | "between";
   /** Bottom area (settings, plugins). */
   footer?: ReactNode;
   children: ReactNode;
   className?: string;
 }
 
-export function Sidebar({ label, header, footer, children, className }: SidebarProps) {
+export function Sidebar({ label, header, headerJustify = "start", footer, children, className }: SidebarProps) {
   return (
     <nav className={cx("od-sidebar", className)} aria-label={label}>
-      {header && <div className="od-sidebar__header">{header}</div>}
+      {header && <div className={cx("od-sidebar__header", headerJustify === "between" && "od-sidebar__header--between")}>{header}</div>}
       <div className="od-sidebar__body">{children}</div>
       {footer && <div className="od-sidebar__footer">{footer}</div>}
     </nav>

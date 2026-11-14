@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { Badge, Icon, Stack, Table, Text, type TableColumn } from "../design";
+import { Badge, Icon, Stack, Table, type TableColumn } from "../design";
 import type { Kernel } from "../kernel/contracts";
 import type { Resource } from "../plugin-api";
 import { formatDateTime, groupLabel } from "./format";
@@ -24,7 +24,8 @@ export function ResourceTable({ resources, label, empty }: { resources: Resource
       render: (r) => (
         <Stack direction="row" gap="sm" align="center">
           <Icon name={kernel.registry.kind(r.kind)?.icon ?? "file"} size="sm" />
-          <Text truncate>{r.name}</Text>
+          {/* Plain text: inherits the row colour, so muted rows (disabled plugins) are grey too. */}
+          <span>{r.name}</span>
         </Stack>
       ),
     },

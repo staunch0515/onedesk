@@ -17,6 +17,7 @@ import type { ActionResult, Resource } from "../plugin-api";
 import { ActionInputDialog, type ActionInputRequest } from "./action-ui";
 import { errorInfo } from "./format";
 import { t } from "./i18n";
+import { rememberKinds } from "./kind-cache";
 import { NewResourceDialog } from "./new-resource-dialog";
 import { AllResourcesPage } from "./pages/all-resources-page";
 import { CollectionsPage } from "./pages/collections-page";
@@ -79,6 +80,8 @@ function ShellRoot({ kernel, services, initialRoute }: { kernel: Kernel; service
   const [newOpen, setNewOpen] = useState(false);
   const [newPreset, setNewPreset] = useState<{ kind?: string; group?: string } | undefined>(undefined);
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const paletteOpenRef = useRef(false);
+  paletteOpenRef.current = paletteOpen;
   const [inputRequest, setInputRequest] = useState<ActionInputRequest | null>(null);
 
   const confirm = useCallback(
@@ -162,6 +165,12 @@ function ShellRoot({ kernel, services, initialRoute }: { kernel: Kernel; service
     guardRef.current = guard;
   }, []);
 
+  // Remember kind names and field labels while plugins are enabled (read-only view of disabled plugins' data).
+  useEffect(() => {
+    void rememberKinds(kernel).catch(() => undefined);
+    return kernel.events.on("plugin.changed", () => void rememberKinds(kernel).catch(() => undefined));
+  }, [kernel]);
+
   // Plugin notifications → toasts.
   useEffect(
     () =>
@@ -179,7 +188,9 @@ function ShellRoot({ kernel, services, initialRoute }: { kernel: Kernel; service
       const key = e.key.toLowerCase();
       if (key === "k") {
         e.preventDefault();
-        setPaletteOpen((o) => !o);
+        // ⌘K closes an open palette, but never stacks on top of another dialog.
+        if (paletteOpenRef.current) setPaletteOpen(false);
+        else if (!document.querySelector("[role=dialog]")) setPaletteOpen(true);
       } else if (key === "n") {
         e.preventDefault();
         if (!document.querySelector("[role=dialog]")) openNewResource();

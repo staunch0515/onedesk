@@ -229,7 +229,9 @@ export function PluginsPage() {
       render: (p) => (
         <Stack direction="row" gap="sm" align="center">
           <Icon name={p.manifest.icon} size="md" />
-          <Text weight="medium">{p.manifest.name}</Text>
+          <Text weight="medium" tone={p.state === "disabled" ? "subtle" : "default"}>
+            {p.manifest.name}
+          </Text>
           {p.activationError ? (
             <Text size="sm" tone="danger" truncate>
               {t("plugins.activationError", { reason: p.activationError })}
@@ -277,13 +279,15 @@ export function PluginsPage() {
     {
       key: "actions",
       header: t("plugins.col.actions"),
-      width: "lg",
+      width: "md",
       align: "end",
       render: (p) => (
         <Stack direction="row" gap="xs" justify="end">
-          <Button size="sm" variant="ghost" icon="settings" onClick={() => setSettingsFor(p)}>
-            {t("plugins.settings")}
-          </Button>
+          {p.manifest.settings.length > 0 && (
+            <Button size="sm" variant="ghost" icon="settings" onClick={() => setSettingsFor(p)}>
+              {t("plugins.settings")}
+            </Button>
+          )}
           {p.origin === "external" && (
             <Button size="sm" variant="ghost" icon="trash-2" onClick={() => setUninstalling(p)}>
               {t("plugins.uninstall")}

@@ -11,6 +11,8 @@ export const zhCN = {
   "app.bootFailed": "无法启动",
   "app.bootFailedResolution": "重新打开应用；问题仍在时，把这段信息发给维护者。",
   "app.retry": "重试",
+  "app.contextMissing": "useShell 必须在 ShellContext 内使用",
+  "nav.loadFailed": "菜单加载失败",
 
   // ---- blocked (migration error)
   "blocked.title": "数据库升级失败，已停止使用",
@@ -104,11 +106,13 @@ export const zhCN = {
   "resource.orphan": "找不到提供“{{kind}}”的插件",
   "resource.orphanBody": "数据保留，只能查看。安装提供该类型的插件后恢复。",
   "resource.readonlyData": "数据（只读）",
+  "resource.rawKeysNote": "插件不可用，无法读取字段名称，以下显示原始键名。",
   "resource.fieldsTitle": "基本信息",
   "resource.delete": "删除资源",
   "resource.deleteTitle": "删除“{{name}}”？",
   "resource.deleteBody": "删除后无法恢复，相关的集合不受影响。",
   "resource.deleted": "已删除“{{name}}”",
+  "resource.deleteFailed": "无法删除“{{name}}”",
   "resource.tabsLabel": "视图",
   "resource.viewLoading": "正在生成视图…",
   "resource.viewFailed": "视图无法显示",
@@ -186,6 +190,11 @@ export const zhCN = {
   "action.errorHint": "处理方式：{{hint}}",
   "action.errorCode": "错误代码：{{code}}",
   "action.unknown": "未知动作",
+  "action.rows": "共 {{count}} 行",
+  "action.showOutput": "显示完整输出",
+  "action.hideOutput": "收起输出",
+  "action.defaultShortcut": "{{label}}（⌘↵）",
+  "action.runningElsewhere": "正在运行",
 
   // ---- all resources
   "all.title": "全部资源",
@@ -360,6 +369,7 @@ export const zhCN = {
   "palette.empty": "没有匹配的结果。",
   "palette.loading": "正在搜索…",
   "palette.resources": "资源",
+  "palette.searchGroup": "搜索",
   "palette.actions": "当前资源的动作",
   "palette.pages": "页面",
   "palette.create": "新建",
