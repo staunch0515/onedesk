@@ -1,6 +1,7 @@
 import { createContext, useContext } from "react";
 import type { Kernel } from "../kernel/contracts";
 import type { Resource } from "../plugin-api";
+import { t } from "./i18n";
 import type { ShellServices } from "./services";
 
 /** Internal state router (D35). */
@@ -42,7 +43,7 @@ export const ShellContext = createContext<ShellApi | null>(null);
 
 export function useShell(): ShellApi {
   const api = useContext(ShellContext);
-  if (!api) throw new Error("useShell 必须在 ShellContext 内使用");
+  if (!api) throw new Error(t("app.contextMissing"));
   return api;
 }
 

@@ -1,20 +1,23 @@
 /**
  * ⌘K command palette: resources (kernel.search), actions of the current resource, pages, new resource,
- * theme and density, plugin menu items. cmdk filters (and keeps the first match selected); kernel results carry
- * the query as a keyword so matches found in body text are not filtered out again.
+ * theme and density, plugin menu items. cmdk filters (and keeps the first match selected). Kernel results carry the
+ * query that found them as a keyword, and that query is part of their item id: cmdk reads keywords only when an item
+ * mounts, so each new result set mounts fresh items and matches found in body text or tags are not filtered out.
  */
 import { useEffect, useMemo, useState } from "react";
 import { CommandPalette, Kbd, Stack, Text, useTheme, type CommandGroup, type CommandItem } from "../design";
 import type { Resource } from "../plugin-api";
 import { groupLabel } from "./format";
+import { useKernelTick } from "./hooks";
 import { t } from "./i18n";
 import { useShell } from "./shell-context";
 
 export function ShellPalette({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
   const { kernel, route, navigate, openNewResource, runAction } = useShell();
   const { theme, density, setTheme, setDensity } = useTheme();
+  const runTick = useKernelTick(kernel, ["action.started", "action.completed"]);
   const [search, setSearch] = useState("");
-  const [results, setResults] = useState<Resource[]>([]);
+  const [found, setFound] = useState<{ query: string; results: Resource[] }>({ query: "", results: [] });
   const [loading, setLoading] = useState(false);
   const [current, setCurrent] = useState<Resource | null>(null);
 
@@ -43,9 +46,9 @@ export function ShellPalette({ open, onOpenChange }: { open: boolean; onOpenChan
     setLoading(true);
     const timer = setTimeout(() => {
       kernel.search(search, { limit: 8 }).then(
-        (found) => {
+        (results) => {
           if (!live) return;
-          setResults(found);
+          setFound({ query: search.trim(), results });
           setLoading(false);
         },
         () => live && setLoading(false),
@@ -64,33 +67,40 @@ export function ShellPalette({ open, onOpenChange }: { open: boolean; onOpenChan
       icon,
       onSelect: () => void navigate(target),
     });
-    const resourceItems: CommandItem[] = results.map((r) => ({
-      id: r.id,
+    const resourceItems: CommandItem[] = found.results.map((r) => ({
+      id: `${r.id}@${found.query}`,
       label: r.name,
       description: [kernel.registry.kind(r.kind)?.name ?? r.kind, groupLabel(r.group)].join(" · "),
       icon: kernel.registry.kind(r.kind)?.icon ?? "file",
-      // Already matched by the kernel (body text too): the query itself as keyword keeps cmdk from hiding it.
-      keywords: search.trim() ? [search.trim()] : undefined,
+      keywords: found.query ? [found.query] : undefined,
       onSelect: () => void navigate({ page: "resource", id: r.id }),
     }));
-    if (search.trim()) {
-      resourceItems.push({
-        id: "search-all",
-        label: t("palette.searchAll", { query: search.trim() }),
-        icon: "search",
-        keywords: [search.trim()],
-        onSelect: () => void navigate({ page: "search", query: search.trim() }),
-      });
-    }
+    // Mounted together with the results it belongs to; listed after them (lower score), so a found resource is
+    // what Enter opens.
+    const searchAll: CommandItem[] = found.query
+      ? [
+          {
+            id: `search-all@${found.query}`,
+            label: t("palette.searchAll", { query: found.query }),
+            icon: "search",
+            onSelect: () => void navigate({ page: "search", query: found.query }),
+          },
+        ]
+      : [];
+    // A resource runs one action at a time (as on the resource page): while one runs, its actions are disabled.
+    const busy = current ? kernel.actions.running().some((r) => r.resourceId === current.id) : false;
     const actionItems: CommandItem[] =
       current && kernel.registry.kind(current.kind)
         ? kernel.registry.actionsFor(current.kind).map((a) => ({
             id: a.key,
             label: a.label,
-            description: current.name,
+            description: busy ? t("action.runningElsewhere") : current.name,
             icon: a.icon ?? "play",
+            disabled: busy,
             shortcut: a.isDefaultFor.includes(current.kind) ? ["⌘", "↵"] : undefined,
-            onSelect: () => runAction(a.key, current),
+            onSelect: () => {
+              if (!kernel.actions.running().some((r) => r.resourceId === current.id)) runAction(a.key, current);
+            },
           }))
         : [];
     const pages: CommandItem[] = [
@@ -129,13 +139,14 @@ export function ShellPalette({ open, onOpenChange }: { open: boolean; onOpenChan
     }));
     return [
       { id: "resources", heading: t("palette.resources"), items: resourceItems },
+      { id: "search", heading: t("palette.searchGroup"), items: searchAll },
       { id: "actions", heading: t("palette.actions"), items: actionItems },
       { id: "create", heading: t("palette.create"), items: create },
       { id: "pages", heading: t("palette.pages"), items: pages },
       { id: "plugins", heading: t("palette.pluginItems"), items: pluginItems },
       { id: "prefs", heading: t("palette.preferences"), items: prefs },
     ];
-  }, [results, search, current, kernel, theme, density, navigate, openNewResource, runAction, setTheme, setDensity]);
+  }, [found, search, current, runTick, kernel, theme, density, navigate, openNewResource, runAction, setTheme, setDensity]);
 
   return (
     <CommandPalette
@@ -147,7 +158,7 @@ export function ShellPalette({ open, onOpenChange }: { open: boolean; onOpenChan
       emptyText={t("palette.empty")}
       search={search}
       onSearchChange={setSearch}
-      loading={loading && results.length === 0}
+      loading={loading && found.results.length === 0}
       loadingLabel={t("palette.loading")}
       footer={
         <Stack direction="row" gap="md" align="center">

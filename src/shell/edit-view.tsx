@@ -56,8 +56,12 @@ export function useEditDraft(kernel: Kernel, resource: Resource | null, schema: 
   const [saving, setSaving] = useState(false);
   const [baseVersion, setBaseVersion] = useState<{ id: string; version: number } | null>(null);
   const justSaved = useRef(false);
+  // Only user edits make the draft dirty; a base that changes underneath (newer version, kind registered after
+  // its plugin was enabled) is simply taken over while nothing was edited.
+  const [edited, setEdited] = useState(false);
+  const schemaKey = useMemo(() => JSON.stringify(schema.map((f) => [f.name, f.type])), [schema]);
 
-  const dirty = general !== null && baseGeneral !== null && (!sameValues(general, baseGeneral) || !sameValues(values, baseValues));
+  const dirty = edited && general !== null && baseGeneral !== null && (!sameValues(general, baseGeneral) || !sameValues(values, baseValues));
 
   const reset = useCallback(() => {
     setGeneralState(baseGeneral);
@@ -66,16 +70,17 @@ export function useEditDraft(kernel: Kernel, resource: Resource | null, schema: 
     setFormError(null);
     setConflict(false);
     justSaved.current = false;
+    setEdited(false);
     setBaseVersion(resource ? { id: resource.id, version: resource.version } : null);
   }, [baseGeneral, baseValues, resource]);
 
-  // New resource, or a newer version saved elsewhere while there are no local edits: take it.
+  // New resource, a newer version, or a changed schema: take the new base unless the user has unsaved edits.
   useEffect(() => {
     if (!resource) return;
     const switched = baseVersion?.id !== resource.id;
-    if (switched || (baseVersion?.version !== resource.version && (!dirty || justSaved.current))) reset();
+    if (switched || !dirty || justSaved.current) reset();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [resource]);
+  }, [resource, schemaKey]);
 
   const save = async (): Promise<boolean> => {
     if (!resource || !general || saving) return false;
@@ -125,8 +130,14 @@ export function useEditDraft(kernel: Kernel, resource: Resource | null, schema: 
     conflict,
     dirty,
     saving,
-    setGeneral: (patch) => setGeneralState((g) => (g ? { ...g, ...patch } : g)),
-    setValue: (name, value) => setValues((v) => ({ ...v, [name]: value })),
+    setGeneral: (patch) => {
+      setEdited(true);
+      setGeneralState((g) => (g ? { ...g, ...patch } : g));
+    },
+    setValue: (name, value) => {
+      setEdited(true);
+      setValues((v) => ({ ...v, [name]: value }));
+    },
     save,
     reset,
   };

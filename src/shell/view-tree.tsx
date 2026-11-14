@@ -2,41 +2,15 @@
  * Renders a validated view tree (D02: form / table / text / link) with design-system components only.
  * Plugins never touch the DOM; links open through the platform (http/https/mailto only, D65).
  */
-import { Badge, Button, EmptyState, Markdown, Section, Stack, Table, Text, type TableColumn } from "../design";
+import { Badge, EmptyState, KeyValueList, Markdown, Section, Stack, Table, Text, TextBlock, TextLink, type TableColumn } from "../design";
 import type { FormNode, LinkNode, TableNode, ViewNode } from "../plugin-api";
 import { t } from "./i18n";
 
 type Cell = string | number | boolean | null;
-type TextTone = "default" | "muted" | "success" | "warning" | "danger";
 
 export interface ViewTreeProps {
   nodes: ViewNode[];
   onOpenLink: (href: string) => void;
-}
-
-/** Longest run of backticks + 1, so any text fits in a fenced code block. */
-function fence(text: string): string {
-  const longest = Math.max(2, ...[...text.matchAll(/`+/g)].map((m) => m[0].length));
-  return "`".repeat(longest + 1);
-}
-
-export function codeMarkdown(text: string): string {
-  const f = fence(text);
-  return `${f}\n${text}\n${f}`;
-}
-
-/** Plain text keeps its line breaks: one paragraph per line (empty lines keep their height). */
-export function PlainText({ text, tone = "default", mono }: { text: string; tone?: TextTone; mono?: boolean }) {
-  const lines = text.split("\n");
-  return (
-    <div>
-      {lines.map((line, i) => (
-        <Text as="p" key={i} tone={tone} mono={mono}>
-          {line === "" ? " " : line}
-        </Text>
-      ))}
-    </div>
-  );
 }
 
 function cellText(v: Cell): string {
@@ -45,7 +19,7 @@ function cellText(v: Cell): string {
   return String(v);
 }
 
-function FormValue({ field }: { field: FormNode["fields"][number] }) {
+export function FormValue({ field }: { field: FormNode["fields"][number] }) {
   const v = field.value;
   if (v === null || v === "") return <Text tone="subtle">{t("common.empty")}</Text>;
   if (typeof v === "boolean") return <Badge tone={v ? "success" : "neutral"}>{cellText(v)}</Badge>;
@@ -53,26 +27,21 @@ function FormValue({ field }: { field: FormNode["fields"][number] }) {
     case "badge":
       return <Badge>{String(v)}</Badge>;
     case "code":
+      return <TextBlock variant="code">{String(v)}</TextBlock>;
     case "url":
-      return <PlainText text={String(v)} mono />;
+      return <Text mono>{String(v)}</Text>;
     default:
-      return <PlainText text={String(v)} />;
+      return <TextBlock>{String(v)}</TextBlock>;
   }
 }
 
 function FormView({ node }: { node: FormNode }) {
   return (
     <Section title={node.title}>
-      <Stack gap="md">
-        {node.fields.map((field, i) => (
-          <Stack gap="xs" key={`${field.label}-${i}`}>
-            <Text size="sm" tone="muted">
-              {field.label}
-            </Text>
-            <FormValue field={field} />
-          </Stack>
-        ))}
-      </Stack>
+      <KeyValueList
+        layout="stacked"
+        items={node.fields.map((field, i) => ({ key: `${i}`, label: field.label, value: <FormValue field={field} /> }))}
+      />
     </Section>
   );
 }
@@ -105,8 +74,13 @@ function TextView({ node, onOpenLink }: { node: Extract<ViewNode, { type: "text"
   const tone = node.tone ?? "default";
   let body;
   if (node.format === "markdown") body = <Markdown onLinkClick={onOpenLink}>{node.text}</Markdown>;
-  else if (node.format === "code") body = <Markdown>{codeMarkdown(node.text)}</Markdown>;
-  else body = <PlainText text={node.text} tone={tone} />;
+  else if (node.format === "code")
+    body = (
+      <TextBlock variant="code" tone={tone} label={node.title}>
+        {node.text}
+      </TextBlock>
+    );
+  else body = <TextBlock tone={tone}>{node.text}</TextBlock>;
   if (!node.title) return body;
   return <Section title={node.title}>{body}</Section>;
 }
@@ -114,9 +88,9 @@ function TextView({ node, onOpenLink }: { node: Extract<ViewNode, { type: "text"
 function LinkView({ node, onOpenLink }: { node: LinkNode; onOpenLink: (href: string) => void }) {
   return (
     <div>
-      <Button variant="secondary" icon="external-link" onClick={() => onOpenLink(node.href)} title={node.href}>
+      <TextLink href={node.href} onOpen={onOpenLink} external>
         {node.text ?? node.href}
-      </Button>
+      </TextLink>
     </div>
   );
 }

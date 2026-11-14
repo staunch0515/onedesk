@@ -3,7 +3,7 @@ import "../design/testing/jsdom-setup";
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { ViewTreeSchema, type ViewNode, type ViewTree as Tree } from "../plugin-api";
-import { codeMarkdown, ViewTree } from "./view-tree";
+import { ViewTree } from "./view-tree";
 
 /** Same path as the kernel: plugin output → zod (defaults applied) → shell renderer. */
 function nodes(tree: Tree): ViewNode[] {
@@ -63,32 +63,32 @@ describe("视图树渲染器", () => {
     expect(container.querySelectorAll("table")).toHaveLength(2);
   });
 
-  it("text：plain 保留换行，markdown 渲染，code 进代码块，tone 生效", () => {
+  it("text：plain 保留换行，markdown 渲染，code 进代码块（长行换行而不是截断），tone 生效", () => {
     const { container } = render(
       <ViewTree
         onOpenLink={() => {}}
         nodes={nodes([
           { type: "text", text: "第一行\n第二行" },
           { type: "text", text: "# 标题\n\n**粗体**", format: "markdown" },
-          { type: "text", title: "正文", text: "const a = 1;", format: "code" },
+          { type: "text", title: "正文", text: "const a = 1;\nUser-Agent: " + "x".repeat(400), format: "code" },
           { type: "text", text: "警告", tone: "warning" },
         ])}
       />,
     );
-    expect(screen.getByText("第一行")).toBeInTheDocument();
-    expect(screen.getByText("第二行")).toBeInTheDocument();
+    expect(container.querySelector(".od-text-block--plain")?.textContent).toBe("第一行\n第二行");
     expect(screen.getByRole("heading", { name: "标题" })).toBeInTheDocument();
     expect(container.querySelector("strong")?.textContent).toBe("粗体");
-    expect(container.querySelector("pre code")?.textContent).toContain("const a = 1;");
-    expect(screen.getByText("警告")).toHaveClass("od-text--warning");
+    const pre = container.querySelector("pre");
+    expect(pre).toHaveClass("od-text-block--code");
+    expect(pre?.textContent).toContain("x".repeat(400));
+    expect(screen.getByText("警告")).toHaveClass("od-text-block--warning");
   });
 
   it("link：点击经宿主打开，不直接导航", () => {
     const open = vi.fn();
     render(<ViewTree onOpenLink={open} nodes={nodes({ type: "link", href: "https://example.com", text: "打开网址" })} />);
-    fireEvent.click(screen.getByRole("button", { name: "打开网址" }));
+    fireEvent.click(screen.getByRole("link", { name: "打开网址" }));
     expect(open).toHaveBeenCalledWith("https://example.com");
-    expect(screen.queryByRole("link")).toBeNull();
   });
 
   it("空视图显示一句话", () => {
@@ -96,8 +96,5 @@ describe("视图树渲染器", () => {
     expect(screen.getByText("这个视图没有内容。")).toBeInTheDocument();
   });
 
-  it("代码块的围栏比正文中最长的反引号还长", () => {
-    expect(codeMarkdown("a ``` b").startsWith("````\n")).toBe(true);
-    expect(codeMarkdown("x").startsWith("```\n")).toBe(true);
-  });
+
 });
