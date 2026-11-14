@@ -4,7 +4,7 @@
  * view (rendered by the shell's view-tree renderer) → run the actions. Plus a smoke test of the whole App.
  */
 import "../design/testing/jsdom-setup";
-import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, configure, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { CORE_EDIT_VIEW } from "../kernel/contracts";
 import { createTestKernel, type TestKernel } from "../kernel/testing";
@@ -14,6 +14,10 @@ import { App } from "./app";
 import { initialValues, valuesToData, valuesToInput, type FormValues } from "./schema-form";
 import type { ShellServices } from "./services";
 import { ViewTree } from "./view-tree";
+
+// Rendering the whole App is slow under coverage instrumentation and machine load.
+configure({ asyncUtilTimeout: 10_000 });
+const APP_TIMEOUT = 30_000;
 
 const response: NetworkResponse = { status: 200, statusText: "OK", headers: { "content-type": "application/json" }, body: '{"ok":true}', durationMs: 5 };
 
@@ -111,7 +115,7 @@ describe("四个内置插件：创建 → 打开视图 → 运行动作", () => 
   });
 });
 
-describe("应用外壳（真实内核）", () => {
+describe("应用外壳（真实内核）", { timeout: APP_TIMEOUT }, () => {
   it("菜单列出资源；打开资源、运行默认动作看到结果；停用插件后菜单项消失、启用后恢复", async () => {
     const t = await kernelWithPlugins();
     await t.kernel.resources.create({ kind: "link", name: "官网", group: "工作", body: { url: "https://example.com" } });
