@@ -4,7 +4,7 @@
   min-height: var(--textarea-min-height);
   margin: 0;
   padding: var(--space-2) var(--control-pad-x-md);
-  border: var(--border-width) solid var(--border-strong);
+  border: var(--border-width) solid var(--border-control);
   border-radius: var(--radius-md);
   background: var(--bg-inset);
   color: var(--fg-default);
@@ -31,7 +31,7 @@
 }
 
 .od-textarea:hover:not(:disabled) {
-  border-color: var(--fg-disabled);
+  border-color: var(--fg-subtle);
 }
 
 .od-textarea:focus-visible {

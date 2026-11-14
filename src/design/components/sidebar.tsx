@@ -87,6 +87,8 @@ export interface NavItemProps extends Omit<HTMLAttributes<HTMLLIElement>, "onSel
   dragHandle?: ReactNode;
   /** Trailing actions shown on hover/focus (e.g. an IconButton opening a DropdownMenu). */
   actions?: ReactNode;
+  /** Keep the actions visible, e.g. while their DropdownMenu is open (pass its `open` state). */
+  actionsOpen?: boolean;
   onSelect?: () => void;
   /** Ref to the <li> (sortable wrappers need it). */
   ref?: Ref<HTMLLIElement>;
@@ -96,11 +98,33 @@ export interface NavItemProps extends Omit<HTMLAttributes<HTMLLIElement>, "onSel
  * One menu entry. Extra props (style for drag transforms, data-*, ref) go to the <li>, so a sortable
  * wrapper can position it — D31 allows inline `transform` only for drag sorting.
  */
-export function NavItem({ label, icon, selected = false, disabled = false, warning, meta, dragHandle, actions, onSelect, className, ref, ...rest }: NavItemProps) {
+export function NavItem({
+  label,
+  icon,
+  selected = false,
+  disabled = false,
+  warning,
+  meta,
+  dragHandle,
+  actions,
+  actionsOpen = false,
+  onSelect,
+  className,
+  ref,
+  ...rest
+}: NavItemProps) {
   return (
     <li
       ref={ref}
-      className={cx("od-nav-item", selected && "od-nav-item--selected", disabled && "od-nav-item--disabled", dragHandle !== undefined && "od-nav-item--draggable", className)}
+      className={cx(
+        "od-nav-item",
+        selected && "od-nav-item--selected",
+        disabled && "od-nav-item--disabled",
+        dragHandle !== undefined && "od-nav-item--draggable",
+        actions !== undefined && "od-nav-item--has-actions",
+        actionsOpen && "od-nav-item--actions-open",
+        className,
+      )}
       {...rest}
     >
       {dragHandle !== undefined && <span className="od-nav-item__handle">{dragHandle}</span>}

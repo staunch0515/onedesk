@@ -8,6 +8,7 @@
 
 .od-table {
   width: 100%;
+  table-layout: fixed;
   border-collapse: separate;
   border-spacing: 0;
   font-size: var(--text-md);
@@ -42,12 +43,27 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  max-width: 0;
 }
 
-.od-table__cell--shrink {
-  width: 1%;
-  max-width: none;
+.od-table__th {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.od-table__col--xs {
+  width: var(--table-col-xs);
+}
+
+.od-table__col--sm {
+  width: var(--table-col-sm);
+}
+
+.od-table__col--md {
+  width: var(--table-col-md);
+}
+
+.od-table__col--lg {
+  width: var(--table-col-lg);
 }
 
 .od-table__row:last-child .od-table__td {

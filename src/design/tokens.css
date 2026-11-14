@@ -116,6 +116,9 @@
   --palette-list-max-height: 360px;
   --palette-offset-top: 12vh;
   --menu-min-width: 180px;
+  --popover-width-sm: 240px;
+  --popover-width-md: 320px;
+  --popover-max-width: calc(100vw - 32px);
   --select-max-height: 320px;
   --tooltip-max-width: 280px;
   --toast-width: 360px;
@@ -133,6 +136,10 @@
   --state-min-height: 240px;
   --state-max-width: 420px;
   --swatch-size: 32px;
+  --table-col-xs: 56px;
+  --table-col-sm: 104px;
+  --table-col-md: 168px;
+  --table-col-lg: 240px;
 
   /* Focus ring */
   --focus-ring-width: 2px;
@@ -202,6 +209,7 @@
 
   --border-default: #e1e4e9;
   --border-strong: #c9ced6;
+  --border-control: #868d98;
   --border-subtle: #eceef1;
 
   --accent: #2259d6;
@@ -272,6 +280,7 @@
 
   --border-default: #2c2f35;
   --border-strong: #3c4048;
+  --border-control: #6b717c;
   --border-subtle: #25272c;
 
   --accent: #2c62dd;
@@ -334,13 +343,14 @@
     --fg-muted: #a5abb5;
     --fg-subtle: #959ba5;
     --fg-disabled: #5e636c;
-  --fg-inactive: #90969f;
+    --fg-inactive: #90969f;
     --fg-inverse: #1a1b1f;
     --fg-on-accent: #ffffff;
     --fg-selected: #a9c4ff;
 
     --border-default: #2c2f35;
     --border-strong: #3c4048;
+    --border-control: #6b717c;
     --border-subtle: #25272c;
 
     --accent: #2c62dd;

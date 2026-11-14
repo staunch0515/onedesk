@@ -11,6 +11,7 @@ export { Icon, hasIcon, resolveIcon, type IconProps, type IconSize } from "./com
 export { Button, type ButtonProps, type ButtonVariant, type ButtonSize } from "./components/button";
 export { IconButton, type IconButtonProps } from "./components/icon-button";
 export { Tooltip, type TooltipProps } from "./components/tooltip";
+export { Popover, type PopoverProps } from "./components/popover";
 export { Kbd, type KbdProps } from "./components/kbd";
 export { Spinner, Progress, type SpinnerProps, type ProgressProps } from "./components/spinner";
 export { FormField, useFieldControl, type FormFieldProps } from "./components/form-field";
@@ -19,7 +20,7 @@ export { Textarea, type TextareaProps } from "./components/textarea";
 export { Select, type SelectProps, type SelectOption, type SelectGroup } from "./components/select";
 export { Switch, type SwitchProps } from "./components/switch";
 export { Checkbox, type CheckboxProps } from "./components/checkbox";
-export { Table, type TableProps, type TableColumn } from "./components/table";
+export { Table, type TableProps, type TableColumn, type TableColumnWidth } from "./components/table";
 export { Dialog, DialogClose, type DialogProps } from "./components/dialog";
 export { Drawer, type DrawerProps } from "./components/drawer";
 export { Tabs, type TabsProps, type TabItem } from "./components/tabs";

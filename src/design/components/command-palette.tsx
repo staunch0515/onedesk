@@ -85,7 +85,7 @@ export function CommandPalette({
               <Command.Input className="od-palette__input" placeholder={placeholder} value={search} onValueChange={onSearchChange} />
               {loading && <Spinner size="sm" label={loadingLabel} />}
             </div>
-            <Command.List className="od-palette__list">
+            <Command.List className="od-palette__list" aria-busy={loading || undefined}>
               {!loading && <Command.Empty className="od-palette__empty">{emptyText}</Command.Empty>}
               {groups
                 .filter((g) => g.items.length > 0)

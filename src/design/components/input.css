@@ -4,7 +4,7 @@
   gap: var(--space-2);
   min-width: 0;
   width: 100%;
-  border: var(--border-width) solid var(--border-strong);
+  border: var(--border-width) solid var(--border-control);
   border-radius: var(--radius-md);
   background: var(--bg-inset);
   color: var(--fg-default);
@@ -27,7 +27,7 @@
 }
 
 .od-input:hover:not(.od-input--disabled) {
-  border-color: var(--fg-disabled);
+  border-color: var(--fg-subtle);
 }
 
 .od-input:focus-within {

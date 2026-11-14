@@ -89,7 +89,7 @@
   margin: var(--space-1) 0 0;
 }
 
-.od-markdown li:has(> input[type="checkbox"]) {
+.od-markdown .task-list-item {
   list-style: none;
   margin-left: calc(var(--space-5) * -1);
 }

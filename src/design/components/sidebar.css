@@ -202,7 +202,7 @@ button.od-nav-group__toggle:hover {
 
 .od-nav-item--disabled .od-nav-item__icon,
 .od-nav-item--disabled.od-nav-item--selected .od-nav-item__icon {
-  color: var(--fg-disabled);
+  color: var(--fg-inactive);
 }
 
 .od-nav-item__warning {
@@ -225,23 +225,33 @@ button.od-nav-group__toggle:hover {
   font-size: var(--text-xs);
 }
 
+/* Actions overlay the right end (over the meta) and are hidden with visibility, never display:none,
+ * so an open DropdownMenu keeps a laid-out anchor (macOS 11/12 WebKit has no :has()). */
 .od-nav-item__actions {
-  display: none;
-  flex: none;
+  position: absolute;
+  top: 0;
+  right: var(--space-1);
+  bottom: 0;
+  display: inline-flex;
+  align-items: center;
+  padding-left: var(--space-1);
+  border-radius: var(--radius-md);
+  background: inherit;
+  visibility: hidden;
+  opacity: 0;
 }
 
 .od-nav-item:hover .od-nav-item__actions,
-.od-nav-item:focus-within .od-nav-item__actions {
-  display: inline-flex;
+.od-nav-item:focus-within .od-nav-item__actions,
+.od-nav-item--actions-open .od-nav-item__actions {
+  visibility: visible;
+  opacity: 1;
 }
 
-.od-nav-item:hover .od-nav-item__meta,
-.od-nav-item:focus-within .od-nav-item__meta {
-  display: none;
-}
-
-.od-nav-item:has(.od-nav-item__actions [data-state="open"]) .od-nav-item__actions {
-  display: inline-flex;
+.od-nav-item--has-actions:hover .od-nav-item__meta,
+.od-nav-item--has-actions:focus-within .od-nav-item__meta,
+.od-nav-item--actions-open .od-nav-item__meta {
+  visibility: hidden;
 }
 
 /* drag handle: overlays the left edge, visible on hover/focus */

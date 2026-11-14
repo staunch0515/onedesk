@@ -29,6 +29,7 @@ import {
   Page,
   PageBody,
   PageHeader,
+  Popover,
   Progress,
   SearchTrigger,
   Section,
@@ -364,18 +365,18 @@ function TableSection({ selected, onSelect }: { selected: string; onSelect: (id:
         </Stack>
       ),
     },
-    { key: "kind", header: "类型", shrink: true },
-    { key: "tags", header: "标签", muted: true },
-    { key: "size", header: "大小（字节）", numeric: true, shrink: true, render: (r) => r.size.toLocaleString("zh-CN") },
-    { key: "updated", header: "更新时间", shrink: true, muted: true, render: (r) => <span className="od-tabular">{r.updated}</span> },
+    { key: "kind", header: "类型", width: "sm" },
+    { key: "tags", header: "标签", muted: true, width: "lg" },
+    { key: "size", header: "大小（字节）", numeric: true, width: "sm", render: (r) => r.size.toLocaleString("zh-CN") },
+    { key: "updated", header: "更新时间", width: "md", muted: true, render: (r) => <span className="od-tabular">{r.updated}</span> },
     {
       key: "actions",
       header: <span className="od-visually-hidden">操作</span>,
-      shrink: true,
+      width: "xs",
       render: (r) => (
         <DropdownMenu
           align="end"
-          trigger={<IconButton icon="ellipsis" label={`${r.name} 的操作`} size="sm" onClick={(e) => e.stopPropagation()} />}
+          trigger={<IconButton icon="ellipsis" label={`${r.name} 的操作`} size="sm" />}
           items={[
             { key: "open", label: "打开", icon: "arrow-up-right", onSelect: () => onSelect(r.id) },
             { key: "dup", label: "复制一份", icon: "copy", onSelect: () => undefined },
@@ -400,7 +401,7 @@ function TableSection({ selected, onSelect }: { selected: string; onSelect: (id:
         />
         <Table
           label="空表格"
-          columns={columns.slice(0, 5)}
+          columns={columns}
           rows={[]}
           getRowKey={(r) => r.id}
           empty={<EmptyState layout="inline" message="还没有资源。点击“新建资源”添加第一个。" />}
@@ -528,6 +529,12 @@ function OverlaysSection({ onOpenPalette }: { onOpenPalette: () => void }) {
             { key: "del", label: "删除", icon: "trash-2", danger: true, onSelect: () => undefined },
           ]}
         />
+        <Popover trigger={<Button icon="filter">弹出面板</Button>} title="筛选" size="sm">
+          <FormField label="标签">
+            <Input size="sm" placeholder="输入标签" />
+          </FormField>
+          <Checkbox label="只看对 AI 可见的资源" />
+        </Popover>
         <Tooltip content="复制到剪贴板" shortcut={["⌘", "C"]}>
           <Button icon="copy">悬停查看提示</Button>
         </Tooltip>
@@ -595,6 +602,7 @@ export function Gallery() {
   const [navSelected, setNavSelected] = useState("all");
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [tab, setTab] = useState("overview");
+  const [itemMenuOpen, setItemMenuOpen] = useState(false);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -633,7 +641,26 @@ export function Gallery() {
             <NavItem icon="library" label="集合" {...nav("collections")} />
           </NavGroup>
           <NavGroup label="工作" actions={<IconButton icon="plus" label="在“工作”中新建" size="sm" />}>
-            <NavItem icon="link" label="内部知识库" dragHandle={<DragHandle label="拖动排序" />} {...nav("r1")} />
+            <NavItem
+              icon="link"
+              label="内部知识库"
+              meta="3"
+              dragHandle={<DragHandle label="拖动排序" />}
+              actionsOpen={itemMenuOpen}
+              actions={
+                <DropdownMenu
+                  open={itemMenuOpen}
+                  onOpenChange={setItemMenuOpen}
+                  align="start"
+                  trigger={<IconButton icon="ellipsis" label="“内部知识库”的操作" size="sm" />}
+                  items={[
+                    { key: "rename", label: "重命名", icon: "pencil", onSelect: () => undefined },
+                    { key: "del", label: "删除", icon: "trash-2", danger: true, onSelect: () => undefined },
+                  ]}
+                />
+              }
+              {...nav("r1")}
+            />
             <NavItem icon="message-square-text" label="周报提示词" dragHandle={<DragHandle label="拖动排序" />} {...nav("r2")} />
             <NavItem icon="send" label="获取用户列表" disabled dragHandle={<DragHandle label="拖动排序" />} {...nav("r3")} />
             <NavItem icon="sticky-note" label="发布检查清单" warning="正文不符合字段定义" dragHandle={<DragHandle label="拖动排序" />} {...nav("r4")} />

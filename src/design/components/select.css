@@ -6,7 +6,7 @@
   width: 100%;
   min-width: 0;
   margin: 0;
-  border: var(--border-width) solid var(--border-strong);
+  border: var(--border-width) solid var(--border-control);
   border-radius: var(--radius-md);
   background: var(--bg-inset);
   color: var(--fg-default);
@@ -31,7 +31,7 @@
 }
 
 .od-select:hover:not(:disabled) {
-  border-color: var(--fg-disabled);
+  border-color: var(--fg-subtle);
 }
 
 .od-select:focus-visible,
@@ -102,7 +102,7 @@
 }
 
 .od-select__item[data-highlighted] {
-  background: var(--bg-hover);
+  background: var(--bg-selected);
 }
 
 .od-select__item[data-state="checked"] {

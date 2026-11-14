@@ -112,7 +112,7 @@
 }
 
 .od-palette__item[data-selected="true"] {
-  background: var(--bg-hover);
+  background: var(--bg-selected);
 }
 
 .od-palette__item[data-disabled="true"] {

@@ -13,7 +13,7 @@ export interface ToastOptions {
   tone?: ToastTone;
   /** One action button. `altText` describes how to do it without the toast (Radix a11y requirement). */
   action?: { label: string; altText: string; onClick: () => void };
-  /** Milliseconds; defaults to the provider's duration. */
+  /** Milliseconds; defaults to the provider's duration, or no auto-dismiss for `danger`. */
   duration?: number;
 }
 
@@ -75,7 +75,8 @@ export function ToastProvider({ children, closeLabel, viewportLabel, duration = 
             <ToastPrimitive.Root
               key={t.id}
               open={t.open}
-              duration={t.duration}
+              // Errors stay until dismissed so the reason is not missed; others use the provider default.
+              duration={t.duration ?? (tone === "danger" ? Infinity : undefined)}
               type={tone === "danger" ? "foreground" : "background"}
               onOpenChange={(open) => (open ? undefined : dismiss(t.id))}
               className={cx("od-toast", `od-toast--${tone}`)}

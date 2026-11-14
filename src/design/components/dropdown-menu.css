@@ -24,7 +24,7 @@
 }
 
 .od-menu__item[data-highlighted] {
-  background: var(--bg-hover);
+  background: var(--bg-selected);
 }
 
 .od-menu__item[data-disabled] {

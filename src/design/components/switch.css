@@ -9,7 +9,7 @@
   padding: 0;
   border: 0;
   border-radius: var(--radius-full);
-  background: var(--border-strong);
+  background: var(--border-control);
   cursor: default;
   transition: background-color var(--duration-fast) var(--ease-standard);
 }

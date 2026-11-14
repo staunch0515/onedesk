@@ -71,6 +71,12 @@ const pairs: Array<[fg: string, bg: string, min: number]> = [
     [`--${tone}-text`, "--bg-surface", TEXT],
     ["--fg-default", `--${tone}-subtle`, TEXT],
   ]),
+  // Control boundaries (WCAG 1.4.11): input/select/checkbox borders, switch track vs knob.
+  ...["--bg-inset", "--bg-surface", "--bg-subtle", "--bg-elevated", "--bg-app"].map((bg): [string, string, number] => ["--border-control", bg, UI]),
+  ["--bg-knob", "--border-control", UI],
+  ["--bg-knob", "--accent", UI],
+  ["--accent", "--bg-inset", UI],
+  ["--accent", "--bg-surface", UI],
   ["--focus-ring", "--bg-surface", UI],
   ["--focus-ring", "--bg-app", UI],
   ["--focus-ring", "--bg-selected", UI],
