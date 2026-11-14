@@ -95,3 +95,11 @@
 - **D64** `views.render(key, resourceId)`：ViewState 由内核构建。`ResourceQuery` 增加 group、offset，去掉 text（全文搜索只有 `Kernel.search`）。列表默认按 updatedAt 倒序；菜单顺序由外壳存在 app_settings。
 - **D65** 链接和 `openExternal` 只允许 http、https、mailto。file 类型的动作输出在本里程碑只显示内容，不提供保存。
 - **D66** 清单使用严格校验（未知字段报错，防止拼写错误被静默忽略）。通过宿主 API 创建资源时忽略 `id` 和 `origin`。
+
+## 内置插件（2026-11-14，主会话汇总插件会话与审查结论）
+
+- **D70** HTTP 请求的上次响应存在插件存储键 `response:<resourceId>`，值 `{status, statusText, durationMs, headers, body, truncated, receivedAt}`。资源删除时清除；插件激活时清理资源已不存在的键。正文超过约 1 MB 截断并提示。
+- **D71** HTTP 非 2xx 是动作成功（output.message 写“服务器返回 N”）；网络失败或超时是 `unavailable` 失败，保留上一次响应。请求头名大小写不敏感合并，值只允许可见 ASCII。
+- **D72** 提示词参数回退：输入为空串或未提供时用默认值；`required` 且无值报“缺少参数”；非必填且无默认值填空串。内核解析 `{fromField}` 时只把“必填且无默认值”的参数标为必填。
+- **D73** 插件动作失败一律抛 `OneDeskError`（`validation` / `unavailable`），内核原样转成失败结果。
+- **D74** 网址不合法时，网址插件的视图不输出 link 节点，字段按纯文本显示（防止 `javascript:` 等被渲染成链接）。
