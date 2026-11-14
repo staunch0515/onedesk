@@ -4,7 +4,7 @@ OneDesk 是个人和企业日常工作的统一桌面入口：一个“内核 + 
 
 ## 技术栈
 
-Tauri 2（Rust stable）· React 19 · TypeScript 7 · Vite 8 · SQLite（rusqlite，Rust 侧）· zod 4 · Radix UI + 自有 CSS token · lucide 图标 · cmdk · vitest + sql.js · Playwright。仅 macOS 11+。包管理 pnpm，Node 22（`.nvmrc`）。
+Tauri 2（Rust stable）· React 19 · TypeScript 7 · Vite 8 · SQLite（rusqlite，Rust 侧）· zod 4 · Radix UI + 自有 CSS token · lucide 图标 · cmdk · vitest + sql.js · Playwright。仅 macOS 11.3+。包管理 pnpm，Node 22（`.nvmrc`）。
 
 ## 命令
 

@@ -4,7 +4,7 @@
  * Every command rejects with a Chinese, user-facing string.
  *
  * Tauri plugins used directly from the front end (permissions in src-tauri/capabilities/default.json, owned by the
- * Rust session): opener:allow-open-url (http/https/mailto), clipboard-manager:allow-write-text, dialog:allow-open,
+ * Rust session): opener:allow-open-url scoped to http/https/mailto URLs, clipboard-manager:allow-write-text, dialog:allow-open,
  * http:default scoped to http://* and https://*.
  *
  * Rust-side facts: data dir = dirs::data_dir()/onedesk; DB = onedesk.db; backups/ keeps 7 snapshots (VACUUM INTO

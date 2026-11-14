@@ -4,7 +4,7 @@
 
 OneDesk 是“内核 + 插件”的桌面工作入口。内核只认识三件事：**资源**、**插件**、**视图**。所有具体功能（网址、笔记、提示词、HTTP 请求……）都由插件提供，内核不认识任何具体功能。
 
-- 平台：仅 macOS，最低 **macOS 11 Big Sur**；Apple Silicon 优先，Intel（x86_64）也能构建。
+- 平台：仅 macOS，最低 **macOS 11.3 Big Sur**（WebKit 14.1，flex gap 等需要）；Apple Silicon 优先，Intel（x86_64）也能构建。
 - 工具链：Node.js 22 LTS（`.nvmrc`）、pnpm、Rust stable（`rust-toolchain.toml`）。
 - 数据目录：`~/Library/Application Support/onedesk/`
   - `onedesk.db`：唯一数据库；`backups/`：启动时自动快照，保留最近 7 份
