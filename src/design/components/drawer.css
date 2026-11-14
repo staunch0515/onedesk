@@ -43,6 +43,16 @@
   border-bottom: var(--border-width) solid var(--border-default);
 }
 
+.od-drawer__close {
+  position: absolute;
+  top: calc(var(--space-4) - var(--space-0-5)); /* centres the control-height-sm button on the title's first line */
+  right: var(--space-4);
+}
+
+.od-drawer__header {
+  padding-right: var(--space-12);
+}
+
 .od-drawer__titles {
   display: flex;
   flex: 1;

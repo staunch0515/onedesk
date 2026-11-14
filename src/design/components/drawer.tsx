@@ -31,14 +31,15 @@ export function Drawer({ open, defaultOpen, onOpenChange, trigger, title, descri
               <DialogPrimitive.Title className="od-drawer__title">{title}</DialogPrimitive.Title>
               {description && <DialogPrimitive.Description className="od-drawer__description">{description}</DialogPrimitive.Description>}
             </div>
-            {closeLabel && (
-              <DialogPrimitive.Close asChild>
-                <IconButton icon="x" label={closeLabel} size="sm" tooltipSide="left" />
-              </DialogPrimitive.Close>
-            )}
           </div>
           <div className="od-drawer__body">{children}</div>
           {footer && <div className="od-drawer__footer">{footer}</div>}
+          {/* Rendered last so initial focus lands on the content, not on the close button. */}
+          {closeLabel && (
+            <DialogPrimitive.Close asChild>
+              <IconButton icon="x" label={closeLabel} size="sm" className="od-drawer__close" tooltipSide="left" />
+            </DialogPrimitive.Close>
+          )}
         </DialogPrimitive.Content>
       </DialogPrimitive.Portal>
     </DialogPrimitive.Root>

@@ -1,0 +1,74 @@
+/* Gallery-only layout. Tokens only, like every other file in src/design. */
+
+.gallery-brand {
+  width: 100%;
+}
+
+.gallery-select {
+  width: calc(var(--space-16) + var(--space-12));
+}
+
+.gallery-grid-2 {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--stack-gap) var(--space-6);
+}
+
+.gallery-grid-3 {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-4);
+}
+
+.gallery-spacer {
+  height: var(--page-gap);
+}
+
+.gallery-frame {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: var(--border-width) solid var(--border-default);
+  border-radius: var(--radius-lg);
+  background: var(--bg-surface);
+}
+
+.gallery-swatches {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: var(--space-3) var(--space-4);
+}
+
+.gallery-swatch {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.gallery-swatch__chip {
+  flex: none;
+  width: var(--swatch-size);
+  height: var(--swatch-size);
+  border: var(--border-width) solid var(--border-default);
+  border-radius: var(--radius-md);
+}
+
+.gallery-swatch__chip--bg-app { background: var(--bg-app); }
+.gallery-swatch__chip--bg-surface { background: var(--bg-surface); }
+.gallery-swatch__chip--bg-subtle { background: var(--bg-subtle); }
+.gallery-swatch__chip--bg-hover { background: var(--bg-hover); }
+.gallery-swatch__chip--bg-active { background: var(--bg-active); }
+.gallery-swatch__chip--bg-selected { background: var(--bg-selected); }
+.gallery-swatch__chip--fg-default { background: var(--fg-default); }
+.gallery-swatch__chip--fg-muted { background: var(--fg-muted); }
+.gallery-swatch__chip--fg-subtle { background: var(--fg-subtle); }
+.gallery-swatch__chip--fg-disabled { background: var(--fg-disabled); }
+.gallery-swatch__chip--border-default { background: var(--border-default); }
+.gallery-swatch__chip--border-strong { background: var(--border-strong); }
+.gallery-swatch__chip--accent { background: var(--accent); }
+.gallery-swatch__chip--accent-subtle { background: var(--accent-subtle); }
+.gallery-swatch__chip--success { background: var(--success); }
+.gallery-swatch__chip--warning { background: var(--warning); }
+.gallery-swatch__chip--danger { background: var(--danger); }
+.gallery-swatch__chip--info { background: var(--info); }

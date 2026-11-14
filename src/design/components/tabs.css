@@ -78,6 +78,11 @@
   padding-top: var(--space-4);
 }
 
+/* Tabs used as a page-level switcher render their content elsewhere; no empty gap. */
+.od-tabs__panel:empty {
+  display: none;
+}
+
 .od-tabs__panel:focus-visible {
   outline: var(--focus-ring-width) solid var(--focus-ring);
   outline-offset: var(--focus-ring-offset);

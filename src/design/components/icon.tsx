@@ -1,3 +1,4 @@
+import * as lucide from "lucide-react";
 import { icons, type LucideIcon } from "lucide-react";
 import { cx } from "./cx";
 import "./icon.css";
@@ -23,10 +24,22 @@ function toPascal(name: string): string {
     .join("");
 }
 
-/** Resolves a lucide icon by name; unknown names resolve to `undefined`. */
+// The module namespace also carries lucide's alias exports (e.g. `trash-2`, `triangle-alert`, `alert-circle`,
+// renamed in lucide 1.x), so names written in older manifests keep working. `icons` only has canonical names.
+const namespace = lucide as unknown as Record<string, unknown>;
+const NON_ICON_EXPORTS = new Set(["Icon", "createLucideIcon", "icons", "LucideProvider"]);
+
+function lookup(key: string): LucideIcon | undefined {
+  const canonical = (icons as Record<string, LucideIcon>)[key];
+  if (canonical) return canonical;
+  if (NON_ICON_EXPORTS.has(key) || key.startsWith("Lucide") || key.endsWith("Icon")) return undefined;
+  const alias = namespace[key];
+  return typeof alias === "object" && alias !== null ? (alias as LucideIcon) : undefined;
+}
+
+/** Resolves a lucide icon by name (kebab-case or PascalCase, aliases included); unknown names give `undefined`. */
 export function resolveIcon(name: string): LucideIcon | undefined {
-  const table = icons as Record<string, LucideIcon>;
-  return table[toPascal(name)] ?? table[name];
+  return lookup(toPascal(name)) ?? lookup(name);
 }
 
 export function hasIcon(name: string): boolean {

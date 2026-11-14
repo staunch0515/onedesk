@@ -398,6 +398,11 @@ samp,
   font-family: var(--font-mono);
 }
 
+/* Key caps use the UI font: SF Mono draws ⌘ ⌥ ⇧ noticeably smaller than the letters. */
+.od-kbd {
+  font-family: var(--font-sans);
+}
+
 button,
 input,
 select,

@@ -57,14 +57,15 @@ export function Dialog({
               <DialogPrimitive.Title className="od-dialog__title">{title}</DialogPrimitive.Title>
               {description && <DialogPrimitive.Description className="od-dialog__description">{description}</DialogPrimitive.Description>}
             </div>
-            {closeLabel && (
-              <DialogPrimitive.Close asChild>
-                <IconButton icon="x" label={closeLabel} size="sm" className="od-dialog__close" />
-              </DialogPrimitive.Close>
-            )}
           </div>
           {children !== undefined && <div className="od-dialog__body">{children}</div>}
           {footer && <div className="od-dialog__footer">{footer}</div>}
+          {/* Rendered last so initial focus lands on the content, not on the close button. */}
+          {closeLabel && (
+            <DialogPrimitive.Close asChild>
+              <IconButton icon="x" label={closeLabel} size="sm" className="od-dialog__close" />
+            </DialogPrimitive.Close>
+          )}
         </DialogPrimitive.Content>
       </DialogPrimitive.Portal>
     </DialogPrimitive.Root>
