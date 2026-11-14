@@ -52,7 +52,11 @@ describe("网络请求（两个平台共用）", () => {
     const failing: FetchLike = async () => {
       throw new TypeError("Failed to fetch");
     };
-    await expect(performFetch(failing, "https://example.com")).rejects.toMatchObject({ code: "unavailable", message: "网络请求失败：Failed to fetch" });
+    await expect(performFetch(failing, "https://example.com")).rejects.toMatchObject({
+      code: "unavailable",
+      message: "无法连接到服务器",
+      hint: "检查网址和网络后重试（Failed to fetch）",
+    });
 
     const hanging: FetchLike = (_url, init) => new Promise((_resolve, reject) => init?.signal?.addEventListener("abort", () => reject(new Error("aborted"))));
     await expect(performFetch(hanging, "https://example.com", { timeoutMs: 10 })).rejects.toMatchObject({ code: "unavailable", message: expect.stringContaining("请求超时") });

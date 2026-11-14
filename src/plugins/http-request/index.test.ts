@@ -91,6 +91,22 @@ describe("http-request plugin", () => {
     expect(host.store.get(`response:${r.id}`)).toMatchObject({ status: 200 });
   });
 
+  it("send: failure messages are Chinese, without a doubled prefix", async () => {
+    const host = await setup();
+    const r = await req(host);
+    host.setFetch(() => {
+      throw new OneDeskError("unavailable", "无法连接到服务器", { hint: "检查网址和网络后重试（Failed to fetch）" });
+    });
+    const refused = await host.runAction("send", r);
+    expect(refused.error?.message).toBe("请求失败：无法连接到服务器");
+    expect(refused.error?.message).not.toMatch(/Failed to fetch/);
+    expect(refused.error?.hint).toBe("检查网址、网络连接或超时设置");
+    host.setFetch(() => {
+      throw new OneDeskError("unavailable", "请求超时（超过 30 秒）");
+    });
+    expect((await host.runAction("send", r)).error?.message).toBe("请求超时（超过 30 秒）");
+  });
+
   it.each([
     ["missing url", { url: "" }],
     ["non-http url", { url: "ftp://example.com" }],

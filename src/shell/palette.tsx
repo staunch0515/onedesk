@@ -160,6 +160,7 @@ export function ShellPalette({ open, onOpenChange }: { open: boolean; onOpenChan
       onSearchChange={setSearch}
       loading={loading && found.results.length === 0}
       loadingLabel={t("palette.loading")}
+      listLabel={t("palette.listLabel")}
       footer={
         <Stack direction="row" gap="md" align="center">
           <Stack direction="row" gap="xs" align="center">

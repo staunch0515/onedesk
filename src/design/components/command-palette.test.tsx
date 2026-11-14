@@ -25,6 +25,12 @@ function setup(overrides: Partial<Parameters<typeof CommandPalette>[0]> = {}) {
 const visibleOptions = () => screen.queryAllByRole("option").map((o) => o.textContent);
 
 describe("CommandPalette", () => {
+  it("names the result list with listLabel instead of cmdk's English default", () => {
+    setup({ listLabel: "搜索结果" });
+    expect(screen.getByRole("listbox", { name: "搜索结果" })).toBeInTheDocument();
+    expect(screen.queryByRole("listbox", { name: "Suggestions" })).toBeNull();
+  });
+
   it("lists every item grouped when the query is empty", () => {
     setup();
     expect(screen.getByRole("dialog", { name: "命令面板" })).toBeInTheDocument();

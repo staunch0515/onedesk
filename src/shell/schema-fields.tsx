@@ -112,7 +112,7 @@ function FieldControl({
       return (
         <Select
           options={options}
-          value={text === "" ? (field.required ? undefined : NONE) : text}
+          value={text === "" ? (field.required ? "" : NONE) : text}
           placeholder={field.placeholder ?? t("edit.selectPlaceholder")}
           disabled={disabled}
           onValueChange={(v) => onChange(v === NONE ? "" : v)}

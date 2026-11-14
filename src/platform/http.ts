@@ -62,7 +62,9 @@ export async function performFetch(fetchImpl: FetchLike, url: string, init: Host
     if (isOneDeskError(e)) throw e;
     if (timedOut) throw new OneDeskError("unavailable", `请求超时（超过 ${Math.round(timeoutMs / 100) / 10} 秒）`, { hint: "检查网络或地址后重试", cause: e });
     if (init.signal?.aborted) throw new OneDeskError("unavailable", "请求已取消", { cause: e });
-    throw new OneDeskError("unavailable", `网络请求失败：${e instanceof Error ? e.message : String(e)}`, { hint: "检查网络或地址后重试", cause: e });
+    // The runtime's own (often English) text is a detail for the hint, not the message.
+    const detail = e instanceof Error ? e.message : String(e);
+    throw new OneDeskError("unavailable", "无法连接到服务器", { hint: detail ? `检查网址和网络后重试（${detail}）` : "检查网址和网络后重试", cause: e });
   } finally {
     clearTimeout(timer);
     init.signal?.removeEventListener("abort", onCallerAbort);
