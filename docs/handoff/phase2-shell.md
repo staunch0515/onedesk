@@ -27,7 +27,7 @@ worktree：`/Users/zhongpingxue/onedesk/repo/.claude/worktrees/agent-a16d78ede4e
 - 修改：`src/main.tsx`
 - 本文件
 
-没有新增依赖，没有改冻结接口、`package.json`、`scripts/`、`src/design/**`。
+没有新增依赖，没有改冻结接口、`package.json`、`scripts/`。第二轮按主会话许可改了 `src/design/**`（新增 TextLink、TextBlock、KeyValueList 及测试，Sidebar header 对齐，展示页一节，`index.ts` 导出），新增 `src/shell/{kind-cache,delete-resource}.ts`、`review-fixes.test.tsx`。
 
 ## 测试与检查结果
 
@@ -90,37 +90,82 @@ worktree：`/Users/zhongpingxue/onedesk/repo/.claude/worktrees/agent-a16d78ede4e
 
 - 导出/导入在真实应用中的手动验证（选文件夹）；密钥在钥匙串中的增删改。
 - `docs/screenshots/` 的验收截图和 `e2e/`：不在本任务允许修改的范围，建议由测试会话把上面的临时脚本整理成 `e2e/` 用例并生成截图。
-- 停用插件的资源只读数据用 body 的原始键名（插件停用后拿不到 schema 的字段标签）。
+- 停用插件的资源：只读数据用记住的字段名（`shell.kindCache`）；从未在启用状态下见过的 kind（例如导入的未知类型）仍显示原始键名，并有一句说明。
 - 菜单只支持组内拖动；跨组移动通过编辑“分组”字段完成；分组排序用“…”菜单上移/下移（没做分组拖动）。
-- HTTP“发送”的成功结果面板会把完整响应正文再显示一遍（插件输出就是这样），响应长时页面较长。
+- 启动包里仍有约 1.2 MB 的 design chunk（主要是 lucide 全部图标 + react-markdown），见“性能”。
+
+## 评审修复（第二轮，主会话转来的独立审查）
+
+提交：`a7f5d9d`（修复 + 设计系统组件）、`4255443`（插件页列宽）、`37a79a3`（按需加载）。
+
+| # | 问题 | 修复 | 测试 |
+|---|---|---|---|
+| 阻断 1 | 在资源页启用插件后显示“有未保存的修改”并拦截导航 | `useEditDraft` 只在用户真的编辑过时算未保存（`edited` 状态）；资源、版本或 schema（kind 注册）变化而没有编辑时重置草稿 | `review-fixes.test.tsx`：停用 → 打开资源 → 点“启用插件” → 没有未保存徽标，导航不弹确认；只有真正改过才算未保存，改回原值不算 |
+| 阻断 2 | ⌘K 面板按正文或标签搜不到资源（cmdk 只在挂载时读 keywords） | 内核结果带上找到它们的查询词作为关键词，**并把查询词放进 item id**，每个新结果集都重新挂载；“搜索 X 的全部结果”单独一组、和结果一起挂载，排在资源后面（回车打开资源） | 正文词“季度目标”、标签词“例会”都能在面板中找到资源、不显示不相关的资源，回车打开 |
+| 3 | 灰色行名称仍是全对比度 | 资源表名称用纯文本继承行颜色；插件表停用行名称用 `subtle` | 停用插件的资源名称没有 `od-text` 类，行是 `--muted` |
+| 4 | 侧栏删除没有反馈 | 抽出 `useDeleteResource`（确认 → 删除 → 成功/失败吐司 → 如在该资源页则离开），资源页和侧栏共用 | 成功吐司；删除失败显示“无法删除…”和原因 |
+| 5 | 侧栏加载错误 | `ErrorState` inline + 重试 | 读取失败显示“菜单加载失败”，重试后恢复 |
+| 6 | ⌘K 叠在其他对话框上 | 面板开着时 ⌘K 关闭它；有其他对话框时忽略 | ⌘N 打开新建后 ⌘K 不打开面板；面板开关 |
+| 7 | 面板运行动作不检查运行中 | 当前资源有动作在运行时，面板里它的动作禁用（描述显示“正在运行”），选择时再检查一次 | HTTP 发送进行中，面板“发送”项 `aria-disabled` |
+| 8 | HTTP 响应重复显示 | kind 有插件视图时结果面板只显示状态行（`output.message`，没有则输出第一行/行数/链接/文件名），“显示完整输出”展开 | compact 面板只显示 “200 OK”，展开后看到完整输出；摘要规则单测 |
+| 9 | 插件页 1280 宽描述被截断 | 操作列 sm、改为图标按钮（带工具提示）；来源列 xs 纯文本；没有 `manifest.settings` 时不显示设置按钮 | 只有 HTTP 请求有设置按钮；1280 宽截图中描述完整 |
+| 10 | 文案集中 | `useShell` 错误信息、默认动作的“（⌘↵）”后缀进 i18n | — |
+| 11 | 长行被截断（User-Agent） | 新组件 `TextBlock`：`white-space: pre-wrap; overflow-wrap: anywhere`；视图树 text 节点和动作输出都用它 | 400 字符的长行完整在 `pre` 中；浏览器里 `pre` 的 `scrollWidth - clientWidth` 为 0 |
+
+设计系统（这次允许改 `src/design/**`）：
+- `TextLink`（行内链接，`onOpen` 代替导航，可带外链图标）、`TextBlock`（保留换行的正文/代码块，长行换行，tone）、`KeyValueList`（只读键值，`columns`/`stacked`，原始键名可用等宽）、`Sidebar headerJustify="between"`。`Select` 本来就支持 `aria-label`（我第一次看漏了），补了测试。
+- 测试：`src/design/components/text-components.test.tsx`；展示页新增“文本块、链接、键值列表”一节。只引用 token，组件内无中文；check-ui 通过（`font-family` 只用 `.od-mono` 和 `font: inherit`）。
+- 外壳使用：视图树 link → `TextLink`；form 节点 → `KeyValueList`；text/code → `TextBlock`；停用插件资源的只读数据 → `KeyValueList`；侧栏头部“OneDesk + 新建”两端对齐。
+
+停用插件资源的字段名：外壳在启动和每次 `plugin.changed` 时把已注册 kind 的名称、图标、字段标签记到 prefs `shell.kindCache`；停用后只读视图按 schema 顺序用这些标签，没有记录时显示原始键名（等宽）并说明“插件不可用，无法读取字段名称，以下显示原始键名。”
+
+浏览器预览复查（1280×800，浅色和深色，`pnpm preview:web`）：HTTP 结果面板只显示“200 · 784 ms”+“显示完整输出”，展开后 User-Agent 长行换行、无横向溢出；⌘K 输入正文词“httpbin”和标签词“阅读”都找到资源并选中，回车打开；⌘N 后 ⌘K 不叠加（对话框数 1）；停用“网址”后全部资源中名称灰色、资源页只读数据显示“网址”标签，点“启用插件”后无未保存徽标、导航不弹确认；侧栏删除“读书笔记”后有“已删除”吐司；插件页 1280 宽描述完整；展示页新组件浅/深色正常。控制台无错误。
+
+## 性能（G.6：冷启动到看到菜单 < 2 秒）
+
+生产构建：`pnpm build` → `pnpm exec vite preview --port 1451`，Playwright 读 `[onedesk] menu-ready`（`performance.now()`，从导航开始算）。“全新”= 每次新浏览器上下文（无缓存、空 localStorage，包含建库、迁移、写示例数据）；“已有数据”= 同一上下文刷新。**测量时机器负载很高（load average 56 → 313），数值偏大。**
+
+| 版本 | 全新（5 次） | 已有数据（5 次） |
+|---|---|---|
+| 优化前（index 1.7 MB） | 2843, 2293, 1790, 1820, 2053 ms（中位 2053） | 847, 820, 883, 1323, 1218 ms（中位 883） |
+| 优化后（按需加载，load 313） | 1946, 1544, 1783, 1559, 1645 ms（中位 1645） | 860, 511, 644, 586, 733 ms（中位 644） |
+
+优化：组件展示页、集合/插件/设置/搜索页改为 `React.lazy` + `import()`（启动不需要）。分析：主包解析执行约 650–850 ms（负载下），sql.js wasm + 迁移约 250 ms，插件加载约 50 ms，其余是首次写示例数据和渲染。剩下的大头是 design chunk（约 1.2 MB，lucide 全部图标按名字解析 + react-markdown），需要设计会话决定是否改为按需图标/懒加载 Markdown。真实应用不走 sql.js、不写示例数据，更接近“已有数据”一行。
+
+## 测试与检查结果（第二轮）
+
+| 命令 | 结果 |
+|---|---|
+| `pnpm typecheck` | 通过 |
+| `pnpm lint` | 通过 |
+| `pnpm test` | 最后一次：35 个文件、430 个测试全过。此前一次内核“1 万条资源搜索 < 200ms”在 load average 300–430 时失败（最好的一次 246 ms，D93 已说明高负载会失败，与本次改动无关），重跑通过 |
 
 ## 决定（请主会话汇总到 decisions.md）
 
 1. 路由：`all | resource(id, tab?) | collections(id?) | plugins | settings | search(query)`，启动进入“全部资源”。
-2. prefs 键：`shell.menu`（`{groupOrder, itemOrder, collapsed}`）、`shell.theme`、`shell.density`、`shell.previewSeeded`。
+2. prefs 键：`shell.menu`（`{groupOrder, itemOrder, collapsed}`）、`shell.theme`、`shell.density`、`shell.previewSeeded`、`shell.kindCache`（kind → 名称、图标、字段标签）。
 3. 菜单默认顺序：分组按名字（zh-CN 排序）、未分组最后；组内按名字；保存过顺序的在前，新资源排在后面。分组名去首尾空格。
 4. 新建对话框包含该 kind 的必填字段（否则 `create` 会因 body 不合法被拒）。
 5. 编辑保存时 body 以原 body 为基础只替换 schema 字段（schema 外的键保留）；空值从 body 中删除；标签用中英文逗号分隔。
 6. ⌘S 只在有修改（或上次保存失败）时保存，避免无意义的版本号增加。
-7. 全局动作（插件菜单项）的结果用吐司显示；资源动作的结果显示在资源页结果面板，编辑标签页不显示结果面板。
-8. 命令面板交给 cmdk 过滤；内核搜索结果附带查询词作关键词。
+7. 全局动作（插件菜单项）的结果用吐司显示；资源动作的结果显示在资源页结果面板，编辑标签页不显示结果面板；kind 有插件视图时结果面板只显示状态行，可展开完整输出。
+8. 命令面板交给 cmdk 过滤；内核结果以查询词作关键词并放进 item id（每个结果集重新挂载）。
 9. 浏览器预览模式示例数据：4 个资源（工作：网址、HTTP 请求；个人：提示词、笔记）+ 集合“常用接口”（标签“接口”），只在资源表为空且从未写过时写入。
 10. 启动只执行一次 `boot()`（StrictMode 双调用不会建两个内核）；失败页“重试”才重新启动。
 11. 卸载插件时只列出“它声明、没有其他插件声明、且钥匙串中确实存在”的密钥供勾选删除。
+12. 草稿只有用户编辑过才算未保存；没有编辑时随资源版本和 schema 变化自动更新。
+13. ⌘K：面板开着时关闭面板；有其他对话框时不打开。资源有动作在运行时，该资源的动作（页面按钮、⌘↵、面板）都不可再运行。
+14. 启动不需要的页面（集合、插件、设置、搜索、组件展示页）按需加载。
 
-## 设计系统缺口（需要设计会话补，外壳目前用现有组件组合）
+## 设计系统缺口
 
-- **Select 不支持 `aria-label`**：筛选栏只能包在 FormField 里带可见标签（占高度）。
-- **没有行内文字链接组件**：视图树的 link 节点和动作的 link 输出用 secondary Button + 外链图标代替。
-- **没有保留换行的纯文本 / 代码块组件**：plain 文本按行拆成多个 `Text`；code 用 Markdown 的围栏代码块。建议加 `Text` 的 `preserveWhitespace` 或 `CodeBlock`。
-- **没有只读键值列表（description list）**：form 节点用 `Stack + Text` 上下排列。
-- **Sidebar header 不能放两端对齐的内容**（需要子元素 flex:1），因此菜单头只放应用名，“新建”只在顶栏。
-- **没有可输入的组合框（Combobox）**：分组和标签用普通输入框，已有分组写在说明文字里。
-- 建议：PageHeader 可选吸顶（长表单时保存按钮可见）；Table 单元格允许换行的选项。
+已在第二轮补上：TextLink、TextBlock、KeyValueList、Sidebar header 两端对齐（Select 原本就支持 `aria-label`）。仍未做：
+- 可输入的组合框（Combobox）：按主会话要求不做；分组和标签仍用普通输入框，已有分组写在说明文字里。
+- 建议：PageHeader 可选吸顶（长表单时保存按钮可见）；Table 单元格允许换行的选项；图标按需加载以缩小启动包。
 
 ## 需要谁确认 / 问题
 
 - **主会话**：分支名是 `worktree-agent-a16d78ede4ece62d7`，不是 `phase2/shell`。
-- **主会话**：上面“决定”写进 decisions.md；“设计系统缺口”转给设计会话。
+- **主会话**：上面“决定”写进 decisions.md。
 - **主会话/测试会话**：`e2e/` 与 `docs/screenshots/` 不在本任务允许范围，验收截图需要另行生成。
-- **主会话**：真实库里留了 3 个联调资源和一行临时插件记录（见上）。
+- **主会话/设计会话**：design chunk 约 1.2 MB（lucide 全量），是否改为按需图标。
