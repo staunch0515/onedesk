@@ -248,6 +248,10 @@ export interface Kernel {
     disable(id: string): Promise<void>;
     /** External only (D16). Returns secret names the plugin declared, so the UI can ask about deleting them. */
     uninstall(id: string): Promise<{ declaredSecrets: string[] }>;
+    /** Uninstalled external plugins still present on disk (from the last load's sources). */
+    uninstalled(): Array<{ id: string; name: string; location: string }>;
+    /** Clear the uninstalled flag and load the plugin from its source (disabled until enabled, D54). */
+    reinstall(id: string): Promise<void>;
     /** Stored values merged over manifest.settings defaults. */
     getSettings(id: string): Promise<Record<string, unknown>>;
     setSettings(id: string, values: Record<string, unknown>): Promise<void>;

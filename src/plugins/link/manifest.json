@@ -1,0 +1,11 @@
+{
+  "id": "org.onedesk.link",
+  "name": "网址",
+  "version": "1.0.0",
+  "description": "保存常用网址，一键在浏览器中打开",
+  "icon": "link",
+  "apiVersion": "1",
+  "provides": { "kinds": ["link"], "actions": ["open"], "views": ["details"] },
+  "requires": { "network": [], "secrets": [], "plugins": [] },
+  "settings": []
+}

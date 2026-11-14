@@ -95,3 +95,28 @@
 - **D64** `views.render(key, resourceId)`：ViewState 由内核构建。`ResourceQuery` 增加 group、offset，去掉 text（全文搜索只有 `Kernel.search`）。列表默认按 updatedAt 倒序；菜单顺序由外壳存在 app_settings。
 - **D65** 链接和 `openExternal` 只允许 http、https、mailto。file 类型的动作输出在本里程碑只显示内容，不提供保存。
 - **D66** 清单使用严格校验（未知字段报错，防止拼写错误被静默忽略）。通过宿主 API 创建资源时忽略 `id` 和 `origin`。
+
+## 内置插件（2026-11-14，主会话汇总插件会话与审查结论）
+
+- **D70** HTTP 请求的上次响应存在插件存储键 `response:<resourceId>`，值 `{status, statusText, durationMs, headers, body, truncated, receivedAt}`。资源删除时清除；插件激活时清理资源已不存在的键。正文超过约 1 MB 截断并提示。
+- **D71** HTTP 非 2xx 是动作成功（output.message 写“服务器返回 N”）；网络失败或超时是 `unavailable` 失败，保留上一次响应。请求头名大小写不敏感合并，值只允许可见 ASCII。
+- **D72** 提示词参数回退：输入为空串或未提供时用默认值；`required` 且无值报“缺少参数”；非必填且无默认值填空串。内核解析 `{fromField}` 时只把“必填且无默认值”的参数标为必填。
+- **D73** 插件动作失败一律抛 `OneDeskError`（`validation` / `unavailable`），内核原样转成失败结果。
+- **D74** 网址不合法时，网址插件的视图不输出 link 节点，字段按纯文本显示（防止 `javascript:` 等被渲染成链接）。
+
+## Rust 后端（2026-11-14，主会话汇总 Rust 会话报告）
+
+- **D80** `pnpm test:rust` 设置 `ONEDESK_TEST_DB=1`，写库测试在 `/check` 中真正执行（只用临时目录）。
+- **D81** 快照名、导出文件夹名、密钥创建时间使用 UTC（标准库无本地时区，不为此新增依赖）。界面显示时间时由前端转成本地时间。
+- **D82** 库已存在时每次启动都做快照（不只在迁移前）；有待执行迁移而快照失败时不迁移并报阻断错误。
+- **D83** keyring 使用 3.x（4.x 接口按平台拆分，3.x 足够）。新增 rusqlite、dirs、tempfile（dev）均已在依赖表。
+- **D84** capabilities 保留 `dialog:allow-ask`（导入冲突等原生确认的后备）；opener 使用带 URL 范围（http/https/mailto）的写法。
+
+## 内核（2026-11-14，主会话汇总内核会话报告）
+
+- **D90** 接口补充（主会话）：`Kernel.plugins.uninstalled()` 与 `reinstall(id)`，用于设置页重新安装已卸载的外部插件（D54）。
+- **D91** sql.js 驱动与 TS 迁移执行器放在 `src/kernel/sqljs/`（内核一侧，无平台依赖），供测试与浏览器预览适配共用；`src/kernel/testing/` 只放测试工具。
+- **D92** 组合根约定：先 `app.status()`，有 `migrationError` 时不创建内核、只显示阻断页；`createBrowserPlatform()` 是异步的。
+- **D93** 性能断言口径：1 万条资源，每个查询取 7 次中最好的一次 < 200 ms（排除并行编译等外部负载造成的抖动），并打印所有测量值。空闲时实测 20–60 ms。
+- **D94** 浏览器预览模式不支持导入；导出为逐个文件下载。`reference` 字段只校验为字符串，不校验目标是否存在（失效引用在界面中提示）。
+- **D95** 构建：Vite 8 不再内置 esbuild，`build.minify` 使用默认压缩器（`minify: !TAURI_ENV_DEBUG`）。
