@@ -111,3 +111,12 @@
 - **D82** 库已存在时每次启动都做快照（不只在迁移前）；有待执行迁移而快照失败时不迁移并报阻断错误。
 - **D83** keyring 使用 3.x（4.x 接口按平台拆分，3.x 足够）。新增 rusqlite、dirs、tempfile（dev）均已在依赖表。
 - **D84** capabilities 保留 `dialog:allow-ask`（导入冲突等原生确认的后备）；opener 使用带 URL 范围（http/https/mailto）的写法。
+
+## 内核（2026-11-14，主会话汇总内核会话报告）
+
+- **D90** 接口补充（主会话）：`Kernel.plugins.uninstalled()` 与 `reinstall(id)`，用于设置页重新安装已卸载的外部插件（D54）。
+- **D91** sql.js 驱动与 TS 迁移执行器放在 `src/kernel/sqljs/`（内核一侧，无平台依赖），供测试与浏览器预览适配共用；`src/kernel/testing/` 只放测试工具。
+- **D92** 组合根约定：先 `app.status()`，有 `migrationError` 时不创建内核、只显示阻断页；`createBrowserPlatform()` 是异步的。
+- **D93** 性能断言口径：1 万条资源，每个查询取 7 次中最好的一次 < 200 ms（排除并行编译等外部负载造成的抖动），并打印所有测量值。空闲时实测 20–60 ms。
+- **D94** 浏览器预览模式不支持导入；导出为逐个文件下载。`reference` 字段只校验为字符串，不校验目标是否存在（失效引用在界面中提示）。
+- **D95** 构建：Vite 8 不再内置 esbuild，`build.minify` 使用默认压缩器（`minify: !TAURI_ENV_DEBUG`）。
