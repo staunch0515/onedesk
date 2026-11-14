@@ -28,3 +28,13 @@
 - 用 `pnpm tauri dev` 启动真实应用，确认菜单可见、能新建资源（数据写入 `~/Library/Application Support/onedesk/onedesk.db`），在交接文件写出看到的结果。
 
 **交付物**：分支上的提交 + `docs/handoff/phase2-shell.md`。
+
+## 第一阶段合并后的补充（主会话）
+
+- 先读 `docs/handoff/phase1-kernel.md`、`phase1-design.md`、`phase1-rust.md`、`phase1-plugins.md` 了解实际 API 与约定。设计组件清单与用法看 `src/design/index.ts` 和展示页 `src/design/gallery/`。
+- 组合根（D92）：`createBrowserPlatform()` 是异步的；先 `app.status()`，有 `migrationError` 时不创建内核。浏览器预览用的 sql.js 在 `src/kernel/sqljs/`。
+- 侧栏 NavItem 的行内菜单：把 DropdownMenu 的 `open` 传给 `actionsOpen`。
+- 插件页需要支持“重新安装”（`kernel.plugins.uninstalled()` / `reinstall(id)`，D90/D114）。
+- 时间：Rust 返回的快照/导出名是 UTC（D81），界面显示用本地时间。
+- 真实 Tauri 联调时验证：HTTP 请求经 `@tauri-apps/plugin-http`（含 D110 的重定向行为）、`opener` 打开网址、剪贴板写入、导出/导入文件夹选择。把结果写进交接文件。`pnpm tauri dev` 若 1420 端口被占用，用 `pnpm tauri dev --config '{"build":{"devUrl":"http://localhost:1430","beforeDevCommand":"pnpm exec vite --port 1430 --strictPort"}}'`，结束后停掉进程。
+- 停用插件的资源在菜单中隐藏、在“全部资源”和搜索结果中用 `--fg-inactive` 灰色显示（D15、D101）。
