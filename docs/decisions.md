@@ -149,3 +149,22 @@
 - **D124** 停用插件的资源以只读键值列表显示 body；字段标签来自外壳缓存的 kind 字段名（prefs `shell.kindCache`），从未见过的 kind 显示原始键名并说明。
 - **D125** 浏览器预览模式首次启动写入示例资源（每种 kind 一个，分组“个人”“工作”），这是外壳组合根中唯一出现内置 kind 名的地方（任务要求，示例数据）。
 - **D126** 新建资源对话框包含该类型的必填字段；菜单只支持组内拖动排序，分组顺序用上移/下移调整。外壳偏好键前缀 `shell.`。
+
+## 最终复审后的记录（2026-11-14，主会话，依据 Fable 5.2 终审）
+
+- **D130 与接口摘要的差异（汇总）**。摘要原文见 requirements.md A 节。已实现但摘要未写、此前未单独记录的扩展：
+  - 清单：`main`（外部插件入口）；`requires` 细分为 `network`/`secrets`/`plugins`；version 必须是语义化版本；未知字段报错（D66）。
+  - 资源：patch 支持 `expectedVersion`（乐观并发）。
+  - kind：可选 `validate(body)`；字段类型增加 `longtext`、`boolean`、`select`。
+  - action：可选 `icon`；`run` 的 context 含 `resource`、`workspace`、`user`、`source`、`signal`。
+  - view 节点：`text.format` 增加 `code`，`text.tone`；`form.fields[].format`；`table.columns[].align/numeric`、`emptyText`；各节点可选 `title`。仍只有四种节点。
+  - 宿主 API：`settings.get`、`storage.keys`、`ui.registerMenuItem`、`pluginId`；`secrets` 只有 `get`（增删改在设置页，由用户操作）。
+  - 生命周期：内核只持久化“启用/停用/已卸载”；“安装”是首次扫描到时写入记录，“激活”是启用后调用 `activate`；可选 `deactivate()`；重新扫描需重启应用。
+  - 摘要中 secrets、network 写“本里程碑占位”，补充要求 G.7 取代之：两者均已实现（D13、D14）。
+- **D131** 通用“编辑”视图由外壳按 schema 生成，内核只在 `viewsFor` 中列出 `core/edit`（`views.render` 拒绝渲染它）。取代 D12 中“内核按 schema 生成表单”的说法。
+- **D132** 外壳打开链接（包括笔记 markdown 中的链接）直接调用平台的 `openExternal`，协议限制（http/https/mailto）在平台适配层实施，与内核的 `SafeHrefSchema` 一致。
+- **D133** 每个迁移在自己的事务中执行；某个迁移失败时回滚该迁移，之前已成功的迁移保留，应用显示阻断页且不可使用，修复后重启继续升级。取代 D21 中“一个事务”的歧义写法。
+- **D134** 文案集中（D33）只覆盖外壳界面。内核、插件、平台、Rust 返回的中文错误信息就近写在代码中；多语言时再抽取（列入 todo）。
+- **D135** 插件加载失败的原因同时在插件页和设置页列出（G.4 要求设置页列出原因）。
+- **D136** 覆盖率门槛按 内核 + plugin-api 合计（行/函数/语句 80%，分支 70%）；实际 98% / 92%。
+- **D137** 截图在每次 `pnpm e2e` 时重新生成并覆盖，不做像素比对；界面改动后由人查看。

@@ -46,7 +46,7 @@ export default definePlugin({
   activate(host) {
     host.resources.registerKind({ id, name, icon, schema, defaultAction, views, describe })
     host.actions.register({ id, label, kinds, input, output, run })
-    host.ui.registerView({ id, label, kinds, render })
+    host.ui.registerView({ id, label, render })   // 哪些 kind 显示该视图由 kind.views 决定（D61）
   },
 })
 ```

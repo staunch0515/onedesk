@@ -28,7 +28,48 @@ OneDesk 是“内核 + 插件”的桌面应用框架，个人和企业日常工
    - HTTP 请求：kind `http-request`，动作 `send`，视图 `response`；经宿主 network 能力发请求。
 4. 不做：数据库类插件、发布、订阅与共享、AI 接口（MCP）、多设备同步、账户登录（只在接口预留位置）。
 
-**接口摘要**：见 docs/architecture.md 第 4 节与 `src/plugin-api`（已按摘要冻结）。生命周期：安装 → 启用 → 激活 → 停用 → 卸载；停用后资源保留，视图和动作不再出现。
+**接口摘要（用户原文）**：本次工作的唯一依据；实现见 `src/plugin-api`，与摘要的差异见 decisions.md D130。
+
+清单（manifest）：
+- id（全局唯一，如 org.example.link）、name、version、description、icon
+- apiVersion：当前为 "1"
+- provides：提供的 kind、action、view 列表
+- requires：需要的宿主能力（network、secrets、其他插件的数据源等）
+- settings：设置项定义，宿主据此画设置表单
+
+资源条目（所有插件共用）：
+- id、kind、name、group、tags、description
+- body：按 kind 定义的 JSON
+- visibility：private 或 public；aiVisible：布尔值
+- version、createdAt、updatedAt、origin（original、subscribed、copied 之一）
+
+kind（资源类型）：
+- schema：字段列表，每个字段有名字、类型（text、number、url、reference、parameter 等）、是否必填
+- defaultAction：点击时默认执行的动作 id
+- views：可用视图 id 列表
+- describe(resource)：返回给 AI 看的摘要和用途
+
+action（动作）：
+- id、label、input（参数定义）、output（text、table、file、link、none 之一）
+- run(context, input)：执行并返回输出，不直接操作界面
+
+view：
+- render(resource, state)：返回声明式的视图树，由宿主画出来；插件不直接操作 DOM
+- 视图树只用四种节点：form（字段列表）、table（列和行）、text（纯文本或 markdown）、link（href 和文字）
+
+宿主 API（插件只能通过这些入口做事）：
+- resources：按 id、kind、标签、集合读写自己类型的资源
+- collections：创建和读取集合
+- actions：调用其他插件提供的动作
+- events：订阅资源变化、动作完成等事件
+- ui：注册视图、菜单项
+- storage：插件自己的键值存储，互不干扰
+- secrets：按名字读取已授权的密钥（本里程碑占位）
+- network：发送请求，地址必须在清单里声明（本里程碑占位）
+- notify：给用户显示消息
+- context：当前工作区、当前用户、调用来源（手动、定时、AI）
+
+生命周期：安装 → 启用 → 激活（注册自己提供的能力）→ 停用 → 卸载。停用后，资源保留，但它的视图和动作不再出现。
 
 ## B. 界面与体验（原始需求）
 
