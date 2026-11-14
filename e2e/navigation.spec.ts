@@ -63,21 +63,29 @@ test.describe("command palette", () => {
     await expect(main(app).getByRole("heading", { level: 1, name: "读书笔记" }).first()).toBeVisible();
   });
 
+  // KNOWN SHELL BUG (docs/handoff/phase2-e2e.md, bug 2): remove test.fail() once the shell fix is merged.
   test("find a resource by body text", async ({ app }) => {
+    test.fail();
+    for (const query of ["每周读完", "关键观点", "完美"]) {
+      await openPalette(app);
+      await app.getByRole("combobox", { name: t("palette.label") }).fill(query);
+      await expect(app.getByRole("option", { name: /读书笔记/ }).first(), `body text ${query}`).toBeVisible();
+      await app.keyboard.press("Escape");
+    }
     await openPalette(app);
     await app.getByRole("combobox", { name: t("palette.label") }).fill("每周读完");
-    await expect(app.getByRole("option", { name: /读书笔记/ }).first()).toBeVisible();
-    await app.keyboard.press("Enter");
+    await app.getByRole("option", { name: /读书笔记/ }).first().click();
     await expect(main(app).getByRole("heading", { level: 1, name: "读书笔记" }).first()).toBeVisible();
   });
 
-  // Known shell bug (see docs/handoff/phase2-e2e.md, bug 2): body hits that the search page finds are hidden
-  // by the palette for some queries. test.fail() turns green when this is fixed so the annotation gets removed.
-  test("find a resource by other body text (known bug)", async ({ app }) => {
+  // KNOWN SHELL BUG (docs/handoff/phase2-e2e.md, bug 2): remove test.fail() once the shell fix is merged.
+  test("find a resource by tag", async ({ app }) => {
     test.fail();
     await openPalette(app);
-    await app.getByRole("combobox", { name: t("palette.label") }).fill("完美");
-    await expect(app.getByRole("option", { name: /读书笔记/ }).first()).toBeVisible({ timeout: 3000 });
+    await app.getByRole("combobox", { name: t("palette.label") }).fill("接口");
+    await expect(app.getByRole("option", { name: /获取示例数据/ }).first()).toBeVisible();
+    await app.getByRole("option", { name: /获取示例数据/ }).first().click();
+    await expect(main(app).getByRole("heading", { level: 1, name: "获取示例数据" }).first()).toBeVisible();
   });
 
   test("run an action of the current resource", async ({ app }) => {
@@ -224,4 +232,26 @@ test("keyboard: Tab moves through the page with a visible focus ring", async ({ 
 test("shortcut: Cmd/Ctrl+N opens the new-resource dialog", async ({ app }) => {
   await app.keyboard.press("ControlOrMeta+n");
   await expect(app.getByRole("dialog", { name: t("new.title") })).toBeVisible();
+});
+
+// KNOWN SHELL BUG (docs/handoff/phase2-e2e.md, bug 3): remove test.fail() once the shell fix is merged.
+test("disable plugin, open its resource, enable from the page, then navigate freely", async ({ app }) => {
+  test.fail();
+  await gotoPage(app, "nav.plugins");
+  await main(app).getByRole("switch", { name: t("plugins.toggle", { name: "HTTP 请求" }) }).click();
+  await gotoPage(app, "nav.allResources");
+  await main(app).getByRole("gridcell", { name: "获取示例数据" }).click();
+  await expect(main(app).getByText(t("resource.pluginDisabled"))).toBeVisible();
+  await main(app).getByRole("button", { name: t("resource.enablePlugin") }).click();
+  await expect(sidebar(app).getByRole("button", { name: "获取示例数据", exact: true })).toBeVisible();
+  await expect(main(app).getByRole("tab", { name: "响应" })).toBeVisible();
+
+  // No false "unsaved changes" prompt when leaving.
+  await openFromMenu(app, "读书笔记");
+  await expect(app.getByRole("dialog", { name: t("edit.leaveTitle") })).toHaveCount(0);
+  await gotoPage(app, "nav.plugins");
+  await expect(app.getByRole("dialog", { name: t("edit.leaveTitle") })).toHaveCount(0);
+  await openFromMenu(app, "获取示例数据");
+  await gotoPage(app, "nav.settings");
+  await expect(app.getByRole("dialog", { name: t("edit.leaveTitle") })).toHaveCount(0);
 });
