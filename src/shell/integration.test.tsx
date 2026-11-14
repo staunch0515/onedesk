@@ -139,6 +139,20 @@ describe("应用外壳（真实内核）", () => {
     expect(await within(nav).findByRole("button", { name: "接口" })).toBeInTheDocument();
   });
 
+  it("数据不符合字段定义的资源：菜单中灰色 + 警示图标，资源页提示要修正的字段", async () => {
+    const t = await kernelWithPlugins();
+    const r = await t.kernel.resources.create({ kind: "link", name: "坏网址", body: { url: "https://example.com" } });
+    // Imported or older data can violate the schema (D62); simulate it below the kernel.
+    t.db.run("UPDATE resources SET body = ? WHERE id = ?", ['{"url":"not a url"}', r.id]);
+    render(<App kernel={t.kernel} services={services(t)} initialTheme="light" initialDensity="comfortable" />);
+    const nav = await screen.findByRole("navigation", { name: "资源目录" });
+    const item = await within(nav).findByRole("button", { name: "坏网址" });
+    expect(item).toHaveAttribute("aria-disabled", "true");
+    expect(within(nav).getByRole("img", { name: /数据不符合字段定义/ })).toBeInTheDocument();
+    fireEvent.click(item);
+    expect(await screen.findByText("在“编辑”中修正以下字段：网址")).toBeInTheDocument();
+  });
+
   it("编辑：字段级错误；有未保存的修改时离开要确认", async () => {
     const t = await kernelWithPlugins();
     const r = await t.kernel.resources.create({ kind: "link", name: "官网", body: { url: "https://example.com" } });

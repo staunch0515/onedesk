@@ -22,10 +22,10 @@ export function ShellPalette({ open, onOpenChange }: { open: boolean; onOpenChan
     if (open) setSearch("");
   }, [open]);
 
-  // Current resource (for its actions).
+  // Current resource (for its actions). Loaded before the palette opens, so the first item cmdk selects is stable.
   const currentId = route.page === "resource" ? route.id : null;
   useEffect(() => {
-    if (!open || !currentId) {
+    if (!currentId) {
       setCurrent(null);
       return;
     }
@@ -36,8 +36,9 @@ export function ShellPalette({ open, onOpenChange }: { open: boolean; onOpenChan
     };
   }, [open, currentId, kernel]);
 
+  // Kernel search as the user types; the empty query (recent resources) is preloaded while closed.
   useEffect(() => {
-    if (!open) return;
+    if (!open && search !== "") return;
     let live = true;
     setLoading(true);
     const timer = setTimeout(() => {
@@ -49,7 +50,7 @@ export function ShellPalette({ open, onOpenChange }: { open: boolean; onOpenChan
         },
         () => live && setLoading(false),
       );
-    }, 80);
+    }, search ? 80 : 0);
     return () => {
       live = false;
       clearTimeout(timer);
