@@ -140,6 +140,41 @@ worktree：`/Users/zhongpingxue/onedesk/repo/.claude/worktrees/agent-a16d78ede4e
 | `pnpm lint` | 通过 |
 | `pnpm test` | 最后一次：35 个文件、430 个测试全过。此前一次内核“1 万条资源搜索 < 200ms”在 load average 300–430 时失败（最好的一次 246 ms，D93 已说明高负载会失败，与本次改动无关），重跑通过 |
 
+## 界面测试发现的问题（第三轮，合并 main 之后）
+
+先 `git merge --no-edit main`（快进到 fe7897f，带进 e2e/ 与 playwright.config.ts）。提交 `489b745`。
+
+| # | 问题 | 修复 | 测试 |
+|---|---|---|---|
+| 1 | 空集合提示换行留下孤字 | 文案改为“还没有符合规则的资源。”（一行） | `ui-test-fixes.test.tsx` 检查文案和长度；截图 1280 宽一行 |
+| 2 | “请求失败：网络请求失败：Failed to fetch” | `platform/http.ts`：主信息“无法连接到服务器”，英文原文放进 hint：“检查网址和网络后重试（Failed to fetch）”；HTTP 插件：宿主信息已以“请求”开头（如“请求超时…”）时不再加“请求失败：”前缀 → 现在显示“请求失败：无法连接到服务器” | `platform.test.ts` 改断言；`http-request/index.test.ts` 新增“中文、无重复前缀、超时不叠前缀” |
+| 3 | 笔记的 `# 标题` 是第二个 h1 | `Markdown` 把标题整体下移一级（h1→h2 … h6 保持 h6），类名 `od-markdown__hN` 保留作者写的级别，视觉不变 | 设计测试（级别和类名）；外壳测试：笔记页只有一个 h1 |
+| 4 | 插件页和设置页重复“加载失败”表 | 设置页只显示一行摘要（“所有插件都已正常加载。”/“N 个插件加载失败。”）+“前往插件页”链接（TextLink，站内跳转） | 设置页没有该表；点链接进入插件页并看到表 |
+| 5 | 新建集合选规则后 Radix Select 非受控变受控 | 所有 Select 从一开始就受控：空值用 `""`（Radix 显示占位），不再用 `undefined`（新建集合的值、新建资源的类型、必填 select 字段） | 走完“新建集合 → 选规则 → 选值 → 创建”，`console.error` 中没有 controlled/uncontrolled 警告 |
+| 6 | 命令面板 listbox 叫 “Suggestions” | `CommandPalette` 新增 `listLabel`（传给 cmdk `Command.List label`），外壳传“搜索结果” | 设计测试 + 外壳测试：listbox 名为“搜索结果” |
+| + | 空集合页红色“删除集合”过重 | 改为次要按钮，删除仍需确认 | 外壳测试检查按钮样式类 |
+
+关于第 2 项的说明：主会话建议的处理方式文案是“检查网址和网络后重试”。但 `e2e/resources.spec.ts:81-82` 要求界面上能看到 `/请求失败/` 和完整的“处理方式：检查网址、网络连接或超时设置”，而本轮不允许改 e2e。所以 HTTP 插件仍用自己的 hint（平台的 hint 带英文原文，能看到它的地方是插件以外的调用方），主信息改成中文、去掉重复前缀。如果希望界面上看到英文细节，需要同时改那条 e2e。
+
+浏览器复查（1280×800，浅色、深色）：
+- 笔记页只有一个 h1，标题大小不变。
+- HTTP 连不上时显示“请求失败：无法连接到服务器 / 处理方式：检查网址、网络连接或超时设置”。浏览器里用 `127.0.0.1:1` 时报的是 ERR_UNSAFE_PORT，同样走“无法连接”。
+- 空集合提示一行显示，没有孤字；“删除集合”为次要按钮。
+- 设置页底部显示摘要和链接，点击后进入插件页。
+- 命令面板 listbox 名为“搜索结果”。
+- 新建集合过程中控制台没有警告。
+
+e2e：`E2E_PORT=1461 pnpm exec playwright test` → **36 passed（7.0 分钟）**。perf 用例在开发服务器、load average 约 300 时记录 menu-ready 为 4926–5361 ms（开发模式，不是生产构建）。e2e 运行会重新生成 `docs/screenshots/` 中 6 张图（空状态、错误、表格），这些文件不在本轮允许范围，已还原未提交。需要更新截图请主会话重跑。
+
+## 测试与检查结果（第三轮）
+
+| 命令 | 结果 |
+|---|---|
+| `pnpm typecheck` | 通过 |
+| `pnpm lint` | 通过 |
+| `pnpm test` | 36 个文件、436 个测试全过 |
+| `E2E_PORT=1461 pnpm exec playwright test` | 36 passed |
+
 ## 决定（请主会话汇总到 decisions.md）
 
 1. 路由：`all | resource(id, tab?) | collections(id?) | plugins | settings | search(query)`，启动进入“全部资源”。
@@ -156,6 +191,9 @@ worktree：`/Users/zhongpingxue/onedesk/repo/.claude/worktrees/agent-a16d78ede4e
 12. 草稿只有用户编辑过才算未保存；没有编辑时随资源版本和 schema 变化自动更新。
 13. ⌘K：面板开着时关闭面板；有其他对话框时不打开。资源有动作在运行时，该资源的动作（页面按钮、⌘↵、面板）都不可再运行。
 14. 启动不需要的页面（集合、插件、设置、搜索、组件展示页）按需加载。
+15. 插件加载失败的完整列表只在插件页；设置页只放摘要和链接。
+16. Markdown 标题在页面内整体下移一级（页面标题是唯一的 h1）。
+17. 网络失败的主信息用中文；运行时的原始错误文本只作为 hint 中的细节。
 
 ## 设计系统缺口
 
