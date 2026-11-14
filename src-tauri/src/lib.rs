@@ -17,19 +17,7 @@ pub fn run() {
         .plugin(tauri_plugin_http::init())
         .plugin(tauri_plugin_dialog::init())
         .manage(state)
-        .invoke_handler(tauri::generate_handler![
-            commands::app_status,
-            commands::db_select,
-            commands::db_execute,
-            commands::db_batch,
-            commands::secrets_list,
-            commands::secrets_get,
-            commands::secrets_set,
-            commands::secrets_delete,
-            commands::plugins_scan,
-            commands::export_write,
-            commands::import_read,
-        ])
+        .invoke_handler(commands::handler())
         .run(tauri::generate_context!())
         .expect("error while running OneDesk");
 }

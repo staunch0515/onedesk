@@ -33,12 +33,32 @@ pub const TEST_DB_ENV: &str = "ONEDESK_TEST_DB";
 /// Refuses paths that look like the real OneDesk database (D26). Used by every test that writes a DB file.
 pub fn check_test_db_path(path: &Path) -> Result<(), String> {
     let s = path.to_string_lossy();
-    if s.contains("Application Support/onedesk") {
+    // macOS file systems are case-insensitive by default, so compare lowercased.
+    let lower = s.to_lowercase();
+    if lower.contains("application support/onedesk") {
         return Err(format!("拒绝在正式数据目录中运行测试：{s}"));
     }
-    if path.file_name().is_some_and(|n| n == "onedesk.db") {
+    if path
+        .file_name()
+        .is_some_and(|n| n.to_string_lossy().to_lowercase() == "onedesk.db")
+    {
         return Err(format!("拒绝在名为 onedesk.db 的数据库上运行测试：{s}"));
     }
+    Ok(())
+}
+
+/// Test builds only: refuse to open any database file unless `ONEDESK_TEST_DB=1` and the path passes
+/// `check_test_db_path` (deny by default, D26).
+#[cfg(test)]
+fn test_open_guard(path: &Path) -> Result<(), String> {
+    if !test_db_enabled() {
+        return Err(format!("测试需要 {TEST_DB_ENV}=1 才能打开数据库文件"));
+    }
+    check_test_db_path(path)
+}
+
+#[cfg(not(test))]
+fn test_open_guard(_path: &Path) -> Result<(), String> {
     Ok(())
 }
 
@@ -58,10 +78,9 @@ fn current_version(conn: &Connection) -> rusqlite::Result<i64> {
     if !exists {
         return Ok(0);
     }
-    let v: Option<i64> = conn
-        .query_row("SELECT MAX(version) FROM schema_version", [], |r| r.get(0))
-        .ok()
-        .flatten();
+    // Read errors propagate (never silently reported as version 0); an empty table means 0.
+    let v: Option<i64> =
+        conn.query_row("SELECT MAX(version) FROM schema_version", [], |r| r.get(0))?;
     Ok(v.unwrap_or(0))
 }
 
@@ -165,6 +184,12 @@ pub struct Opened {
 /// Startup sequence: open → snapshot (when the DB already existed) → migrate.
 /// A snapshot failure blocks pending migrations (no migration without a backup).
 pub fn open_and_migrate(db_path: &Path, backups_dir: &Path, migrations: &[Migration]) -> Opened {
+    if let Err(e) = test_open_guard(db_path) {
+        return Opened {
+            conn: None,
+            migration_error: Some(e),
+        };
+    }
     let existed = db_path.is_file() && fs::metadata(db_path).map(|m| m.len() > 0).unwrap_or(false);
     let mut conn = match Connection::open(db_path) {
         Ok(c) => c,
@@ -385,6 +410,29 @@ mod tests {
         assert!(check_test_db_path(home).is_err());
         assert!(check_test_db_path(Path::new("/tmp/abc/onedesk.db")).is_err());
         assert!(check_test_db_path(Path::new("/tmp/abc/test.db")).is_ok());
+        // Case variants (case-insensitive file systems).
+        for p in [
+            "/Users/me/Library/application support/OneDesk/x.db",
+            "/Users/me/LIBRARY/APPLICATION SUPPORT/ONEDESK/x.db",
+            "/tmp/abc/OneDesk.DB",
+            "/tmp/abc/ONEDESK.db",
+        ] {
+            assert!(check_test_db_path(Path::new(p)).is_err(), "{p}");
+        }
+    }
+
+    #[test]
+    fn open_and_migrate_refuses_real_db_names_in_tests() {
+        let t = tempfile::tempdir().unwrap();
+        for name in ["onedesk.db", "OneDesk.DB"] {
+            let path = t.path().join(name);
+            let opened = open_and_migrate(&path, &t.path().join("backups"), MIGRATIONS);
+            assert!(opened.conn.is_none(), "{name}");
+            assert!(opened.migration_error.unwrap().contains("拒绝") || !test_db_enabled());
+            assert!(!path.exists(), "{name} must not be created");
+        }
+        let real = t.path().join("Application Support/onedesk/x.db");
+        assert!(open_and_migrate(&real, t.path(), MIGRATIONS).conn.is_none());
     }
 
     #[test]

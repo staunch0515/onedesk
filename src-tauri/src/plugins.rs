@@ -2,7 +2,7 @@
 //! Only `main` is read from the manifest; all other validation happens in TypeScript.
 
 use std::fs;
-use std::path::{Component, Path};
+use std::path::{Component, Path, PathBuf};
 
 use serde::Serialize;
 use serde_json::Value;
@@ -43,13 +43,23 @@ fn scan_one(dir: &Path) -> ScannedPlugin {
         entry_source: None,
         error: None,
     };
-    let manifest_path = dir.join("manifest.json");
-    let text = match fs::read_to_string(&manifest_path) {
-        Ok(t) => t,
+    let manifest_path = match canonical_inside(dir, &dir.join("manifest.json")) {
+        Ok(Some(p)) => p,
+        Ok(None) => {
+            out.error = Some("manifest.json 指向插件文件夹之外，已拒绝加载。".into());
+            return out;
+        }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
             out.error = Some("缺少 manifest.json。".into());
             return out;
         }
+        Err(e) => {
+            out.error = Some(format!("无法读取 manifest.json：{e}"));
+            return out;
+        }
+    };
+    let text = match fs::read_to_string(&manifest_path) {
+        Ok(t) => t,
         Err(e) => {
             out.error = Some(format!("无法读取 manifest.json：{e}"));
             return out;
@@ -78,6 +88,14 @@ fn scan_one(dir: &Path) -> ScannedPlugin {
     out
 }
 
+/// Resolves `path` (following symlinks) and returns it only if it lies strictly inside `dir`.
+/// `Ok(None)` means it resolves outside the plugin folder.
+fn canonical_inside(dir: &Path, path: &Path) -> std::io::Result<Option<PathBuf>> {
+    let canon_dir = fs::canonicalize(dir)?;
+    let canon = fs::canonicalize(path)?;
+    Ok((canon.starts_with(&canon_dir) && canon != canon_dir).then_some(canon))
+}
+
 /// Reads the entry file, refusing anything that could leave the plugin folder (errs on the side of rejecting).
 fn read_entry(dir: &Path, main: &str) -> Result<String, String> {
     let escape = || format!("入口文件 {main} 越出了插件文件夹，已拒绝加载。");
@@ -95,19 +113,15 @@ fn read_entry(dir: &Path, main: &str) -> Result<String, String> {
     {
         return Err(escape());
     }
-    let joined = dir.join(rel);
-    let canon_dir = fs::canonicalize(dir).map_err(|e| format!("无法解析插件文件夹路径：{e}"))?;
-    let canon = match fs::canonicalize(&joined) {
-        Ok(p) => p,
+    // Symlinks pointing outside the folder are rejected too.
+    let canon = match canonical_inside(dir, &dir.join(rel)) {
+        Ok(Some(p)) => p,
+        Ok(None) => return Err(escape()),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
             return Err(format!("缺少入口文件 {main}。"))
         }
         Err(e) => return Err(format!("无法读取入口文件 {main}：{e}")),
     };
-    // Symlinks pointing outside the folder are rejected too.
-    if !canon.starts_with(&canon_dir) || canon == canon_dir {
-        return Err(escape());
-    }
     if !canon.is_file() {
         return Err(format!("入口 {main} 不是文件。"));
     }
@@ -176,8 +190,40 @@ mod tests {
         std::os::unix::fs::symlink(root.join("ok/index.js"), root.join("escape-link/link.js"))
             .unwrap();
 
+        let outside = root
+            .parent()
+            .unwrap()
+            .join(format!("outside-manifest-{}.json", std::process::id()));
+        fs::write(&outside, r#"{"id":"outside"}"#).unwrap();
+        plugin(root, "manifest-link", None, &[("index.js", "x")]);
+        std::os::unix::fs::symlink(&outside, root.join("manifest-link/manifest.json")).unwrap();
+        // A symlinked manifest that stays inside the folder is fine.
+        plugin(
+            root,
+            "manifest-inner-link",
+            None,
+            &[("real.json", "{}"), ("index.js", "y")],
+        );
+        std::os::unix::fs::symlink(
+            root.join("manifest-inner-link/real.json"),
+            root.join("manifest-inner-link/manifest.json"),
+        )
+        .unwrap();
+
         let list = scan(root).unwrap();
-        assert_eq!(list.len(), 9);
+        fs::remove_file(&outside).unwrap();
+        assert_eq!(list.len(), 11);
+
+        let ml = by_name(&list, "manifest-link");
+        assert!(ml.manifest_text.is_none() && ml.entry_source.is_none());
+        assert!(
+            ml.error.as_deref().unwrap().contains("之外"),
+            "{:?}",
+            ml.error
+        );
+        let mi = by_name(&list, "manifest-inner-link");
+        assert_eq!(mi.manifest_text.as_deref(), Some("{}"));
+        assert_eq!(mi.entry_source.as_deref(), Some("y"));
 
         let ok = by_name(&list, "ok");
         assert_eq!(ok.manifest_text.as_deref(), Some(r#"{"id":"a"}"#));
