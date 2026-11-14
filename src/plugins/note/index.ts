@@ -29,7 +29,7 @@ export default definePlugin({
       icon: "book-open",
       render(resource) {
         const text = content(resource);
-        if (!text.trim()) return { type: "text", text: "还没有内容，点击编辑开始记录。", tone: "muted" };
+        if (!text.trim()) return { type: "text", text: "点击编辑开始记录。", tone: "muted" };
         return { type: "text", text, format: "markdown" };
       },
     });

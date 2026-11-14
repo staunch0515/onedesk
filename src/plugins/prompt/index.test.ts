@@ -122,6 +122,33 @@ describe("prompt plugin", () => {
     expect(ViewTreeSchema.safeParse(tree).success).toBe(true);
   });
 
+  it("preview view: shows a warning node for $name style syntax", async () => {
+    const host = await setup();
+    const tree = await host.renderView("preview", host.makeResource("prompt", { template: "cost $price", parameters: [] }));
+    expect(ViewTreeSchema.safeParse(tree).success).toBe(true);
+    expect(Array.isArray(tree) && tree.some((n) => n.type === "text" && n.tone === "warning")).toBe(true);
+  });
+
+  it("copy: without a resource fails with validation", async () => {
+    const host = await setup();
+    const result = await host.runAction("copy", undefined, {});
+    expect(result.error?.code).toBe("validation");
+    expect(host.copied).toHaveLength(0);
+  });
+
+  it("copy: the fake host builds {fromField} input as name -> string and drops unknown keys", async () => {
+    const host = await setup();
+    await host.runAction("copy", host.makeResource("prompt", { template: "{{n}}", parameters: [{ name: "n" }] }), { n: 5, other: "x" });
+    expect(host.copied).toEqual(["5"]);
+  });
+
+  it("validate: parameter errors name the position and field from the zod issue", async () => {
+    const validate = (await setup()).registered.kinds.get("prompt")!.validate!;
+    expect(validate({ template: "x", parameters: [{ name: "a" }, { name: "1bad" }] }).parameters).toMatch(/第 2 个参数的 name：/);
+    expect(validate({ template: "x", parameters: [{ name: "a", required: "yes" }] }).parameters).toContain("required");
+    expect(validate({ template: "x", parameters: [42] }).parameters).toContain("第 1 个参数");
+  });
+
   it("describe lists the parameters", async () => {
     const host = await setup();
     const kind = host.registered.kinds.get("prompt")!;

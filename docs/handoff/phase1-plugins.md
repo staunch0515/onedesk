@@ -21,8 +21,20 @@
 - `pnpm install`：成功。
 - `pnpm typecheck`：通过（无输出错误）。
 - `pnpm lint`：通过（架构检查：内置插件 4 个；界面规范检查通过）。有一条警告“kind `link` 与通用视图节点/输出类型同名”，来自 `scripts/check-arch.mjs` 对 kind `link` 的既有处理，非错误。
-- `pnpm exec vitest run src/plugins`：5 个文件、53 个测试全部通过。
+- `pnpm exec vitest run src/plugins`：6 个文件、68 个测试全部通过（审查修复后重跑；`typecheck`、`lint` 同样重跑通过）。
 - 覆盖：每个清单通过 `ManifestSchema` 且 provides 与实际注册完全一致；link 非法网址（空、file、javascript、无主机）与宿主失败；prompt 缺必填参数、模板用未定义参数、格式错误占位符、剪贴板失败、默认值回退、validate 各分支；http 网络失败（保留旧响应）、404 仍为成功并存储、非法网址、坏 header 行（指出行号）、未知方法、超时设置；每个视图的输出都经 `ViewTreeSchema` 校验。
+
+## 审查修复（第二轮）
+
+1. http-request：激活时清理资源已不存在的 `response:*`；发送完成后确认资源仍存在才写存储；删除事件处理带 `.catch`。
+2. 响应正文截断到 1,000,000 字符，存 `truncated` 标志；output message 与 response 视图（warning 文本节点）提示“正文过大，已截断”。
+3. prompt preview：`lintPlaceholders` 有 warnings 时加 tone warning 的“提示”文本节点。
+4. prompt copy 无资源抛 `validation`。
+5. link details：网址不合法时 format 为 `text`。
+6. parseHeaders：名字大小写不敏感合并（保留首次写法，值用 `, ` 连接）；值含 `\t`、`\x20-\x7E` 以外字符报 validation（含行号）。
+7. fake-host：输出经 `ActionOutputSchema` 校验（成功时返回解析后的值）；create/update/delete 发出事件；`runActionAbortable` 取消辅助（状态 `cancelled`）；`settings.get` 合并 manifest 默认值（`manifest` 选项）；`{fromField}` 输入按参数名 → 字符串；新增 `createResource`、`resetRegistrations`；测试改用真实事件；新增 `fake-host.test.ts`。
+8. prompt 参数校验信息改用 zod issue 的位置与 path/message。
+9. 文案：note 空状态“点击编辑开始记录”；http 无响应“运行“发送”查看响应”；修正 prompt 格式。
 
 ## 还缺什么
 

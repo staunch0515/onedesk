@@ -27,7 +27,7 @@ describe("note plugin", () => {
     const tree = await host.renderView("markdown", host.makeResource("note", body));
     const parsed = ViewTreeSchema.parse(tree);
     expect(parsed).toMatchObject({ type: "text", tone: "muted" });
-    expect(JSON.stringify(parsed)).toContain("还没有内容");
+    expect(JSON.stringify(parsed)).toContain("点击编辑开始记录");
   });
 
   it("describe covers empty and non-empty notes", async () => {

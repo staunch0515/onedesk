@@ -64,7 +64,9 @@ export default definePlugin({
         for (const item of raw ?? []) {
           const parsed = ParameterDefSchema.safeParse(item);
           if (!parsed.success) {
-            errors.parameters = "参数名只能包含字母、数字和下划线，且不以数字开头";
+            const issue = parsed.error.issues[0]!;
+            const field = issue.path.join(".");
+            errors.parameters = `第 ${names.size + 1} 个参数${field ? `的 ${field}` : ""}：${issue.message}`;
             break;
           }
           if (names.has(parsed.data.name)) {
@@ -87,6 +89,7 @@ export default definePlugin({
       input: { fromField: "parameters" },
       output: "text",
       async run({ resource }, input) {
+        if (!resource) throw new OneDeskError("validation", "请选择一个提示词");
         const tpl = template(resource);
         const params = parameters(resource?.body);
         const problems = templateProblems(tpl, params);
@@ -129,8 +132,10 @@ export default definePlugin({
       render(resource) {
         const tpl = template(resource);
         const params = parameters(resource.body);
+        const warnings = lintPlaceholders(tpl).warnings;
         return [
-          { type: "text", title: "模板", text: tpl || "模板为空", format: "plain",tone: tpl ? undefined : "muted" },
+          { type: "text", title: "模板", text: tpl || "模板为空", format: "plain", tone: tpl ? undefined : "muted" },
+          ...(warnings.length ? [{ type: "text" as const, title: "提示", text: warnings.join("\n"), tone: "warning" as const }] : []),
           {
             type: "table",
             title: "参数",

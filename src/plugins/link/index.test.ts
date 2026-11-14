@@ -78,6 +78,8 @@ describe("link plugin", () => {
     const tree = await host.renderView("details", host.makeResource("link", { url: "javascript:x" }));
     expect(ViewTreeSchema.safeParse(tree).success).toBe(true);
     expect(Array.isArray(tree) && tree.some((n) => n.type === "link")).toBe(false);
+    const form = Array.isArray(tree) ? tree[0] : tree;
+    expect(form).toMatchObject({ type: "form", fields: [{ label: "网址", format: "text" }, expect.anything()] });
   });
 
   it("describe returns Chinese summary and usage", async () => {

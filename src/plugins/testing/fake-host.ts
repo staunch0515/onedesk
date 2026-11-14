@@ -4,6 +4,7 @@
  * Phase 2 re-tests the plugins against the real kernel.
  */
 import {
+  ActionOutputSchema,
   OneDeskError,
   type ActionDefinition,
   type ActionOutputInput,
@@ -12,6 +13,7 @@ import {
   type HostApi,
   type HostEvent,
   type KindDefinition,
+  type ManifestInput,
   type MenuItemDefinition,
   type NetworkRequestInit,
   type NetworkResponse,
@@ -30,6 +32,8 @@ export interface FakeHostOptions {
   pluginId?: string;
   /** Plugin settings values. */
   settings?: Record<string, unknown>;
+  /** Manifest JSON: its `settings[].default` values back `settings.get` when no explicit value is set. */
+  manifest?: ManifestInput;
   secrets?: Record<string, string>;
   /** Injected network behaviour; default rejects with `unavailable`. */
   fetch?: FetchHandler;
@@ -49,14 +53,32 @@ export interface FakeHost extends HostApi {
   readonly copied: string[];
   readonly fetchCalls: { url: string; init: NetworkRequestInit | undefined }[];
   readonly notifications: NotifyMessage[];
+  /** Forget registrations and event handlers but keep storage and resources (simulates an app restart before re-activation). */
+  resetRegistrations(): void;
   /** Replace the injected network behaviour. */
   setFetch(handler: FetchHandler): void;
   /** Make `openExternal` / `copyText` fail (simulates a host-side failure). */
   failSystemCalls(message: string): void;
   /** Build a resource of a registered kind. */
   makeResource(kind: string, body: Record<string, unknown>, extra?: Partial<Resource>): Resource;
-  /** Run a registered action like the kernel would: returns a result, never throws. */
-  runAction(actionId: string, resource: Resource | undefined, input?: Record<string, unknown>): Promise<ActionResult>;
+  /**
+   * Run a registered action like the kernel would: returns a result, never throws. Output is validated with
+   * `ActionOutputSchema`; a `{ fromField }` input is built from the resource's parameter field (name -> string).
+   */
+  runAction(
+    actionId: string,
+    resource: Resource | undefined,
+    input?: Record<string, unknown>,
+    options?: { signal?: AbortSignal },
+  ): Promise<ActionResult>;
+  /** Start an action whose signal can be aborted: `abort()` then await `result` (status "cancelled"). */
+  runActionAbortable(
+    actionId: string,
+    resource: Resource | undefined,
+    input?: Record<string, unknown>,
+  ): { abort(): void; result: Promise<ActionResult> };
+  /** Create and store a resource (without events), so `resources.get` finds it. */
+  createResource(kind: string, body: Record<string, unknown>, extra?: Partial<Resource>): Promise<Resource>;
   /** Render a registered view. */
   renderView(viewId: string, resource: Resource, state?: Partial<ViewState>): Promise<ViewTree>;
   /** Deliver an event to subscribed handlers. */
@@ -108,6 +130,7 @@ export function createFakeHost(options: FakeHostOptions = {}): FakeHost {
       create: async (draft: ResourceDraft) => {
         const resource = host.makeResource(draft.kind, draft.body ?? {}, { name: draft.name });
         resources.set(resource.id, resource);
+        host.emit({ type: "resource.created", resource });
         return resource;
       },
       update: async (id, patch) => {
@@ -115,10 +138,13 @@ export function createFakeHost(options: FakeHostOptions = {}): FakeHost {
         if (!current) throw new OneDeskError("not_found", "资源不存在");
         const next = { ...current, ...patch, version: current.version + 1 } as Resource;
         resources.set(id, next);
+        host.emit({ type: "resource.updated", resource: next });
         return next;
       },
       delete: async (id) => {
+        const current = resources.get(id);
         resources.delete(id);
+        if (current) host.emit({ type: "resource.deleted", id, kind: current.kind });
       },
     },
     collections: {
@@ -164,7 +190,12 @@ export function createFakeHost(options: FakeHostOptions = {}): FakeHost {
       },
       keys: async () => [...store.keys()],
     },
-    settings: { get: async <T = unknown>(name: string) => options.settings?.[name] as T | undefined },
+    settings: {
+      get: async <T = unknown>(name: string) => {
+        if (options.settings && name in options.settings) return options.settings[name] as T;
+        return options.manifest?.settings?.find((f) => f.name === name)?.default as T | undefined;
+      },
+    },
     secrets: { get: async (name) => options.secrets?.[name] },
     network: {
       fetch: async (url, init) => {
@@ -177,6 +208,13 @@ export function createFakeHost(options: FakeHostOptions = {}): FakeHost {
     },
     context: { workspace: { id: "ws", name: "测试工作区" }, user: { id: "u", name: "测试用户" } },
 
+    resetRegistrations: () => {
+      kinds.clear();
+      actions.clear();
+      views.clear();
+      menuItems.length = 0;
+      handlers.clear();
+    },
     setFetch: (handler) => {
       fetchHandler = handler;
     },
@@ -202,7 +240,17 @@ export function createFakeHost(options: FakeHostOptions = {}): FakeHost {
         ...extra,
       };
     },
-    runAction: async (actionId, resource, input = {}) => {
+    createResource: async (kind, body, extra) => {
+      const resource = host.makeResource(kind, body, extra);
+      resources.set(resource.id, resource);
+      return resource;
+    },
+    runActionAbortable: (actionId, resource, input) => {
+      const controller = new AbortController();
+      return { abort: () => controller.abort(), result: host.runAction(actionId, resource, input, { signal: controller.signal }) };
+    },
+    runAction: async (actionId, resource, input = {}, runOptions) => {
+      const signal = runOptions?.signal ?? new AbortController().signal;
       const started = Date.now();
       const finish = (r: Pick<ActionResult, "status" | "output" | "error">): ActionResult => ({
         runId: `run-${++counter}`,
@@ -214,16 +262,30 @@ export function createFakeHost(options: FakeHostOptions = {}): FakeHost {
       });
       const action = actions.get(actionId);
       if (!action) return finish({ status: "error", error: { code: "not_found", message: "动作不存在" } });
-      try {
-        const output = (await action.run(
-          { resource, workspace: host.context.workspace, user: host.context.user, source: "manual", signal: new AbortController().signal },
-          input,
-        )) as ActionOutputInput;
-        if (output.type !== "none" && output.type !== action.output) {
-          return finish({ status: "error", error: { code: "internal", message: `动作输出类型 ${output.type} 与声明 ${action.output} 不符` } });
+      let actualInput = input;
+      const spec = action.input;
+      if (spec && !Array.isArray(spec)) {
+        const defs = resource?.body[spec.fromField];
+        actualInput = {};
+        for (const def of Array.isArray(defs) ? defs : []) {
+          const name = (def as { name?: unknown }).name;
+          if (typeof name === "string" && input[name] !== undefined && input[name] !== null) actualInput[name] = String(input[name]);
         }
-        return finish({ status: "success", output: output as ActionResult["output"] });
+      }
+      try {
+        const raw = (await action.run(
+          { resource, workspace: host.context.workspace, user: host.context.user, source: "manual", signal },
+          actualInput,
+        )) as ActionOutputInput;
+        if (signal.aborted) return finish({ status: "cancelled" });
+        const parsed = ActionOutputSchema.safeParse(raw);
+        if (!parsed.success) return finish({ status: "error", error: { code: "internal", message: `动作输出不合法：${parsed.error.message}` } });
+        if (parsed.data.type !== "none" && parsed.data.type !== action.output) {
+          return finish({ status: "error", error: { code: "internal", message: `动作输出类型 ${parsed.data.type} 与声明 ${action.output} 不符` } });
+        }
+        return finish({ status: "success", output: parsed.data });
       } catch (e) {
+        if (signal.aborted) return finish({ status: "cancelled" });
         const code = e instanceof OneDeskError ? e.code : "internal";
         return finish({
           status: "error",

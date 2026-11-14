@@ -73,7 +73,7 @@ export default definePlugin({
           {
             type: "form",
             fields: [
-              { label: "网址", value: url, format: "url" },
+              { label: "网址", value: url, format: checkUrl(url) ? "text" : "url" },
               { label: "浏览器配置文件", value: profile || "未设置", format: "text" },
             ],
           },
