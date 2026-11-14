@@ -271,6 +271,8 @@ export const zhCN = {
   "plugins.toggleFailed": "无法切换“{{name}}”",
   "plugins.activationError": "激活失败：{{reason}}",
   "plugins.settings": "设置",
+  "plugins.settingsOf": "“{{name}}”的设置",
+  "plugins.uninstallOf": "卸载“{{name}}”",
   "plugins.settingsTitle": "“{{name}}”的设置",
   "plugins.settingsSaved": "已保存设置",
   "plugins.noSettings": "这个插件没有设置项。",

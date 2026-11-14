@@ -13,6 +13,7 @@ import {
   Drawer,
   EmptyState,
   Icon,
+  IconButton,
   Page,
   PageBody,
   PageHeader,
@@ -248,8 +249,8 @@ export function PluginsPage() {
     {
       key: "origin",
       header: t("plugins.col.origin"),
-      width: "sm",
-      render: (p) => <Badge>{p.origin === "builtin" ? t("plugins.origin.builtin") : t("plugins.origin.external")}</Badge>,
+      width: "xs",
+      render: (p) => (p.origin === "builtin" ? t("plugins.origin.builtin") : t("plugins.origin.external")),
     },
     {
       key: "resources",
@@ -279,19 +280,15 @@ export function PluginsPage() {
     {
       key: "actions",
       header: t("plugins.col.actions"),
-      width: "md",
+      width: "sm",
       align: "end",
       render: (p) => (
         <Stack direction="row" gap="xs" justify="end">
           {p.manifest.settings.length > 0 && (
-            <Button size="sm" variant="ghost" icon="settings" onClick={() => setSettingsFor(p)}>
-              {t("plugins.settings")}
-            </Button>
+            <IconButton size="sm" icon="settings" label={t("plugins.settingsOf", { name: p.manifest.name })} onClick={() => setSettingsFor(p)} />
           )}
           {p.origin === "external" && (
-            <Button size="sm" variant="ghost" icon="trash-2" onClick={() => setUninstalling(p)}>
-              {t("plugins.uninstall")}
-            </Button>
+            <IconButton size="sm" icon="trash-2" label={t("plugins.uninstallOf", { name: p.manifest.name })} onClick={() => setUninstalling(p)} />
           )}
         </Stack>
       ),

@@ -175,7 +175,7 @@ describe("评审修复", SLOW, () => {
     const t = await createTestKernel({ plugins: builtinPluginSources() });
     renderApp(t, t.kernel, { page: "plugins" });
     const table = await screen.findByRole("table", { name: "插件列表" });
-    expect(within(table).getAllByRole("button", { name: "设置" })).toHaveLength(1); // only HTTP 请求 has settings
+    expect(within(table).getAllByRole("button", { name: /的设置$/ })).toHaveLength(1); // only HTTP 请求 has settings
   });
 
   it("停用插件的资源：只读数据用记住的字段名；没有记录时显示原始键名并说明", async () => {
