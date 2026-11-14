@@ -47,6 +47,21 @@ $ ls -la ".../onedesk/backups"
 
   两次启动后均已停止进程（含 1430 端口的 vite）。前端是占位页，未检查界面内容；命令未从前端实际调用过（前端 tauri 适配器不在本会话范围）。
 
+## 审查后修改（提交 7f78cf6）
+
+1. **钥匙串调用不持有数据库锁**：`migrationError` 在启动时设定、之后不变，`AppState::ready()` 检查它，不拿锁。`secrets_get` 只调钥匙串，不碰连接；`secrets_set`/`secrets_delete` 先调钥匙串（不持锁），再只为 `secret_names` 写入短暂加锁。钥匙串后端改为可注入（`Box<dyn SecretBackend>`，生产用 `Keychain`）。测试 `secrets_index_names_only_and_keychain_runs_unlocked` 用的内存后端在每次调用时检查连接锁空闲（`try_lock`）。
+2. **D26 默认拒绝**：见决定 9。`check_test_db_path` 改为小写后匹配。测试：`guard_rejects_real_paths` 覆盖大小写变体；`open_and_migrate_refuses_real_db_names_in_tests` 验证 `onedesk.db` / `OneDesk.DB` / `Application Support/onedesk` 都打不开，也不会创建文件。
+3. **`db_select`/`db_execute` 的 `params` 可省略**（`Option<Vec<Param>>`，缺省为 `[]`）。dev-dependencies 加了 `tauri`（`test` 特性，仅测试用，同一依赖）。命令列表抽成 `commands::handler()`，`run()` 和测试共用。新增测试 `ipc_contract_shapes_and_optional_params`：通过 mock runtime 的真实 IPC 调用，覆盖省略/提供 params、`rowsAffected`、db_batch 回滚、secrets 的 set/get/list/delete（返回 null）和 app_status 字段名。
+4. **manifest.json 也做规范化**：解析符号链接后必须在插件目录内，否则 `error`（“指向插件文件夹之外”），`manifestText` 为 null。测试：指向外部的符号链接被拒；指向插件目录内文件的符号链接可用。
+5. **互斥锁中毒自动恢复**：`lock()` 用 `PoisonError::into_inner` 恢复（rusqlite 会在 drop 时回滚未完成的事务）。测试 `poisoned_lock_recovers`。`app_status` 读取版本出错时返回错误，不再静默报 0；原来 `current_version` 会把读取错误当成 0，现已改为向上传递。只有数据库根本没打开时才报 0，此时 `migrationError` 会说明原因。测试 `status_reports_read_errors`。
+
+检查：
+- `ONEDESK_TEST_DB=1 cargo test`：**25 passed, 0 failed, 1 ignored**。
+- 不设开关的 `cargo test`：25 passed，写库测试跳过。
+- `cargo clippy --all-targets -- -D warnings`：通过。
+- `cargo fmt --check`：通过。
+- 改动影响启动路径（命令注册、AppState 初始化），所以重新用 1430 端口跑了 `pnpm tauri dev` 验证：`target/debug/onedesk` 进程运行，日志在 `Running target/debug/onedesk` 之后无输出；生成新快照 `backups/onedesk-20261114-093140.db`（共 2 份）；schema_version = 1。之后已停止进程和 1430 端口的 vite。
+
 ## 还缺什么
 
 - 钥匙串真实读写只写了 `#[ignore]` 测试，未运行（避免写用户钥匙串）。手动：`cargo test -- --ignored`。
@@ -55,20 +70,18 @@ $ ls -la ".../onedesk/backups"
 ## 决定（请主会话汇总到 decisions.md）
 
 1. **快照时机**：库文件已存在（非空）时**每次启动**都快照（不只在需要迁移时），首次创建库时不快照。快照失败：若有待执行迁移，则不迁移并设置 `migrationError`（没有备份不迁移）；否则只记日志。
-2. **时间用 UTC**：快照名、导出文件夹名中的 `YYYYMMDD-HHMMSS` 和 `secret_names.created_at` 都是 UTC（标准库无本地时区；没有引入 chrono/time）。用户看到的导出文件夹名会比本地时间差时区（例：本地 18:18 → `091817`）。如需本地时间需引入新依赖。
+2. **时间用 UTC**：快照名、导出文件夹名和 `secret_names.created_at` 用 UTC。主会话已记为 D81。
 3. **同秒重名**：快照名加 `-2`、`-3`…；导出文件夹同样。
 4. **迁移失败语义**：每个迁移单独事务，失败的那个回滚，之前已成功的保留（与 D21 一致）。库版本高于应用最新版本 → `migrationError`，不降级。
 5. **整数绑定**：JSON 中整值浮点（如 `3.0`）也绑定为 INTEGER；布尔绑定 0/1（契约未列 boolean，但宽松接受）。BLOB 列返回字节数组。
-6. **`secrets_get` 也受 `migrationError` 阻断**（与其他 secrets 命令一致）。密钥名校验：非空、首尾无空格、≤128 字符。
+6. **`secrets_get` 也受 `migrationError` 阻断**，但不碰数据库连接（只查启动时设定、之后不变的错误字段）。密钥名校验：非空、首尾无空格、≤128 字符。
 7. **扫描**：跳过以 `.` 开头的文件夹；`main` 含 `\` 也拒绝；入口必须是文件；结果按文件夹名排序。
 8. **keyring 用 3.x**（3.6.3，`apple-native` 特性），不用最新 4.x：4.x 改为按平台 store 的新 API，3.x API 简单且满足需求。依赖表中只写了 keyring，没写版本。
-9. **D26 测试开关**：会写数据库文件的测试在没有 `ONEDESK_TEST_DB=1` 时**跳过（打印提示）而不是失败**；内存库测试不受开关影响。测试数据库一律命名 `test.db` 并先过 `check_test_db_path`。
-10. `capabilities/default.json` 保留了原有的 `dialog:allow-ask`（契约头注释只列了 `dialog:allow-open`）；没删，以免影响内核/外壳的确认对话框。
+9. **D26 测试开关（默认拒绝）**：测试构建中 `open_and_migrate` 内置 `#[cfg(test)]` 检查，没有 `ONEDESK_TEST_DB=1` 或路径（小写后）含 `application support/onedesk`、文件名为 `onedesk.db`（不分大小写）时拒绝打开，不创建文件。写库的测试在没有开关时跳过并打印提示；内存库测试不受影响。测试数据库一律命名 `test.db`。
+10. `capabilities/default.json` 保留 `dialog:allow-ask`。主会话已记为 D84。
 
 ## 需要谁确认 / 问题
 
-- **主会话 / package.json**：`pnpm test:rust` 现为 `cargo test --manifest-path src-tauri/Cargo.toml`，未设 `ONEDESK_TEST_DB=1`，因此 `pnpm check` 下 8 个写库测试会被跳过（仍显示 ok）。建议改为 `ONEDESK_TEST_DB=1 cargo test --manifest-path src-tauri/Cargo.toml`（我无权改 package.json）。
+- ~~package.json 的 `test:rust` 加 `ONEDESK_TEST_DB=1`~~：主会话已在 main 上改好。
 - **主会话**：契约头注释写 opener 用 `opener:allow-open-url`；我用了带 `allow` scope 的对象形式（同一权限 + URL 范围），是否需同步改注释措辞。
-- **主会话**：是否保留 `dialog:allow-ask`（见决定 10）。
-- **主会话**：导出文件夹名是否需要本地时间（见决定 2）。
 - **环境**：端口 1420 被其他会话的 vite 占用，多个会话同时 `pnpm tauri dev` 会冲突。另外发现存在另一个 worktree `.claude/worktrees/phase1-rust-3f25ab`（也在编译 tauri），可能是重复的 Rust 会话，请主会话确认用哪一份。
