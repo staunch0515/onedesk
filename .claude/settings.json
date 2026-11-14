@@ -1,0 +1,43 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pnpm check)",
+      "Bash(pnpm typecheck)",
+      "Bash(pnpm lint)",
+      "Bash(pnpm test)",
+      "Bash(pnpm test *)",
+      "Bash(pnpm coverage)",
+      "Bash(pnpm test:rust)",
+      "Bash(pnpm clippy)",
+      "Bash(pnpm e2e)",
+      "Bash(pnpm e2e *)",
+      "Bash(pnpm build)",
+      "Bash(pnpm install)",
+      "Bash(pnpm exec vitest *)",
+      "Bash(pnpm exec playwright *)",
+      "Bash(npx vitest *)",
+      "Bash(cargo check *)",
+      "Bash(cargo test *)",
+      "Bash(cargo clippy *)",
+      "Bash(cargo build *)",
+      "Bash(cargo fmt *)",
+      "Bash(node scripts/check-arch.mjs)",
+      "Bash(node scripts/check-ui.mjs)",
+      "Bash(python3 -m json.tool *)",
+      "Bash(git status *)",
+      "Bash(git diff *)",
+      "Bash(git log *)",
+      "Bash(git show *)",
+      "Bash(git branch *)"
+    ],
+    "ask": [
+      "Bash(rm *)",
+      "Bash(git push *)",
+      "Bash(git reset *)",
+      "Bash(git checkout -- *)",
+      "Bash(git clean *)",
+      "Write",
+      "Edit"
+    ]
+  }
+}
