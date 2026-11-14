@@ -16,6 +16,10 @@
   padding: 0 var(--space-3) 0 var(--space-4);
 }
 
+.od-sidebar__header--between {
+  justify-content: space-between;
+}
+
 .od-sidebar__body {
   display: flex;
   flex: 1;

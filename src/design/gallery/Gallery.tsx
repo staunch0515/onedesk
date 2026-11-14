@@ -22,6 +22,7 @@ import {
   IconButton,
   Input,
   Kbd,
+  KeyValueList,
   LoadingState,
   Markdown,
   NavGroup,
@@ -44,6 +45,8 @@ import {
   Textarea,
   Tooltip,
   TopBar,
+  TextBlock,
+  TextLink,
   useTheme,
   useToast,
   type Density,
@@ -716,6 +719,21 @@ export function Gallery() {
             <TableSection selected={selected} onSelect={setSelected} />
             <StatesSection />
             <OverlaysSection onOpenPalette={() => setPaletteOpen(true)} />
+            <Section title="文本块、链接、键值列表" description="保留换行、长行自动换行；行内链接；只读键值。">
+              <Stack gap="md">
+                <TextBlock>{"第一行\n  缩进的第二行\n" + "很长的一行".repeat(40)}</TextBlock>
+                <TextBlock variant="code" label="代码">{"GET /items HTTP/1.1\nUser-Agent: " + "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 ".repeat(4)}</TextBlock>
+                <Text>
+                  阅读 <TextLink href="https://example.com" onOpen={() => undefined} external>使用说明</TextLink> 了解更多。
+                </Text>
+                <KeyValueList
+                  items={[
+                    { key: "url", label: "网址", value: "https://example.com/a/very/long/path" },
+                    { key: "method", label: "method", value: "GET", monoLabel: true },
+                  ]}
+                />
+              </Stack>
+            </Section>
             <Section title="Markdown 阅读态" description="GFM 表格、任务列表、代码；原始 HTML 不渲染。">
               <Markdown onLinkClick={() => undefined}>{MARKDOWN}</Markdown>
             </Section>

@@ -1,0 +1,39 @@
+.od-text-block {
+  margin: 0;
+  min-width: 0;
+  font-size: var(--text-md);
+  line-height: var(--leading-md);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.od-text-block--code {
+  padding: var(--space-3) var(--space-4);
+  border: var(--border-width) solid var(--border-default);
+  border-radius: var(--radius-md);
+  background: var(--bg-subtle);
+  font: inherit;
+  font-size: var(--text-sm);
+  line-height: var(--leading-sm);
+}
+
+.od-text-block--code code {
+  font-size: inherit;
+  white-space: inherit;
+}
+
+.od-text-block--default {
+  color: var(--fg-default);
+}
+.od-text-block--muted {
+  color: var(--fg-muted);
+}
+.od-text-block--success {
+  color: var(--success-text);
+}
+.od-text-block--warning {
+  color: var(--warning-text);
+}
+.od-text-block--danger {
+  color: var(--danger-text);
+}
