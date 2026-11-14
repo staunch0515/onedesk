@@ -39,14 +39,22 @@ describe("界面测试发现的问题", { timeout: 30_000 }, () => {
     expect(screen.getByRole("heading", { level: 2, name: "读书笔记" })).toBeInTheDocument();
   });
 
-  it("设置页只显示加载错误摘要和前往插件页的链接；完整列表只在插件页", async () => {
+  it("设置页列出每个加载失败插件的原因（G.4、D135），并可前往插件页", async () => {
+    const broken = { origin: "external" as const, location: "/plugins/broken", manifest: { id: "Not A Valid Id" }, load: async () => ({ activate() {} }) };
+    const tk = await createTestKernel({ plugins: [...builtinPluginSources(), broken] });
+    renderApp(tk, { page: "settings" });
+    expect(await screen.findByText(t("settings.pluginErrorsSome", { count: 1 }))).toBeInTheDocument();
+    const table = screen.getByRole("table", { name: t("plugins.errorsTitle") });
+    expect(within(table).getByText(/\/plugins\/broken/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("link", { name: t("settings.gotoPlugins") }));
+    expect(await screen.findByRole("heading", { level: 1, name: t("plugins.title") })).toBeInTheDocument();
+  });
+
+  it("没有加载错误时设置页只显示一行说明", async () => {
     const tk = await createTestKernel({ plugins: builtinPluginSources() });
     renderApp(tk, { page: "settings" });
     expect(await screen.findByText(t("settings.pluginErrorsNone"))).toBeInTheDocument();
     expect(screen.queryByRole("table", { name: t("plugins.errorsTitle") })).toBeNull();
-    fireEvent.click(screen.getByRole("link", { name: t("settings.gotoPlugins") }));
-    expect(await screen.findByRole("heading", { level: 1, name: t("plugins.title") })).toBeInTheDocument();
-    expect(screen.getByRole("table", { name: t("plugins.errorsTitle") })).toBeInTheDocument();
   });
 
   it("新建集合：切换规则和选择值时没有受控/非受控警告；空集合文案简短；删除集合是次要按钮", async () => {
