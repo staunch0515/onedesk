@@ -26,7 +26,8 @@ export default defineConfig({
   },
   test: {
     environment: "node",
-    include: ["src/**/*.test.{ts,tsx}"],
+    include: process.env.ONEDESK_PERF ? ["src/**/*.perf.test.{ts,tsx}"] : ["src/**/*.test.{ts,tsx}"],
+    exclude: process.env.ONEDESK_PERF ? [] : ["src/**/*.perf.test.{ts,tsx}", "node_modules/**"],
     coverage: {
       provider: "v8",
       include: ["src/kernel/**/*.ts", "src/plugin-api/**/*.ts"],
