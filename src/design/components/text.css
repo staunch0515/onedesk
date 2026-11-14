@@ -1,0 +1,68 @@
+.od-text {
+  margin: 0;
+}
+
+.od-text--xs {
+  font-size: var(--text-xs);
+  line-height: var(--leading-xs);
+}
+.od-text--sm {
+  font-size: var(--text-sm);
+  line-height: var(--leading-sm);
+}
+.od-text--md {
+  font-size: var(--text-md);
+  line-height: var(--leading-md);
+}
+.od-text--lg {
+  font-size: var(--text-lg);
+  line-height: var(--leading-lg);
+}
+.od-text--xl {
+  font-size: var(--text-xl);
+  line-height: var(--leading-xl);
+  letter-spacing: var(--tracking-tight);
+}
+
+.od-text--default {
+  color: var(--fg-default);
+}
+.od-text--muted {
+  color: var(--fg-muted);
+}
+.od-text--subtle {
+  color: var(--fg-subtle);
+}
+.od-text--accent {
+  color: var(--accent-text);
+}
+.od-text--success {
+  color: var(--success-text);
+}
+.od-text--warning {
+  color: var(--warning-text);
+}
+.od-text--danger {
+  color: var(--danger-text);
+}
+.od-text--info {
+  color: var(--info-text);
+}
+
+.od-text--regular {
+  font-weight: var(--weight-regular);
+}
+.od-text--medium {
+  font-weight: var(--weight-medium);
+}
+.od-text--semibold {
+  font-weight: var(--weight-semibold);
+}
+
+.od-text--truncate {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

@@ -1,0 +1,117 @@
+.od-toast-viewport {
+  position: fixed;
+  right: 0;
+  bottom: 0;
+  z-index: var(--z-toast);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  width: calc(var(--toast-width) + var(--space-8));
+  max-width: 100%;
+  margin: 0;
+  padding: var(--space-4);
+  list-style: none;
+  outline: none;
+}
+
+.od-toast {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-3) var(--space-3) var(--space-4);
+  border: var(--border-width) solid var(--border-default);
+  border-radius: var(--radius-lg);
+  background: var(--bg-elevated);
+  color: var(--fg-default);
+  box-shadow: var(--shadow-md);
+}
+
+.od-toast[data-state="open"] {
+  animation: od-rise-in var(--duration-slow) var(--ease-out);
+}
+
+.od-toast[data-state="closed"] {
+  animation: od-fade-out var(--duration-fast) var(--ease-in);
+}
+
+.od-toast[data-swipe="move"] {
+  transform: translateX(var(--radix-toast-swipe-move-x));
+}
+
+.od-toast[data-swipe="cancel"] {
+  transform: translateX(0);
+  transition: transform var(--duration-base) var(--ease-out);
+}
+
+.od-toast[data-swipe="end"] {
+  animation: od-fade-out var(--duration-fast) var(--ease-in);
+}
+
+.od-toast:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
+}
+
+.od-toast__icon {
+  margin-top: var(--space-0-5);
+}
+
+.od-toast--info .od-toast__icon {
+  color: var(--info-text);
+}
+.od-toast--success .od-toast__icon {
+  color: var(--success-text);
+}
+.od-toast--warning .od-toast__icon {
+  color: var(--warning-text);
+}
+.od-toast--danger .od-toast__icon {
+  color: var(--danger-text);
+}
+
+.od-toast__content {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--space-0-5);
+  min-width: 0;
+}
+
+.od-toast__title {
+  font-size: var(--text-md);
+  line-height: var(--leading-md);
+  font-weight: var(--weight-medium);
+}
+
+.od-toast__description {
+  color: var(--fg-muted);
+  font-size: var(--text-sm);
+  line-height: var(--leading-sm);
+}
+
+.od-toast__action {
+  flex: none;
+  height: var(--control-height-sm);
+  margin: calc(var(--space-0-5) * -1) 0;
+  padding: 0 var(--space-2);
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--accent-text);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  cursor: default;
+}
+
+.od-toast__action:hover {
+  background: var(--accent-subtle);
+}
+
+.od-toast__action:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring);
+  outline-offset: var(--focus-ring-inset);
+}
+
+.od-toast__close {
+  margin: calc(var(--space-1) * -1) calc(var(--space-1) * -1) calc(var(--space-1) * -1) 0;
+}

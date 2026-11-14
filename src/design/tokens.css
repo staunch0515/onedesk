@@ -1,0 +1,406 @@
+/*
+ * OneDesk design tokens — the ONLY file allowed to contain literal values (D31).
+ * Components reference these variables; scripts/check-ui.mjs rejects literals elsewhere.
+ *
+ * Theme:   <html data-theme="light|dark">; without the attribute, follows prefers-color-scheme.
+ * Density: <html data-density="comfortable|compact">; default comfortable.
+ *
+ * The dark palette appears twice (explicit attribute + system preference). Keep both blocks
+ * identical — tokens.test.ts fails if they drift. Contrast pairs are checked there too.
+ */
+
+/* ------------------------------------------------------------------ static scales */
+:root {
+  /* Typography */
+  --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Hiragino Sans GB",
+    "Helvetica Neue", system-ui, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Monaco, monospace;
+
+  --text-xs: 12px;
+  --text-sm: 13px;
+  --text-md: 14px;
+  --text-lg: 16px;
+  --text-xl: 20px;
+  --text-2xl: 24px;
+
+  --leading-xs: 16px;
+  --leading-sm: 20px;
+  --leading-md: 20px;
+  --leading-lg: 24px;
+  --leading-xl: 28px;
+  --leading-2xl: 32px;
+  --leading-prose: 1.65;
+
+  --weight-regular: 400;
+  --weight-medium: 500;
+  --weight-semibold: 600;
+
+  --tracking-tight: -0.01em;
+  --tracking-normal: 0;
+
+  /* Spacing — 4px grid */
+  --space-0: 0;
+  --space-px: 1px;
+  --space-0-5: 2px;
+  --space-1: 4px;
+  --space-1-5: 6px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+  --space-16: 64px;
+
+  /* Radius */
+  --radius-xs: 3px;
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-xl: 12px;
+  --radius-full: 9999px;
+
+  /* Borders */
+  --border-width: 1px;
+  --border-width-thick: 2px;
+
+  /* Motion — restrained, no bounce */
+  --duration-none: 0s;
+  --duration-fast: 120ms;
+  --duration-base: 160ms;
+  --duration-slow: 200ms;
+  --duration-spin: 800ms;
+  --duration-indeterminate: 1200ms;
+  --duration-tooltip-delay: 400ms;
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --ease-out: cubic-bezier(0, 0, 0.2, 1);
+  --ease-in: cubic-bezier(0.4, 0, 1, 1);
+  --motion-shift: 4px;
+  --motion-scale: 0.98;
+
+  /* Z-index layers */
+  --z-base: 0;
+  --z-raised: 1;
+  --z-sticky: 10;
+  --z-overlay: 1000;
+  --z-modal: 1010;
+  --z-drawer: 1010;
+  --z-popover: 1100;
+  --z-toast: 1200;
+  --z-tooltip: 1300;
+
+  /* Icons (lucide, D32) */
+  --icon-xs: 12px;
+  --icon-sm: 14px;
+  --icon-md: 16px;
+  --icon-lg: 20px;
+  --icon-stroke: 1.75;
+  --icon-stroke-mark: 2.5; /* checkbox tick only: 1.75 is too faint at 14px on a filled box */
+
+  /* Layout */
+  --app-min-width: 1280px;
+  --viewport-height: 100vh;
+  --sidebar-width: 248px;
+  --topbar-height: 48px;
+  --page-max-width: 1120px;
+  --readable-max-width: 760px;
+  --search-trigger-width: 360px;
+  --dialog-width-sm: 400px;
+  --dialog-width-md: 520px;
+  --dialog-width-lg: 720px;
+  --dialog-max-height: 85vh;
+  --drawer-width: 440px;
+  --palette-width: 640px;
+  --palette-list-max-height: 360px;
+  --palette-offset-top: 12vh;
+  --menu-min-width: 180px;
+  --select-max-height: 320px;
+  --tooltip-max-width: 280px;
+  --toast-width: 360px;
+  --textarea-min-height: 80px;
+  --progress-height: 4px;
+  --progress-width: 160px;
+  --switch-width: 32px;
+  --switch-height: 18px;
+  --switch-thumb: 14px;
+  --checkbox-size: 16px;
+  --badge-height: 20px;
+  --badge-dot: 6px;
+  --kbd-min-width: 20px;
+  --kbd-height: 20px;
+  --state-min-height: 240px;
+  --state-max-width: 420px;
+  --swatch-size: 32px;
+
+  /* Focus ring */
+  --focus-ring-width: 2px;
+  --focus-ring-offset: 2px;
+  --focus-ring-inset: -2px;
+}
+
+/* ------------------------------------------------------------------ density */
+:root,
+[data-density="comfortable"] {
+  --control-height-sm: 28px;
+  --control-height-md: 32px;
+  --control-pad-x-sm: 10px;
+  --control-pad-x-md: 12px;
+  --table-row-height: 40px;
+  --table-cell-pad-x: 12px;
+  --nav-item-height: 30px;
+  --page-pad-x: 32px;
+  --page-pad-y: 24px;
+  --page-gap: 24px;
+  --stack-gap: 16px;
+  --field-gap: 6px;
+  --menu-item-height: 30px;
+}
+
+[data-density="compact"] {
+  --control-height-sm: 24px;
+  --control-height-md: 28px;
+  --control-pad-x-sm: 8px;
+  --control-pad-x-md: 10px;
+  --table-row-height: 32px;
+  --table-cell-pad-x: 10px;
+  --nav-item-height: 26px;
+  --page-pad-x: 24px;
+  --page-pad-y: 16px;
+  --page-gap: 16px;
+  --stack-gap: 12px;
+  --field-gap: 4px;
+  --menu-item-height: 26px;
+}
+
+/* ------------------------------------------------------------------ light theme */
+:root,
+[data-theme="light"] {
+  color-scheme: light;
+
+  --bg-app: #f5f6f8;
+  --bg-surface: #ffffff;
+  --bg-subtle: #f3f4f6;
+  --bg-hover: #edeff2;
+  --bg-active: #e3e6ea;
+  --bg-selected: #e6eefd;
+  --bg-inset: #ffffff;
+  --bg-elevated: #ffffff;
+  --bg-overlay: rgba(15, 18, 23, 0.36);
+  --bg-inverse: #1f2329;
+  --bg-knob: #ffffff;
+
+  --fg-default: #1a1d21;
+  --fg-muted: #555d69;
+  --fg-subtle: #646c78;
+  --fg-disabled: #a2a8b1;
+  --fg-inactive: #646c78;
+  --fg-inverse: #f5f6f8;
+  --fg-on-accent: #ffffff;
+  --fg-selected: #1849b8;
+
+  --border-default: #e1e4e9;
+  --border-strong: #c9ced6;
+  --border-subtle: #eceef1;
+
+  --accent: #2259d6;
+  --accent-hover: #1c4dbf;
+  --accent-active: #183fa0;
+  --accent-text: #1d4fc4;
+  --accent-subtle: #edf2fd;
+  --accent-border: #b8cbf5;
+
+  --success: #18794a;
+  --success-text: #146b40;
+  --success-subtle: #ecf7f0;
+  --success-border: #b5ddc4;
+
+  --warning: #a35a00;
+  --warning-text: #8a4b00;
+  --warning-subtle: #fdf5e7;
+  --warning-border: #f0d29b;
+
+  --danger: #cd2b31;
+  --danger-hover: #b8242a;
+  --danger-text: #b4232a;
+  --danger-subtle: #fdeeee;
+  --danger-border: #f2bfc1;
+
+  --info: #0b6a9e;
+  --info-text: #0a5f8e;
+  --info-subtle: #ebf5fb;
+  --info-border: #b3d8ec;
+
+  --focus-ring: #2f6bf0;
+  --focus-ring-soft: rgba(47, 107, 240, 0.22);
+
+  --scrollbar-thumb: rgba(26, 29, 33, 0.22);
+
+  --shadow-xs: 0 1px 1px rgba(16, 24, 40, 0.04);
+  --shadow-sm: 0 1px 2px rgba(16, 24, 40, 0.06), 0 1px 1px rgba(16, 24, 40, 0.03);
+  --shadow-md: 0 6px 16px rgba(16, 24, 40, 0.08), 0 1px 3px rgba(16, 24, 40, 0.06);
+  --shadow-lg: 0 16px 40px rgba(16, 24, 40, 0.14), 0 2px 6px rgba(16, 24, 40, 0.06);
+  --shadow-switch-thumb: 0 1px 2px rgba(16, 24, 40, 0.2);
+}
+
+/* ------------------------------------------------------------------ dark theme */
+:root[data-theme="dark"],
+[data-theme="dark"] {
+  color-scheme: dark;
+
+  --bg-app: #131417;
+  --bg-surface: #1a1b1f;
+  --bg-subtle: #212328;
+  --bg-hover: #25272c;
+  --bg-active: #2d3036;
+  --bg-selected: #1d2a45;
+  --bg-inset: #16171a;
+  --bg-elevated: #222429;
+  --bg-overlay: rgba(0, 0, 0, 0.56);
+  --bg-inverse: #e9ebee;
+  --bg-knob: #e9ebee;
+
+  --fg-default: #e9ebee;
+  --fg-muted: #a5abb5;
+  --fg-subtle: #959ba5;
+  --fg-disabled: #5e636c;
+  --fg-inactive: #90969f;
+  --fg-inverse: #1a1b1f;
+  --fg-on-accent: #ffffff;
+  --fg-selected: #a9c4ff;
+
+  --border-default: #2c2f35;
+  --border-strong: #3c4048;
+  --border-subtle: #25272c;
+
+  --accent: #2c62dd;
+  --accent-hover: #3069e8;
+  --accent-active: #2556c4;
+  --accent-text: #8cb0ff;
+  --accent-subtle: #1b2742;
+  --accent-border: #2e4677;
+
+  --success: #18794a;
+  --success-text: #6cd49b;
+  --success-subtle: #14261d;
+  --success-border: #22513a;
+
+  --warning: #a35a00;
+  --warning-text: #f0b660;
+  --warning-subtle: #2a2114;
+  --warning-border: #5a4320;
+
+  --danger: #cd2b31;
+  --danger-hover: #b8242a;
+  --danger-text: #ff8f8f;
+  --danger-subtle: #2e1718;
+  --danger-border: #612a2c;
+
+  --info: #0b6a9e;
+  --info-text: #74c3f0;
+  --info-subtle: #112330;
+  --info-border: #1f4862;
+
+  --focus-ring: #6d9bff;
+  --focus-ring-soft: rgba(109, 155, 255, 0.28);
+
+  --scrollbar-thumb: rgba(233, 235, 238, 0.2);
+
+  --shadow-xs: 0 1px 1px rgba(0, 0, 0, 0.2);
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 8px 20px rgba(0, 0, 0, 0.36), 0 1px 3px rgba(0, 0, 0, 0.3);
+  --shadow-lg: 0 18px 44px rgba(0, 0, 0, 0.5), 0 2px 6px rgba(0, 0, 0, 0.3);
+  --shadow-switch-thumb: 0 1px 2px rgba(0, 0, 0, 0.4);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme]) {
+    color-scheme: dark;
+
+    --bg-app: #131417;
+    --bg-surface: #1a1b1f;
+    --bg-subtle: #212328;
+    --bg-hover: #25272c;
+    --bg-active: #2d3036;
+    --bg-selected: #1d2a45;
+    --bg-inset: #16171a;
+    --bg-elevated: #222429;
+    --bg-overlay: rgba(0, 0, 0, 0.56);
+    --bg-inverse: #e9ebee;
+  --bg-knob: #e9ebee;
+
+    --fg-default: #e9ebee;
+    --fg-muted: #a5abb5;
+    --fg-subtle: #959ba5;
+    --fg-disabled: #5e636c;
+  --fg-inactive: #90969f;
+    --fg-inverse: #1a1b1f;
+    --fg-on-accent: #ffffff;
+    --fg-selected: #a9c4ff;
+
+    --border-default: #2c2f35;
+    --border-strong: #3c4048;
+    --border-subtle: #25272c;
+
+    --accent: #2c62dd;
+    --accent-hover: #3069e8;
+    --accent-active: #2556c4;
+    --accent-text: #8cb0ff;
+    --accent-subtle: #1b2742;
+    --accent-border: #2e4677;
+
+    --success: #18794a;
+    --success-text: #6cd49b;
+    --success-subtle: #14261d;
+    --success-border: #22513a;
+
+    --warning: #a35a00;
+    --warning-text: #f0b660;
+    --warning-subtle: #2a2114;
+    --warning-border: #5a4320;
+
+    --danger: #cd2b31;
+    --danger-hover: #b8242a;
+    --danger-text: #ff8f8f;
+    --danger-subtle: #2e1718;
+    --danger-border: #612a2c;
+
+    --info: #0b6a9e;
+    --info-text: #74c3f0;
+    --info-subtle: #112330;
+    --info-border: #1f4862;
+
+    --focus-ring: #6d9bff;
+    --focus-ring-soft: rgba(109, 155, 255, 0.28);
+
+    --scrollbar-thumb: rgba(233, 235, 238, 0.2);
+
+    --shadow-xs: 0 1px 1px rgba(0, 0, 0, 0.2);
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+    --shadow-md: 0 8px 20px rgba(0, 0, 0, 0.36), 0 1px 3px rgba(0, 0, 0, 0.3);
+    --shadow-lg: 0 18px 44px rgba(0, 0, 0, 0.5), 0 2px 6px rgba(0, 0, 0, 0.3);
+    --shadow-switch-thumb: 0 1px 2px rgba(0, 0, 0, 0.4);
+  }
+}
+
+/* ------------------------------------------------------------------ font families
+ * check-ui allows `font-family` only in this file, so every family assignment lives here. */
+html {
+  font-family: var(--font-sans);
+}
+
+code,
+kbd,
+pre,
+samp,
+.od-mono {
+  font-family: var(--font-mono);
+}
+
+button,
+input,
+select,
+textarea {
+  font-family: inherit;
+}

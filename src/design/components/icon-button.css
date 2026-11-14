@@ -1,0 +1,54 @@
+.od-icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  margin: 0;
+  padding: 0;
+  border: var(--border-width) solid transparent;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--fg-muted);
+  cursor: default;
+  transition:
+    background-color var(--duration-fast) var(--ease-standard),
+    color var(--duration-fast) var(--ease-standard);
+}
+
+.od-icon-button--md {
+  width: var(--control-height-md);
+  height: var(--control-height-md);
+}
+
+.od-icon-button--sm {
+  width: var(--control-height-sm);
+  height: var(--control-height-sm);
+}
+
+.od-icon-button:hover:not(:disabled),
+.od-icon-button[data-state="open"] {
+  background: var(--bg-hover);
+  color: var(--fg-default);
+}
+
+.od-icon-button:active:not(:disabled),
+.od-icon-button[aria-pressed="true"] {
+  background: var(--bg-active);
+  color: var(--fg-default);
+}
+
+.od-icon-button--secondary {
+  border-color: var(--border-strong);
+  background: var(--bg-surface);
+  box-shadow: var(--shadow-xs);
+}
+
+.od-icon-button:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
+}
+
+.od-icon-button:disabled {
+  color: var(--fg-disabled);
+  background: transparent;
+}

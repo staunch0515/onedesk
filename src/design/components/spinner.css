@@ -1,0 +1,76 @@
+.od-spinner {
+  display: inline-block;
+  flex: none;
+  border-radius: var(--radius-full);
+  border: var(--border-width-thick) solid currentColor;
+  border-right-color: transparent;
+  opacity: 0.8;
+  animation: od-spin var(--duration-spin) linear infinite;
+}
+
+.od-spinner--sm {
+  width: var(--icon-sm);
+  height: var(--icon-sm);
+}
+
+.od-spinner--md {
+  width: var(--icon-md);
+  height: var(--icon-md);
+}
+
+.od-spinner--lg {
+  width: var(--icon-lg);
+  height: var(--icon-lg);
+}
+
+.od-progress {
+  -webkit-appearance: none;
+  appearance: none;
+  display: block;
+  position: relative;
+  overflow: hidden;
+  width: var(--progress-width);
+  height: var(--progress-height);
+  border: 0;
+  border-radius: var(--radius-full);
+  background: var(--bg-active);
+  color: var(--accent);
+}
+
+.od-progress::-webkit-progress-bar {
+  background: var(--bg-active);
+  border-radius: var(--radius-full);
+}
+
+.od-progress::-webkit-progress-value {
+  background: var(--accent);
+  border-radius: var(--radius-full);
+  transition: width var(--duration-base) var(--ease-standard);
+}
+
+.od-progress::-moz-progress-bar {
+  background: var(--accent);
+  border-radius: var(--radius-full);
+}
+
+.od-progress--indeterminate {
+  display: block;
+}
+
+.od-progress__bar {
+  position: absolute;
+  inset: 0;
+  width: 40%;
+  border-radius: var(--radius-full);
+  background: var(--accent);
+  animation: od-progress-slide var(--duration-indeterminate) var(--ease-standard) infinite;
+}
+
+@keyframes od-progress-slide {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(250%);
+  }
+}
