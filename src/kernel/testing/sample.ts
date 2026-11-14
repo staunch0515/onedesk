@@ -39,7 +39,7 @@ export const sampleKind: KindDefinition = {
   defaultAction: "echo",
   views: ["summary", "broken"],
   describe: (resource) => ({ summary: resource.name, usage: "测试用" }),
-  validate: (body) => (body.note === "bad" ? { note: "备注不能是 bad" } : {}),
+  validate: (body): Record<string, string> => (body.note === "bad" ? { note: "备注不能是 bad" } : {}),
 };
 
 export interface SamplePlugin {

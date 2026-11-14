@@ -185,15 +185,24 @@ export class ResourceStore {
     if (allowed && allowed.length === 0) return [];
     const { where, whereParams, score, scoreParams } = searchSql(terms);
     const params: SqlParam[] = [...whereParams];
-    let sql = `SELECT ${COLUMNS} FROM resources WHERE ${where}`;
+    // Two steps: rank ids first (the sorter then carries only small rows), then load the winners.
+    let sql = `SELECT id FROM resources WHERE ${where}`;
     if (allowed) {
       sql += ` AND kind IN (${allowed.map(() => "?").join(", ")})`;
       params.push(...allowed);
     }
     sql += ` ORDER BY (${score}) DESC, updated_at DESC, id LIMIT ?`;
     params.push(...scoreParams, limit);
-    const rows = await this.db.select<ResourceRow>(sql, params);
-    return rows.map(rowToResource);
+    const ids = (await this.db.select<{ id: string }>(sql, params)).map((row) => row.id);
+    if (ids.length === 0) return [];
+    const rows = await this.db.select<ResourceRow>(`SELECT ${COLUMNS} FROM resources WHERE id IN (${ids.map(() => "?").join(", ")})`, ids);
+    const byId = new Map(rows.map((row) => [row.id, row]));
+    const found: Resource[] = [];
+    for (const id of ids) {
+      const row = byId.get(id);
+      if (row) found.push(rowToResource(row));
+    }
+    return found;
   }
 
   validate(kind: string, body: Record<string, unknown>): Record<string, string> {
