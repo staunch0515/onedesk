@@ -122,3 +122,12 @@
 - **D95** 构建：Vite 8 不再内置 esbuild，`build.minify` 使用默认压缩器（`minify: !TAURI_ENV_DEBUG`）。
 - **D96** 最低系统版本改为 macOS 11.3（WebKit 14.1 起支持 flex `gap`；11.0–11.2 间距会塌陷）。取代架构文档中的 11.0。
 - **D97** Rust 命令 `db_select` / `db_execute` 的 `params` 可省略（缺省 `[]`）。钥匙串调用不持有数据库锁；数据库锁中毒时自动恢复。
+
+## 设计系统（2026-11-14，主会话汇总设计会话报告与审查）
+
+- **D100** 主题“跟随系统”时移除 `data-theme`，由 `prefers-color-scheme` 决定；深色配色写两份（媒体查询 + `[data-theme=dark]`），因为 macOS 11/12 不支持 `light-dark()`。组件不碰 localStorage，持久化通过回调由外壳存 prefs。
+- **D101** `--border-control`（≥3:1）用于输入框、下拉、复选框边框和开关关闭态轨道；`--border-strong` 只用于分隔线。`--fg-inactive`（≥4.5:1）用于灰色但可交互的项（停用插件的资源等），`--fg-disabled` 只用于真正禁用的控件。
+- **D102** 可交互表格使用 `role=grid`，一个 Tab 停靠点，↑/↓/Home/End 移动行焦点；行内控件的按键与点击不触发行激活。
+- **D103** 危险（danger）吐司默认不自动消失。每个 Tooltip 自带 Provider。Checkbox、Progress 用原生元素（不新增依赖）。Icon 按 lucide 名字解析（含旧名别名），未知名字显示占位图标。
+- **D104** CommandPalette 默认按标签/描述/关键词过滤；外部结果（内核搜索）时传 `filter={false}`，加载中 `aria-busy`。Dialog `dismissible={false}` 时遮罩和 Esc 都不关闭。
+- **D105** 额外的布局组件 `Stack`、`Text`、`Section`，让页面排版不需要一次性 CSS。组件展示页保留，外壳接管后通过 `?gallery` 打开。
