@@ -35,9 +35,7 @@
       "Bash(git push *)",
       "Bash(git reset *)",
       "Bash(git checkout -- *)",
-      "Bash(git clean *)",
-      "Write",
-      "Edit"
+      "Bash(git clean *)"
     ]
   }
 }

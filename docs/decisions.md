@@ -75,3 +75,23 @@
 ### 临时措施（必须迁移）
 
 - **T01** 浏览器预览模式把 sql.js 数据库存在 `localStorage`，只用于开发与界面测试，不含密钥（预览模式的 secrets 为内存实现）。迁移期限：第二个里程碑结束前评估是否保留预览模式。
+
+## 接口定稿复审（2026-11-14，主会话，依据 Fable 5.2 独立审查）
+
+- **D50** 占位符检查：格式错误的 `{{…}}` 是错误（阻止保存）；`$name`、`${name}`、`:name` 是警告（不会被替换，正文中可能合法）。不用正则后行断言（macOS 11/12 的 WebKit 不支持）。取代 D08 中“出现时报错”。
+- **D51** 平台接口增加 `app.status`、`plugins.scan`、`files.{pickFolder, exportWrite, importRead}`。组合根 `src/shell/bootstrap.ts` 是外壳中唯一可以 import `src/platform` 的文件。
+- **D52** `PluginSource.error`：扫描阶段的问题（清单缺失或无法解析、入口缺失、main 越出插件目录）作为加载错误上报，不加载。
+- **D53** 密钥名是全局命名空间（用户在设置页管理，如 `github_token`），名字索引存 `secret_names` 表，值只在钥匙串。卸载插件时只询问删除它声明、且没有其他已安装插件声明的密钥。
+- **D54** `plugins.uninstalled` 标记卸载（文件夹保留，再次扫描不会自动重装；设置页可重新安装）。新发现的外部插件默认停用，内置插件默认启用。
+- **D55** 外部插件入口是自包含的 ES 模块，`export default` 一个 PluginModule；宿主 API 通过 `activate(host)` 传入，不需要 import。
+- **D56** 动作运行以 `runId` 跟踪；状态增加 `cancelled`。`actions.run` 不抛异常：未知动作、插件停用、输入无效、插件抛错、输出类型与声明不符都返回失败结果。
+- **D57** 导出额外包含 `plugins.json`（启用状态、设置、插件存储），只导出不导入；导入只恢复资源和集合，保留原 id、version、时间戳和 origin；未知 kind 也导入（显示为失效资源）。集合冲突同样询问覆盖或跳过。`attachments/` 保留为空文件夹（附件功能下一阶段）。
+- **D58 已知限制**：插件与宿主同进程，恶意插件理论上可绕过宿主 API 直接调用 Tauri 命令。本里程碑只运行内置插件和用户自行放入的插件，接受此限制；隔离（Worker/独立进程 + Rust 侧权限检查）列入下一阶段。
+- **D59** `schema_version(version INTEGER NOT NULL)` 单行。网络主机模式：精确主机、`*.example.com`、`*`；只允许 http/https；非 2xx 正常返回，网络失败或超时（默认 30 秒）报 `unavailable`；响应头名小写，重复的用 `, ` 连接；正文按 UTF-8 文本。
+- **D60** `requires.plugins`：允许读取所列插件的 kind 的资源、运行它们的动作；写入只限自己的 kind。插件收到的事件只包含它能读的 kind。插件不能把视图或动作挂到别的插件的 kind 上。
+- **D61** 单一来源：kind 显示哪些视图只由 `KindDefinition.views` 决定（去掉 `ViewDefinition.kinds`）；动作出现在哪些 kind 上只由 `ActionDefinition.kinds` 决定。
+- **D62** 字段值类型见 `FieldDefSchema` 注释；HTTP 头用 `longtext`，每行 `Key: Value`。create/update 拒绝不合法的 body（`validation`）；导入或 schema 变化可能产生不合法的旧数据，界面灰色显示。
+- **D63** 错误：`OneDeskError(code, 中文信息)`，code ∈ not_found / validation / conflict / permission / unavailable / not_implemented / internal。Rust 命令失败返回中文字符串。
+- **D64** `views.render(key, resourceId)`：ViewState 由内核构建。`ResourceQuery` 增加 group、offset，去掉 text（全文搜索只有 `Kernel.search`）。列表默认按 updatedAt 倒序；菜单顺序由外壳存在 app_settings。
+- **D65** 链接和 `openExternal` 只允许 http、https、mailto。file 类型的动作输出在本里程碑只显示内容，不提供保存。
+- **D66** 清单使用严格校验（未知字段报错，防止拼写错误被静默忽略）。通过宿主 API 创建资源时忽略 `id` 和 `origin`。

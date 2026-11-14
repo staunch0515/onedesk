@@ -2,6 +2,7 @@
 export * from "./schemas";
 export * from "./types";
 export * from "./placeholders";
+export * from "./errors";
 
 import type { PluginModule } from "./types";
 

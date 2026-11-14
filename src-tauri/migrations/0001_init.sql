@@ -1,5 +1,5 @@
 -- 0001_init: initial schema for milestone 1. Published migrations are never edited (D21).
--- schema_version is created and maintained by the migration runner, not here.
+-- schema_version(version INTEGER NOT NULL), one row, is created and maintained by the migration runner, not here.
 
 CREATE TABLE resources (
   id          TEXT PRIMARY KEY,
@@ -31,6 +31,7 @@ CREATE TABLE collections (
 CREATE TABLE plugins (
   id           TEXT PRIMARY KEY,
   enabled      INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
+  uninstalled  INTEGER NOT NULL DEFAULT 0 CHECK (uninstalled IN (0, 1)),  -- external plugins only (D16)
   settings     TEXT NOT NULL DEFAULT '{}',
   installed_at TEXT NOT NULL
 );
@@ -45,4 +46,10 @@ CREATE TABLE plugin_storage (
 CREATE TABLE app_settings (
   key   TEXT PRIMARY KEY,
   value TEXT NOT NULL
+);
+
+-- Names only; secret values live in the macOS Keychain (D14).
+CREATE TABLE secret_names (
+  name       TEXT PRIMARY KEY,
+  created_at TEXT NOT NULL
 );

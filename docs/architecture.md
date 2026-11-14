@@ -26,7 +26,7 @@ OneDesk 是“内核 + 插件”的桌面工作入口。内核只认识三件事
   系统能力：opener（系统浏览器）、clipboard-manager、http（无 CORS 的网络请求）、dialog（选择文件夹）
 ```
 
-依赖方向只能向下：`shell → design / kernel / plugin-api`，`plugins → plugin-api`，`kernel → plugin-api`。`kernel` 不得 import `plugins/`、`shell/`、`design/`、`platform/`；平台能力由 `createKernel({ platform })` 注入。测试注入 sql.js + 模拟平台。
+依赖方向只能向下：`shell → design / kernel / plugin-api`，`plugins → plugin-api`，`kernel → plugin-api`，`platform → kernel(类型)`。`kernel` 不得 import `plugins/`、`shell/`、`design/`、`platform/`；平台能力由 `createKernel({ platform })` 注入。外壳中只有组合根 `src/shell/bootstrap.ts` 可以 import `platform/`（选择 Tauri 或浏览器预览实现、扫描插件、创建内核）。测试注入 sql.js + 模拟平台。
 
 ## 3. 内核
 

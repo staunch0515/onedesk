@@ -79,7 +79,7 @@ for (const b of builtins) {
   for (const f of walk(dir)) {
     for (const spec of importsOf(readFileSync(f, "utf8"))) {
       if (spec === "@onedesk/plugin-api") continue;
-      if (/\.test\.tsx?$/.test(f) && (spec === "vitest" || spec.includes("kernel/testing"))) continue;
+      if (/\.test\.tsx?$/.test(f) && (spec === "vitest" || /(^|\/)(kernel|plugins)\/testing(\/|$)|^\.\.\/testing(\/|$)/.test(spec))) continue;
       if (spec.startsWith(".")) {
         const target = resolve(dirname(f), spec);
         if (target === dir || target.startsWith(dir + sep)) continue;

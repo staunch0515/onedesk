@@ -1,15 +1,17 @@
 /**
  * The single placeholder syntax for OneDesk templates: `{{name}}` (D08).
  * Shared by the host and plugins so syntax cannot drift.
+ * Note: no regex lookbehind here — it is a SyntaxError on macOS 11/12 WebKit.
  */
 
 const PLACEHOLDER = /\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}\}/g;
-/** Anything that looks like a placeholder attempt in another syntax or malformed. */
-const FOREIGN_SYNTAX: Array<{ re: RegExp; reason: string }> = [
-  { re: /(^|[^$\w])\$\{?[A-Za-z_][A-Za-z0-9_]*\}?/g, reason: "不支持 $name / ${name}，请写成 {{name}}" },
-  { re: /(^|[\s(,=])(?<!:):[A-Za-z_][A-Za-z0-9_]*\b/g, reason: "不支持 :name，请写成 {{name}}" },
-  { re: /\{\{(?!\s*[A-Za-z_][A-Za-z0-9_]*\s*\}\})/g, reason: "占位符格式不正确，应为 {{name}}" },
-];
+
+export interface PlaceholderLint {
+  /** Malformed `{{…}}` — the template cannot be filled correctly. Blocks saving. */
+  errors: string[];
+  /** Looks like a placeholder in another syntax (`$name`, `${name}`, `:name`); will NOT be replaced. Shown, not blocking. */
+  warnings: string[];
+}
 
 /** Names referenced by `{{name}}` placeholders, in order of first appearance. */
 export function extractPlaceholders(template: string): string[] {
@@ -21,13 +23,16 @@ export function extractPlaceholders(template: string): string[] {
   return names;
 }
 
-/** Problems in a template: foreign syntaxes and malformed placeholders. Errs on the side of rejecting. */
-export function lintPlaceholders(template: string): string[] {
-  const problems = new Set<string>();
-  for (const { re, reason } of FOREIGN_SYNTAX) {
-    if (new RegExp(re.source, re.flags).test(template)) problems.add(reason);
-  }
-  return [...problems];
+/** Check a template. Errs on the side of flagging. */
+export function lintPlaceholders(template: string): PlaceholderLint {
+  const errors: string[] = [];
+  const warnings: string[] = [];
+  // Every `{{` must start a well-formed placeholder.
+  const stripped = template.replace(PLACEHOLDER, "");
+  if (stripped.includes("{{")) errors.push("占位符格式不正确，应为 {{name}}（名字由字母、数字、下划线组成，不以数字开头）");
+  if (/(^|[^$\w])\$\{?[A-Za-z_][A-Za-z0-9_]*\}?/.test(stripped)) warnings.push("$name / ${name} 不会被替换，参数请写成 {{name}}");
+  if (/(^|[\s(,=]):[A-Za-z_][A-Za-z0-9_]*\b/.test(stripped)) warnings.push(":name 不会被替换，参数请写成 {{name}}");
+  return { errors, warnings };
 }
 
 /** Replace `{{name}}` with values; throws listing every missing name. */

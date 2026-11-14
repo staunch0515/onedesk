@@ -37,10 +37,13 @@ export const FIELD_TYPES = [
 export const FieldTypeSchema = z.enum(FIELD_TYPES);
 
 /**
- * A field in a kind schema, action input, or plugin settings.
- * - `select`: requires `options`.
- * - `reference`: value is a resource id; `refKind` restricts the target kind.
- * - `parameter`: value is `ParameterDef[]` (a list of parameter definitions).
+ * A field in a kind schema, action input, or plugin settings. Body value type per field type:
+ * - `text`, `longtext`: string. Key-value data (e.g. HTTP headers) is `longtext` with one `Key: Value` per line.
+ * - `url`: string, must be an http/https/mailto URL. `number`: finite number. `boolean`: boolean.
+ * - `select`: string, one of `options[].value` (options required).
+ * - `reference`: string resource id; `refKind` restricts the target kind.
+ * - `parameter`: `ParameterDef[]` (a list of parameter definitions).
+ * Missing/empty values are allowed unless `required`. create/update reject invalid bodies (code `validation`).
  */
 export const FieldDefSchema = z
   .object({
@@ -68,7 +71,7 @@ export const ParameterDefSchema = z.object({
 
 // ---------------------------------------------------------------- manifest
 
-export const ManifestSchema = z.object({
+export const ManifestSchema = z.strictObject({
   id: PluginIdSchema,
   name: z.string().min(1),
   version: z.string().regex(/^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/, "version 必须是语义化版本，如 1.0.0"),
@@ -79,19 +82,19 @@ export const ManifestSchema = z.object({
   /** Entry module file for external plugins (relative to the plugin folder). Ignored for built-ins. */
   main: z.string().default("index.js"),
   provides: z
-    .object({
+    .strictObject({
       kinds: z.array(LocalIdSchema).default([]),
       actions: z.array(LocalIdSchema).default([]),
       views: z.array(LocalIdSchema).default([]),
     })
     .default({ kinds: [], actions: [], views: [] }),
   requires: z
-    .object({
-      /** Host patterns allowed for `host.network.fetch`; `"*"` = any host (D13). */
+    .strictObject({
+      /** Host patterns for `host.network.fetch` (D13): exact `api.x.com`, wildcard `*.x.com`, or `"*"` (any host). http/https only. */
       network: z.array(z.string().min(1)).default([]),
       /** Secret names readable via `host.secrets.get` (D14). */
       secrets: z.array(z.string().min(1)).default([]),
-      /** Other plugin ids whose data/actions this plugin depends on. */
+      /** Other plugin ids whose kinds this plugin may READ and whose actions it may run (D10). */
       plugins: z.array(PluginIdSchema).default([]),
     })
     .default({ network: [], secrets: [], plugins: [] }),
@@ -103,9 +106,11 @@ export const ManifestSchema = z.object({
 export const VisibilitySchema = z.enum(["private", "public"]);
 export const OriginSchema = z.enum(["original", "subscribed", "copied"]);
 
+const IsoDate = z.iso.datetime({ offset: true });
+
 export const ResourceSchema = z.object({
   id: z.string().min(1),
-  kind: z.string().min(1),
+  kind: LocalIdSchema,
   name: z.string().min(1),
   group: z.string(),
   tags: z.array(z.string()),
@@ -114,12 +119,15 @@ export const ResourceSchema = z.object({
   visibility: VisibilitySchema,
   aiVisible: z.boolean(),
   version: z.number().int().positive(),
-  createdAt: z.string(),
-  updatedAt: z.string(),
+  createdAt: IsoDate,
+  updatedAt: IsoDate,
   origin: OriginSchema,
 });
 
-/** Input for creating a resource; omitted fields get defaults. */
+/**
+ * Input for creating a resource; omitted fields get defaults.
+ * Via the host API, `id` and `origin` are ignored (kernel assigns id, origin = "original"); only import may set them.
+ */
 export const ResourceDraftSchema = z.object({
   id: z.string().min(1).optional(),
   kind: z.string().min(1),
@@ -178,9 +186,15 @@ export const TextNodeSchema = z.object({
   tone: z.enum(["default", "muted", "success", "warning", "danger"]).optional(),
 });
 
+/** Only http:, https:, mailto: links are rendered/opened by the host. */
+export const SafeHrefSchema = z
+  .string()
+  .min(1)
+  .refine((v) => /^(https?:\/\/|mailto:)/i.test(v), "链接只支持 http、https、mailto");
+
 export const LinkNodeSchema = z.object({
   type: z.literal("link"),
-  href: z.string().min(1),
+  href: SafeHrefSchema,
   text: z.string().optional(),
 });
 
@@ -193,15 +207,16 @@ export const ACTION_OUTPUT_TYPES = ["text", "table", "file", "link", "none"] as 
 export const ActionOutputTypeSchema = z.enum(ACTION_OUTPUT_TYPES);
 
 export const ActionOutputSchema = z.discriminatedUnion("type", [
-  z.object({ type: z.literal("text"), text: z.string(), format: z.enum(["plain", "markdown", "code"]).optional(), message: z.string().optional() }),
+  z.object({ type: z.literal("text"), text: z.string(), format: z.enum(["plain", "markdown", "code"]).default("plain"), message: z.string().optional() }),
   z.object({
     type: z.literal("table"),
     columns: TableNodeSchema.shape.columns,
     rows: TableNodeSchema.shape.rows,
     message: z.string().optional(),
   }),
+  /** UTF-8 text content only in apiVersion 1; the shell displays it with its name (no save in milestone 1). */
   z.object({ type: z.literal("file"), name: z.string().min(1), mime: z.string().optional(), content: z.string(), message: z.string().optional() }),
-  z.object({ type: z.literal("link"), href: z.string().min(1), text: z.string().optional(), message: z.string().optional() }),
+  z.object({ type: z.literal("link"), href: SafeHrefSchema, text: z.string().optional(), message: z.string().optional() }),
   z.object({ type: z.literal("none"), message: z.string().optional() }),
 ]);
 
@@ -217,3 +232,12 @@ export const NotifySchema = z.object({
   title: z.string().min(1),
   description: z.string().optional(),
 });
+
+// ---------------------------------------------------------------- errors
+
+/**
+ * Error codes shared by kernel, host API and shell. Kernel/host errors are `OneDeskError` instances
+ * (see types.ts) with a Chinese user-facing message.
+ */
+export const ERROR_CODES = ["not_found", "validation", "conflict", "permission", "unavailable", "not_implemented", "internal"] as const;
+export const ErrorCodeSchema = z.enum(ERROR_CODES);

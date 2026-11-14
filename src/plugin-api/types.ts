@@ -7,6 +7,7 @@ import type {
   ActionInputSpecSchema,
   ActionOutputSchema,
   ActionOutputTypeSchema,
+  ErrorCodeSchema,
   FieldDefSchema,
   FieldTypeSchema,
   InvocationSourceSchema,
@@ -36,13 +37,20 @@ export type ManifestInput = z.input<typeof ManifestSchema>;
 export type Resource = z.infer<typeof ResourceSchema>;
 export type ResourceDraft = z.input<typeof ResourceDraftSchema>;
 export type ResourcePatch = z.infer<typeof ResourcePatchSchema>;
+/** Validated node (defaults applied) — what the shell renders. */
 export type ViewNode = z.infer<typeof ViewNodeSchema>;
+/** Node as a plugin writes it (optional fields with defaults may be omitted). */
+export type ViewNodeInput = z.input<typeof ViewNodeSchema>;
 export type FormNode = z.infer<typeof FormNodeSchema>;
 export type TableNode = z.infer<typeof TableNodeSchema>;
 export type TextNode = z.input<typeof TextNodeSchema>;
 export type LinkNode = z.infer<typeof LinkNodeSchema>;
 export type ViewTree = z.input<typeof ViewTreeSchema>;
+/** Validated output (defaults applied). */
 export type ActionOutput = z.infer<typeof ActionOutputSchema>;
+/** Output as `run` returns it. */
+export type ActionOutputInput = z.input<typeof ActionOutputSchema>;
+export type ErrorCode = z.infer<typeof ErrorCodeSchema>;
 export type ActionOutputType = z.infer<typeof ActionOutputTypeSchema>;
 export type ActionInputSpec = z.infer<typeof ActionInputSpecSchema>;
 export type InvocationSource = z.infer<typeof InvocationSourceSchema>;
@@ -57,9 +65,12 @@ export interface KindDefinition {
   /** lucide icon name. */
   icon?: string;
   schema: FieldDef[];
-  /** Local action id run when the menu item is activated with the primary action. */
+  /** Local action id of this plugin run as the primary action; must list this kind in its `kinds`. */
   defaultAction?: string;
-  /** Local view ids; first one is the default view. Host always adds the generic “编辑” view (D12). */
+  /**
+   * Local view ids of THIS plugin, in order; the first is the default view. Single source of truth for
+   * which views a kind shows. Host always appends the generic “编辑” view (D12).
+   */
   views: string[];
   /** Summary for AI consumers (not shown as UI). */
   describe(resource: Resource): { summary: string; usage: string };
@@ -82,17 +93,23 @@ export interface ActionDefinition {
   id: string;
   label: string;
   icon?: string;
-  /** Kinds this action appears on (D06). Empty = global action (command palette only). */
+  /**
+   * Kinds (registered by THIS plugin) this action appears on (D06). Single source of truth for action ↔ kind.
+   * Omitted or [] = global action (no resource; reachable via menu items / command palette).
+   */
   kinds?: string[];
   input?: ActionInputSpec;
+  /** The declared type; `run` must return this type (or `none`), otherwise the run fails. */
   output: ActionOutputType;
-  run(context: ActionContext, input: Record<string, unknown>): Promise<ActionOutput> | ActionOutput;
+  run(context: ActionContext, input: Record<string, unknown>): Promise<ActionOutputInput> | ActionOutputInput;
 }
 
 export interface ActionResult {
-  status: "success" | "error";
+  /** Unique per run; running state and cancellation are tracked by runId. */
+  runId: string;
+  status: "success" | "error" | "cancelled";
   output?: ActionOutput;
-  error?: { message: string; hint?: string };
+  error?: { code: ErrorCode; message: string; hint?: string };
   durationMs: number;
   /** Global action key `pluginId/actionId`. */
   action: string;
@@ -100,6 +117,7 @@ export interface ActionResult {
   finishedAt: string;
 }
 
+/** Built by the kernel (not by the shell or plugin). */
 export interface ViewState {
   /** Increments whenever the resource or its last action result changes. */
   revision: number;
@@ -111,7 +129,7 @@ export interface ViewDefinition {
   id: string;
   label: string;
   icon?: string;
-  kinds: string[];
+  /** Which kinds show this view is decided by `KindDefinition.views` only. */
   render(resource: Resource, state: ViewState): ViewTree | Promise<ViewTree>;
 }
 
@@ -127,18 +145,21 @@ export interface MenuItemDefinition {
 
 export type Unsubscribe = () => void;
 
+/** Delivered to a plugin only for kinds it can read (own kinds + kinds of `requires.plugins`). */
 export type HostEvent =
   | { type: "resource.created"; resource: Resource }
   | { type: "resource.updated"; resource: Resource }
   | { type: "resource.deleted"; id: string; kind: string }
   | { type: "action.completed"; result: ActionResult };
 
+/** Filters are ANDed. Results ordered by updatedAt desc. Full-text search is `Kernel.search` (shell only). */
 export interface ResourceQuery {
   kind?: string;
   tag?: string;
+  group?: string;
   collectionId?: string;
-  text?: string;
   limit?: number;
+  offset?: number;
 }
 
 export interface Collection {
@@ -151,7 +172,10 @@ export interface Collection {
 export interface HostApi {
   readonly pluginId: string;
 
-  /** Only resources of kinds registered by this plugin (D10). */
+  /**
+   * D10: read own kinds + kinds of plugins listed in `requires.plugins`; write own kinds only.
+   * Querying a kind outside that set throws `OneDeskError("permission")`.
+   */
   resources: {
     registerKind(kind: KindDefinition): void;
     get(id: string): Promise<Resource | null>;
@@ -167,7 +191,7 @@ export interface HostApi {
   };
   actions: {
     register(action: ActionDefinition): void;
-    /** Run any registered action by global key `pluginId/actionId`. */
+    /** Run an action by global key `pluginId/actionId`: own actions, or those of `requires.plugins`. Never throws; failures are results. */
     run(key: string, args: { resourceId?: string; input?: Record<string, unknown> }): Promise<ActionResult>;
   };
   events: {
@@ -176,7 +200,7 @@ export interface HostApi {
   ui: {
     registerView(view: ViewDefinition): void;
     registerMenuItem(item: MenuItemDefinition): void;
-    /** Open in the system browser (D09). `profile` is reserved, ignored in milestone 1. */
+    /** Open in the system browser (D09). http/https/mailto only. `profile` is reserved, ignored in milestone 1. */
     openExternal(url: string, options?: { profile?: string }): Promise<void>;
     copyText(text: string): Promise<void>;
   };
@@ -191,11 +215,14 @@ export interface HostApi {
   settings: {
     get<T = unknown>(name: string): Promise<T | undefined>;
   };
-  /** Keychain-backed, only names declared in manifest.requires.secrets (D14). */
+  /** Keychain-backed, global name space; only names declared in manifest.requires.secrets (D14). */
   secrets: {
     get(name: string): Promise<string | undefined>;
   };
-  /** Only hosts declared in manifest.requires.network (D13). */
+  /**
+   * Only hosts declared in manifest.requires.network (D13). Non-2xx statuses RESOLVE (check `status`);
+   * network failures/timeouts reject with OneDeskError("unavailable"). Default timeout 30 s.
+   */
   network: {
     fetch(url: string, init?: NetworkRequestInit): Promise<NetworkResponse>;
   };
@@ -217,13 +244,19 @@ export interface NetworkRequestInit {
 export interface NetworkResponse {
   status: number;
   statusText: string;
+  /** Lower-cased names; repeated headers joined with ", ". */
   headers: Record<string, string>;
+  /** Decoded as UTF-8 text (binary bodies unsupported in apiVersion 1). */
   body: string;
   durationMs: number;
 }
 
 // ---------------------------------------------------------------- plugin module
 
+/**
+ * A plugin's default export. External plugins: `<plugin dir>/<manifest.main>` is a SELF-CONTAINED ES module
+ * (no bare imports — `@onedesk/plugin-api` is not resolvable from a Blob URL) whose `default` export is this.
+ */
 export interface PluginModule {
   activate(host: HostApi): void | Promise<void>;
   deactivate?(): void | Promise<void>;

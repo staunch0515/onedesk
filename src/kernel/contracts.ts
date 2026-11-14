@@ -3,6 +3,7 @@
  * Frozen for milestone 1 (lead session). The kernel must not import plugins/, shell/, design/, platform/.
  */
 import type {
+  ActionOutputType,
   ActionResult,
   Collection,
   FieldDef,
@@ -19,18 +20,47 @@ import type {
   ResourcePatch,
   ResourceQuery,
   ViewNode,
-  ViewState,
 } from "../plugin-api";
 
 // ================================================================= platform (injected)
 
 export type SqlParam = string | number | null;
 
+// Shapes returned by Rust commands (see src/platform/contract.ts), defined here so the kernel stays platform-free.
+export interface AppStatus {
+  /** Absolute data dir, e.g. /Users/me/Library/Application Support/onedesk */
+  dataDir: string;
+  dbPath: string;
+  schemaVersion: number;
+  /** Latest migration available in this build. */
+  latestSchemaVersion: number;
+  /** Set when a migration failed and was rolled back; the UI must block usage (D21). */
+  migrationError: string | null;
+  /** Snapshot file names in backups/, newest first. */
+  backups: string[];
+}
+
+export interface ScannedPlugin {
+  /** Absolute folder path. */
+  dir: string;
+  /** Raw manifest.json text, or null if missing/unreadable. */
+  manifestText: string | null;
+  /** Entry module source (manifest.main, default index.js), or null if missing. */
+  entrySource: string | null;
+  /** File-system level problem (missing manifest, unreadable entry…), Chinese. */
+  error: string | null;
+}
+
+
+/**
+ * SQL access. Placeholders are `?`. Integral numbers bind as INTEGER, others as REAL; booleans are stored 0/1
+ * by the caller. Errors reject with OneDeskError("internal") carrying a Chinese message.
+ */
 export interface SqlDriver {
   select<T = Record<string, unknown>>(sql: string, params?: SqlParam[]): Promise<T[]>;
   execute(sql: string, params?: SqlParam[]): Promise<{ rowsAffected: number }>;
-  /** Runs all statements in ONE transaction; rolls back on any failure. */
-  batch(statements: Array<{ sql: string; params?: SqlParam[] }>): Promise<void>;
+  /** Runs all statements in ONE transaction; rolls back on any failure. Returns rowsAffected per statement. */
+  batch(statements: Array<{ sql: string; params?: SqlParam[] }>): Promise<number[]>;
 }
 
 export interface Platform {
@@ -48,6 +78,19 @@ export interface Platform {
     set(name: string, value: string): Promise<void>;
     delete(name: string): Promise<void>;
   };
+  /** Used by the shell's composition root (src/shell/bootstrap.ts), not by the kernel itself. */
+  app: {
+    status(): Promise<AppStatus>;
+  };
+  plugins: {
+    scan(): Promise<ScannedPlugin[]>;
+  };
+  files: {
+    /** Native folder picker; null if cancelled. */
+    pickFolder(title: string): Promise<string | null>;
+    exportWrite(parentDir: string, files: Array<{ name: string; content: string }>): Promise<string>;
+    importRead(dir: string): Promise<{ resources: string; collections: string; manifest: string }>;
+  };
   /** Injectable for tests. */
   now?(): Date;
   randomId?(): string;
@@ -60,8 +103,11 @@ export interface PluginSource {
   origin: "builtin" | "external";
   /** Folder path for external plugins, module path for built-ins. Used in error reports. */
   location: string;
-  /** Raw manifest JSON (unvalidated). */
+  /** Raw manifest JSON (unvalidated); null when it could not be read. */
   manifest: unknown;
+  /** File-system level problem found while scanning (missing/invalid manifest, missing entry). Reported, not loaded. */
+  error?: string;
+  /** Resolves the module's `default` export. */
   load(): Promise<PluginModule>;
 }
 
@@ -99,7 +145,7 @@ export interface RegisteredAction {
   label: string;
   icon?: string;
   kinds: string[];
-  output: string;
+  output: ActionOutputType;
   isDefaultFor: string[];
 }
 export interface RegisteredView {
@@ -109,7 +155,6 @@ export interface RegisteredView {
   id: string;
   label: string;
   icon?: string;
-  kinds: string[];
 }
 export interface RegisteredMenuItem extends MenuItemDefinition {
   pluginId: string;
@@ -125,7 +170,7 @@ export type KernelEvent =
   | { type: "resource.created"; resource: Resource }
   | { type: "resource.updated"; resource: Resource }
   | { type: "resource.deleted"; id: string; kind: string }
-  | { type: "action.started"; key: string; resourceId?: string }
+  | { type: "action.started"; runId: string; key: string; resourceId?: string }
   | { type: "action.completed"; result: ActionResult }
   | { type: "plugin.changed"; pluginId: string }
   | { type: "collection.changed"; id: string }
@@ -134,17 +179,24 @@ export type KernelEvent =
 
 // ================================================================= export / import
 
+/**
+ * Export folder = resources.json, collections.json, plugins.json, manifest.json, attachments/ (empty in milestone 1).
+ * plugins.json (enabled state, settings, plugin storage) is export-only in milestone 1; import restores resources
+ * and collections only. Secrets are never exported.
+ */
 export interface ExportBundle {
   manifest: { app: "onedesk"; formatVersion: 1; schemaVersion: number; exportedAt: string; counts: { resources: number; collections: number } };
   resources: Resource[];
   collections: Collection[];
+  plugins: Array<{ id: string; enabled: boolean; settings: Record<string, unknown>; storage: Record<string, unknown> }>;
 }
 
+/** Imported items keep their id, version, createdAt, updatedAt, origin. Unknown kinds are imported (shown as orphaned). */
 export interface ImportPlan {
   newResources: Resource[];
   conflicts: Array<{ incoming: Resource; existing: Resource }>;
   newCollections: Collection[];
-  conflictingCollections: Collection[];
+  collectionConflicts: Array<{ incoming: Collection; existing: Collection }>;
 }
 
 // ================================================================= the kernel API used by the shell
@@ -157,6 +209,7 @@ export interface Kernel {
 
   resources: {
     get(id: string): Promise<Resource | null>;
+    /** includeDisabled: also resources whose kind is not currently registered (disabled or missing plugin). */
     list(query?: ResourceQuery & { includeDisabled?: boolean }): Promise<Resource[]>;
     create(draft: ResourceDraft): Promise<Resource>;
     update(id: string, patch: ResourcePatch): Promise<Resource>;
@@ -167,7 +220,10 @@ export interface Kernel {
     groups(): Promise<string[]>;
   };
 
-  /** Substring search over name, description, tags and body text; terms ANDed; name hits first. */
+  /**
+   * Substring search over name, description, tags and body strings. Query and search_text are lower-cased with
+   * JS toLowerCase; matching uses SQLite instr(). Whitespace-separated terms ANDed; name hits first, then updatedAt desc.
+   */
   search(text: string, options?: { kinds?: string[]; limit?: number; includeDisabled?: boolean }): Promise<Resource[]>;
 
   collections: {
@@ -180,7 +236,11 @@ export interface Kernel {
   };
 
   plugins: {
-    /** Validate + load + activate (if enabled). Never throws for a single bad plugin; see loadErrors(). */
+    /**
+     * Called once at startup (rescan = restart in milestone 1). Validate + load + activate (if enabled).
+     * Never throws for a single bad plugin; see loadErrors(). First sight inserts a `plugins` row:
+     * built-in → enabled, external → disabled until the user enables it. Uninstalled external plugins are skipped.
+     */
     load(sources: PluginSource[]): Promise<void>;
     list(): PluginInfo[];
     loadErrors(): PluginLoadError[];
@@ -188,6 +248,7 @@ export interface Kernel {
     disable(id: string): Promise<void>;
     /** External only (D16). Returns secret names the plugin declared, so the UI can ask about deleting them. */
     uninstall(id: string): Promise<{ declaredSecrets: string[] }>;
+    /** Stored values merged over manifest.settings defaults. */
     getSettings(id: string): Promise<Record<string, unknown>>;
     setSettings(id: string, values: Record<string, unknown>): Promise<void>;
   };
@@ -199,7 +260,7 @@ export interface Kernel {
     kindOwner(id: string): string | undefined;
     actionsFor(kind: string): RegisteredAction[];
     action(key: string): RegisteredAction | undefined;
-    /** Kind views in declared order, then CORE_EDIT_VIEW. */
+    /** KindDefinition.views in order, then CORE_EDIT_VIEW. */
     viewsFor(kind: string): RegisteredView[];
     menuItems(): RegisteredMenuItem[];
   };
@@ -207,16 +268,20 @@ export interface Kernel {
   actions: {
     /** Input fields for an action on a resource (resolves `{ fromField }`, D07). */
     inputFields(key: string, resource?: Resource): FieldDef[];
+    /**
+     * Never throws: unknown key, disabled plugin, invalid input, plugin exception, wrong output type → error result.
+     * Runs asynchronously; the UI stays responsive.
+     */
     run(key: string, args: { resourceId?: string; input?: Record<string, unknown>; source?: InvocationSource }): Promise<ActionResult>;
     /** Last result for a resource in this session. */
     lastResult(resourceId: string): ActionResult | undefined;
-    isRunning(resourceId: string): boolean;
-    cancel(resourceId: string): void;
+    running(): Array<{ runId: string; key: string; resourceId?: string; startedAt: string }>;
+    cancel(runId: string): void;
   };
 
   views: {
-    /** Render + validate. Throws Error with a user-facing message on render or validation failure. */
-    render(key: string, resource: Resource, state: ViewState): Promise<ViewNode[]>;
+    /** Kernel builds ViewState, renders, validates. Throws OneDeskError on render or validation failure. */
+    render(key: string, resourceId: string): Promise<ViewNode[]>;
   };
 
   prefs: {
@@ -230,8 +295,11 @@ export interface Kernel {
     exportAll(): Promise<ExportBundle>;
     /** Parse + validate an import bundle and compute conflicts. Throws with a user-facing message if invalid. */
     planImport(files: { resources: unknown; collections: unknown; manifest: unknown }): Promise<ImportPlan>;
-    /** Apply: new items always, conflicts per decision. One DB transaction. */
-    applyImport(plan: ImportPlan, decide: (resourceId: string) => "overwrite" | "skip"): Promise<{ created: number; overwritten: number; skipped: number }>;
+    /** Apply: new items always, conflicts per decision (keyed by id). One DB transaction. */
+    applyImport(
+      plan: ImportPlan,
+      decide: (conflict: { type: "resource" | "collection"; id: string }) => "overwrite" | "skip",
+    ): Promise<{ created: number; overwritten: number; skipped: number }>;
   };
 
   context: { workspace: { id: string; name: string }; user: { id: string; name: string } };

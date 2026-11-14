@@ -12,22 +12,29 @@ describe("placeholders", () => {
   });
 
   it("accepts clean templates", () => {
-    expect(lintPlaceholders("Write about {{topic}} in {{lang}}. Price: 5 USD. https://x.io:8080/a")).toEqual([]);
+    expect(lintPlaceholders("Write about {{topic}} in {{lang}}. Price: 5 USD. https://x.io:8080/a")).toEqual({ errors: [], warnings: [] });
   });
 
-  // Every rejection case has its own test (err on the side of rejecting).
-  it("rejects $name", () => {
-    expect(lintPlaceholders("Hello $name")).toHaveLength(1);
+  // Every flagged case has its own test.
+  it("warns on $name", () => {
+    expect(lintPlaceholders("Hello $name").warnings).toHaveLength(1);
   });
-  it("rejects ${name}", () => {
-    expect(lintPlaceholders("Hello ${name}")).toHaveLength(1);
+  it("warns on ${name}", () => {
+    expect(lintPlaceholders("Hello ${name}").warnings).toHaveLength(1);
   });
-  it("rejects :name", () => {
-    expect(lintPlaceholders("WHERE id = :id")).toHaveLength(1);
+  it("warns on :name", () => {
+    expect(lintPlaceholders("WHERE id = :id").warnings).toHaveLength(1);
   });
-  it("rejects malformed {{ }}", () => {
-    expect(lintPlaceholders("Hello {{ }}")).toHaveLength(1);
-    expect(lintPlaceholders("Hello {{1abc}}")).toHaveLength(1);
-    expect(lintPlaceholders("Hello {{name")).toHaveLength(1);
+  it("errors on empty {{ }}", () => {
+    expect(lintPlaceholders("Hello {{ }}").errors).toHaveLength(1);
+  });
+  it("errors on name starting with a digit", () => {
+    expect(lintPlaceholders("Hello {{1abc}}").errors).toHaveLength(1);
+  });
+  it("errors on unclosed {{", () => {
+    expect(lintPlaceholders("Hello {{name").errors).toHaveLength(1);
+  });
+  it("does not treat a valid placeholder as foreign syntax", () => {
+    expect(lintPlaceholders("{{a}}:{{b}}")).toEqual({ errors: [], warnings: [] });
   });
 });
