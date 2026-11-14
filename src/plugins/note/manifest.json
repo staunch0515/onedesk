@@ -1,0 +1,11 @@
+{
+  "id": "org.onedesk.note",
+  "name": "笔记",
+  "version": "1.0.0",
+  "description": "用 Markdown 记录笔记",
+  "icon": "notebook-pen",
+  "apiVersion": "1",
+  "provides": { "kinds": ["note"], "actions": [], "views": ["markdown"] },
+  "requires": { "network": [], "secrets": [], "plugins": [] },
+  "settings": []
+}
