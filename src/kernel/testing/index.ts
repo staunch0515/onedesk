@@ -8,10 +8,7 @@ import { OneDeskError } from "../../plugin-api";
 import type { ManifestInput, NetworkRequestInit, NetworkResponse, PluginModule } from "../../plugin-api";
 import type { Kernel, Platform, PluginSource } from "../contracts";
 import { createKernel } from "../index";
-import { bundledMigrations, createSqlJsDriver, runMigrations } from "./sqljs";
-
-export { bundledMigrations, createSqlJsDriver, parseMigrations, runMigrations, schemaVersion } from "./sqljs";
-export type { Migration } from "./sqljs";
+import { bundledMigrations, createSqlJsDriver, runMigrations } from "../sqljs";
 
 export const MEMORY_DB = ":memory:";
 

@@ -1,7 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { HostApi, PluginModule } from "../plugin-api";
 import { CORE_EDIT_VIEW } from "./contracts";
 import type { KernelEvent } from "./contracts";
+import { ACTIVATION_TIMEOUT_MS } from "./plugin-host";
 import { createTestKernel, pluginSource } from "./testing";
 import { SAMPLE_ID, SAMPLE_KIND, createSamplePlugin, sampleKind, sampleManifest } from "./testing/sample";
 
@@ -286,5 +287,136 @@ describe("插件设置", () => {
     await expect(t.kernel.plugins.setSettings(SAMPLE_ID, { greeting: 1 })).rejects.toMatchObject({ code: "validation", fields: { greeting: expect.any(String) } });
     await expect(t.kernel.plugins.setSettings(SAMPLE_ID, null as never)).rejects.toMatchObject({ code: "validation" });
     expect(await t.kernel.plugins.getSettings(SAMPLE_ID)).toEqual({ greeting: "hi" });
+  });
+});
+
+describe("重新安装已卸载的外部插件（D54/D90）", () => {
+  it("卸载后列在 uninstalled()；重新安装后默认停用，启用后恢复，资源一直保留", async () => {
+    const plugin = createSamplePlugin({ origin: "external" });
+    const t = await createTestKernel({ plugins: [plugin.source] });
+    await t.kernel.plugins.enable(SAMPLE_ID);
+    const resource = await t.kernel.resources.create({ kind: SAMPLE_KIND, name: "a", body: { url: "https://example.com" } });
+    expect(t.kernel.plugins.uninstalled()).toEqual([]);
+
+    await t.kernel.plugins.uninstall(SAMPLE_ID);
+    expect(t.kernel.plugins.uninstalled()).toEqual([{ id: SAMPLE_ID, name: "示例", location: plugin.source.location }]);
+
+    const events: KernelEvent[] = [];
+    t.kernel.events.on("plugin.changed", (e) => events.push(e));
+    await t.kernel.plugins.reinstall(SAMPLE_ID);
+    expect(t.kernel.plugins.uninstalled()).toEqual([]);
+    expect(t.kernel.plugins.list()).toEqual([expect.objectContaining({ origin: "external", state: "disabled", resourceCount: 1 })]);
+    expect(t.kernel.plugins.loadErrors()).toEqual([]);
+    expect(t.kernel.registry.kindOwner(SAMPLE_KIND)).toBe(SAMPLE_ID);
+    expect(t.kernel.registry.kinds()).toEqual([]);
+    expect(plugin.activations).toBe(1); // 重新安装不执行插件代码
+    expect(t.db.exec("SELECT enabled, uninstalled FROM plugins")[0]?.values).toEqual([[0, 0]]);
+    expect(events).toEqual([{ type: "plugin.changed", pluginId: SAMPLE_ID }]);
+
+    await t.kernel.plugins.enable(SAMPLE_ID);
+    expect(plugin.activations).toBe(2);
+    expect(await t.kernel.resources.list()).toEqual([resource]);
+    await expect(t.kernel.plugins.reinstall(SAMPLE_ID)).rejects.toMatchObject({ code: "not_found" });
+  });
+
+  it("重启后（新内核、同一个库）扫描到已卸载的插件：不加载，但可以重新安装", async () => {
+    const first = await createTestKernel({ plugins: [createSamplePlugin({ origin: "external" }).source] });
+    await first.kernel.plugins.uninstall(SAMPLE_ID);
+
+    const { createKernel } = await import("./index");
+    const kernel = await createKernel({ platform: first.platform });
+    const again = createSamplePlugin({ origin: "external" });
+    await kernel.plugins.load([again.source]);
+    expect(kernel.plugins.list()).toEqual([]);
+    expect(kernel.plugins.loadErrors()).toEqual([]);
+    expect(kernel.plugins.uninstalled()).toEqual([{ id: SAMPLE_ID, name: "示例", location: again.source.location }]);
+    expect(kernel.registry.kindOwner(SAMPLE_KIND)).toBeUndefined();
+
+    await kernel.plugins.reinstall(SAMPLE_ID);
+    expect(kernel.plugins.list().map((p) => [p.manifest.id, p.state])).toEqual([[SAMPLE_ID, "disabled"]]);
+    await kernel.plugins.enable(SAMPLE_ID);
+    expect(again.activations).toBe(1);
+    // 再“重启”一次：不再被跳过。
+    const kernel3 = await createKernel({ platform: first.platform });
+    await kernel3.plugins.load([createSamplePlugin({ origin: "external" }).source]);
+    expect(kernel3.plugins.list().map((p) => p.state)).toEqual(["enabled"]);
+    expect(kernel3.plugins.uninstalled()).toEqual([]);
+  });
+
+  it("没有这个已卸载插件时报 not_found；kind 已被别的插件占用时拒绝且保持已卸载", async () => {
+    const t = await createTestKernel({ plugins: [createSamplePlugin({ origin: "external" }).source] });
+    await expect(t.kernel.plugins.reinstall("org.test.none")).rejects.toMatchObject({ code: "not_found" });
+    await expect(t.kernel.plugins.reinstall(SAMPLE_ID)).rejects.toMatchObject({ code: "not_found" }); // 已安装的不算
+    await t.kernel.plugins.uninstall(SAMPLE_ID);
+    await t.kernel.plugins.load([pluginSource({ ...sampleManifest(), id: "org.test.taker" }, noop)]);
+    expect(t.kernel.registry.kindOwner(SAMPLE_KIND)).toBe("org.test.taker");
+    await expect(t.kernel.plugins.reinstall(SAMPLE_ID)).rejects.toMatchObject({ code: "conflict", message: expect.stringContaining("org.test.taker") });
+    expect(t.kernel.plugins.uninstalled().map((p) => p.id)).toEqual([SAMPLE_ID]);
+    expect(t.db.exec("SELECT uninstalled FROM plugins WHERE id = ?", [SAMPLE_ID])[0]?.values).toEqual([[1]]);
+  });
+});
+
+describe("激活超时", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("activate 10 秒没有完成：记为激活错误，不阻塞后面的插件和启动", async () => {
+    const t = await createTestKernel();
+    let lateHost: HostApi | undefined;
+    const hanging = createSamplePlugin({
+      manifest: { id: "org.test.hang", provides: { kinds: ["hang-item"], views: ["late"] } },
+      activate: (host) => {
+        lateHost = host;
+        host.resources.registerKind({ id: "hang-item", name: "卡住", schema: [], views: [], describe: () => ({ summary: "", usage: "" }) });
+        return new Promise<void>(() => undefined);
+      },
+    });
+    const good = createSamplePlugin();
+
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    let done = false;
+    const loading = t.kernel.plugins.load([hanging.source, good.source]).then(() => {
+      done = true;
+    });
+    await vi.advanceTimersByTimeAsync(ACTIVATION_TIMEOUT_MS - 1);
+    expect(done).toBe(false);
+    expect(good.activations).toBe(0);
+    await vi.advanceTimersByTimeAsync(1);
+    await loading;
+    vi.useRealTimers();
+
+    expect(ACTIVATION_TIMEOUT_MS).toBe(10_000);
+    const [hung, ok] = t.kernel.plugins.list();
+    expect(hung).toMatchObject({ state: "disabled", activationError: "激活失败：超过 10 秒没有完成" });
+    expect(ok).toMatchObject({ state: "enabled" });
+    expect(ok?.activationError).toBeUndefined();
+    expect(t.kernel.plugins.loadErrors()).toEqual([]);
+    // 超时前注册的内容不生效；超时后宿主接口已撤销，迟到的注册和调用都被拒绝。
+    expect(t.kernel.registry.kind("hang-item")).toBeUndefined();
+    expect(t.kernel.registry.kinds().map((k) => k.id)).toEqual([SAMPLE_KIND]);
+    expect(() => lateHost!.ui.registerView({ id: "late", label: "x", render: () => [] })).toThrow(/已停用/);
+    await expect(lateHost!.storage.set("k", 1)).rejects.toMatchObject({ code: "unavailable" });
+  });
+
+  it("超时后才失败的 activate 不会产生未处理的异常；按时完成的不受计时器影响", async () => {
+    const t = await createTestKernel();
+    let fail: ((e: Error) => void) | undefined;
+    const slow = createSamplePlugin({
+      manifest: { id: "org.test.slow", provides: {} },
+      activate: () =>
+        new Promise<void>((_resolve, reject) => {
+          fail = reject;
+        }),
+    });
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const loading = t.kernel.plugins.load([slow.source, createSamplePlugin().source]);
+    await vi.advanceTimersByTimeAsync(ACTIVATION_TIMEOUT_MS);
+    await loading;
+    fail?.(new Error("迟到的失败"));
+    await vi.advanceTimersByTimeAsync(ACTIVATION_TIMEOUT_MS);
+    expect(vi.getTimerCount()).toBe(0);
+    vi.useRealTimers();
+    expect(t.kernel.plugins.list().map((p) => [p.manifest.id, p.state])).toEqual([["org.test.slow", "disabled"], [SAMPLE_ID, "enabled"]]);
   });
 });

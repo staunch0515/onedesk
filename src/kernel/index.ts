@@ -43,7 +43,8 @@ export const createKernel: CreateKernel = async (options: KernelOptions): Promis
   // The runner and the host refer to each other (host aborts runs; runner asks whether a plugin is disabled).
   const hostRef: { current?: PluginHost } = {};
   const isPluginDisabled = (id: string): boolean => hostRef.current?.isDisabled(id) ?? false;
-  const actions = new ActionRunner(runtime, events, registry, resources, context, isPluginDisabled);
+  const readableKinds = (id: string): string[] => hostRef.current?.readableKinds(id) ?? [];
+  const actions = new ActionRunner(runtime, events, registry, resources, context, isPluginDisabled, readableKinds);
   const host = new PluginHost(db, runtime, events, registry, resources, actions, { db, runtime, events, registry, resources, collections, platform, context });
   hostRef.current = host;
   const views = new ViewRenderer(registry, resources, actions, isPluginDisabled);
@@ -83,6 +84,8 @@ export const createKernel: CreateKernel = async (options: KernelOptions): Promis
       enable: (id) => host.enable(id),
       disable: (id) => host.disable(id),
       uninstall: (id) => host.uninstall(id),
+      uninstalled: () => host.uninstalled(),
+      reinstall: (id) => host.reinstall(id),
       getSettings: (id) => host.getSettings(id),
       setSettings: (id, values) => host.setSettings(id, values),
     },

@@ -1,6 +1,6 @@
 /**
- * sql.js (SQLite compiled to WebAssembly) behind the kernel's SqlDriver, plus the TypeScript migration runner.
- * Shared by tests (`createTestKernel`) and the browser preview platform, so both run the very same SQL files as
+ * sql.js (SQLite compiled to WebAssembly) behind the kernel's SqlDriver, plus the TypeScript migration runner (D91).
+ * No platform dependency. Shared by tests (`createTestKernel`) and the browser preview platform, so both run the very same SQL files as
  * the Rust side (src-tauri/migrations). The caller creates the sql.js Database (loading the wasm differs between
  * Node and the browser).
  */

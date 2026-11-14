@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { MEMORY_DB, assertMemoryDb, bundledMigrations, createSqlJsDriver, createTestDatabase, createTestKernel, loadSqlJs, parseMigrations, runMigrations, schemaVersion } from "./index";
+import { MEMORY_DB, assertMemoryDb, createTestDatabase, createTestKernel, loadSqlJs } from "../testing";
+import { bundledMigrations, createSqlJsDriver, parseMigrations, runMigrations, schemaVersion } from "./index";
 import type { Migration } from "./index";
 
 async function emptyDb() {

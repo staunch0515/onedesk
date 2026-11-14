@@ -27,6 +27,11 @@ async function call<K extends keyof Commands>(command: K, args: Commands[K]["arg
   }
 }
 
+const tauriHttp: FetchLike = (input, init = {}) => {
+  const { redirect, ...rest } = init;
+  return tauriFetch(input, redirect === "manual" ? { ...rest, maxRedirections: 0 } : rest);
+};
+
 export function createTauriPlatform(): Platform {
   return {
     db: {
@@ -53,7 +58,8 @@ export function createTauriPlatform(): Platform {
       },
     },
     network: {
-      fetch: (url, init) => performFetch(tauriFetch as unknown as FetchLike, url, init),
+      // The Rust HTTP client takes `maxRedirections` instead of fetch's `redirect`: 0 = return the 3xx as is.
+      fetch: (url, init) => performFetch(tauriHttp, url, init),
     },
     secrets: {
       list: () => call("secrets_list", {}, "读取密钥列表失败"),

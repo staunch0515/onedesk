@@ -12,7 +12,7 @@ import initSqlJs from "sql.js";
 import type { Database, SqlJsStatic } from "sql.js";
 import wasmUrl from "sql.js/dist/sql-wasm-browser.wasm?url";
 import type { AppStatus, Platform } from "../kernel/contracts";
-import { bundledMigrations, createSqlJsDriver, runMigrations, schemaVersion } from "../kernel/testing/sqljs";
+import { bundledMigrations, createSqlJsDriver, runMigrations, schemaVersion } from "../kernel/sqljs";
 import { OneDeskError } from "../plugin-api";
 import { assertSafeExternalUrl, performFetch } from "./http";
 import type { FetchLike } from "./http";

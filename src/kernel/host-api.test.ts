@@ -148,7 +148,7 @@ describe("宿主 API：网络主机模式（D13/D59）", () => {
     ["精确主机", "https://api.example.com/v1?q=1"],
     ["精确主机 http", "http://api.example.com"],
     ["精确主机大小写", "https://API.Example.COM/"],
-    ["精确主机带端口", "https://api.example.com:8443/x"],
+    ["显式写出默认端口", "https://api.example.com:443/x"],
     ["通配子域", "https://a.example.org/"],
     ["通配多级子域", "https://a.b.example.org/"],
   ])("允许：%s", async (_label, url) => {
@@ -158,6 +158,9 @@ describe("宿主 API：网络主机模式（D13/D59）", () => {
 
   it.each([
     ["未声明的主机", "https://evil.com/"],
+    ["未声明的端口", "https://api.example.com:8443/x"],
+    ["http 的非默认端口", "http://api.example.com:8080/"],
+    ["通配子域的非默认端口", "https://a.example.org:8443/"],
     ["通配不含根域", "https://example.org/"],
     ["后缀相似的主机", "https://evilexample.org/"],
     ["声明主机作为前缀", "https://api.example.com.evil.com/"],
@@ -181,20 +184,18 @@ describe("宿主 API：网络主机模式（D13/D59）", () => {
   });
 
   it("不规范的模式一律不匹配", () => {
-    expect(isNetworkAllowed(["*.*"], "https://a.b/")).toBe(false);
-    expect(isNetworkAllowed(["*."], "https://a.b/")).toBe(false);
-    expect(isNetworkAllowed(["api.*.com"], "https://api.x.com/")).toBe(false);
-    expect(isNetworkAllowed(["*example.org"], "https://evilexample.org/")).toBe(false);
-    expect(isNetworkAllowed(["example.com:8080"], "https://example.com:8080/")).toBe(true);
-    expect(isNetworkAllowed(["example.com:8080"], "https://example.com:9090/")).toBe(false);
-    expect(isNetworkAllowed([" Example.com "], "https://example.com./")).toBe(true);
+    for (const pattern of ["*.*", "*.", "api.*.com", "*example.org", " example.com ", "https://example.com", "example.com/x"]) {
+      expect(isNetworkAllowed([pattern], "https://example.com/")).toBe(false);
+      expect(isNetworkAllowed([pattern], "https://evilexample.org/")).toBe(false);
+      expect(isNetworkAllowed([pattern], "https://api.x.com/")).toBe(false);
+    }
   });
 
   it("默认超时 30 秒，可覆盖；非 2xx 正常返回；失败转为 unavailable", async () => {
     await sample.network.fetch("https://api.example.com/", { method: "POST", body: "x" });
-    expect(t.requests.at(-1)?.init).toEqual({ method: "POST", body: "x", timeoutMs: 30_000 });
+    expect(t.requests.at(-1)?.init).toEqual({ method: "POST", body: "x", timeoutMs: 30_000, redirect: "manual" });
     await sample.network.fetch("https://api.example.com/", { timeoutMs: 5 });
-    expect(t.requests.at(-1)?.init).toEqual({ timeoutMs: 5 });
+    expect(t.requests.at(-1)?.init).toEqual({ timeoutMs: 5, redirect: "manual" });
 
     const p = createSamplePlugin();
     await createTestKernel({ plugins: [p.source], fetch: async () => ({ ...OK, status: 404, statusText: "Not Found" }) });

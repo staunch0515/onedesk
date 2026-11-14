@@ -243,3 +243,24 @@ describe("偏好设置与事件", () => {
     expect(await t.kernel.secrets.get("k")).toBeUndefined();
   });
 });
+
+describe("标签里的引号和反斜杠", () => {
+  it.each([["双引号", 'a"b'], ["反斜杠", "a\\b"], ["两者都有", '\\"']])("新建和更新都拒绝含%s的标签", async (_label, tag) => {
+    await expect(t.kernel.resources.create(draft("x", { tags: ["ok", tag] }))).rejects.toMatchObject({
+      code: "validation",
+      message: "标签不能包含双引号或反斜杠",
+      fields: { tags: "标签不能包含双引号或反斜杠" },
+    });
+    const r = await t.kernel.resources.create(draft("x", { tags: ["ok"] }));
+    await expect(t.kernel.resources.update(r.id, { tags: [tag] })).rejects.toMatchObject({ code: "validation", fields: { tags: expect.any(String) } });
+    expect((await t.kernel.resources.get(r.id))?.tags).toEqual(["ok"]);
+    expect(await t.kernel.resources.list({ includeDisabled: true })).toHaveLength(1);
+  });
+
+  it("其他标点照常可用，按标签查询仍然精确", async () => {
+    const r = await t.kernel.resources.create(draft("x", { tags: ["a/b", "c'd", "[e]", "f,g", "空 格"] }));
+    for (const tag of r.tags) expect(await t.kernel.resources.list({ tag })).toHaveLength(1);
+    expect(await t.kernel.resources.list({ tag: "a" })).toEqual([]);
+    expect(await t.kernel.resources.list({ tag: "f" })).toEqual([]);
+  });
+});

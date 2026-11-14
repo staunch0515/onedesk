@@ -9,7 +9,7 @@ import type { ActionRunner } from "./actions";
 import type { PluginInfo, PluginLoadError, PluginSource, SqlDriver } from "./contracts";
 import type { EventBus } from "./events";
 import { validateFields } from "./fields";
-import { createHostSession } from "./host-api";
+import { createHostSession, parseNetworkPattern } from "./host-api";
 import type { HostDeps, HostSession } from "./host-api";
 import type { PluginRegistrations, Registry } from "./registry";
 import type { ResourceStore } from "./resources";
@@ -27,6 +27,9 @@ interface PluginRecord {
   module?: PluginModule;
   session?: HostSession;
 }
+
+/** A plugin whose `activate` has not settled after this long is reported as failed (it must not block startup). */
+export const ACTIVATION_TIMEOUT_MS = 10_000;
 
 /** Cross-checks between what one plugin registered (D05, D60, D61). Returns Chinese problem descriptions. */
 export function checkRegistrations(regs: PluginRegistrations): string[] {
@@ -57,6 +60,8 @@ export function checkRegistrations(regs: PluginRegistrations): string[] {
 export class PluginHost {
   private readonly records = new Map<string, PluginRecord>();
   private readonly errors: PluginLoadError[] = [];
+  /** Uninstalled external plugins seen in the sources (D54/D90): kept so they can be reinstalled. */
+  private readonly removed = new Map<string, { manifest: Manifest; source: PluginSource }>();
 
   constructor(
     private readonly db: SqlDriver,
@@ -66,13 +71,24 @@ export class PluginHost {
     private readonly resources: ResourceStore,
     private readonly actions: ActionRunner,
     /** Everything a HostSession needs except the plugin-host callbacks, which are filled in here. */
-    private readonly hostDeps: Omit<HostDeps, "manifestOf" | "getSettings" | "runAction">,
+    private readonly hostDeps: Omit<HostDeps, "readableKinds" | "getSettings" | "runAction">,
   ) {}
 
   /** True when the plugin is loaded but not active (used by the action runner for a precise error). */
   isDisabled(id: string): boolean {
     const record = this.records.get(id);
     return record !== undefined && !record.active;
+  }
+
+  /** Kinds a plugin may read (D10/D60): its own + those of the plugins in `requires.plugins`. */
+  readableKinds(id: string): string[] {
+    const record = this.records.get(id);
+    if (!record) return [];
+    const kinds = new Set(record.manifest.provides.kinds);
+    for (const other of record.manifest.requires.plugins) {
+      for (const kind of this.records.get(other)?.manifest.provides.kinds ?? []) kinds.add(kind);
+    }
+    return [...kinds];
   }
 
   private fail(source: PluginSource, reason: string, pluginId?: string): void {
@@ -106,15 +122,29 @@ export class PluginHost {
     if (manifest.apiVersion !== API_VERSION) {
       return this.fail(source, `apiVersion "${manifest.apiVersion}" 不兼容，当前只支持 "${API_VERSION}"`, manifest.id);
     }
+    // D13: a malformed host pattern would silently never match (or be misread), so it is a load error.
+    const badPattern = manifest.requires.network.find((pattern) => !parseNetworkPattern(pattern));
+    if (badPattern !== undefined) {
+      return this.fail(
+        source,
+        `requires.network 中的 "${badPattern}" 格式不正确：只能写主机名（可带端口）、*.主机名 或 *，不能带协议、路径或空格`,
+        manifest.id,
+      );
+    }
     const duplicate = this.records.get(manifest.id);
     if (duplicate) return this.fail(source, `插件 id ${manifest.id} 重复，已由 ${duplicate.source.location} 提供`, manifest.id);
+
+    const rows = await this.db.select<{ enabled: number; uninstalled: number }>("SELECT enabled, uninstalled FROM plugins WHERE id = ?", [manifest.id]);
+    let row = rows[0];
+    if (row?.uninstalled === 1 && source.origin === "external") {
+      // D54: stays uninstalled across scans; remembered so the settings page can offer to reinstall it (D90).
+      this.removed.set(manifest.id, { manifest, source });
+      return;
+    }
     for (const kind of manifest.provides.kinds) {
       const owner = this.registry.kindOwner(kind);
       if (owner) return this.fail(source, `资源类型 ${kind} 已由插件 ${owner} 提供`, manifest.id);
     }
-
-    const rows = await this.db.select<{ enabled: number; uninstalled: number }>("SELECT enabled, uninstalled FROM plugins WHERE id = ?", [manifest.id]);
-    let row = rows[0];
     if (!row) {
       // D54: built-in plugins start enabled, newly found external plugins start disabled.
       row = { enabled: source.origin === "builtin" ? 1 : 0, uninstalled: 0 };
@@ -124,7 +154,6 @@ export class PluginHost {
         this.runtime.now().toISOString(),
       ]);
     }
-    if (row.uninstalled === 1 && source.origin === "external") return; // D54: stays uninstalled across scans.
 
     const record: PluginRecord = { manifest, source, enabled: row.enabled === 1, active: false };
     this.records.set(manifest.id, record);
@@ -143,13 +172,13 @@ export class PluginHost {
       session = createHostSession(
         {
           ...this.hostDeps,
-          manifestOf: (id) => this.records.get(id)?.manifest,
+          readableKinds: (id) => this.readableKinds(id),
           getSettings: (id) => this.getSettings(id),
           runAction: (key, args) => this.actions.run(key, args),
         },
         record.manifest,
       );
-      await module.activate(session.api);
+      await this.withTimeout(Promise.resolve(module.activate(session.api)));
       session.closeRegistration();
       const problems = [...session.violations, ...checkRegistrations(session.regs)];
       if (problems.length) throw new OneDeskError("validation", [...new Set(problems)].join("；"));
@@ -161,6 +190,25 @@ export class PluginHost {
       record.active = false;
       record.activationError = `激活失败：${errorMessage(e)}`;
     }
+  }
+
+  /** Rejects when `work` has not settled within ACTIVATION_TIMEOUT_MS; a late failure of `work` is ignored. */
+  private withTimeout(work: Promise<void>): Promise<void> {
+    return new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        reject(new OneDeskError("unavailable", `超过 ${ACTIVATION_TIMEOUT_MS / 1000} 秒没有完成`));
+      }, ACTIVATION_TIMEOUT_MS);
+      work.then(
+        () => {
+          clearTimeout(timer);
+          resolve();
+        },
+        (e: unknown) => {
+          clearTimeout(timer);
+          reject(e instanceof Error ? e : new Error(errorMessage(e)));
+        },
+      );
+    });
   }
 
   private async deactivate(record: PluginRecord): Promise<void> {
@@ -232,12 +280,31 @@ export class PluginHost {
     ]);
     this.records.delete(id);
     this.registry.removeOwner(id);
+    this.removed.set(id, { manifest: record.manifest, source: record.source });
     // D53: only secrets no other installed plugin declares.
     const others = new Set<string>();
     for (const other of this.records.values()) for (const name of other.manifest.requires.secrets) others.add(name);
     const declaredSecrets = record.manifest.requires.secrets.filter((name) => !others.has(name));
     this.events.emit({ type: "plugin.changed", pluginId: id });
     return { declaredSecrets };
+  }
+
+  uninstalled(): Array<{ id: string; name: string; location: string }> {
+    return [...this.removed.values()].map(({ manifest, source }) => ({ id: manifest.id, name: manifest.name, location: source.location }));
+  }
+
+  /** D90: clears the uninstalled flag and loads the plugin from its remembered source; it stays disabled (D54). */
+  async reinstall(id: string): Promise<void> {
+    const entry = this.removed.get(id);
+    if (!entry) throw notFound("已卸载的插件");
+    // Checked before touching the database so a refused reinstall changes nothing.
+    for (const kind of entry.manifest.provides.kinds) {
+      const owner = this.registry.kindOwner(kind);
+      if (owner) throw new OneDeskError("conflict", `无法重新安装：资源类型 ${kind} 已由插件 ${owner} 提供`);
+    }
+    await this.db.execute("UPDATE plugins SET uninstalled = 0, enabled = 0 WHERE id = ?", [id]);
+    this.removed.delete(id);
+    await this.loadOne(entry.source);
   }
 
   async getSettings(id: string): Promise<Record<string, unknown>> {

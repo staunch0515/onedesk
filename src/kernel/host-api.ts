@@ -23,6 +23,8 @@ import type {
   HostApi,
   HostEvent,
   KindDefinition,
+  NetworkRequestInit,
+  NetworkResponse,
   Manifest,
   MenuItemDefinition,
   Resource,
@@ -38,6 +40,16 @@ import { errorMessage, parseJson, zodMessage } from "./util";
 import type { Runtime } from "./util";
 
 export const DEFAULT_NETWORK_TIMEOUT_MS = 30_000;
+/** Redirect hops the host follows itself (each one re-checked against the allow-list). */
+export const MAX_REDIRECTS = 5;
+
+/**
+ * What the kernel passes to Platform.network.fetch: the public init plus a redirect hint. With "manual" the
+ * platform must NOT follow redirects itself: it returns the 3xx response (with its `location` header) or fails.
+ */
+export interface HostFetchInit extends NetworkRequestInit {
+  redirect?: "follow" | "manual";
+}
 const HOST_EVENT_TYPES: ReadonlyArray<HostEvent["type"]> = ["resource.created", "resource.updated", "resource.deleted", "action.completed"];
 
 export interface HostDeps {
@@ -50,8 +62,8 @@ export interface HostDeps {
   platform: Pick<Platform, "system" | "network" | "secrets">;
   context: Kernel["context"];
   runAction(key: string, args: { resourceId?: string; input?: Record<string, unknown> }): Promise<ActionResult>;
-  /** Manifest of any loaded plugin (enabled or not). */
-  manifestOf(pluginId: string): Manifest | undefined;
+  /** Kinds a plugin may read (D10/D60): its own + those of `requires.plugins`. */
+  readableKinds(pluginId: string): string[];
   getSettings(pluginId: string): Promise<Record<string, unknown>>;
 }
 
@@ -64,9 +76,38 @@ export interface HostSession {
   revoke(): void;
 }
 
+const HOST_LABEL = "[a-z0-9](?:[a-z0-9-]*[a-z0-9])?";
+const NETWORK_PATTERN = new RegExp(`^(\\*\\.)?(${HOST_LABEL}(?:\\.${HOST_LABEL})*)(?::(\\d{1,5}))?$`);
+
+interface NetworkPattern {
+  any: boolean;
+  subdomains: boolean;
+  hostname: string;
+  /** undefined = default port of the scheme only. */
+  port?: number;
+}
+
 /**
- * D13/D59 host patterns: exact host (`api.x.com`, optionally with `:port`), `*.x.com` (sub-domains only), or `*`.
- * Anything that cannot be parsed, is not http/https, or does not match is refused.
+ * Parses one `requires.network` entry (D13/D59): `*`, `host`, `host:port`, `*.host`, `*.host:port`.
+ * No scheme, path, credentials, spaces or other wildcards; returns undefined for anything else.
+ */
+export function parseNetworkPattern(raw: string): NetworkPattern | undefined {
+  if (raw === "*") return { any: true, subdomains: false, hostname: "" };
+  const match = NETWORK_PATTERN.exec(raw.toLowerCase());
+  if (!match) return undefined;
+  const pattern: NetworkPattern = { any: false, subdomains: match[1] !== undefined, hostname: match[2]! };
+  if (match[3] !== undefined) {
+    const port = Number(match[3]);
+    if (port < 1 || port > 65535) return undefined;
+    pattern.port = port;
+  }
+  return pattern;
+}
+
+/**
+ * True when the URL is http/https and matches one of the patterns. `*.x.com` matches sub-domains only; a pattern
+ * without a port matches the scheme's default port only (80 / 443); with a port, exactly that port.
+ * Anything that cannot be parsed or does not match is refused (fail closed).
  */
 export function isNetworkAllowed(patterns: string[], rawUrl: string): boolean {
   let url: URL;
@@ -78,18 +119,65 @@ export function isNetworkAllowed(patterns: string[], rawUrl: string): boolean {
   if (url.protocol !== "http:" && url.protocol !== "https:") return false;
   const hostname = url.hostname.toLowerCase().replace(/\.$/, "");
   if (!hostname) return false;
-  const host = url.port ? `${hostname}:${url.port}` : hostname;
+  const defaultPort = url.protocol === "https:" ? 443 : 80;
+  const port = url.port ? Number(url.port) : defaultPort;
   return patterns.some((raw) => {
-    const pattern = raw.trim().toLowerCase();
-    if (pattern === "*") return true;
-    if (pattern.startsWith("*.")) {
-      const suffix = pattern.slice(1);
-      if (suffix.length < 2 || suffix.includes("*")) return false;
-      return hostname.length > suffix.length && hostname.endsWith(suffix);
-    }
-    if (pattern.includes("*")) return false;
-    return pattern === hostname || pattern === host;
+    const pattern = parseNetworkPattern(raw);
+    if (!pattern) return false;
+    if (pattern.any) return true;
+    if (port !== (pattern.port ?? defaultPort)) return false;
+    if (pattern.subdomains) return hostname.endsWith(`.${pattern.hostname}`);
+    return hostname === pattern.hostname;
   });
+}
+
+/** A list containing `*` allows every host, so redirects need no per-hop check. */
+function allowsAnyHost(patterns: string[]): boolean {
+  return patterns.includes("*");
+}
+
+const SENSITIVE_HEADERS = new Set(["authorization", "cookie", "proxy-authorization"]);
+
+/**
+ * Fetch for a plugin whose allow-list is not `*`: the platform does not follow redirects; every hop is checked
+ * against the allow-list here, so a declared host cannot bounce the request to an undeclared one (D13).
+ */
+async function fetchCheckingRedirects(
+  fetchOnce: (url: string, init: HostFetchInit) => Promise<NetworkResponse>,
+  patterns: string[],
+  startUrl: string,
+  startInit: NetworkRequestInit,
+  denied: (message: string) => OneDeskError,
+): Promise<NetworkResponse> {
+  let url = startUrl;
+  let init: NetworkRequestInit = startInit;
+  for (let hop = 0; ; hop++) {
+    const response = await fetchOnce(url, { ...init, redirect: "manual" });
+    if (response.status < 300 || response.status > 399 || response.status === 304) return response;
+    const location = response.headers.location;
+    if (!location) return response;
+    if (hop >= MAX_REDIRECTS) throw new OneDeskError("unavailable", `重定向次数过多（超过 ${MAX_REDIRECTS} 次）`);
+    let next: URL;
+    try {
+      next = new URL(location, url);
+    } catch {
+      throw denied("重定向的目标地址无法解析，已拒绝");
+    }
+    if (!isNetworkAllowed(patterns, next.href)) throw denied(`重定向到未声明的地址 ${next.host}，已拒绝`);
+    // Same conventions as browsers: 303 (and 301/302 for non-GET/HEAD) become GET without a body.
+    const method = (init.method ?? "GET").toUpperCase();
+    const toGet = response.status === 303 || ((response.status === 301 || response.status === 302) && method !== "GET" && method !== "HEAD");
+    const nextInit: NetworkRequestInit = { ...init };
+    if (toGet) {
+      nextInit.method = "GET";
+      delete nextInit.body;
+    }
+    if (next.origin !== new URL(url).origin && nextInit.headers) {
+      nextInit.headers = Object.fromEntries(Object.entries(nextInit.headers).filter(([name]) => !SENSITIVE_HEADERS.has(name.toLowerCase())));
+    }
+    url = next.href;
+    init = nextInit;
+  }
 }
 
 const KindShape = z.object({
@@ -136,11 +224,7 @@ export function createHostSession(deps: HostDeps, manifest: Manifest): HostSessi
   };
 
   const ownKinds = (): string[] => manifest.provides.kinds;
-  const readableKinds = (): string[] => {
-    const kinds = new Set(ownKinds());
-    for (const other of manifest.requires.plugins) for (const kind of deps.manifestOf(other)?.provides.kinds ?? []) kinds.add(kind);
-    return [...kinds];
-  };
+  const readableKinds = (): string[] => deps.readableKinds(pluginId);
   const assertReadable = (kind: string): void => {
     if (!readableKinds().includes(kind)) throw new OneDeskError("permission", `插件 ${pluginId} 无权读取类型 ${kind} 的资源`);
   };
@@ -252,6 +336,21 @@ export function createHostSession(deps: HostDeps, manifest: Manifest): HostSessi
           if (args?.resourceId !== undefined) result.resourceId = args.resourceId;
           return result;
         }
+        // D10: a plugin cannot use somebody's action to reach a resource it may not read itself.
+        if (args?.resourceId !== undefined) {
+          const target = await deps.resources.get(args.resourceId).catch(() => null);
+          if (target && !readableKinds().includes(target.kind)) {
+            return {
+              runId: deps.runtime.randomId(),
+              status: "error",
+              error: { code: "permission", message: `插件 ${pluginId} 无权读取类型 ${target.kind} 的资源` },
+              durationMs: 0,
+              action: key,
+              resourceId: args.resourceId,
+              finishedAt: deps.runtime.now().toISOString(),
+            };
+          }
+        }
         const runArgs: { resourceId?: string; input?: Record<string, unknown> } = {};
         if (args?.resourceId !== undefined) runArgs.resourceId = args.resourceId;
         if (args?.input !== undefined) runArgs.input = args.input;
@@ -351,11 +450,17 @@ export function createHostSession(deps: HostDeps, manifest: Manifest): HostSessi
     network: {
       async fetch(url, init) {
         live();
-        if (typeof url !== "string" || !isNetworkAllowed(manifest.requires.network, url)) {
-          throw new OneDeskError("permission", `插件 ${pluginId} 无权访问该地址`, { hint: "只能访问清单 requires.network 中声明的 http/https 主机" });
-        }
+        const patterns = manifest.requires.network;
+        const denied = (message: string): OneDeskError =>
+          new OneDeskError("permission", message, { hint: "只能访问清单 requires.network 中声明的 http/https 主机" });
+        if (typeof url !== "string" || !isNetworkAllowed(patterns, url)) throw denied(`插件 ${pluginId} 无权访问该地址`);
+        const request: NetworkRequestInit = { ...init, timeoutMs: init?.timeoutMs ?? DEFAULT_NETWORK_TIMEOUT_MS };
         try {
-          return await deps.platform.network.fetch(url, { ...init, timeoutMs: init?.timeoutMs ?? DEFAULT_NETWORK_TIMEOUT_MS });
+          if (allowsAnyHost(patterns)) {
+            const follow: HostFetchInit = { ...request, redirect: "follow" };
+            return await deps.platform.network.fetch(url, follow);
+          }
+          return await fetchCheckingRedirects((u, i) => deps.platform.network.fetch(u, i), patterns, url, request, denied);
         } catch (e) {
           if (isOneDeskError(e)) throw e;
           throw new OneDeskError("unavailable", `网络请求失败：${errorMessage(e)}`, { cause: e });

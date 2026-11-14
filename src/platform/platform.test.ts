@@ -222,3 +222,38 @@ describe("Tauri 平台", () => {
     expect(plugins.fetch).toHaveBeenCalledWith("https://example.com", expect.objectContaining({ method: "PUT" }));
   });
 });
+
+describe("不自动跟随重定向（D13）", () => {
+  it("共用实现：manual 时把 redirect 传给 fetch，3xx 原样返回（带 location）", async () => {
+    const seen: unknown[] = [];
+    const fetchImpl: FetchLike = async (_url, init) => {
+      seen.push(init?.redirect);
+      return response(302, "", [["Location", "https://evil.com/"]]);
+    };
+    expect(await performFetch(fetchImpl, "https://example.com", { redirect: "manual" })).toMatchObject({ status: 302, headers: { location: "https://evil.com/" } });
+    await performFetch(fetchImpl, "https://example.com", { redirect: "follow" });
+    await performFetch(fetchImpl, "https://example.com");
+    expect(seen).toEqual(["manual", undefined, undefined]);
+  });
+
+  it("浏览器：manual 遇到重定向只能拿到不透明响应，直接拒绝", async () => {
+    const opaque: FetchLike = async () => ({ ...response(0, ""), type: "opaqueredirect" });
+    await expect(performFetch(opaque, "https://example.com", { redirect: "manual" })).rejects.toMatchObject({ code: "permission", message: expect.stringContaining("重定向") });
+    const platform = await createBrowserPlatform({ storage: memoryStorage(), initSql: loadSqlJs, fetch: opaque });
+    await expect(platform.network.fetch("https://example.com", { redirect: "manual" } as never)).rejects.toMatchObject({ code: "permission" });
+  });
+
+  it("Tauri：manual 转成 maxRedirections 0，不把 redirect 传给 Rust 客户端；否则不限制", async () => {
+    const { createTauriPlatform } = await import("./tauri");
+    const platform = createTauriPlatform();
+    plugins.fetch.mockResolvedValue(response(302, "", [["location", "/next"]]));
+    expect(await platform.network.fetch("https://example.com", { redirect: "manual" } as never)).toMatchObject({ status: 302, headers: { location: "/next" } });
+    const manualInit = plugins.fetch.mock.calls.at(-1)?.[1] as Record<string, unknown>;
+    expect(manualInit.maxRedirections).toBe(0);
+    expect("redirect" in manualInit).toBe(false);
+    await platform.network.fetch("https://example.com");
+    const followInit = plugins.fetch.mock.calls.at(-1)?.[1] as Record<string, unknown>;
+    expect("maxRedirections" in followInit).toBe(false);
+    plugins.fetch.mockReset();
+  });
+});

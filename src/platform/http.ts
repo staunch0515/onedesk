@@ -3,17 +3,30 @@
  * http/https only; non-2xx statuses resolve; network failures and timeouts (default 30 s) reject with
  * OneDeskError("unavailable"); header names lower-cased, repeated headers joined with ", "; body as UTF-8 text.
  */
-import { OneDeskError } from "../plugin-api";
-import type { NetworkRequestInit, NetworkResponse } from "../plugin-api";
+import type { HostFetchInit } from "../kernel/host-api";
+import { OneDeskError, isOneDeskError } from "../plugin-api";
+import type { NetworkResponse } from "../plugin-api";
 
 export type FetchLike = (
   input: string,
-  init?: { method?: string; headers?: Record<string, string>; body?: string; signal?: AbortSignal },
-) => Promise<{ status: number; statusText: string; headers: { forEach(callback: (value: string, name: string) => void): void }; text(): Promise<string> }>;
+  init?: { method?: string; headers?: Record<string, string>; body?: string; signal?: AbortSignal; redirect?: "follow" | "manual" },
+) => Promise<{
+  status: number;
+  statusText: string;
+  /** "opaqueredirect" when a browser fetch with redirect "manual" hit a redirect. */
+  type?: string;
+  headers: { forEach(callback: (value: string, name: string) => void): void };
+  text(): Promise<string>;
+}>;
 
 export const DEFAULT_TIMEOUT_MS = 30_000;
 
-export async function performFetch(fetchImpl: FetchLike, url: string, init: NetworkRequestInit = {}): Promise<NetworkResponse> {
+/**
+ * `init.redirect === "manual"` (set by the kernel for plugins with a host allow-list, D13): redirects are not
+ * followed. The 3xx response is returned so the kernel can check its `location`; where the runtime hides that
+ * response (browsers return an opaque one), the request is refused.
+ */
+export async function performFetch(fetchImpl: FetchLike, url: string, init: HostFetchInit = {}): Promise<NetworkResponse> {
   if (!/^https?:\/\//i.test(url)) throw new OneDeskError("permission", "只能请求 http 或 https 地址");
   if (init.signal?.aborted) throw new OneDeskError("unavailable", "请求已取消");
   const timeoutMs = init.timeoutMs ?? DEFAULT_TIMEOUT_MS;
@@ -31,7 +44,13 @@ export async function performFetch(fetchImpl: FetchLike, url: string, init: Netw
     const request: Parameters<FetchLike>[1] = { method: init.method ?? "GET", signal: controller.signal };
     if (init.headers) request.headers = init.headers;
     if (init.body !== undefined) request.body = init.body;
+    if (init.redirect === "manual") request.redirect = "manual";
     const response = await fetchImpl(url, request);
+    if (init.redirect === "manual" && (response.type === "opaqueredirect" || response.status === 0)) {
+      throw new OneDeskError("permission", "该地址发生了重定向，当前环境无法检查重定向的目标，已拒绝", {
+        hint: "把最终地址写进请求，或在桌面应用中重试",
+      });
+    }
     const body = await response.text();
     const headers: Record<string, string> = {};
     response.headers.forEach((value, name) => {
@@ -40,6 +59,7 @@ export async function performFetch(fetchImpl: FetchLike, url: string, init: Netw
     });
     return { status: response.status, statusText: response.statusText, headers, body, durationMs: Math.round(performance.now() - started) };
   } catch (e) {
+    if (isOneDeskError(e)) throw e;
     if (timedOut) throw new OneDeskError("unavailable", `请求超时（超过 ${Math.round(timeoutMs / 100) / 10} 秒）`, { hint: "检查网络或地址后重试", cause: e });
     if (init.signal?.aborted) throw new OneDeskError("unavailable", "请求已取消", { cause: e });
     throw new OneDeskError("unavailable", `网络请求失败：${e instanceof Error ? e.message : String(e)}`, { hint: "检查网络或地址后重试", cause: e });

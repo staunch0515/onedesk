@@ -42,6 +42,8 @@ export class ActionRunner {
     private readonly context: Kernel["context"],
     /** True when the plugin is known (loaded) but not active. */
     private readonly isPluginDisabled: (pluginId: string) => boolean,
+    /** Kinds a plugin may read (D10/D60): its own + those of `requires.plugins`. */
+    private readonly readableKinds: (pluginId: string) => string[],
   ) {}
 
   inputFields(key: string, resource?: Resource): FieldDef[] {
@@ -134,6 +136,9 @@ export class ActionRunner {
       if (kinds.length > 0) {
         if (!resource) return fail(new OneDeskError("validation", "这个动作需要在资源上运行"));
         if (!kinds.includes(resource.kind)) return fail(new OneDeskError("validation", "这个动作不适用于该类型的资源"));
+      } else if (resource && !this.readableKinds(entry.pluginId).includes(resource.kind)) {
+        // D10: a global action receives the resource in its context, so its plugin must be allowed to read it.
+        return fail(new OneDeskError("permission", `插件 ${entry.pluginId} 无权读取类型 ${resource.kind} 的资源`));
       }
 
       const rawInput = args.input ?? {};

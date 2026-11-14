@@ -79,6 +79,17 @@ function uniqueTags(tags: string[]): string[] {
   return [...new Set(tags)];
 }
 
+/**
+ * Tags are matched inside the stored JSON array with instr() (D25). A quote or backslash would be escaped in
+ * that JSON and could make one tag match another, so such tags are refused.
+ */
+function assertTags(tags: string[] | undefined): void {
+  if (tags?.some((tag) => /["\\]/.test(tag))) {
+    const message = "标签不能包含双引号或反斜杠";
+    throw new OneDeskError("validation", message, { fields: { tags: message } });
+  }
+}
+
 export interface ListOptions {
   includeDisabled?: boolean;
   /** Restrict to these kinds (host API read scope). */
@@ -234,6 +245,7 @@ export class ResourceStore {
     const parsed = ResourceDraftSchema.safeParse(draftInput);
     if (!parsed.success) throw new OneDeskError("validation", zodMessage(parsed.error), { fields: zodFields(parsed.error) });
     const draft = parsed.data;
+    assertTags(draft.tags);
     this.assertBody(draft.kind, draft.body);
     const now = this.runtime.now().toISOString();
     const resource: Resource = {
@@ -262,6 +274,7 @@ export class ResourceStore {
     const parsed = ResourcePatchSchema.safeParse(patchInput);
     if (!parsed.success) throw new OneDeskError("validation", zodMessage(parsed.error), { fields: zodFields(parsed.error) });
     const patch = parsed.data;
+    assertTags(patch.tags);
     const existing = await this.get(id);
     if (!existing) throw notFound("资源");
     const conflict = () => new OneDeskError("conflict", "资源已被修改，请刷新后重试", { hint: "重新打开资源后再保存" });
