@@ -1,0 +1,32 @@
+.od-popover {
+  z-index: var(--z-popover);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  max-width: var(--popover-max-width);
+  padding: var(--space-4);
+  border: var(--border-width) solid var(--border-default);
+  border-radius: var(--radius-lg);
+  background: var(--bg-elevated);
+  color: var(--fg-default);
+  box-shadow: var(--shadow-md);
+  animation: od-rise-in var(--duration-fast) var(--ease-out);
+}
+
+.od-popover:focus-visible {
+  outline: none;
+}
+
+.od-popover--sm {
+  width: var(--popover-width-sm);
+}
+
+.od-popover--md {
+  width: var(--popover-width-md);
+}
+
+.od-popover__title {
+  font-size: var(--text-md);
+  line-height: var(--leading-md);
+  font-weight: var(--weight-semibold);
+}

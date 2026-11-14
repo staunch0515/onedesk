@@ -1,0 +1,122 @@
+.od-table-wrap {
+  width: 100%;
+  overflow: auto;
+  border: var(--border-width) solid var(--border-default);
+  border-radius: var(--radius-lg);
+  background: var(--bg-surface);
+}
+
+.od-table {
+  width: 100%;
+  table-layout: fixed;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: var(--text-md);
+  line-height: var(--leading-md);
+  color: var(--fg-default);
+}
+
+.od-table__th {
+  height: var(--control-height-md);
+  padding: 0 var(--table-cell-pad-x);
+  border-bottom: var(--border-width) solid var(--border-default);
+  background: var(--bg-subtle);
+  color: var(--fg-muted);
+  font-size: var(--text-xs);
+  line-height: var(--leading-xs);
+  font-weight: var(--weight-medium);
+  white-space: nowrap;
+  text-align: left;
+}
+
+.od-table--sticky .od-table__th {
+  position: sticky;
+  top: 0;
+  z-index: var(--z-sticky);
+}
+
+.od-table__td {
+  height: var(--table-row-height);
+  padding: 0 var(--table-cell-pad-x);
+  border-bottom: var(--border-width) solid var(--border-subtle);
+  vertical-align: middle;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.od-table__th {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.od-table__col--xs {
+  width: var(--table-col-xs);
+}
+
+.od-table__col--sm {
+  width: var(--table-col-sm);
+}
+
+.od-table__col--md {
+  width: var(--table-col-md);
+}
+
+.od-table__col--lg {
+  width: var(--table-col-lg);
+}
+
+.od-table__row:last-child .od-table__td {
+  border-bottom: 0;
+}
+
+.od-table__cell--start {
+  text-align: left;
+}
+
+.od-table__cell--center {
+  text-align: center;
+}
+
+.od-table__cell--end {
+  text-align: right;
+}
+
+.od-table__cell--muted {
+  color: var(--fg-muted);
+  font-size: var(--text-sm);
+}
+
+.od-table__td.od-mono {
+  font-size: var(--text-sm);
+}
+
+.od-table__row {
+  transition: background-color var(--duration-fast) var(--ease-standard);
+}
+
+.od-table__row:hover {
+  background: var(--bg-hover);
+}
+
+.od-table--interactive .od-table__row {
+  cursor: default;
+}
+
+.od-table__row:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring);
+  outline-offset: var(--focus-ring-inset);
+}
+
+.od-table__row--selected,
+.od-table__row--selected:hover {
+  background: var(--bg-selected);
+}
+
+.od-table__row--muted .od-table__td {
+  color: var(--fg-inactive);
+}
+
+.od-table__empty {
+  padding: 0;
+}

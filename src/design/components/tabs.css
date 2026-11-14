@@ -1,0 +1,90 @@
+.od-tabs {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.od-tabs__bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  border-bottom: var(--border-width) solid var(--border-default);
+}
+
+.od-tabs__list {
+  display: flex;
+  flex: 1;
+  gap: var(--space-4);
+  min-width: 0;
+}
+
+.od-tabs__trigger {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1-5);
+  height: var(--control-height-md);
+  margin: 0 0 calc(var(--border-width) * -1);
+  padding: 0 var(--space-0-5);
+  border: 0;
+  border-bottom: var(--border-width-thick) solid transparent;
+  background: transparent;
+  color: var(--fg-muted);
+  font-size: var(--text-md);
+  font-weight: var(--weight-medium);
+  white-space: nowrap;
+  cursor: default;
+  transition:
+    color var(--duration-fast) var(--ease-standard),
+    border-color var(--duration-fast) var(--ease-standard);
+}
+
+.od-tabs__trigger:hover:not(:disabled) {
+  color: var(--fg-default);
+}
+
+.od-tabs__trigger[data-state="active"] {
+  color: var(--fg-default);
+  border-bottom-color: var(--accent);
+}
+
+.od-tabs__trigger:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring);
+  outline-offset: calc(var(--focus-ring-inset) * 1);
+  border-radius: var(--radius-sm);
+}
+
+.od-tabs__trigger:disabled {
+  color: var(--fg-disabled);
+}
+
+.od-tabs__count {
+  padding: 0 var(--space-1-5);
+  border-radius: var(--radius-full);
+  background: var(--bg-active);
+  color: var(--fg-muted);
+  font-size: var(--text-xs);
+  line-height: var(--leading-xs);
+}
+
+.od-tabs__trailing {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding-bottom: var(--space-1);
+}
+
+.od-tabs__panel {
+  padding-top: var(--space-4);
+}
+
+/* Tabs used as a page-level switcher render their content elsewhere; no empty gap. */
+.od-tabs__panel:empty {
+  display: none;
+}
+
+.od-tabs__panel:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
+  border-radius: var(--radius-sm);
+}

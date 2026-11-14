@@ -1,0 +1,294 @@
+.od-sidebar {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  color: var(--fg-default);
+  font-size: var(--text-md);
+}
+
+.od-sidebar__header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex: none;
+  height: var(--topbar-height);
+  padding: 0 var(--space-3) 0 var(--space-4);
+}
+
+.od-sidebar__body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--space-2) var(--space-2) var(--space-4);
+}
+
+.od-sidebar__footer {
+  flex: none;
+  padding: var(--space-2);
+  border-top: var(--border-width) solid var(--border-default);
+}
+
+.od-sidebar__footer .od-nav-group__list {
+  margin: 0;
+}
+
+/* ---- group */
+.od-nav-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-0-5);
+}
+
+.od-nav-group__header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  height: var(--control-height-sm);
+  padding-right: var(--space-1);
+}
+
+.od-nav-group__toggle {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+  height: 100%;
+  margin: 0;
+  padding: 0 var(--space-2) 0 var(--space-3);
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--fg-muted);
+  font-size: var(--text-xs);
+  line-height: var(--leading-xs);
+  font-weight: var(--weight-medium);
+  text-align: left;
+  cursor: default;
+}
+
+button.od-nav-group__toggle:hover {
+  color: var(--fg-default);
+}
+
+.od-nav-group__toggle:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring);
+  outline-offset: var(--focus-ring-inset);
+}
+
+.od-nav-group__label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.od-nav-group__chevron {
+  color: var(--fg-subtle);
+  opacity: 0;
+  transition:
+    transform var(--duration-fast) var(--ease-standard),
+    opacity var(--duration-fast) var(--ease-standard);
+}
+
+.od-nav-group__toggle:hover .od-nav-group__chevron,
+.od-nav-group__toggle:focus-visible .od-nav-group__chevron,
+.od-nav-group__chevron:not(.od-nav-group__chevron--open) {
+  opacity: 1;
+}
+
+.od-nav-group__chevron--open {
+  transform: rotate(90deg);
+}
+
+.od-nav-group__actions {
+  display: inline-flex;
+  opacity: 0;
+  transition: opacity var(--duration-fast) var(--ease-standard);
+}
+
+.od-nav-group__header:hover .od-nav-group__actions,
+.od-nav-group__header:focus-within .od-nav-group__actions {
+  opacity: 1;
+}
+
+.od-nav-group__list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-px);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.od-nav-group__list[hidden] {
+  display: none;
+}
+
+/* ---- item */
+.od-nav-item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  height: var(--nav-item-height);
+  padding-right: var(--space-1);
+  border-radius: var(--radius-md);
+  color: var(--fg-default);
+  transition: background-color var(--duration-fast) var(--ease-standard);
+}
+
+.od-nav-item:hover {
+  background: var(--bg-hover);
+}
+
+.od-nav-item--selected,
+.od-nav-item--selected:hover {
+  background: var(--bg-active);
+}
+
+.od-nav-item__button {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  height: 100%;
+  margin: 0;
+  padding: 0 var(--space-1) 0 var(--space-3);
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: inherit;
+  font-size: var(--text-md);
+  line-height: var(--leading-md);
+  text-align: left;
+  cursor: default;
+}
+
+.od-nav-item__button:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring);
+  outline-offset: var(--focus-ring-inset);
+}
+
+.od-nav-item__icon {
+  color: var(--fg-muted);
+}
+
+.od-nav-item--selected .od-nav-item__button {
+  font-weight: var(--weight-medium);
+}
+
+.od-nav-item--selected .od-nav-item__icon {
+  color: var(--accent-text);
+}
+
+.od-nav-item__label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.od-nav-item--disabled {
+  color: var(--fg-inactive);
+}
+
+.od-nav-item--disabled .od-nav-item__icon,
+.od-nav-item--disabled.od-nav-item--selected .od-nav-item__icon {
+  color: var(--fg-inactive);
+}
+
+.od-nav-item__warning {
+  display: inline-flex;
+  flex: none;
+  padding: var(--space-0-5);
+  border-radius: var(--radius-sm);
+  color: var(--warning-text);
+}
+
+.od-nav-item__warning:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring);
+  outline-offset: 0;
+}
+
+.od-nav-item__meta {
+  flex: none;
+  padding: 0 var(--space-1);
+  color: var(--fg-muted);
+  font-size: var(--text-xs);
+}
+
+/* Actions overlay the right end (over the meta) and are hidden with visibility, never display:none,
+ * so an open DropdownMenu keeps a laid-out anchor (macOS 11/12 WebKit has no :has()). */
+.od-nav-item__actions {
+  position: absolute;
+  top: 0;
+  right: var(--space-1);
+  bottom: 0;
+  display: inline-flex;
+  align-items: center;
+  padding-left: var(--space-1);
+  border-radius: var(--radius-md);
+  background: inherit;
+  visibility: hidden;
+  opacity: 0;
+}
+
+.od-nav-item:hover .od-nav-item__actions,
+.od-nav-item:focus-within .od-nav-item__actions,
+.od-nav-item--actions-open .od-nav-item__actions {
+  visibility: visible;
+  opacity: 1;
+}
+
+.od-nav-item--has-actions:hover .od-nav-item__meta,
+.od-nav-item--has-actions:focus-within .od-nav-item__meta,
+.od-nav-item--actions-open .od-nav-item__meta {
+  visibility: hidden;
+}
+
+/* drag handle: overlays the left edge, visible on hover/focus */
+.od-nav-item__handle {
+  position: absolute;
+  left: 0;
+  display: inline-flex;
+  opacity: 0;
+  transition: opacity var(--duration-fast) var(--ease-standard);
+}
+
+.od-nav-item:hover .od-nav-item__handle,
+.od-nav-item:focus-within .od-nav-item__handle {
+  opacity: 1;
+}
+
+.od-drag-handle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--space-3);
+  height: var(--nav-item-height);
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--fg-subtle);
+  cursor: grab;
+  touch-action: none;
+}
+
+.od-drag-handle:active {
+  cursor: grabbing;
+}
+
+.od-drag-handle:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring);
+  outline-offset: 0;
+}

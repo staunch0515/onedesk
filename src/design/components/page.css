@@ -1,0 +1,164 @@
+.od-page {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+}
+
+.od-page-header {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--page-pad-y) var(--page-pad-x) 0;
+}
+
+.od-page-header__row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  min-height: var(--control-height-md);
+}
+
+.od-page-header__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: var(--control-height-md);
+  height: var(--control-height-md);
+  border: var(--border-width) solid var(--border-default);
+  border-radius: var(--radius-md);
+  background: var(--bg-subtle);
+  color: var(--fg-muted);
+}
+
+.od-page-header__titles {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.od-page-header__title-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--control-height-md);
+  min-width: 0;
+}
+
+.od-page-header__title {
+  overflow: hidden;
+  color: var(--fg-default);
+  font-size: var(--text-xl);
+  line-height: var(--leading-xl);
+  font-weight: var(--weight-semibold);
+  letter-spacing: var(--tracking-tight);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.od-page-header__meta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1-5);
+  flex: none;
+}
+
+.od-page-header__description {
+  color: var(--fg-muted);
+  font-size: var(--text-md);
+  line-height: var(--leading-md);
+}
+
+.od-page-header__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex: none;
+}
+
+.od-page-body {
+  flex: 1;
+  width: 100%;
+  padding: var(--page-gap) var(--page-pad-x) var(--space-10);
+}
+
+.od-page-body--default {
+  max-width: calc(var(--page-max-width) + var(--page-pad-x) * 2);
+}
+
+.od-page-body--readable {
+  max-width: calc(var(--readable-max-width) + var(--page-pad-x) * 2);
+}
+
+/* ---- Stack */
+.od-stack {
+  display: flex;
+  min-width: 0;
+}
+
+.od-stack--column {
+  flex-direction: column;
+}
+
+.od-stack--row {
+  flex-direction: row;
+  align-items: center;
+}
+
+.od-stack--wrap {
+  flex-wrap: wrap;
+}
+
+.od-stack--gap-xs {
+  gap: var(--space-1);
+}
+
+.od-stack--gap-sm {
+  gap: var(--space-2);
+}
+
+.od-stack--gap-md {
+  gap: var(--stack-gap);
+}
+
+.od-stack--gap-lg {
+  gap: var(--page-gap);
+}
+
+.od-stack--align-start {
+  align-items: flex-start;
+}
+
+.od-stack--align-center {
+  align-items: center;
+}
+
+.od-stack--align-end {
+  align-items: flex-end;
+}
+
+.od-stack--align-stretch {
+  align-items: stretch;
+}
+
+.od-stack--align-baseline {
+  align-items: baseline;
+}
+
+.od-stack--justify-start {
+  justify-content: flex-start;
+}
+
+.od-stack--justify-center {
+  justify-content: center;
+}
+
+.od-stack--justify-end {
+  justify-content: flex-end;
+}
+
+.od-stack--justify-between {
+  justify-content: space-between;
+}

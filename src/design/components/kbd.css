@@ -1,0 +1,32 @@
+.od-kbd-group {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-0-5);
+  flex: none;
+}
+
+.od-kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: var(--kbd-min-width);
+  height: var(--kbd-height);
+  padding: 0 var(--space-1);
+  border: var(--border-width) solid var(--border-default);
+  border-bottom-width: var(--border-width-thick);
+  border-radius: var(--radius-sm);
+  background: var(--bg-subtle);
+  color: var(--fg-muted);
+  font-size: var(--text-xs);
+  line-height: var(--leading-xs);
+  font-weight: var(--weight-medium);
+}
+
+.od-kbd-group--inverse .od-kbd {
+  border-color: transparent;
+  background: transparent;
+  color: inherit;
+  opacity: 0.75;
+  min-width: 0;
+  padding: 0;
+}

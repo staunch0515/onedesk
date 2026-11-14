@@ -1,0 +1,131 @@
+.od-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-1-5);
+  flex: none;
+  margin: 0;
+  border: var(--border-width) solid transparent;
+  border-radius: var(--radius-md);
+  font-weight: var(--weight-medium);
+  white-space: nowrap;
+  user-select: none;
+  cursor: default;
+  transition:
+    background-color var(--duration-fast) var(--ease-standard),
+    border-color var(--duration-fast) var(--ease-standard),
+    color var(--duration-fast) var(--ease-standard),
+    box-shadow var(--duration-fast) var(--ease-standard);
+}
+
+.od-button--md {
+  height: var(--control-height-md);
+  padding: 0 var(--control-pad-x-md);
+  font-size: var(--text-md);
+  line-height: var(--leading-md);
+}
+
+.od-button--sm {
+  height: var(--control-height-sm);
+  padding: 0 var(--control-pad-x-sm);
+  font-size: var(--text-sm);
+  line-height: var(--leading-sm);
+  gap: var(--space-1);
+}
+
+.od-button__label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* primary */
+.od-button--primary {
+  background: var(--accent);
+  color: var(--fg-on-accent);
+  box-shadow: var(--shadow-xs);
+}
+.od-button--primary:hover:not(:disabled) {
+  background: var(--accent-hover);
+}
+.od-button--primary:active:not(:disabled) {
+  background: var(--accent-active);
+}
+
+/* secondary */
+.od-button--secondary {
+  background: var(--bg-surface);
+  border-color: var(--border-strong);
+  color: var(--fg-default);
+  box-shadow: var(--shadow-xs);
+}
+.od-button--secondary:hover:not(:disabled) {
+  background: var(--bg-hover);
+}
+.od-button--secondary:active:not(:disabled) {
+  background: var(--bg-active);
+}
+
+/* ghost */
+.od-button--ghost {
+  background: transparent;
+  color: var(--fg-default);
+}
+.od-button--ghost:hover:not(:disabled) {
+  background: var(--bg-hover);
+}
+.od-button--ghost:active:not(:disabled) {
+  background: var(--bg-active);
+}
+
+/* danger */
+.od-button--danger {
+  background: var(--danger);
+  color: var(--fg-on-accent);
+  box-shadow: var(--shadow-xs);
+}
+.od-button--danger:hover:not(:disabled) {
+  background: var(--danger-hover);
+}
+.od-button--danger:active:not(:disabled) {
+  background: var(--danger-hover);
+}
+
+.od-button:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
+}
+
+.od-button:disabled {
+  background: var(--bg-subtle);
+  border-color: var(--border-default);
+  color: var(--fg-disabled);
+  box-shadow: none;
+}
+
+.od-button--ghost:disabled {
+  background: transparent;
+  border-color: transparent;
+}
+
+/* Loading keeps the variant colours so it reads as "working", not "disabled". */
+.od-button--loading.od-button--primary:disabled {
+  background: var(--accent);
+  border-color: transparent;
+  color: var(--fg-on-accent);
+}
+.od-button--loading.od-button--danger:disabled {
+  background: var(--danger);
+  border-color: transparent;
+  color: var(--fg-on-accent);
+}
+.od-button--loading.od-button--secondary:disabled {
+  background: var(--bg-surface);
+  border-color: var(--border-strong);
+  color: var(--fg-muted);
+}
+.od-button--loading.od-button--ghost:disabled {
+  color: var(--fg-muted);
+}
+.od-button--loading {
+  cursor: progress;
+}

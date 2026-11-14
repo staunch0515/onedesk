@@ -1,0 +1,112 @@
+.od-dialog__overlay {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-overlay);
+  background: var(--bg-overlay);
+  animation: od-fade-in var(--duration-base) var(--ease-out);
+}
+
+.od-dialog {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  z-index: var(--z-modal);
+  display: flex;
+  flex-direction: column;
+  width: calc(100% - var(--space-12));
+  max-height: var(--dialog-max-height);
+  border: var(--border-width) solid var(--border-default);
+  border-radius: var(--radius-xl);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-lg);
+  transform: translate(-50%, -50%);
+  animation: od-dialog-in var(--duration-slow) var(--ease-out);
+}
+
+.od-dialog:focus-visible {
+  outline: none;
+}
+
+.od-dialog--sm {
+  max-width: var(--dialog-width-sm);
+}
+
+.od-dialog--md {
+  max-width: var(--dialog-width-md);
+}
+
+.od-dialog--lg {
+  max-width: var(--dialog-width-lg);
+}
+
+@keyframes od-dialog-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(var(--motion-scale));
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+  }
+}
+
+.od-dialog__header {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: var(--space-5) var(--space-5) 0;
+}
+
+.od-dialog__titles {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.od-dialog__title {
+  color: var(--fg-default);
+  font-size: var(--text-lg);
+  line-height: var(--leading-lg);
+  font-weight: var(--weight-semibold);
+}
+
+.od-dialog__description {
+  color: var(--fg-muted);
+  font-size: var(--text-md);
+  line-height: var(--leading-md);
+}
+
+.od-dialog__close {
+  position: absolute;
+  top: calc(var(--space-5) - var(--space-0-5)); /* centres the control-height-sm button on the title's first line */
+  right: var(--space-4);
+}
+
+.od-dialog__header {
+  padding-right: var(--space-12);
+}
+
+.od-dialog__body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: var(--space-4) var(--space-5);
+  color: var(--fg-default);
+}
+
+.od-dialog__header:last-child {
+  padding-bottom: var(--space-5);
+}
+
+.od-dialog__header + .od-dialog__footer {
+  margin-top: var(--space-5);
+}
+
+.od-dialog__footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-5) var(--space-5);
+}

@@ -1,0 +1,16 @@
+.od-tooltip {
+  z-index: var(--z-tooltip);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  max-width: var(--tooltip-max-width);
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-sm);
+  background: var(--bg-inverse);
+  color: var(--fg-inverse);
+  font-size: var(--text-xs);
+  line-height: var(--leading-xs);
+  box-shadow: var(--shadow-md);
+  user-select: none;
+  animation: od-fade-in var(--duration-fast) var(--ease-out);
+}
