@@ -1,11 +1,12 @@
 /** The application shell: layout, routing, dialogs, global shortcuts, notifications. */
-import { Component, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Component, lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   AppShell,
   Button,
   Dialog,
   DialogClose,
   ErrorState,
+  LoadingState,
   ThemeProvider,
   ToastProvider,
   useToast,
@@ -20,16 +21,18 @@ import { t } from "./i18n";
 import { rememberKinds } from "./kind-cache";
 import { NewResourceDialog } from "./new-resource-dialog";
 import { AllResourcesPage } from "./pages/all-resources-page";
-import { CollectionsPage } from "./pages/collections-page";
-import { PluginsPage } from "./pages/plugins-page";
 import { ResourcePage } from "./pages/resource-page";
-import { SearchPage } from "./pages/search-page";
-import { SettingsPage } from "./pages/settings-page";
 import { ShellPalette } from "./palette";
 import type { ShellServices } from "./services";
 import { ShellContext, sameRoute, type ConfirmOptions, type LeaveGuard, type Route, type ShellApi } from "./shell-context";
 import { SidebarMenu } from "./sidebar-menu";
 import { ShellTopBar } from "./top-bar";
+
+// Pages not needed to show the menu are split out of the startup bundle.
+const CollectionsPage = lazy(() => import("./pages/collections-page").then((m) => ({ default: m.CollectionsPage })));
+const PluginsPage = lazy(() => import("./pages/plugins-page").then((m) => ({ default: m.PluginsPage })));
+const SearchPage = lazy(() => import("./pages/search-page").then((m) => ({ default: m.SearchPage })));
+const SettingsPage = lazy(() => import("./pages/settings-page").then((m) => ({ default: m.SettingsPage })));
 
 export const THEME_PREF = "shell.theme";
 export const DENSITY_PREF = "shell.density";
@@ -238,7 +241,9 @@ function ShellRoot({ kernel, services, initialRoute }: { kernel: Kernel; service
   return (
     <ShellContext.Provider value={api}>
       <AppShell sidebar={<SidebarMenu />} topbar={<ShellTopBar />} mainLabel={t("app.mainLabel")}>
-        <PageBoundary resetKey={JSON.stringify(route)}>{page}</PageBoundary>
+        <PageBoundary resetKey={JSON.stringify(route)}>
+          <Suspense fallback={<LoadingState label={t("common.loading")} />}>{page}</Suspense>
+        </PageBoundary>
       </AppShell>
       <NewResourceDialog open={newOpen} onOpenChange={setNewOpen} preset={newPreset} />
       <ShellPalette open={paletteOpen} onOpenChange={setPaletteOpen} />

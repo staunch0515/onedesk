@@ -1,11 +1,12 @@
 // Renders the application shell. The design-system gallery stays available with `?gallery` (D105).
-import { StrictMode } from "react";
+import { lazy, StrictMode, Suspense } from "react";
 import { createRoot } from "react-dom/client";
 import { ThemeProvider, ToastProvider, type Density, type ThemePreference } from "./design";
-import { Gallery } from "./design/gallery/Gallery";
 import { Start } from "./shell/start";
 
 const params = new URLSearchParams(window.location.search);
+// Loaded only when asked for, so the app's startup bundle does not carry the gallery.
+const Gallery = lazy(() => import("./design/gallery/Gallery").then((m) => ({ default: m.Gallery })));
 const root = createRoot(document.getElementById("root")!);
 
 if (params.has("gallery")) {
@@ -16,7 +17,9 @@ if (params.has("gallery")) {
     <StrictMode>
       <ThemeProvider defaultTheme={theme} defaultDensity={density}>
         <ToastProvider closeLabel="关闭" viewportLabel="通知 ({hotkey})">
-          <Gallery />
+          <Suspense fallback={null}>
+            <Gallery />
+          </Suspense>
         </ToastProvider>
       </ThemeProvider>
     </StrictMode>,
