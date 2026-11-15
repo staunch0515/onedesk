@@ -1,4 +1,4 @@
-# week1/plugins（分支 claude/week1-plugins-15d46f）：第一阶段完成
+# week1/plugins（分支 claude/week1-plugins-15d46f）：第一、二阶段完成
 
 ## 完成了什么
 - `plugins/org.onedesk.note/`：类型 `note`（`resources` 树，body `{text}`）、页面 `editor`（占满高度的 `longtext`，`bind: body.text`）、保存操作、“新建”里的“笔记”、右键命令 `duplicate`（`resources.get/create` + `ui.open`，副本名 `<原名> (副本|copy)`）。
@@ -6,7 +6,7 @@
 - 两个插件都有英、中语言文件；纯 JS ES 模块，无 `console`/`setTimeout`/`fetch`；清单已用 `python3 -m json.tool` 校验。
 - 测试：`plugins/*/main.test.ts` + 共用的 `plugins/_testing/view-check.ts`（假 host、ViewNode 严格校验镜像、registry）。
 - `scripts/check-arch.mjs`、`scripts/check-ui.mjs` 改为新结构规则（见下）。
-- `e2e/week1.spec.ts`（连真 devhost，浅/深各一组，截图到 `docs/screenshots/week1-<主题>-<名>.png`）。**写完，没有运行。**
+- `e2e/week1.spec.ts`（连真 devhost，浅/深各一组，截图到 `docs/screenshots/week1-<主题>-<名>.png`）。第二阶段已跑通，见文末。
 
 ## 测试与检查结果
 - `pnpm test`：12 个文件、75 个测试全过（插件 23 个）。
@@ -38,5 +38,21 @@
 - `playwright.config.ts` 没改（现有配置已能同时跑两个 spec；webServer 仍是 vite）。
 - `pnpm check` 里的 Rust 部分不在我范围，没跑。
 
-## e2e 运行情况
-`E2E_PORT=1432 pnpm exec playwright test`：`workbench.spec.ts` 23 通过、1 个本来就跳过；`week1.spec.ts` 5 个因无 devhost 二进制被跳过（未执行）。耗时约 8 分钟。
+## 第二阶段（合并 claude/week1-slice-3b4ae5 之后）
+做了：
+- 文件插件面包屑去掉 `tree`；两个插件的 `render`/`children`/`save` 返回值各加“无多余字段”断言（对照 `pages.rs` 的 `RenderOut`/`PluginCrumb`/`SaveOut` 与 `kernel.rs` 的 `PNode`/`PPage`）。
+- `check-arch` 去掉 LEGACY；新结构后出现的误报用两条规则处理：`crates/kernel` 里不查 `sql` 一词（SQLite 层，变量名/文件名），`tests/` 目录里不查工具词（测试用 `org.test.note` 之类的假插件），真实插件 id 与类型名仍然处处检查。
+- `week1.spec.ts` 对着真 devhost 跑通：`--plugins <仓库>/plugins`；WebSocket 为 `/?token=&client=`、数值 id、先 `hello {protocol:"1"}`；展开节点用点击后按 `ArrowRight`（箭头没有可访问名字）；点击文件节点即打开；重启后用“Expand all”展开。
+- 杀工作进程那一项真的杀了（`pkill` 无匹配会让测试失败）。
+
+### 第二阶段发现的问题
+**K1（内核，`crates/kernel/src/kernel.rs` `provided_page`）**：提供树的页面声明了 `page` 时，所有节点（含文件夹）都会补上默认 `target`（`n.target.or_else(|| has_page.then(...))`），插件无法表示“这个节点没有页面”。现象：授权文件夹后点击文件夹或顶层授权文件夹，会打开一个标题为文件夹名的标签页（`page.resolve` 对文件夹路径会走文本页，`readText` 失败后显示说明）；右键菜单也多出“打开”。复现：`tree.children {tree:"org.onedesk.files:files"}` 返回的文件夹节点带 `target`。期望：插件返回的节点没有 `target` 就不补（任务书“文件夹节点没有页面”）。建议：只有当插件显式给了 `target` 才有页面，或允许插件传 `target: null` 表示无页面。检查：现有 spec 没有断言它（以免绑死在缺陷上）；修好后可加“点击文件夹不开标签”。
+
+**S1（外壳，`src/workbench/state/context.tsx` `save`，约 90–110 行）**：只处理 `new:` 和 `resource:` 目标，`node:` 目标（文本文件）直接 `return true`，没有发 `page.save`，标签一直是“未保存”，硬盘不变。复现：文件树里授权文件夹→打开文本文件→输入→⌘S 或点“保存”→无任何网络请求（内核直接发 `page.save {target:"node:…", changes:{content}, basis}` 是正常的，已验证写盘与新 basis）。期望：`node:` 目标同样调用 `client.page.save(tab.target, draft, basis)`，成功后用返回的 `page`（含新 `basis`）刷新、清草稿；`basis` 取自 `page.resolve` 的 `basis`。对应检查 `e2e/week1.spec.ts` 里的 `test.fixme("files: saving a text file …")`，修好后去掉 `.fixme`。
+
+### 截图
+`docs/screenshots/week1-{light,dark}-*.png`（空工作区、笔记未保存/已保存、拖动后、重启后、文件树、文本未保存、关闭询问、非文本、`week1-light-worker-recovered.png`）。
+
+## e2e 运行情况（最终）
+`E2E_PORT=1432 pnpm e2e`：**28 通过、0 失败、2 跳过**（1 个 `test.fixme`：S1；1 个 workbench.spec 原本就跳过的“review shots”）。`week1.spec.ts` 6 个：5 通过 + 1 fixme。另：全量跑时 `workbench.spec.ts` 的“new query … cancel a run”在机器很忙时偶发超时（单独跑 39 秒通过，最终全量也通过），与我的改动无关。
+`pnpm test` 75 通过、`pnpm lint`、`pnpm typecheck` 通过；改了 `week1.spec.ts` 里的输入框定位（“Content”、“New name”）使它不依赖输入时机。

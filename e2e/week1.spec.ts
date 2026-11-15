@@ -43,7 +43,7 @@ async function freePort(): Promise<number> {
 async function startHost(dataDir: string): Promise<Host> {
   const port = await freePort();
   const token = randomBytes(16).toString("hex");
-  const proc = spawn(DEVHOST, ["--data-dir", dataDir, "--port", String(port), "--token", token], {
+  const proc = spawn(DEVHOST, ["--data-dir", dataDir, "--port", String(port), "--token", token, "--plugins", path.join(ROOT, "plugins")], {
     cwd: ROOT,
     env: { ...process.env, ONEDESK_DATA_DIR: dataDir },
     stdio: ["ignore", "pipe", "pipe"],
@@ -77,7 +77,7 @@ const ui = {
   nodeKey: (page: Page, key: string) => page.locator(`[data-tree-key="${key}"]`),
   activity: (page: Page, name: string) => page.getByRole("navigation", { name: "Views" }).getByRole("button", { name, exact: true }),
   menuItem: (page: Page, name: string) => page.getByRole("menuitem", { name }),
-  editor: (page: Page) => page.getByRole("textbox").last(),
+  editor: (page: Page) => page.getByRole("textbox", { name: "Content", exact: true }),
 };
 
 async function openKernel(page: Page, h: Host, theme = "light") {
@@ -86,26 +86,25 @@ async function openKernel(page: Page, h: Host, theme = "light") {
   await page.evaluate(() => history.replaceState(null, "", location.pathname + location.search.replace("reset&", "")));
 }
 
-/** Raw protocol call over the same WebSocket transport the shell uses (assumed: `?token=` query, JSON text frames). */
-async function rpc<T = unknown>(page: Page, h: Host, method: string, params: unknown = {}): Promise<T> {
+/** Raw protocol call over the devhost WebSocket (`/?token=&client=`, numeric ids, one JSON text frame each). */
+async function rpc<T = unknown>(page: Page, h: Host, method: string, params: unknown = null): Promise<T> {
   return page.evaluate(
     ({ url, method, params }) =>
       new Promise<T>((resolve, reject) => {
         const ws = new WebSocket(url);
-        let n = 0;
-        const send = (m: string, p: unknown) => ws.send(JSON.stringify({ id: String(++n), method: m, params: p, client: "e2e" }));
-        ws.onopen = () => send("hello", { protocol: 1, client: "e2e" });
+        const send = (id: number, m: string, p: unknown) => ws.send(JSON.stringify({ id, method: m, params: p }));
+        ws.onopen = () => send(1, "hello", { protocol: "1" });
         ws.onerror = () => reject(new Error("ws error"));
         ws.onmessage = (ev) => {
           const msg = JSON.parse(String(ev.data));
-          if (msg.id === "1") return send(method, params);
-          if (msg.id === "2") {
+          if (msg.id === 1) return send(2, method, params);
+          if (msg.id === 2) {
             ws.close();
             msg.error ? reject(new Error(JSON.stringify(msg.error))) : resolve(msg.result);
           }
         };
       }),
-    { url: `ws://127.0.0.1:${h.port}/?token=${h.token}`, method, params },
+    { url: `ws://127.0.0.1:${h.port}/?token=${h.token}&client=e2e-rpc`, method, params },
   );
 }
 
@@ -154,7 +153,7 @@ for (const theme of ["light", "dark"] as const) {
       // new group
       await page.getByRole("button", { name: "New", exact: true }).click();
       await ui.menuItem(page, "New group").click();
-      await page.keyboard.type(`Work-${theme}`);
+      await page.getByRole("textbox", { name: "New name" }).fill(`Work-${theme}`);
       await page.keyboard.press("Enter");
       await expect(ui.node(page, `Work-${theme}`)).toBeVisible();
 
@@ -203,9 +202,9 @@ for (const theme of ["light", "dark"] as const) {
       host = await startHost(dataDir);
       await openKernel(page, host, theme);
       await expect(ui.node(page, `Work-${theme}`)).toBeVisible();
-      await ui.node(page, `Work-${theme}`).dblclick(); // expand if collapsed
+      await page.getByRole("button", { name: "Expand all" }).click();
       await expect(ui.node(page, `Plan-${theme}`)).toBeVisible();
-      await ui.node(page, `Plan-${theme}`).dblclick();
+      await ui.node(page, `Plan-${theme}`).click();
       await expect(ui.editor(page)).toHaveValue(`hello from ${theme}`);
       await shot(page, theme, "after-restart");
     });
@@ -220,6 +219,7 @@ for (const theme of ["light", "dark"] as const) {
       await rpc(page, host, "plugin.grantFolder", { plugin: "org.onedesk.files", path: granted });
       await expect(ui.nodeKey(page, granted)).toBeVisible();
       await ui.nodeKey(page, granted).click();
+      await page.keyboard.press("ArrowRight"); // expand (the chevron has no accessible name)
       await expect(ui.nodeKey(page, path.join(granted, "sub"))).toBeVisible();
       await expect(ui.nodeKey(page, path.join(granted, "readme.md"))).toBeVisible();
       await expect(ui.nodeKey(page, path.join(granted, ".hidden"))).toHaveCount(0);
@@ -231,17 +231,14 @@ for (const theme of ["light", "dark"] as const) {
 
       // open, edit, dirty mark, save → disk changes
       const file = path.join(granted, "readme.md");
-      await ui.nodeKey(page, file).dblclick();
+      await ui.nodeKey(page, file).click();
       await expect(ui.tab(page, "readme.md")).toBeVisible();
       await ui.editor(page).fill(`# edited in ${theme}\n`);
       await expect(ui.tab(page, "readme.md")).toHaveClass(/od-tab--dirty/);
       await shot(page, theme, "text-dirty");
-      await page.keyboard.press("Meta+s");
-      await expect(ui.tab(page, "readme.md")).not.toHaveClass(/od-tab--dirty/);
-      expect(readFileSync(file, "utf8")).toBe(`# edited in ${theme}\n`);
+      // (saving a node: page from the UI is the fixme test below)
 
       // closing with unsaved changes asks first
-      await ui.editor(page).fill("unsaved");
       await ui.tab(page, "readme.md").getByRole("button").click();
       await expect(page.getByRole("dialog")).toContainText("unsaved changes");
       await shot(page, theme, "close-guard");
@@ -249,7 +246,7 @@ for (const theme of ["light", "dark"] as const) {
       await expect(ui.tab(page, "readme.md")).toBeVisible();
 
       // a binary file shows a muted explanation instead of an editor
-      await ui.nodeKey(page, path.join(granted, "blob.bin")).dblclick();
+      await ui.nodeKey(page, path.join(granted, "blob.bin")).click();
       await expect(page.getByText(/not UTF-8 text/)).toBeVisible();
       await shot(page, theme, "text-not-text");
 
@@ -257,23 +254,38 @@ for (const theme of ["light", "dark"] as const) {
       const target = `node:org.onedesk.files:files/${encodeURIComponent(path.join(outside, "pass.txt"))}`;
       const resolved = await rpc(page, host, "page.resolve", { target }).catch((e: Error) => String(e));
       expect(JSON.stringify(resolved)).not.toContain("top secret");
+      expect(JSON.stringify(resolved)).toMatch(/denied|muted|reason\.denied|outside/); // refused or shown as a refusal
     });
   });
 }
 
+// FIXME(shell): `save` in src/workbench/state/context.tsx only handles `new:` and `resource:` targets, so
+// ⌘S / the Save button on a `node:` page (text files) sends nothing and the tab stays dirty. See the
+// handoff file, "第二阶段发现的问题" #S1. Remove `.fixme` when the shell calls `page.save` for `node:` targets.
+test.fixme("files: saving a text file writes it to disk and clears the unsaved mark", async ({ page }) => {
+  await openKernel(page, host);
+  await ui.activity(page, "Files").click();
+  const file = path.join(granted, "readme.md");
+  await ui.nodeKey(page, granted).click();
+  await page.keyboard.press("ArrowRight");
+  await ui.nodeKey(page, file).click();
+  await ui.editor(page).fill("# saved from the UI\n");
+  await expect(ui.tab(page, "readme.md")).toHaveClass(/od-tab--dirty/);
+  await page.keyboard.press("Meta+s");
+  await expect(ui.tab(page, "readme.md")).not.toHaveClass(/od-tab--dirty/);
+  expect(readFileSync(file, "utf8")).toBe("# saved from the UI\n");
+  await shot(page, "light", "text-saved");
+});
+
 test("kill the worker: the UI recovers and data is intact", async ({ page }) => {
   await openKernel(page, host);
   await expect(ui.node(page, "Work-light")).toBeVisible();
-  try {
-    execFileSync("pkill", ["-9", "-f", `onedesk-worker.*${dataDir}`]);
-  } catch {
-    // pkill exits 1 when nothing matched; the next assertions then fail with a clearer message
-  }
+  execFileSync("pkill", ["-9", "-f", `onedesk-worker.*${dataDir}`]); // throws when no worker matched
   // a connection-lost banner may flash; the tree must come back on its own
   await expect(ui.node(page, "Work-light")).toBeVisible({ timeout: 30_000 });
   await page.getByRole("button", { name: "New", exact: true }).click();
   await ui.menuItem(page, "New group").click();
-  await page.keyboard.type("After-kill");
+  await page.getByRole("textbox", { name: "New name" }).fill("After-kill");
   await page.keyboard.press("Enter");
   await expect(ui.node(page, "After-kill")).toBeVisible();
   await shot(page, "light", "worker-recovered");
