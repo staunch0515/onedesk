@@ -1,0 +1,12 @@
+{
+  "plugin.name": "笔记",
+  "plugin.description": "资源树里的纯文本笔记。",
+  "kind.note": "笔记",
+  "kind.note.new": "未命名笔记",
+  "action.save": "保存",
+  "command.duplicate": "创建副本",
+  "field.text": "内容",
+  "field.placeholder": "写下笔记。",
+  "copy.suffix": "副本",
+  "error.notFound": "这条笔记已不存在。"
+}

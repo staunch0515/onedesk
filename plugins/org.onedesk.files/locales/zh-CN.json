@@ -1,0 +1,12 @@
+{
+  "plugin.name": "文件",
+  "plugin.description": "浏览已授权的文件夹，编辑文本文件。",
+  "tree.files": "文件",
+  "action.save": "保存",
+  "field.content": "内容",
+  "reason.tooLarge": "文件太大，无法在这里编辑（上限 2 MB）。",
+  "reason.notText": "这个文件不是 UTF-8 文本，无法在这里编辑。",
+  "reason.denied": "这个文件在你授权的文件夹之外。",
+  "reason.notFound": "这个文件已不存在。",
+  "reason.failed": "无法打开这个文件。"
+}

@@ -22,7 +22,7 @@ export default defineConfig({
   projects: [{ name: "chromium" }],
   webServer: {
     command: `pnpm exec vite --port ${PORT} --strictPort`,
-    url: `http://localhost:${PORT}`,
+    url: `http://localhost:${PORT}/workbench.html`,
     reuseExistingServer: false,
     timeout: 120_000,
   },

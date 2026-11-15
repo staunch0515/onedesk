@@ -1,104 +1,131 @@
 #!/usr/bin/env node
 /**
  * Architecture boundary check (fails closed: when unsure, reject).
- *  1. src/kernel must not import plugins/, shell/, design/, platform/ (or react).
- *  2. src/kernel must not mention any built-in plugin id or kind (ids and kinds are read from
- *     src/plugins/<dir>/manifest.json every run, so the list never goes stale).
- *  3. src/plugins/<dir> may only import `@onedesk/plugin-api` and files inside its own folder.
- *  4. src/plugin-api must not import kernel/, shell/, design/, platform/, plugins/.
+ *  1. crates/kernel, crates/worker, crates/protocol, crates/host, src-tauri: source (not tests/fixtures)
+ *     must not mention any plugin id under plugins/ or its kind names, nor the banned tool words
+ *     (note, markdown, sql, postgres, ssh, docker, psql, video, ffmpeg) as whole words.
+ *  2. crates/kernel must not depend on tauri.
+ *  3. src/workbench must not import plugins/; only main.tsx may import protocol/mock.
+ *  4. plugins/<id>: no imports outside the package, no browser/sandbox-absent globals.
  */
 import { readFileSync, readdirSync, statSync, existsSync } from "node:fs";
 import { join, relative, resolve, dirname, sep } from "node:path";
 
 const root = resolve(dirname(new URL(import.meta.url).pathname), "..");
-const src = join(root, "src");
 const errors = [];
-const warnings = [];
-
-function walk(dir) {
-  if (!existsSync(dir)) return [];
-  return readdirSync(dir).flatMap((name) => {
-    const p = join(dir, name);
-    return statSync(p).isDirectory() ? walk(p) : /\.(ts|tsx|mjs|js)$/.test(name) ? [p] : [];
-  });
-}
 const rel = (p) => relative(root, p);
+const walk = (dir, re) =>
+  !existsSync(dir)
+    ? []
+    : readdirSync(dir).flatMap((n) => {
+        if (n === "node_modules" || n === "target" || n === "generated") return [];
+        const p = join(dir, n);
+        return statSync(p).isDirectory() ? walk(p, re) : re.test(n) ? [p] : [];
+      });
 const importsOf = (code) =>
-  [...code.matchAll(/(?:import|export)\s[^'"]*?from\s*['"]([^'"]+)['"]|import\(\s*['"]([^'"]+)['"]\s*\)/g)].map((m) => m[1] ?? m[2]);
+  [...code.matchAll(/(?:import|export)\s[^'"]*?from\s*['"]([^'"]+)['"]|import\(\s*['"]([^'"]+)['"]\s*\)|^\s*import\s*['"]([^'"]+)['"]/gm)].map((m) => m[1] ?? m[2] ?? m[3]);
+const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
-// Words that are also generic view-node / output types in the public API. A kind with such a name is
-// ambiguous for a plain string search, so we warn and fall back to kind-specific patterns.
-const GENERIC_WORDS = new Set(["form", "table", "text", "link", "file", "none"]);
-
-// ---- collect built-in plugin ids and kinds from manifests
-const pluginsDir = join(src, "plugins");
-const builtins = [];
+// ---- plugins: ids and kind names come from the manifests every run
+const pluginsDir = join(root, "plugins");
+const plugins = [];
 if (existsSync(pluginsDir)) {
   for (const d of readdirSync(pluginsDir)) {
     const mf = join(pluginsDir, d, "manifest.json");
     if (!existsSync(mf)) continue;
     try {
       const m = JSON.parse(readFileSync(mf, "utf8"));
-      builtins.push({ dir: d, id: m.id, kinds: m.provides?.kinds ?? [] });
+      const kinds = (m.contributes?.kinds ?? []).map((k) => k.id);
+      plugins.push({ dir: d, id: m.id, kinds });
     } catch (e) {
       errors.push(`${rel(mf)}: manifest.json 不是合法 JSON（${e.message}）`);
     }
   }
 }
 
-// ---- 1 & 2: kernel
-const kernelFiles = walk(join(src, "kernel"));
-for (const f of kernelFiles) {
-  const code = readFileSync(f, "utf8");
-  const isTest = /\.test\.tsx?$/.test(f) || f.includes(`${sep}testing${sep}`);
-  for (const spec of importsOf(code)) {
-    if (/(^|\/)(plugins|shell|design|platform)(\/|$)/.test(spec) || spec === "react" || spec.startsWith("@tauri-apps/")) {
-      // Tests may load built-in plugins to exercise the real public path, never production kernel code.
-      if (isTest && /(^|\/)plugins(\/|$)/.test(spec)) continue;
-      errors.push(`${rel(f)}: 内核不得 import "${spec}"`);
-    }
-  }
-  if (isTest) continue;
-  for (const b of builtins) {
-    if (b.id && code.includes(b.id)) errors.push(`${rel(f)}: 内核出现内置插件 id "${b.id}"`);
-    for (const k of b.kinds) {
-      if (GENERIC_WORDS.has(k)) {
-        warnings.push(`kind "${k}"（${b.dir}）与通用视图节点/输出类型同名，只检查 kind 相关写法`);
-        const re = new RegExp(`kind\\s*(===|!==|==|:)\\s*["'\`]${k}["'\`]|["'\`]${k}["'\`]\\s*(===|!==|==)\\s*\\w*kind`);
-        if (re.test(code)) errors.push(`${rel(f)}: 内核出现针对 kind "${k}" 的判断`);
-      } else if (new RegExp(`["'\`]${k.replace(/[-]/g, "\\-")}["'\`]`).test(code)) {
-        errors.push(`${rel(f)}: 内核出现内置 kind "${k}"`);
+// ---- 1: kernel-side sources know no concrete plugin
+const BANNED_WORDS = ["note", "markdown", "sql", "postgres", "ssh", "docker", "psql", "video", "ffmpeg"];
+const wordRe = new RegExp(`(?<![A-Za-z0-9_])(${BANNED_WORDS.join("|")})(?![A-Za-z0-9_])`, "i");
+const kernelSide = ["crates/kernel", "crates/worker", "crates/protocol", "crates/host", "src-tauri"].map((d) => join(root, d));
+const isFixture = (f) => f.includes(`${sep}tests${sep}fixtures${sep}`) || f.includes(`${sep}gen${sep}`);
+// First-version Rust still in src-tauri; the shell session replaces it (D257). Reported as warnings until
+// those files are gone, then this set is dead code and should be deleted.
+const LEGACY = new Set(["commands.rs", "db.rs", "plugins.rs", "secrets.rs", "time.rs", "transfer.rs"].map((n) => join(root, "src-tauri/src", n)));
+const warnings = [];
+// Doc comments and `#[cfg(test)]` modules (last in the file by convention) are not scanned for words.
+const stripRust = (f, code) => {
+  if (!f.endsWith(".rs")) return code;
+  const cut = code.indexOf("#[cfg(test)]");
+  return (cut >= 0 ? code.slice(0, cut) : code).replace(/\/\/.*$/gm, "");
+};
+let scanned = 0;
+for (const dir of kernelSide) {
+  for (const f of walk(dir, /\.(rs|toml|json|sql|ts|js|mjs)$/)) {
+    if (isFixture(f) || /(^|\/)(Cargo\.lock|package-lock\.json)$/.test(f)) continue;
+    scanned++;
+    const code = stripRust(f, readFileSync(f, "utf8"));
+    const errors_ = LEGACY.has(f) ? warnings : errors;
+    for (const p of plugins) {
+      if (p.id && code.includes(p.id)) errors_.push(`${rel(f)}: 出现内置插件 id "${p.id}"`);
+      for (const k of p.kinds) {
+        if (new RegExp(`${esc(p.id)}:${esc(k)}\\b`).test(code)) errors_.push(`${rel(f)}: 出现内置类型 "${p.id}:${k}"`);
       }
     }
+    code.split("\n").forEach((line, i) => {
+      const m = wordRe.exec(line);
+      if (m) errors_.push(`${rel(f)}:${i + 1}: 出现具体插件相关的词 "${m[1]}"`);
+    });
   }
 }
 
-// ---- 3: plugins
-for (const b of builtins) {
-  const dir = join(pluginsDir, b.dir);
-  for (const f of walk(dir)) {
-    for (const spec of importsOf(readFileSync(f, "utf8"))) {
-      if (spec === "@onedesk/plugin-api") continue;
-      if (/\.test\.tsx?$/.test(f) && (spec === "vitest" || /(^|\/)(kernel|plugins)\/testing(\/|$)|^\.\.\/testing(\/|$)/.test(spec))) continue;
+// ---- 2: kernel must not depend on tauri
+const kernelToml = join(root, "crates/kernel/Cargo.toml");
+if (existsSync(kernelToml) && /^\s*tauri[\w-]*\s*[=.{]/m.test(readFileSync(kernelToml, "utf8"))) errors.push("crates/kernel/Cargo.toml: 内核不得依赖 tauri");
+for (const f of walk(join(root, "crates/kernel"), /\.rs$/)) {
+  if (/\btauri\b/.test(readFileSync(f, "utf8").replace(/\/\/.*$/gm, ""))) errors.push(`${rel(f)}: 内核源码不得使用 tauri`);
+}
+
+// ---- 3: workbench imports
+const wb = join(root, "src/workbench");
+for (const f of walk(wb, /\.(ts|tsx)$/)) {
+  const isMain = f === join(wb, "main.tsx");
+  const isTest = /\.test\.tsx?$/.test(f);
+  for (const spec of importsOf(readFileSync(f, "utf8"))) {
+    if (/(^|\/)plugins(\/|$)/.test(spec) && spec.startsWith(".")) errors.push(`${rel(f)}: 外壳不得 import plugins/ ("${spec}")`);
+    const toMock = /(^|\/)mock(\/|$)/.test(spec) && (/protocol\/mock/.test(spec) || f.includes(`${sep}protocol${sep}`));
+    if (toMock && !isMain && !isTest && !f.includes(`${sep}protocol${sep}mock${sep}`)) errors.push(`${rel(f)}: 只有 main.tsx 可以 import protocol/mock ("${spec}")`);
+  }
+}
+
+// ---- 4: plugin packages
+const SANDBOX_ABSENT = /(?<![\w.$])(console|setTimeout|setInterval|fetch|XMLHttpRequest|window|document|localStorage|require|process)\s*[.(]/;
+let pluginFiles = 0;
+for (const p of plugins) {
+  const dir = join(pluginsDir, p.dir);
+  for (const f of walk(dir, /\.(js|mjs|ts|tsx)$/)) {
+    pluginFiles++;
+    const isTest = /\.test\.ts$/.test(f);
+    const code = readFileSync(f, "utf8");
+    for (const spec of importsOf(code)) {
+      if (isTest && (spec === "vitest" || spec.startsWith("../_testing/") || spec.startsWith("../../src/workbench/protocol/generated"))) continue;
       if (spec.startsWith(".")) {
         const target = resolve(dirname(f), spec);
         if (target === dir || target.startsWith(dir + sep)) continue;
       }
-      errors.push(`${rel(f)}: 插件只能 import "@onedesk/plugin-api" 和自己文件夹内的文件，发现 "${spec}"`);
+      errors.push(`${rel(f)}: 插件只能 import 自己文件夹内的文件，发现 "${spec}"`);
+    }
+    if (!isTest) {
+      code.split("\n").forEach((line, i) => {
+        const l = line.replace(/\/\/.*$/, "");
+        if (SANDBOX_ABSENT.test(l)) errors.push(`${rel(f)}:${i + 1}: 沙箱里没有这个全局对象 → ${line.trim()}`);
+      });
     }
   }
 }
 
-// ---- 4: plugin-api
-for (const f of walk(join(src, "plugin-api"))) {
-  for (const spec of importsOf(readFileSync(f, "utf8"))) {
-    if (/(^|\/)(kernel|shell|design|platform|plugins)(\/|$)/.test(spec)) errors.push(`${rel(f)}: plugin-api 不得 import "${spec}"`);
-  }
-}
-
-for (const w of new Set(warnings)) console.warn(`警告：${w}`);
+if (warnings.length) console.warn(`警告：旧代码（待外壳会话替换）有 ${warnings.length} 处违规，未计入失败：${[...new Set(warnings.map((w) => w.split(":")[0]))].join("、")}`);
 if (errors.length) {
   console.error(`架构检查失败（${errors.length}）：\n- ${errors.join("\n- ")}`);
   process.exit(1);
 }
-console.log(`架构检查通过（内核 ${kernelFiles.length} 个文件，内置插件 ${builtins.length} 个）`);
+console.log(`架构检查通过（内核侧 ${scanned} 个文件，内置插件 ${plugins.length} 个，插件文件 ${pluginFiles} 个）`);

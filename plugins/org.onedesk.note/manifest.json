@@ -1,0 +1,37 @@
+{
+  "id": "org.onedesk.note",
+  "version": "0.1.0",
+  "apiVersion": "2",
+  "name": "plugin.name",
+  "description": "plugin.description",
+  "icon": "sticky-note",
+  "main": "main.js",
+  "requires": { "files": false },
+  "contributes": {
+    "kinds": [
+      {
+        "id": "note",
+        "label": "kind.note",
+        "icon": "sticky-note",
+        "tree": "resources",
+        "page": "editor",
+        "newName": "kind.note.new",
+        "defaults": { "text": "" },
+        "draggable": true,
+        "accepts": [],
+        "menu": ["duplicate"]
+      }
+    ],
+    "pages": [
+      {
+        "id": "editor",
+        "actions": [
+          { "id": "save", "role": "save", "label": "action.save", "icon": "save", "primary": true, "shortcut": ["Mod", "S"] }
+        ]
+      }
+    ],
+    "commands": [{ "id": "duplicate", "label": "command.duplicate", "icon": "copy" }],
+    "menus": { "new": ["note"] },
+    "locales": { "en-US": "locales/en-US.json", "zh-CN": "locales/zh-CN.json" }
+  }
+}
