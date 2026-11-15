@@ -30,4 +30,3 @@
 - （验收）`command.execute` 没有把界面语言传给插件的命令处理函数（`CommandContext` 需要加 `locale`）；笔记“创建副本”的后缀因此总是英文。
 - （验收）发布构建：打包 `onedesk-worker` 和内置插件；入口改名。
 - （验收）在桌面窗口里实际点一遍并截图；系统选择文件夹对话框未验证。
-- （验收）`e2e/week1.spec.ts` 跑通并并入 `pnpm e2e`。
