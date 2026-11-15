@@ -17,6 +17,7 @@ pub const MIGRATIONS: &[(&str, &str)] = &[
     ("0001_init", include_str!("../migrations/0001_init.sql")),
     ("0002_search_restore", include_str!("../migrations/0002_search_restore.sql")),
     ("0003_search_rowid", include_str!("../migrations/0003_search_rowid.sql")),
+    ("0004_search_secure_delete", include_str!("../migrations/0004_search_secure_delete.sql")),
 ];
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -60,6 +61,8 @@ pub struct Workspace {
 fn configure(conn: &Connection) -> rusqlite::Result<()> {
     conn.busy_timeout(std::time::Duration::from_secs(5))?;
     conn.pragma_update(None, "foreign_keys", true)?;
+    // D283: freed pages are zeroed, so a permanent deletion leaves nothing in the file.
+    conn.pragma_update(None, "secure_delete", true)?;
     Ok(())
 }
 
@@ -378,7 +381,24 @@ mod tests {
         let built: i64 = conn.query_row("SELECT count(*) FROM meta WHERE key = 'search_built'", [], |r| r.get(0)).unwrap();
         assert_eq!(built, 0, "the kernel rebuilds the index on start");
         let v: String = conn.query_row("SELECT value FROM meta WHERE key='schema_version'", [], |r| r.get(0)).unwrap();
-        assert_eq!(v, "3");
+        assert_eq!(v, MIGRATIONS.len().to_string());
+    }
+
+    #[test]
+    fn migration_0004_turns_on_secure_delete_for_search_and_keeps_data() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        let tx = conn.transaction().unwrap();
+        for (_, m) in &MIGRATIONS[..3] {
+            tx.execute_batch(m).unwrap();
+        }
+        tx.execute("INSERT INTO meta (key, value) VALUES ('schema_version', '3')", []).unwrap();
+        tx.execute("INSERT INTO search (rowid, name, text) VALUES (7, 'Kept', 'body')", []).unwrap();
+        tx.commit().unwrap();
+        migrate(&mut conn).unwrap();
+        let v: i64 = conn.query_row("SELECT v FROM search_config WHERE k = 'secure-delete'", [], |r| r.get(0)).unwrap();
+        assert_eq!(v, 1);
+        let name: String = conn.query_row("SELECT name FROM search WHERE rowid = 7", [], |r| r.get(0)).unwrap();
+        assert_eq!(name, "Kept");
     }
 
     #[test]

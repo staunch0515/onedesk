@@ -308,7 +308,12 @@ impl Writer {
         }
         let (op, object) = describe(&cmd);
         let quiet = matches!(cmd, Command::Meta { .. } | Command::Startup);
+        let purge = matches!(cmd, Command::Purge { .. });
         let res = self.transact(actor, cmd);
+        if purge && res.is_ok() {
+            // D283: the WAL still holds the old pages; fold them in and cut the file to zero.
+            let _ = self.conn.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(()));
+        }
         if let Some(e) = res.as_ref().err().filter(|_| !quiet) {
             // Failed or refused: data unchanged, the audit row is written on its own (§4.3).
             // Codes only: error params can carry user content (parameter names, fields).

@@ -565,3 +565,22 @@ async fn audit_text_filter_matches_the_current_name_but_not_after_purge() {
     let n: i64 = db(&env).query_row("SELECT count(*) FROM audit WHERE summary LIKE '%Renamed%' OR object LIKE '%Renamed%'", [], |r| r.get(0)).unwrap();
     assert_eq!(n, 0, "no names in audit rows");
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn purge_leaves_no_trace_in_the_database_or_wal_files() {
+    let (env, c) = setup().await;
+    let marker = "Xq7ZmarkerUnlikely";
+    let id = item(&c, &format!("{marker} name"), &format!("text with {marker} inside")).await;
+    for i in 0..5 {
+        c.ok("page.save", json!({ "target": format!("resource:{id}"), "changes": { "body.text": format!("{marker} edit {i} {}", "pad ".repeat(200)) } })).await;
+    }
+    c.ok("page.resolve", json!({ "target": format!("resource:{id}") })).await;
+    c.ok("resource.delete", json!({ "id": id })).await;
+    c.ok("resource.purge", json!({ "id": id })).await;
+    let dir = env.kernel.db_path().parent().unwrap().to_path_buf();
+    for f in ["workspace.db", "workspace.db-wal"] {
+        let bytes = std::fs::read(dir.join(f)).unwrap_or_default();
+        let found = bytes.windows(marker.len()).any(|w| w == marker.as_bytes());
+        assert!(!found, "{marker} still in {f} ({} bytes)", bytes.len());
+    }
+}
