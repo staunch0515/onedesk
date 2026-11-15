@@ -2,6 +2,7 @@ import { createContext, useContext, useEffect, useMemo, useRef, useState, type D
 import { useToast } from "../../design";
 import { useI18n } from "../i18n";
 import { useClient, type CommandContext, type CommandEffect, type ProtocolClient } from "../protocol";
+import { saveTab } from "./save";
 import { useStore, type Store, type TabState, type UiState } from "./store";
 
 export interface OpenOptions {
@@ -93,26 +94,11 @@ export function WorkbenchProvider({ store, children }: { store: Store; children:
       const draft = s.drafts[tabId];
       if (!tab || !draft || Object.keys(draft).length === 0) return true;
       try {
-        if (tab.target.startsWith("new:")) {
-          const { page } = await client.page.save(tab.target, draft);
-          store.set((st) => {
-            const drafts = { ...st.drafts };
-            delete drafts[tabId];
-            return { drafts, tabs: st.tabs.map((t) => (t.id === tabId ? { ...t, target: page.target, title: page.title } : t)) };
-          });
-          // The tab now points at the created resource: show it in its tree.
-          if (page.resourceId) {
-            const created = await client.resource.get(page.resourceId);
-            if (created) void actions.reveal(created.tree, created.id);
-          }
-        } else if (tab.target.startsWith("resource:")) {
-          await client.page.save(tab.target, draft);
-          // Keep what was typed while the save was in flight.
-          store.set((st) => {
-            const now = { ...(st.drafts[tabId] ?? {}) };
-            for (const [k, v] of Object.entries(draft)) if (now[k] === v) delete now[k];
-            return { drafts: { ...st.drafts, [tabId]: now } };
-          });
+        const created = await saveTab(client, store, tabId);
+        // A new resource: show it in its tree.
+        if (created) {
+          const res = await client.resource.get(created);
+          if (res) void actions.reveal(res.tree, res.id);
         }
         return true;
       } catch (error) {

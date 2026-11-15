@@ -78,4 +78,17 @@ describe("mixed client", () => {
     expect(open && "target" in open && open.target.includes("demo=1")).toBe(true);
     expect(client.demo?.target((open as { target: string }).target)).toBe(true);
   });
+
+  it("sends saves of node: pages (files) to the kernel with the basis", async () => {
+    const kernel = fakeKernel();
+    let seen: { target: string; basis?: string } | undefined;
+    kernel.page.save = async (target, _changes, basis) => {
+      seen = { target, basis };
+      return { page: { target, title: "saved by kernel" } as never };
+    };
+    const client = createMixedClient(kernel, createMockClient({ fresh: true, quiet: true }));
+    await client.tree.list();
+    await client.page.save("node:org.onedesk.files%3Afiles/a.txt", { "body.text": "x" }, "7");
+    expect(seen).toEqual({ target: "node:org.onedesk.files%3Afiles/a.txt", basis: "7" });
+  });
 });

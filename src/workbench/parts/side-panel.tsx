@@ -226,7 +226,7 @@ export function TreePanel({ tree }: { tree: TreeInfo }) {
       }
       actions={
         <>
-          {!tree.toolbar.some((c) => c.id === "node.newGroup") && (
+          {tree.groups && !tree.toolbar.some((c) => c.id === "node.newGroup") && (
             <IconButton icon="folder-plus" size="sm" label={t("tree.newGroup")} disabled={!tree.groups} onClick={() => void actions.command("node.newGroup", { tree: tree.id, nodeKey: selected })} />
           )}
           {tree.toolbar.map((c) => (
