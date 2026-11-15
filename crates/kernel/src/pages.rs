@@ -292,7 +292,8 @@ impl Inner {
     ) -> KResult<RenderOut> {
         let env = ctx.get("envId").and_then(Value::as_str).map(String::from);
         ctx["envId"] = json!(env);
-        let info = crate::sandbox::CallInfo { client, env_id: env, ..Default::default() };
+        let resource_id = ctx["resource"]["id"].as_str().filter(|i| !i.is_empty()).map(String::from);
+        let info = crate::sandbox::CallInfo { client, env_id: env, resource_id, ..Default::default() };
         // The version given: for a resource, the one it is bound to (§7.6).
         let plugin = self.registry.version(&plugin.id, &plugin.version).unwrap_or(self.registry.plugin(&plugin.id).ok_or_else(|| not_found("plugin"))?);
         let out = self

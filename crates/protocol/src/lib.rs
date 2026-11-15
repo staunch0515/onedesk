@@ -1193,6 +1193,9 @@ pub struct RunError {
     pub message: String,
     pub detail: Option<String>,
     pub hint: Option<String>,
+    /// D318: for a host refusal or failure (`code` = `denied`, `invalid`…), its reason code
+    /// (`secretNotAllowed`, `hostNotAllowed`, `blockedByPolicy`…).
+    pub reason: Option<String>,
 }
 
 #[skip_serializing_none]
