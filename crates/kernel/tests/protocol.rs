@@ -42,6 +42,8 @@ async fn suite(env: &Env, c: &Client) {
     let draft = c.ok("page.resolve", json!({ "target": new_target, "context": { "locale": "zh-CN" } })).await;
     assert_eq!(draft["title"], "新条目");
     assert_eq!(draft["values"]["body.text"], "");
+    assert_eq!(draft["view"][0]["fields"][0]["label"]["en-US"], "Text", "ctx.t gives the localized label");
+    assert_eq!(draft["kindLabel"]["zh-CN"], "条目");
     assert!(draft.get("resourceId").is_none());
     assert_eq!(env.kernel.active_plugins(), vec!["test.alpha".to_string()]);
     let saved = c.ok("page.save", json!({ "target": new_target, "changes": { "body.text": "hello" } })).await;

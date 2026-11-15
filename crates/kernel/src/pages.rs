@@ -405,8 +405,8 @@ mod tests {
     #[test]
     fn targets_parse() {
         assert!(matches!(parse_target("resource:abc"), Target::Resource(id) if id == "abc"));
-        assert!(matches!(parse_target("new:a.b:note?parent=p1"), Target::New { kind, parent: Some(p) } if kind == "a.b:note" && p == "p1"));
-        assert!(matches!(parse_target("new:a.b:note"), Target::New { parent: None, .. }));
+        assert!(matches!(parse_target("new:a.b:k?parent=p1"), Target::New { kind, parent: Some(p) } if kind == "a.b:k" && p == "p1"));
+        assert!(matches!(parse_target("new:a.b:k"), Target::New { parent: None, .. }));
         assert!(matches!(parse_target("node:a.b:disk/%2Fx%2Fy"), Target::Node { tree, key } if tree == "a.b:disk" && key == "/x/y"));
         assert!(is_target("resource:x") && !is_target("https://x") && !is_target("resource:"));
     }
