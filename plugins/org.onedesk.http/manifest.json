@@ -1,0 +1,60 @@
+{
+  "id": "org.onedesk.http",
+  "version": "0.1.0",
+  "apiVersion": "2",
+  "name": "plugin.name",
+  "description": "plugin.description",
+  "icon": "globe",
+  "main": "main.js",
+  "author": "OneDesk",
+  "license": "MIT",
+  "homepage": "https://onedesk.example.com/plugins/http",
+  "requires": { "files": false, "network": { "fromResources": true } },
+  "contributes": {
+    "kinds": [
+      {
+        "id": "request",
+        "label": "kind.request",
+        "icon": "send",
+        "tree": "resources",
+        "page": "editor",
+        "newName": "kind.request.new",
+        "defaults": { "method": "GET", "url": "", "headers": "", "body": "" },
+        "fields": { "url": { "type": "text", "grants": "network" } },
+        "draggable": true,
+        "accepts": []
+      }
+    ],
+    "actions": [
+      {
+        "id": "send",
+        "label": "action.send",
+        "icon": "send",
+        "kinds": ["request"],
+        "output": "text",
+        "shortcut": ["Mod", "Enter"],
+        "saveFirst": false,
+        "confirm": null
+      }
+    ],
+    "pages": [
+      {
+        "id": "editor",
+        "recompute": true,
+        "usesEnv": true,
+        "actions": [
+          { "id": "send", "role": "run", "action": "send", "label": "action.send", "icon": "send", "primary": true, "shortcut": ["Mod", "Enter"] },
+          { "id": "save", "role": "save", "label": "action.save", "icon": "save", "shortcut": ["Mod", "S"] },
+          { "id": "save-send", "role": "save-run", "action": "send", "label": "action.saveSend", "icon": "save-all" }
+        ],
+        "resultTabs": [
+          { "id": "response", "type": "output", "label": "tab.response", "icon": "file-text" },
+          { "id": "headers", "type": "view", "label": "tab.headers", "icon": "list" },
+          { "id": "history", "type": "history", "label": "tab.history", "icon": "history" }
+        ]
+      }
+    ],
+    "menus": { "new": ["request"] },
+    "locales": { "en-US": "locales/en-US.json", "zh-CN": "locales/zh-CN.json" }
+  }
+}
