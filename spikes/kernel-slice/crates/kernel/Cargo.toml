@@ -1,0 +1,17 @@
+[package]
+name = "ks-kernel"
+version = "0.0.0"
+edition.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[dependencies]
+ks-protocol = { path = "../protocol" }
+serde.workspace = true
+serde_json.workspace = true
+rquickjs.workspace = true
+tokio.workspace = true
+rusqlite.workspace = true
+libc.workspace = true
+# used by the bench binary (temp workspaces only)
+tempfile.workspace = true

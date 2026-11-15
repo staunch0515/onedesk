@@ -1,0 +1,5 @@
+{
+  "id": "demo-sql",
+  "apiVersion": "2",
+  "kinds": { "sql": { "page": "editor", "icon": "database" } }
+}
