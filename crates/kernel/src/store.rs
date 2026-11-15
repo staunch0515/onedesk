@@ -239,3 +239,103 @@ pub fn batch_rows(conn: &Connection, batch: &str) -> rusqlite::Result<Vec<Row>> 
 pub fn of_kind(conn: &Connection, kind: &str) -> rusqlite::Result<Vec<Row>> {
     list(conn, &[kind.to_string()], None)
 }
+
+/* ------------------------------------------------------------------ runs (§8) */
+
+/// One `runs` row; JSON columns are kept as values.
+#[derive(Debug, Clone, Default)]
+pub struct RunRow {
+    pub id: String,
+    pub seq: i64,
+    pub title: String,
+    pub icon: String,
+    pub resource_id: Option<String>,
+    pub resource_kind: Option<String>,
+    pub plugin: String,
+    pub action: String,
+    pub action_label: Value,
+    pub tab_id: Option<String>,
+    pub env_id: Option<String>,
+    pub env_name: Option<String>,
+    pub actor: String,
+    pub source: String,
+    pub started_at: i64,
+    pub ended_at: Option<i64>,
+    pub status: String,
+    pub params: Value,
+    pub input: Value,
+    pub progress: Option<Value>,
+    pub summary: Option<Value>,
+    pub error: Option<Value>,
+    pub output: Option<Value>,
+    pub kept: bool,
+    pub kept_name: Option<String>,
+    pub in_task_panel: bool,
+}
+
+pub const RUN_COLUMNS: &str = "id, seq, title, icon, resource_id, resource_kind, plugin, action, action_label, tab_id, \
+     env_id, env_name, actor, source, started_at, ended_at, status, params, input, progress, summary, error, output, \
+     kept, kept_name, in_task_panel";
+
+fn json_col(s: Option<String>) -> Option<Value> {
+    s.and_then(|s| serde_json::from_str(&s).ok())
+}
+
+pub fn run_from_sql(r: &SqlRow<'_>) -> rusqlite::Result<RunRow> {
+    Ok(RunRow {
+        id: r.get(0)?,
+        seq: r.get(1)?,
+        title: r.get(2)?,
+        icon: r.get(3)?,
+        resource_id: r.get(4)?,
+        resource_kind: r.get(5)?,
+        plugin: r.get(6)?,
+        action: r.get(7)?,
+        action_label: json_col(r.get(8)?).unwrap_or(Value::Null),
+        tab_id: r.get(9)?,
+        env_id: r.get(10)?,
+        env_name: r.get(11)?,
+        actor: r.get(12)?,
+        source: r.get(13)?,
+        started_at: r.get(14)?,
+        ended_at: r.get(15)?,
+        status: r.get(16)?,
+        params: json_col(r.get(17)?).unwrap_or_else(|| Value::Object(Default::default())),
+        input: json_col(r.get(18)?).unwrap_or_else(|| Value::Object(Default::default())),
+        progress: json_col(r.get(19)?),
+        summary: json_col(r.get(20)?),
+        error: json_col(r.get(21)?),
+        output: json_col(r.get(22)?),
+        kept: r.get::<_, i64>(23)? != 0,
+        kept_name: r.get(24)?,
+        in_task_panel: r.get::<_, i64>(25)? != 0,
+    })
+}
+
+pub fn run_get(conn: &Connection, id: &str) -> rusqlite::Result<Option<RunRow>> {
+    conn.query_row(&format!("SELECT {RUN_COLUMNS} FROM runs WHERE id = ?1"), [id], run_from_sql).optional()
+}
+
+/// Runs matching `where_` (a fixed SQL condition with `?1`), newest first.
+pub fn runs_where(conn: &Connection, where_: &str, arg: &str, limit: u32) -> rusqlite::Result<Vec<RunRow>> {
+    let mut st = conn.prepare_cached(&format!(
+        "SELECT {RUN_COLUMNS} FROM runs WHERE {where_} ORDER BY seq DESC LIMIT {limit}"
+    ))?;
+    let rows = st.query_map([arg], run_from_sql)?;
+    rows.collect()
+}
+
+pub fn storage_get(conn: &Connection, plugin: &str, version: &str, key: &str) -> rusqlite::Result<Option<String>> {
+    conn.query_row(
+        "SELECT value FROM plugin_storage WHERE plugin = ?1 AND version = ?2 AND key = ?3",
+        params![plugin, version, key],
+        |r| r.get(0),
+    )
+    .optional()
+}
+
+pub fn storage_keys(conn: &Connection, plugin: &str, version: &str) -> rusqlite::Result<Vec<String>> {
+    let mut st = conn.prepare_cached("SELECT key FROM plugin_storage WHERE plugin = ?1 AND version = ?2 ORDER BY key")?;
+    let rows = st.query_map(params![plugin, version], |r| r.get(0))?;
+    rows.collect()
+}

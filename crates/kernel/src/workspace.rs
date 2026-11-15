@@ -18,6 +18,7 @@ pub const MIGRATIONS: &[(&str, &str)] = &[
     ("0002_search_restore", include_str!("../migrations/0002_search_restore.sql")),
     ("0003_search_rowid", include_str!("../migrations/0003_search_rowid.sql")),
     ("0004_search_secure_delete", include_str!("../migrations/0004_search_secure_delete.sql")),
+    ("0005_runs", include_str!("../migrations/0005_runs.sql")),
 ];
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -399,6 +400,30 @@ mod tests {
         assert_eq!(v, 1);
         let name: String = conn.query_row("SELECT name FROM search WHERE rowid = 7", [], |r| r.get(0)).unwrap();
         assert_eq!(name, "Kept");
+    }
+
+    #[test]
+    fn migration_0005_adds_runs_and_keeps_data() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        let tx = conn.transaction().unwrap();
+        for (_, m) in &MIGRATIONS[..4] {
+            tx.execute_batch(m).unwrap();
+        }
+        tx.execute("INSERT INTO meta (key, value) VALUES ('schema_version', '4')", []).unwrap();
+        tx.execute(
+            "INSERT INTO resources (id, kind, name, rev, created_at, created_by, updated_at, updated_by)
+             VALUES ('r1', 'core:group', 'Kept', 1, 0, 'user', 0, 'user')",
+            [],
+        )
+        .unwrap();
+        tx.commit().unwrap();
+        migrate(&mut conn).unwrap();
+        let name: String = conn.query_row("SELECT name FROM resources WHERE id = 'r1'", [], |r| r.get(0)).unwrap();
+        assert_eq!(name, "Kept");
+        let n: i64 = conn.query_row("SELECT count(*) FROM runs", [], |r| r.get(0)).unwrap();
+        assert_eq!(n, 0);
+        let v: String = conn.query_row("SELECT value FROM meta WHERE key='schema_version'", [], |r| r.get(0)).unwrap();
+        assert_eq!(v, MIGRATIONS.len().to_string());
     }
 
     #[test]
