@@ -6,7 +6,7 @@ import { useQuery, useWorkbench } from "../state/context";
 /** Task panel (§8): running and just-finished runs with progress, cancel, clear finished. */
 export function TaskPanel() {
   const { client, store, actions } = useWorkbench();
-  const { t, tx, time, number, duration } = useI18n();
+  const { t, tx, time, number, duration, runError } = useI18n();
   const tasks = useQuery((c) => c.run.tasks(), [], ["runs"]);
   const list = tasks.data ?? [];
   const statusName: Record<RunStatus, string> = { running: t("run.running"), success: t("run.success"), error: t("run.error"), cancelled: t("run.cancelled") };
@@ -35,7 +35,7 @@ export function TaskPanel() {
             r.status === "running"
               ? r.progress?.message
               : r.status === "error"
-                ? r.error?.message
+                ? (r.error ? runError(r.error) : undefined)
                 : [r.summary?.rows !== undefined ? t("result.rows", { count: number(r.summary.rows) }) : r.summary?.message, r.summary?.durationMs !== undefined ? duration(r.summary.durationMs) : undefined].filter(Boolean).join(" · ")
           }
           onOpen={() => actions.open(`run:${r.id}`)}

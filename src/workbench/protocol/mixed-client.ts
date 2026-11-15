@@ -35,6 +35,9 @@ export function createMixedClient(kernel: KernelClient, mock: ProtocolClient): P
   const demoIds = new Set<string>();
   const kernelIds = new Set<string>();
   const isDemoTree = (tree: string | undefined) => tree !== undefined && (tree === DEMO_RESOURCES || mockTrees.has(tree));
+  /** Runs started on demo pages; every other run is the kernel's. */
+  const demoRuns = new Set<string>();
+  const runSide = (id: string) => (demoRuns.has(id) ? mock : kernel);
   /** `new:` targets the mock handed out (marked with `demo=1`). */
   const isDemoNew = (target: string) => target.startsWith("new:") && target.includes("demo=1");
 
@@ -77,8 +80,9 @@ export function createMixedClient(kernel: KernelClient, mock: ProtocolClient): P
       const tree = decodeURIComponent(target.slice(5).split("/")[0] ?? "");
       return isDemoTree(tree) ? "demo" : "kernel";
     }
-    // `core:audit`, `core:deleted`: kernel pages.
-    if (target.startsWith("core:")) return "kernel";
+    // `core:audit`, `core:deleted`: kernel pages. `plugin:<id>`: plugins are the kernel's.
+    if (target.startsWith("core:") || target.startsWith("plugin:")) return "kernel";
+    if (target.startsWith("run:")) return demoRuns.has(target.slice(4)) ? "demo" : "kernel";
     return "demo";
   };
 
@@ -94,7 +98,8 @@ export function createMixedClient(kernel: KernelClient, mock: ProtocolClient): P
         if (target.startsWith("resource:")) return demoIds.has(target.slice(9));
         if (target.startsWith("new:")) return isDemoNew(target);
         if (target.startsWith("node:")) return isDemoTree(decodeURIComponent(target.slice(5).split("/")[0] ?? ""));
-        if (target.startsWith("core:")) return false;
+        if (target.startsWith("core:") || target.startsWith("plugin:")) return false;
+        if (target.startsWith("run:")) return demoRuns.has(target.slice(4));
         return true;
       },
     },
@@ -133,6 +138,9 @@ export function createMixedClient(kernel: KernelClient, mock: ProtocolClient): P
     },
     page: {
       ...mock.page,
+      async event(target, event, context) {
+        return (await targetOwner(target)) === "kernel" ? kernel.page.event(target, event, context) : mock.page.event(target.replace(/[?&]demo=1/, ""), event, context);
+      },
       async resolve(target, context) {
         if ((await targetOwner(target)) === "kernel") return kernel.page.resolve(target, context);
         // Demo pages know the demo's own environments, not the kernel's: they get none.
@@ -149,8 +157,28 @@ export function createMixedClient(kernel: KernelClient, mock: ProtocolClient): P
         return { page: fromMock(result.page) };
       },
     },
+    run: {
+      async start(request) {
+        if ((await targetOwner(request.target)) === "kernel") return kernel.run.start(request);
+        const id = await mock.run.start({ ...request, target: request.target.replace(/[?&]demo=1/, "") });
+        demoRuns.add(id);
+        return id;
+      },
+      get: (id) => runSide(id).run.get(id),
+      cancel: (id) => runSide(id).run.cancel(id),
+      render: (id, tabId) => runSide(id).run.render(id, tabId),
+      setKept: (id, kept) => runSide(id).run.setKept(id, kept),
+      async listFor(resourceId) {
+        return (await ownerOf(resourceId)) === "kernel" ? kernel.run.listFor(resourceId) : mock.run.listFor(resourceId);
+      },
+      tasks: () => kernel.run.tasks(),
+      async clearFinished() {
+        await Promise.all([kernel.run.clearFinished(), mock.run.clearFinished()]);
+      },
+    },
     command: {
       ...mock.command,
+      palette: () => kernel.command.palette(),
       newItems: () => kernel.command.newItems(),
       async execute(id, context: CommandContext) {
         const demo = isDemoTree(context.tree) || (context.target !== undefined && (await targetOwner(context.target)) === "demo" && !context.tree);
@@ -161,6 +189,10 @@ export function createMixedClient(kernel: KernelClient, mock: ProtocolClient): P
     },
     plugin: {
       ...mock.plugin,
+      get: (id) => kernel.plugin.get(id),
+      setEnabled: (id, enabled) => kernel.plugin.setEnabled(id, enabled),
+      setSetting: (id, name, value) => kernel.plugin.setSetting(id, name, value),
+      reload: (id) => kernel.plugin.reload(id),
       grants: (plugin) => kernel.plugin.grants(plugin),
       grantFolder: (plugin, path) => kernel.plugin.grantFolder(plugin, path),
       revokeFolder: (plugin, path) => kernel.plugin.revokeFolder(plugin, path),

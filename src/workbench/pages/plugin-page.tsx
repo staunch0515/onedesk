@@ -8,13 +8,15 @@ import { Frame } from "../parts/frame";
 /** Plugin page (ui-spec §4, I.6): description, versions, enable switch, settings, permissions, what it provides, load status. */
 export function PluginPage({ tab, descriptor }: { tab: TabState; descriptor: PageDescriptor }) {
   const { client, actions } = useWorkbench();
-  const { t, tx, dateTime } = useI18n();
+  const { t, tx, dateTime, permission } = useI18n();
   const { toast } = useToast();
   const id = tab.target.slice("plugin:".length);
   const plugin = useQuery((c) => c.plugin.get(id), [id], ["plugins"]);
   const p = plugin.data;
   if (!p) return <Frame tab={tab} descriptor={descriptor}>{plugin.loading ? <LoadingState label={t("common.loading")} /> : null}</Frame>;
 
+  // Kernel plugins: versions and permissions are shown read-only this round (no install, no permission prompts yet).
+  const real = client.demo !== undefined && !client.demo.target(descriptor.target);
   const installed = p.load.state !== "not-installed";
   const notYet = () => toast({ tone: "warning", title: t("common.notInPrototype") });
   const active = p.versions.find((v) => v.active);
@@ -22,7 +24,9 @@ export function PluginPage({ tab, descriptor }: { tab: TabState; descriptor: Pag
     { key: "toggle", label: p.enabled ? t("plugin.disable") : t("plugin.enable"), icon: p.enabled ? "circle-slash" : "circle-check", primary: !p.enabled && installed, disabled: !installed, onSelect: () => client.plugin.setEnabled(id, !p.enabled).catch(actions.fail) },
     { key: "reload", label: t("plugin.reload"), icon: "rotate-cw", disabled: !installed || !p.enabled, onSelect: () => client.plugin.reload(id).then(() => toast({ tone: "success", title: t("plugin.reloaded") }), actions.fail) },
     { key: "updates", label: t("plugin.checkUpdates"), icon: "cloud-download", onSelect: notYet },
-    { key: "folder", label: t("plugin.openFolder"), icon: "folder-open", disabled: !installed, onSelect: notYet },
+    ...(real
+      ? [{ key: "grant", label: t("plugin.grantFolder"), icon: "folder-plus", disabled: !installed || !p.enabled, onSelect: () => void actions.command("plugin.grantFolder", { args: { plugin: id } }) }]
+      : [{ key: "folder", label: t("plugin.openFolder"), icon: "folder-open", disabled: !installed, onSelect: notYet }]),
     { key: "uninstall", label: t("plugin.uninstall"), icon: "trash-2", danger: true, disabled: !installed || p.builtin, onSelect: notYet },
   ];
 
@@ -52,13 +56,13 @@ export function PluginPage({ tab, descriptor }: { tab: TabState; descriptor: Pag
     },
     { key: "installed", header: t("plugin.installedAt"), width: 160, value: (v) => v.installedAt, render: (v) => dateTime(v.installedAt) },
     { key: "notes", header: t("plugin.notes"), width: 380, value: (v) => v.notes },
-    {
+    ...(real ? [] : [{
       key: "actions",
       header: "",
       width: 232,
       sortable: false,
       resizable: false,
-      render: (v) => (
+      render: (v: PluginVersion) => (
         <Pane direction="row" gap="xs" align="center" justify="end">
           {!v.active && (
             <Button size="sm" onClick={() => client.plugin.activateVersion(id, v.version).then(() => toast({ tone: "success", title: t("plugin.activated", { version: v.version }) }), actions.fail)}>
@@ -70,14 +74,14 @@ export function PluginPage({ tab, descriptor }: { tab: TabState; descriptor: Pag
           </Button>
         </Pane>
       ),
-    },
+    }]),
   ];
 
   const permissionColumns: Array<DataGridColumn<PluginPermission>> = [
-    { key: "label", header: t("plugin.permission"), width: 300, value: (x) => tx(x.label) },
+    { key: "label", header: t("plugin.permission"), width: 300, value: (x) => (x.label ? tx(x.label) : permission(x.id)) },
     { key: "detail", header: t("plugin.scope"), width: 360, mono: true, value: (x) => x.detail },
     { key: "required", header: t("plugin.required"), width: 120, value: (x) => (x.required ? 1 : 0), render: (x) => (x.required ? <Badge>{t("plugin.requiredYes")}</Badge> : <Text size="sm" tone="muted">{t("plugin.optional")}</Text>) },
-    { key: "granted", header: t("plugin.granted"), width: 104, sortable: false, render: (x) => <Switch aria-label={tx(x.label)} checked={x.granted} onCheckedChange={(on) => client.plugin.setPermission(id, x.id, on).catch(actions.fail)} /> },
+    { key: "granted", header: t("plugin.granted"), width: 104, sortable: false, render: (x) => <Switch aria-label={x.label ? tx(x.label) : permission(x.id)} checked={x.granted} disabled={real} onCheckedChange={(on) => client.plugin.setPermission(id, x.id, on).catch(actions.fail)} /> },
   ];
 
   const badges = (labels: Label[]) =>
@@ -176,6 +180,31 @@ export function PluginPage({ tab, descriptor }: { tab: TabState; descriptor: Pag
                 ),
               )}
             </Pane>
+          </Section>
+        )}
+
+        {real && (
+          <Section title={t("plugin.folders")} description={t("plugin.foldersHint")}>
+            {p.folders.length === 0 ? (
+              <Text size="sm" tone="muted">
+                {t("plugin.foldersNone")}
+              </Text>
+            ) : (
+              <Pane gap="xs">
+                {p.folders.map((f) => (
+                  <Pane key={f} direction="row" gap="sm" align="center">
+                    <Pane grow>
+                      <Text mono size="sm" truncate>
+                        {f}
+                      </Text>
+                    </Pane>
+                    <Button size="sm" variant="ghost" icon="x" onClick={() => client.plugin.revokeFolder(id, f).then(() => undefined, actions.fail)}>
+                      {t("plugin.folderRemove")}
+                    </Button>
+                  </Pane>
+                ))}
+              </Pane>
+            )}
           </Section>
         )}
 

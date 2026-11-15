@@ -1,7 +1,7 @@
 import { createContext, useContext, useMemo, type ReactNode } from "react";
 import { kernelErrorCode, type Label, type Locale } from "../protocol";
 import { enUS, type MessageKey } from "./en-US";
-import { AUDIT_OPERATIONS, interpolate, KERNEL_CONFIRMS, KERNEL_ERRORS, KERNEL_LABELS } from "./kernel-texts";
+import { AUDIT_OPERATIONS, PERMISSIONS, RUN_ERRORS, interpolate, KERNEL_CONFIRMS, KERNEL_ERRORS, KERNEL_LABELS } from "./kernel-texts";
 import { zhCN } from "./zh-CN";
 
 const TABLES: Record<Locale, Partial<Record<MessageKey, string>>> = { "en-US": enUS, "zh-CN": zhCN };
@@ -21,6 +21,10 @@ export interface I18n {
   error: (error: unknown) => string;
   /** Title and confirm-button words for a kernel `confirm` message key; undefined for other messages. */
   confirmTexts: (label: Label | undefined) => { title: string; ok: string } | undefined;
+  /** A run failure as a sentence: by code when the shell knows it, else the message the run came with. */
+  runError: (error: { code: string; message: string }) => string;
+  /** A plugin permission id as words (unknown ids as they are). */
+  permission: (id: string) => string;
   /** An audit operation id as words. */
   operation: (id: string) => string;
   dateTime: (at: number) => string;
@@ -64,6 +68,8 @@ function build(locale: Locale): I18n {
       if (known && text) return interpolate(text, known.params);
       return error instanceof Error ? error.message : String(error);
     },
+    runError: (e) => RUN_ERRORS[locale][e.code] ?? RUN_ERRORS["en-US"][e.code] ?? e.message,
+    permission: (id) => PERMISSIONS[locale][id] ?? PERMISSIONS["en-US"][id] ?? id,
     operation: (id) => AUDIT_OPERATIONS[locale][id] ?? AUDIT_OPERATIONS["en-US"][id] ?? id,
     dateTime: (at) => dt.format(at),
     time: (at) => tm.format(at),

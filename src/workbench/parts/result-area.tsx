@@ -29,7 +29,7 @@ function OutputTable({ run, widthKey }: { run: Run; widthKey: string }) {
     <DataGrid
       label={t("result.result")}
       columns={columns}
-      rows={out.rows}
+      rows={out.rows as OutputCell[][]}
       getRowKey={(_row, i) => String(i)}
       rowNumbers
       {...grid}
@@ -40,7 +40,7 @@ function OutputTable({ run, widthKey }: { run: Run; widthKey: string }) {
 
 function OutputTab({ tab, run, widthKey }: { tab: TabState; run: Run | null | undefined; widthKey: string }) {
   const { client, actions } = useWorkbench();
-  const { t } = useI18n();
+  const { t, runError } = useI18n();
   if (run === undefined) return <LoadingState layout="inline" label={t("common.loading")} />;
   if (run === null) return <EmptyState layout="inline" icon="play" message={tab.target.startsWith("run:") ? t("result.gone") : t("result.empty")} />;
   if (run.status === "running") {
@@ -62,7 +62,7 @@ function OutputTab({ tab, run, widthKey }: { tab: TabState; run: Run | null | un
     // Errors stay here until the next run or "clear" (I.7): never a toast that disappears.
     return (
       <Pane grow scroll pad="md" gap="sm">
-        <Banner tone="danger" title={`${run.error.code} — ${run.error.message}`}>
+        <Banner tone="danger" title={`${run.error.code} — ${runError(run.error)}`}>
           {run.error.hint}
         </Banner>
         {run.error.detail && (
@@ -131,7 +131,7 @@ function ViewTab({ runId, tabId }: { runId: string | null; tabId: string }) {
 /** Result area of a page (§9.5): the page chooses the sub-tabs, the frame owns the toolbar. */
 export function ResultArea({ tab, descriptor }: { tab: TabState; descriptor: PageDescriptor }) {
   const { client, store, actions } = useWorkbench();
-  const { t, tx, number, duration, time } = useI18n();
+  const { t, tx, number, duration, time, runError } = useI18n();
   const { toast } = useToast();
   const panelOpen = useUi((s) => s.panelOpen);
   const runId = descriptor.runId ?? tab.runId ?? null;
@@ -147,7 +147,7 @@ export function ResultArea({ tab, descriptor }: { tab: TabState; descriptor: Pag
         {`#${r.seq}`}
       </Badge>
       {r.status === "running" && <span>{r.progress?.message ?? t("result.running")}</span>}
-      {r.status === "error" && <span>{r.error?.message}</span>}
+      {r.status === "error" && <span>{r.error ? runError(r.error) : null}</span>}
       {r.summary?.rows !== undefined && <span>{t("result.rows", { count: number(r.summary.rows) })}</span>}
       {r.summary?.durationMs !== undefined && <span>{duration(r.summary.durationMs)}</span>}
       {r.envName && <span>{r.envName}</span>}

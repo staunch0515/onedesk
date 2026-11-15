@@ -11,7 +11,7 @@ export interface Settings {
 
 export function StatusBarPart({ settings, onSetting, resolvedTheme }: { settings: Settings; onSetting: (name: "ui.language" | "ui.theme" | "ui.density", value: string) => void; resolvedTheme: "light" | "dark" }) {
   const { client, store, actions } = useWorkbench();
-  const { t, number, duration } = useI18n();
+  const { t, number, duration, runError } = useI18n();
   const tab = useUi((s) => s.tabs.find((x) => x.id === s.activeTabId) ?? null);
   const tasksOpen = useUi((s) => s.tasksOpen);
   const workspaces = useQuery((c) => c.workspace.list(), []);
@@ -55,7 +55,7 @@ export function StatusBarPart({ settings, onSetting, resolvedTheme }: { settings
             </StatusItem>
           ) : r.status === "error" ? (
             <StatusItem icon="circle-alert" tone="danger" title={t("status.showResult")} onClick={() => store.set({ panelOpen: true })}>
-              {`#${r.seq} ${r.error?.message ?? t("run.error")}`}
+              {`#${r.seq} ${r.error ? runError(r.error) : t("run.error")}`}
             </StatusItem>
           ) : (
             <StatusItem icon={r.status === "success" ? "circle-check" : "circle-slash"} tone={r.status === "success" ? "success" : "default"} title={t("status.showResult")} onClick={() => store.set({ panelOpen: true })}>

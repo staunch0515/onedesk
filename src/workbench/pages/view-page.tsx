@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { CodeEditor, DropdownMenu, FieldStrip, FormField, IconButton, Input, Pane, Select, StripField, Switch, Textarea, useToast, type ActionBarItem } from "../../design";
+import { Button, CodeEditor, Dialog, DropdownMenu, FieldStrip, FormField, IconButton, Input, Pane, Select, StripField, Switch, Textarea, useToast, type ActionBarItem } from "../../design";
 import { useI18n } from "../i18n";
 import type { ActionDecl, PageDescriptor, RunStatus, ViewField, ViewNode } from "../protocol";
 import { useQuery, useUi, useWorkbench } from "../state/context";
@@ -112,6 +112,7 @@ export function ViewPage({ tab, descriptor: initial }: { tab: TabState; descript
   const draft = useUi((s) => s.drafts[tab.id]) ?? EMPTY;
   const [descriptor, setDescriptor] = useState(initial);
   const [busy, setBusy] = useState<string | null>(null);
+  const [ask, setAsk] = useState<ActionDecl | null>(null);
   const running = useQuery((c) => (tab.runId ? c.run.get(tab.runId) : Promise.resolve(null)), [tab.runId], tab.runId ? [`run:${tab.runId}`] : []);
   const isRunning = running.data?.status === "running";
 
@@ -139,16 +140,32 @@ export function ViewPage({ tab, descriptor: initial }: { tab: TabState; descript
 
   const setBound = (bind: string, value: string) => {
     if (descriptor.autosave && descriptor.resourceId) client.page.save(`resource:${descriptor.resourceId}`, { [bind]: value }).catch(actions.fail);
-    else actions.setDraft(tab.id, bind, value, String(values[bind] ?? ""));
+    else actions.setDraft(tab.id, bind, typed(bind, value), kernelPage ? (values[bind] ?? "") : String(values[bind] ?? ""));
   };
   const setParam = (name: string, value: string) => actions.updateTab(tab.id, { params: { ...tab.params, [name]: value } });
 
   const latest = useRef({ descriptor, draft, tab });
   latest.current = { descriptor, draft, tab };
 
-  const invoke = async (action: ActionDecl) => {
+  // Values the kernel types as numbers or booleans go out as such (the controls hold text). Demo pages keep text.
+  const kernelPage = client.demo !== undefined && !client.demo.target(tab.target);
+  const fieldKinds = new Map(descriptor.view.flatMap((n) => (n.type === "form" ? n.fields.filter((f) => f.bind && !f.param).map((f) => [f.bind!, f.kind] as const) : [])));
+  const typed = (bind: string, value: unknown): unknown => {
+    if (!kernelPage || typeof value !== "string") return value;
+    const kind = fieldKinds.get(bind);
+    if (kind === "number" && value.trim() !== "" && Number.isFinite(Number(value))) return Number(value);
+    if (kind === "boolean" && (value === "true" || value === "false")) return value === "true";
+    return value;
+  };
+  const typedAll = (values: Record<string, unknown>) => Object.fromEntries(Object.entries(values).map(([k, v]) => [k, typed(k, v)]));
+
+  const invoke = async (action: ActionDecl, confirmed = false) => {
+    if (action.confirm && !confirmed && (action.role === "run" || action.role === "save-run")) {
+      setAsk(action);
+      return;
+    }
     const now = latest.current;
-    const context = { envId: now.tab.envId, draft: { ...now.descriptor.values, ...now.draft } };
+    const context = { envId: now.tab.envId, draft: typedAll({ ...now.descriptor.values, ...now.draft }) };
     try {
       setBusy(action.id);
       if (action.role === "save" || action.role === "save-run") {
@@ -159,7 +176,7 @@ export function ViewPage({ tab, descriptor: initial }: { tab: TabState; descript
         const fresh = store.get().tabs.find((x) => x.id === tab.id) ?? now.tab;
         const params = Object.fromEntries(paramFields.map((f) => [f.name, fresh.params[f.name] || f.envValue || ""]));
         const runId = await client.run.start({
-          action: action.role === "save-run" ? "run" : action.id,
+          action: action.action ?? (action.role === "save-run" ? "run" : action.id),
           resourceId: fresh.target.startsWith("resource:") ? fresh.target.slice(9) : undefined,
           target: fresh.target,
           tabId: tab.id,
@@ -270,11 +287,35 @@ export function ViewPage({ tab, descriptor: initial }: { tab: TabState; descript
 
   const hasFill = descriptor.view.some((n) => (n.type === "form" && n.fields.some((f) => f.fill)) || (n.type === "text" && n.mono) || n.type === "table");
   return (
+    <>
     <Frame tab={tab} descriptor={descriptor} actions={items} panel={descriptor.resultTabs.length > 0 ? <ResultArea tab={tab} descriptor={descriptor} /> : undefined}>
       {descriptor.runId && <RunHeader runId={descriptor.runId} />}
       <Pane grow scroll={!hasFill}>
         {descriptor.view.map((node) => (node.type === "form" ? renderForm(node) : <ViewNodes key={node.id} nodes={[node]} />))}
       </Pane>
     </Frame>
+      <Dialog
+        open={ask !== null}
+        onOpenChange={(open) => !open && setAsk(null)}
+        size="sm"
+        title={t("confirm.title")}
+        description={ask?.confirm ? tx(ask.confirm) : undefined}
+        footer={
+          <>
+            <Button onClick={() => setAsk(null)}>{t("common.cancel")}</Button>
+            <Button
+              variant={ask?.danger ? "danger" : "primary"}
+              onClick={() => {
+                const pending = ask;
+                setAsk(null);
+                if (pending) void invoke(pending, true);
+              }}
+            >
+              {t("confirm.ok")}
+            </Button>
+          </>
+        }
+      />
+    </>
   );
 }
