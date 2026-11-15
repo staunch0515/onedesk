@@ -28,6 +28,9 @@ export interface KernelClient {
 }
 
 /** Removes `null` and `undefined` members: the kernel's optional fields are absent, not null. */
+/** The wire type of a parameter `basis` is the node's numeric `rev`; the UI carries it as text. */
+const rev = (basis?: string) => (basis === undefined || basis === "" ? undefined : Number(basis));
+
 export function compact<T extends Record<string, unknown>>(value: T): Record<string, unknown> {
   return Object.fromEntries(Object.entries(value).filter(([, v]) => v !== null && v !== undefined));
 }
@@ -67,9 +70,9 @@ export async function createKernelClient(transport: Transport, locale?: () => st
       env: async (envId) => ((await call<EnvView | null>("params.env", { envId })) ?? null),
       envOptions: () => call<EnvOption[]>("params.envOptions"),
       resolve: (envId, name) => call<ResolvedParam>("params.resolve", compact({ envId, name })),
-      set: async (node, name, value, basis) => void (await call("params.set", compact({ node, name, value, basis }))),
-      unset: async (node, name, basis) => void (await call("params.unset", compact({ node, name, basis }))),
-      acknowledge: async (node, name, basis) => void (await call("params.acknowledge", compact({ node, name, basis }))),
+      set: async (node, name, value, basis) => void (await call("params.set", compact({ node, name, value, basis: rev(basis) }))),
+      unset: async (node, name, basis) => void (await call("params.unset", compact({ node, name, basis: rev(basis) }))),
+      acknowledge: async (node, name, basis) => void (await call("params.acknowledge", compact({ node, name, basis: rev(basis) }))),
     },
     search: { query: (text, limit) => call<SearchHit[]>("search.query", compact({ text, limit })) },
     audit: {

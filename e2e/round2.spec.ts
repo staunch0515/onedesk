@@ -70,7 +70,7 @@ test("environments: a child inherits and shows where the value comes from", asyn
 // FIXME(shell): env-page.tsx sends `basis` as a string (`String(env.data.rev)`) but `ParamSetParams.basis` /
 // `ParamNameParams.basis` are numbers, so every override, "keep mine" and "use inherited" from the page fails
 // with "The request was malformed" (invalidParams). See round2-tests-done.md, S-B1. Remove `.fixme` when fixed.
-test.fixme("environments (UI): override, changed upstream, keep mine, use the inherited value", async ({ page }) => {
+test("environments (UI): override, changed upstream, keep mine, use the inherited value", async ({ page }) => {
   await openKernel(page, host);
   const root = await nodeId(page, "env", "Default");
   await call(page, "params.set", { node: root, name: "region", value: "eu" });
@@ -235,7 +235,7 @@ test("deleted items: delete, restore, delete again, delete permanently with conf
 });
 
 // FIXME(shell): same cause as above (S-B1): editing the value on the environment page is refused.
-test.fixme("history (UI): environment page lists rename and value changes and restores one", async ({ page }) => {
+test("history (UI): environment page lists rename and value changes and restores one", async ({ page }) => {
   await openKernel(page, host);
   const root = await nodeId(page, "env", "Default");
   await call(page, "command.execute", { id: "env.newChild", context: { tree: "env", nodeKey: root } });

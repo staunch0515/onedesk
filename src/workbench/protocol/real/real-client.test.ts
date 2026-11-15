@@ -93,8 +93,8 @@ describe("kernel client", () => {
     await client.params.unset("e1", "host", "7");
     await client.params.acknowledge("e1", "host");
     expect(calls.slice(1).map((c) => c.params)).toEqual([
-      { node: "e1", name: "host", value: "db", basis: "7" },
-      { node: "e1", name: "host", basis: "7" },
+      { node: "e1", name: "host", value: "db", basis: 7 },
+      { node: "e1", name: "host", basis: 7 },
       { node: "e1", name: "host" },
     ]);
   });
