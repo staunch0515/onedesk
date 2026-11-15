@@ -1,0 +1,14 @@
+{
+  "id": "test.beta",
+  "version": "0.1.0",
+  "apiVersion": "2",
+  "name": "plugin.name",
+  "icon": "circle",
+  "main": "main.js",
+  "contributes": {
+    "kinds": [ { "id": "thing", "label": "kind.thing", "icon": "circle", "tree": "resources", "page": "view", "newName": "kind.thing" } ],
+    "pages": [ { "id": "view" } ],
+    "commands": [ { "id": "probe", "label": "command.probe" } ],
+    "locales": { "en-US": "locales/en-US.json" }
+  }
+}

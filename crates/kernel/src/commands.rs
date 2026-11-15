@@ -1,0 +1,171 @@
+//! `command.execute` and folder grants (week1-protocol §4, §7).
+
+use onedesk_protocol::*;
+use serde_json::{json, Value};
+
+use crate::kernel::{node_target, url_encode, Inner, GRANTS_KEY};
+use crate::manifest::Registry;
+use crate::pipeline::{Actor, Changes, Command, NewResource};
+use crate::store::{self, KIND_GROUP, KIND_PLUGIN_STATE};
+use crate::util::*;
+
+impl Inner {
+    pub async fn command(&self, p: CommandExecuteParams, client: Option<String>) -> KResult<Vec<CommandEffect>> {
+        let c = p.context;
+        let arg = |k: &str| c.args.as_ref().and_then(|a| a.get(k)).and_then(Value::as_str).map(String::from);
+        match p.id.as_str() {
+            "node.open" => {
+                let target = match (&c.target, &c.tree, &c.node_key) {
+                    (Some(t), _, _) => t.clone(),
+                    (None, Some(tree), Some(key)) if self.stored_tree(tree).is_ok() => {
+                        let r = self.row_in_tree(tree, key)?;
+                        if r.kind == KIND_GROUP {
+                            return Ok(vec![]);
+                        }
+                        format!("resource:{}", r.id)
+                    }
+                    (None, Some(tree), Some(key)) => node_target(tree, key),
+                    _ => return Err(invalid_params("node.open needs a target or a node")),
+                };
+                Ok(vec![CommandEffect::Open { target }])
+            }
+            "node.rename" => {
+                let (tree, key) = c.tree.clone().zip(c.node_key.clone()).ok_or_else(|| invalid_params("node"))?;
+                self.stored_tree(&tree)?;
+                self.row_in_tree(&tree, &key)?;
+                Ok(vec![CommandEffect::Rename { tree, key }])
+            }
+            "node.newGroup" => {
+                let tree = c.tree.clone().unwrap_or_else(|| store::TREE_RESOURCES.into());
+                let parent = match &c.node_key {
+                    Some(k) => {
+                        let r = self.row_in_tree(&tree, k)?;
+                        // Inside the node when it is a group, otherwise next to it.
+                        if r.kind == KIND_GROUP { Some(r.id) } else { r.parent_id }
+                    }
+                    None => None,
+                };
+                let id = self.create_group(&tree, parent, &arg("name").unwrap_or_default()).await?;
+                Ok(vec![CommandEffect::Reveal { tree: tree.clone(), key: id.clone() }, CommandEffect::Rename { tree, key: id }])
+            }
+            "node.delete" => {
+                let key = c.node_key.clone().ok_or_else(|| invalid_params("nodeKey"))?;
+                let row = self.live_row(&key)?;
+                if self.hidden_tree(&row) || c.tree.as_deref().is_some_and(|t| row.tree.as_deref() != Some(t)) {
+                    return Err(not_found("node"));
+                }
+                let out = self.execute(Actor::User, Command::Delete { id: row.id }).await?;
+                Ok(out
+                    .rows
+                    .iter()
+                    .filter(|r| r.kind != KIND_GROUP)
+                    .map(|r| CommandEffect::CloseTarget { target: format!("resource:{}", r.id) })
+                    .collect())
+            }
+            "plugin.grantFolder" => {
+                let plugin = arg("plugin")
+                    .or_else(|| c.tree.as_deref().and_then(Registry::split).map(|(p, _)| p.to_string()))
+                    .ok_or_else(|| invalid_params("plugin"))?;
+                self.registry.plugin(&plugin).ok_or_else(|| not_found("plugin"))?;
+                Ok(vec![CommandEffect::PickFolder { plugin }])
+            }
+            id if id.starts_with("new:") => {
+                let kind = &id[4..];
+                self.registry.kind(kind).ok_or_else(|| not_found("kind"))?;
+                let parent = match &c.node_key {
+                    Some(k) => self.read(|conn| store::get(conn, k))?.filter(|r| r.kind == KIND_GROUP).map(|r| r.id),
+                    None => None,
+                };
+                let target = match parent {
+                    Some(p) => format!("new:{kind}?parent={}", url_encode(&p)),
+                    None => format!("new:{kind}"),
+                };
+                Ok(vec![CommandEffect::Open { target }])
+            }
+            id => {
+                let (pid, name) = Registry::split(id).ok_or_else(|| not_found("command"))?;
+                let plugin = self.registry.plugin(pid).ok_or_else(|| not_found("command"))?;
+                plugin.command(name).ok_or_else(|| not_found("command"))?;
+                let ctx = json!({ "target": c.target, "locale": Value::Null });
+                let context = serde_json::to_value(&c).map_err(internal)?;
+                let out = self.call_plugin(pid, "commands", name, "", json!([ctx, context]), client).await?;
+                let out = if out.is_null() { json!([]) } else { out };
+                serde_json::from_value(out).map_err(|e| err_d(ErrorCode::PluginError, format!("bad effects: {e}")))
+            }
+        }
+    }
+
+    pub fn grants_of(&self, plugin: &str) -> KResult<PluginGrants> {
+        self.registry.plugin(plugin).ok_or_else(|| not_found("plugin"))?;
+        Ok(PluginGrants { plugin: plugin.into(), folders: self.folder_grants(plugin)? })
+    }
+
+    async fn set_grants(&self, plugin: &str, folders: Vec<String>) -> KResult<()> {
+        let value = json!(folders);
+        match self.read(|c| store::plugin_state(c, plugin))? {
+            Some(r) => {
+                let mut changes = Changes::default();
+                changes.body.insert(GRANTS_KEY.into(), value);
+                self.execute(Actor::User, Command::Update { id: r.id, changes, basis: None }).await?;
+            }
+            None => {
+                let mut body = JsonMap::new();
+                body.insert(GRANTS_KEY.into(), value);
+                self.execute(
+                    Actor::User,
+                    Command::Create(NewResource {
+                        kind: KIND_PLUGIN_STATE.into(),
+                        tree: None,
+                        parent: None,
+                        name: plugin.into(),
+                        description: String::new(),
+                        tags: vec![],
+                        body,
+                        plugin_version: None,
+                    }),
+                )
+                .await?;
+            }
+        }
+        // Trees the plugin provides may now show different roots.
+        if let Some(p) = self.registry.plugin(plugin) {
+            for t in p.manifest.contributes.trees.iter().filter(|t| t.source == TreeSource::Provided) {
+                self.emit(format!("{}{}", topic::TREE, p.full(&t.id)), None, None);
+            }
+        }
+        Ok(())
+    }
+
+    pub async fn grant_folder(&self, p: PluginFolderParams) -> KResult<PluginGrants> {
+        let plugin = self.registry.plugin(&p.plugin).ok_or_else(|| not_found("plugin"))?;
+        if !plugin.manifest.requires.files {
+            return Err(denied("notRequested"));
+        }
+        let path = std::path::Path::new(&p.path);
+        if !path.is_absolute() {
+            return Err(invalid("notAbsolute"));
+        }
+        if !path.is_dir() {
+            return Err(invalid("notFolder"));
+        }
+        let canon = std::fs::canonicalize(path).map_err(internal)?.display().to_string();
+        let mut folders = self.folder_grants(&p.plugin)?;
+        if !folders.contains(&canon) {
+            folders.push(canon);
+            self.set_grants(&p.plugin, folders).await?;
+        }
+        self.grants_of(&p.plugin)
+    }
+
+    pub async fn revoke_folder(&self, p: PluginFolderParams) -> KResult<PluginGrants> {
+        self.registry.plugin(&p.plugin).ok_or_else(|| not_found("plugin"))?;
+        let canon = std::fs::canonicalize(&p.path).map(|c| c.display().to_string()).unwrap_or_else(|_| p.path.clone());
+        let mut folders = self.folder_grants(&p.plugin)?;
+        let before = folders.len();
+        folders.retain(|f| f != &canon && f != &p.path);
+        if folders.len() != before {
+            self.set_grants(&p.plugin, folders).await?;
+        }
+        self.grants_of(&p.plugin)
+    }
+}

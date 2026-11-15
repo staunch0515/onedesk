@@ -1,0 +1,30 @@
+{
+  "id": "test.alpha",
+  "version": "0.1.0",
+  "apiVersion": "2",
+  "name": "plugin.name",
+  "description": "plugin.description",
+  "icon": "box",
+  "main": "main.js",
+  "requires": { "files": true },
+  "contributes": {
+    "kinds": [
+      { "id": "item", "label": "kind.item", "icon": "box", "tree": "resources", "page": "editor",
+        "newName": "kind.item.new", "defaults": { "text": "" },
+        "draggable": true, "accepts": [], "menu": ["probe"] }
+    ],
+    "pages": [
+      { "id": "editor",
+        "actions": [ { "id": "save", "role": "save", "label": "action.save", "icon": "save", "primary": true, "shortcut": ["Mod", "S"] } ] },
+      { "id": "file",
+        "actions": [ { "id": "save", "role": "save", "label": "action.save", "icon": "save", "primary": true } ] }
+    ],
+    "trees": [
+      { "id": "disk", "label": "tree.disk", "icon": "folder-open", "source": "provided", "page": "file",
+        "toolbar": ["plugin.grantFolder"] }
+    ],
+    "commands": [ { "id": "probe", "label": "command.probe", "icon": "flask-conical" } ],
+    "menus": { "new": ["item"] },
+    "locales": { "en-US": "locales/en-US.json", "zh-CN": "locales/zh-CN.json" }
+  }
+}

@@ -8,3 +8,8 @@ license.workspace = true
 [dependencies]
 onedesk-protocol.workspace = true
 onedesk-kernel.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+serde_json.workspace = true

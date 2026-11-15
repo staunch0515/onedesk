@@ -12,3 +12,9 @@
 - “动作执行中界面不冻结”没有自动化测试（动作是异步的，手动验证过）。
 - 桌面应用内冷启动的自动计时；空闲机器上重测 docs/perf.md。
 - 外部插件只能手写 `OneDeskError`（name/code 约定），可提供一个可复制的小运行时。
+
+## 来自 week1-kernel（2026-11-15）
+
+- 根 `Cargo.toml` 的 `[workspace.dependencies]` 里 `futures-util`、`libc`、`onedesk-host`、`tokio-tungstenite` 未被任何包用到时，每次 cargo 都打 4 条 “unused workspace dependency” 警告（外壳分支用上之后自然消失；否则删掉）。
+- 架构检查（`scripts/check-arch.mjs`）给 Rust 内核加规则时：`files`（宿主能力名、清单 `requires.files`）、`text`（视图节点和字段类型）是协议里的机制名，不是插件名；应检查的是内置插件 id（`org.onedesk.*`）和它们的类型名。
+- 审计的“合并计数”（kernel-design §4.3）未做：`audit` 禁止 UPDATE，需要另设计存法并加迁移。

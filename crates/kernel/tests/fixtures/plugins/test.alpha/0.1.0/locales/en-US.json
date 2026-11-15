@@ -1,0 +1,2 @@
+{ "plugin.name": "Alpha", "plugin.description": "Test plugin", "kind.item": "Item", "kind.item.new": "New item",
+  "action.save": "Save", "tree.disk": "Disk", "command.probe": "Probe", "field.text": "Text" }
