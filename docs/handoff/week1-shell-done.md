@@ -1,0 +1,42 @@
+# claude/week1-shell-74b52c：外壳（主进程库、devhost、Tauri 外皮、真协议客户端）
+
+## 完成了什么
+- `crates/host`（`onedesk-host`）：`Host::start/request/events/shutdown`；启动工作进程（短路径套接字）、`hello`、转发（填 `client`）、事件广播、崩溃重启（间隔 100ms×2^n 封顶 6.4s；在途 `workerGone`、新请求最多等 20 秒）、`connection` 事件、退出时关闭连接并给 3 秒收尾再杀、复制内置插件、数据目录规则（D264）。`ws` 模块 + `onedesk-devhost` 可执行文件（127.0.0.1、令牌、`client` 参数、就绪打印 `READY`）。
+- `src-tauri`：重写为窗口外皮（单实例、`protocol_request`、`protocol-event`、`pick_folder`）。旧源码、迁移、旧依赖（rusqlite、keyring、http/opener/clipboard 插件）全删。启动失败时窗口照开，界面退回演示数据并提示。
+- `src/workbench/protocol/real/`：Tauri 与 WebSocket 传输、事件总线、`hello` 版本核对、`connection restored` 后所有订阅者重读。`mixed-client.ts`：本周方法走内核，其余走演示；演示“资源”树改名 `demo:resources`（“演示资源”），假“文件”树去掉；真树在前。
+- 协议对齐：`types.ts` 从 generated 再导出，演示专用类型已注明；`ProtocolClient` 改为 `tree.children` 分批（`loadChildren` 读全）、`page.save`、`resource.delete`、`plugin.grants/grantFolder/revokeFolder`、`workspace.info`。
+- 界面：`pick-folder`（桌面系统对话框；浏览器输入路径对话框）、`confirm`、`copy`；树工具栏按 `TreeInfo.toolbar`；内核 id 与错误码的中英文字（`i18n/kernel-texts.ts`）；`page.resolve` 出错在标签页显示错误；`conflict` 有专门提示；演示数据徽标（树标题、页面标题、状态栏）。
+
+## 测试与检查
+- `cargo test -p onedesk-host`：9 项集成 + 2 项单元，全过。`cargo clippy -p onedesk-host -p onedesk --all-targets -- -D warnings`：无警告。
+- `pnpm typecheck`、`pnpm lint`、`pnpm test` 通过（新增 real-client、mixed-client、kernel-texts 测试）。
+- 纯假数据 `e2e/workbench.spec.ts`：全量跑 21 过、2 失败（深色 SQL 页、树悬停）——失败时机器负载约 470 且我正在改文件触发热更新；单独重跑这两项连同浅色 SQL 页全过。截图已 `git checkout` 还原（未提交）。注意：原 `playwright.config.ts` 的 `webServer.url` 指向根路径，Vite 返回 404 会超时，我用临时配置（指向 `/workbench.html`）跑的；插件会话分支已改。
+
+## 我做的决定
+- `client` = Tauri 窗口标签 / WebSocket 的 `client` 参数（缺省 `ws-<n>`；浏览器用 sessionStorage 里的随机 id）。
+- 主进程自己回答界面的 `hello`（用缓存的工作进程 hello），版本不符返回 `versionMismatch`。
+- 资源/页面归属：先问内核，找不到再归演示，并缓存；演示树发出的 `new:` 目标加 `demo=1` 标记。
+- UI 的 `CommandContext/PageContext` 保留 `null`/宽松 JSON（超集），真客户端发送前去掉 null。
+- `EventHandler` 增加可选 `payload`；`ui` 事件载荷就是 `CommandEffect`（外壳尚未订阅 `ui` 主题执行，见下）。
+- 内置插件目录：开发构建用仓库 `plugins/`，发布构建用 `Resources/plugins`，`ONEDESK_BUILTIN_PLUGINS` 覆盖。
+
+## 新依赖
+- Rust：`onedesk-host` 用工作区已有的 tokio、tokio-tungstenite、futures-util、serde(_json)、tempfile（dev）；`onedesk` 用 tauri 2、tauri-plugin-single-instance、tauri-plugin-dialog（均 MIT/Apache-2.0）。
+- JS：删除 `@tauri-apps/plugin-{clipboard-manager,dialog,http,opener}`；无新增。
+
+## 协议变更
+无。建议：`TreeNode.parentKey` 内核省略而非 null（已按此适配）。
+
+## 没做或没验证
+- **没有对接真内核**：工作进程仍是占位，所有对内核的调用只在假工作进程和假内核下测过。合并后需用真 worker 跑 devhost + 界面验收。
+- `ui` 主题事件（插件 `host.ui.open/notify/copy`）外壳还没订阅执行。
+- 发布构建（`index.html` 入口、打包 worker 与插件）没做，见 todo.md。
+- `pnpm check` 全量、`cargo test --workspace` 没跑（其他 crate 不归我）。
+- ⌘W/⌘N/⌘1…9、编辑器、日期控件在 WKWebView 中的表现：见下节。
+
+## Tauri 窗口
+`pnpm tauri dev`（首次编译 12 分钟，机器负载很高）开出了窗口。工作进程仍是占位（立刻退出码 0），所以主进程报 `cannot start the workspace worker`、窗口照开，界面退回纯演示数据。我用 `screencapture` 看到的（第一次截图是空白，约 20 秒后才加载完，那时负载高）：
+- 原型整体渲染正常，布局与 Chromium 里一致：顶部栏、活动栏、资源树、标签栏、信息面板、参数条、SQL 编辑器（透明 textarea 叠着色文本，行号与着色对得上，没有错位）、结果区。
+- 日期时间控件显示为 `11/15/2026, 12:30 P`，右侧被截断（原生控件在 WKWebView 里比 Chromium 宽）——**未修**，需要时调 `src/design` 里该字段的宽度 token。
+- 没有看到启动失败的提示条（截图时可能已消失，或没出现）——**未确认**。
+- ⌘W/⌘N/⌘1…9 没有试（我没有办法向窗口发键盘事件）。
