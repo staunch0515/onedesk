@@ -1,6 +1,6 @@
 import type { ConnectionState, EventMessage, HelloResult, TreePage } from "../generated";
 import type { ProtocolClient } from "../client";
-import type { PageEventResult, PaletteCommand, PluginDetail, Run, ViewNode, AuditFacets, AuditFilter, AuditRow, EnvOption, EnvView, HistoryEntry, ResolvedParam, SearchHit, CommandContext, CommandEffect, NewItem, PageContext, PageDescriptor, PageSaveResult, PluginGrants, Resource, TreeInfo, TreeNode, WorkspaceInfo } from "../types";
+import type { InstallPreview, PluginVersionParams, SecretInfo, UndoUpgradeResult, UpgradeResult, PageEventResult, PaletteCommand, PluginDetail, Run, ViewNode, AuditFacets, AuditFilter, AuditRow, EnvOption, EnvView, HistoryEntry, ResolvedParam, SearchHit, CommandContext, CommandEffect, NewItem, PageContext, PageDescriptor, PageSaveResult, PluginGrants, Resource, TreeInfo, TreeNode, WorkspaceInfo } from "../types";
 import { EventBus } from "./event-bus";
 import { KernelError } from "../errors";
 import type { Transport } from "./transport";
@@ -21,7 +21,9 @@ export interface KernelClient {
   page: Pick<ProtocolClient["page"], "resolve" | "save" | "event">;
   run: ProtocolClient["run"];
   command: ProtocolClient["command"];
-  plugin: Pick<ProtocolClient["plugin"], "grants" | "grantFolder" | "revokeFolder" | "get" | "setEnabled" | "setSetting" | "reload">;
+  plugin: Pick<ProtocolClient["plugin"], "grants" | "grantFolder" | "revokeFolder" | "get" | "setEnabled" | "setSetting" | "reload" | "activateVersion" | "setPinned" | "undoUpgrade" | "confirmPermissions">;
+  app: NonNullable<ProtocolClient["app"]>;
+  secrets: NonNullable<ProtocolClient["secrets"]>;
   ui: ProtocolClient["ui"];
   events: ProtocolClient["events"];
   /** Connection state as last reported by the main process. */
@@ -75,6 +77,16 @@ export async function createKernelClient(transport: Transport, locale?: () => st
       unset: async (node, name, basis) => void (await call("params.unset", compact({ node, name, basis: rev(basis) }))),
       acknowledge: async (node, name, basis) => void (await call("params.acknowledge", compact({ node, name, basis: rev(basis) }))),
     },
+    app: {
+      inspectPlugin: (folder) => call<InstallPreview>("app.inspectPlugin", { folder }),
+      installPlugin: (folder) => call<PluginVersionParams>("app.installPlugin", { folder }),
+      removePlugin: async (plugin, version) => void (await call("app.removePlugin", { plugin, version })),
+    },
+    secrets: {
+      list: () => call<SecretInfo[]>("secrets.list"),
+      set: async (name, value) => void (await call("secrets.set", { name, value })),
+      delete: async (name) => void (await call("secrets.delete", { name })),
+    },
     search: { query: (text, limit) => call<SearchHit[]>("search.query", compact({ text, limit })) },
     audit: {
       list: (filter: AuditFilter) => call<AuditRow[]>("audit.list", compact(filter)),
@@ -126,6 +138,10 @@ export async function createKernelClient(transport: Transport, locale?: () => st
       setEnabled: async (id, enabled) => void (await call("plugin.setEnabled", { plugin: id, enabled })),
       setSetting: async (id, name, value) => void (await call("plugin.setSetting", { plugin: id, name, value })),
       reload: async (id) => void (await call("plugin.reload", { plugin: id })),
+      activateVersion: (id, version) => call<UpgradeResult>("plugin.activateVersion", { plugin: id, version }),
+      setPinned: async (id, version, pinned) => void (await call("plugin.setPinned", { plugin: id, version, pinned })),
+      undoUpgrade: (batch, also) => call<UndoUpgradeResult>("plugin.undoUpgrade", { batch, also: also ?? [] }),
+      confirmPermissions: async (id, version) => void (await call("plugin.confirmPermissions", { plugin: id, version })),
     },
     ui: {
       get: async <T,>(key: string) => ((await call<T | null>("ui.get", { key })) ?? null) as T | null,

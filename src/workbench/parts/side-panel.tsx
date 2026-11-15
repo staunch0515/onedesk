@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { startInstall } from "./install-dialogs";
 import { Badge, ContextMenu, EmptyState, IconButton, Input, LoadingState, SidePanel, Tree, type MenuEntry, type TreeDropPosition, type TreeRow } from "../../design";
 import { useI18n } from "../i18n";
 import { loadChildren, type MenuCommand, type TreeInfo, type TreeNode } from "../protocol";
@@ -228,6 +229,9 @@ export function TreePanel({ tree }: { tree: TreeInfo }) {
         <>
           {tree.groups && !tree.toolbar.some((c) => c.id === "node.newGroup") && (
             <IconButton icon="folder-plus" size="sm" label={t("tree.newGroup")} disabled={!tree.groups} onClick={() => void actions.command("node.newGroup", { tree: tree.id, nodeKey: selected })} />
+          )}
+          {tree.id === "plugins" && client.app && (
+            <IconButton icon="package-plus" size="sm" label={t("install.action")} onClick={() => void startInstall(client, store, actions)} />
           )}
           {tree.toolbar.map((c) => (
             <IconButton key={c.id} icon={c.icon ?? "circle"} size="sm" label={tx(c.label)} disabled={c.disabled} onClick={() => void actions.command(c.id, { tree: tree.id, nodeKey: selected })} />

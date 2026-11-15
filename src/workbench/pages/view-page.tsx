@@ -21,10 +21,12 @@ interface FieldProps {
   size: "sm" | "md";
   readOnly: boolean;
   id?: string;
+  /** Kernel pages: a secret is write-only. `saved` says whether one is stored; the box never shows it. */
+  secret?: { saved: boolean };
 }
 
 /** One form control, chosen by the field's kind. Values are always text; booleans are "true" / "false". */
-function FieldControl({ field, value, onChange, size, readOnly, id }: FieldProps) {
+export function FieldControl({ field, value, onChange, size, readOnly, id, secret }: FieldProps) {
   const { tx, t } = useI18n();
   const label = tx(field.label);
   const placeholder = field.envValue || (field.placeholder ? tx(field.placeholder) : undefined);
@@ -50,6 +52,7 @@ function FieldControl({ field, value, onChange, size, readOnly, id }: FieldProps
     case "code":
       return <CodeEditor label={label} height="auto" framed value={value} readOnly={locked} tokenize={field.language ? TOKENIZERS[field.language] : undefined} onChange={onChange} />;
     case "secret":
+      if (secret) return <Input id={id} size={size} aria-label={label} icon="key-round" mono type="password" autoComplete="off" value={value} readOnly={locked} placeholder={secret.saved ? t("field.secretSaved") : t("field.secretUnset")} onChange={(e) => onChange(e.target.value)} />;
       return <Input id={id} size={size} aria-label={label} icon="key-round" mono value={value} readOnly placeholder={t("field.secretUnset")} />;
     default: {
       const type = field.kind === "date" ? "date" : field.kind === "datetime" ? "datetime-local" : "text";
@@ -149,8 +152,11 @@ export function ViewPage({ tab, descriptor: initial }: { tab: TabState; descript
 
   const setBound = (bind: string, value: string) => {
     if (descriptor.autosave && descriptor.resourceId) client.page.save(`resource:${descriptor.resourceId}`, { [bind]: value }).catch(actions.fail);
-    else actions.setDraft(tab.id, bind, typed(bind, value), kernelPage ? (values[bind] ?? "") : String(values[bind] ?? ""));
+    else actions.setDraft(tab.id, bind, typed(bind, value), fieldKinds.get(bind) === "secret" && kernelPage ? "" : kernelPage ? (values[bind] ?? "") : String(values[bind] ?? ""));
   };
+  // A stored secret is never put back into the box: it shows only what is typed now, and "saved" as a hint.
+  const secretOf = (f: ViewField) => (kernelPage && f.kind === "secret" ? { saved: Boolean(values[f.bind ?? f.name]) } : undefined);
+  const fieldValue = (f: ViewField) => (secretOf(f) ? String(draft[f.bind ?? f.name] ?? "") : bound(f.bind ?? f.name));
   const setParam = (name: string, value: string) => actions.updateTab(tab.id, { params: { ...tab.params, [name]: value } });
 
   const latest = useRef({ descriptor, draft, tab });
@@ -258,7 +264,8 @@ export function ViewPage({ tab, descriptor: initial }: { tab: TabState; descript
                   field={f}
                   size="sm"
                   readOnly={readOnly && !f.param}
-                  value={f.param ? (tab.params[f.name] ?? "") : bound(f.bind ?? f.name)}
+                  value={f.param ? (tab.params[f.name] ?? "") : fieldValue(f)}
+                  secret={secretOf(f)}
                   onChange={(v) => (f.param ? setParam(f.name, v) : setBound(f.bind ?? f.name, v))}
                 />
               </StripField>
@@ -275,7 +282,7 @@ export function ViewPage({ tab, descriptor: initial }: { tab: TabState; descript
           <Pane grow={!fill} scroll pad="lg" gap="md" width="form">
             {rest.map((f) => (
               <FormField key={f.name} label={tx(f.label)} description={f.hint ? tx(f.hint) : undefined}>
-                <FieldControl field={f} size="md" readOnly={readOnly} value={bound(f.bind ?? f.name)} onChange={(v) => setBound(f.bind ?? f.name, v)} />
+                <FieldControl field={f} size="md" readOnly={readOnly} value={fieldValue(f)} secret={secretOf(f)} onChange={(v) => setBound(f.bind ?? f.name, v)} />
               </FormField>
             ))}
           </Pane>

@@ -4,7 +4,7 @@
  * memory only.
  */
 import { useSyncExternalStore } from "react";
-import type { CommandContext, Label } from "../protocol/types";
+import type { CommandContext, InstallPreview, Label } from "../protocol/types";
 
 export interface TabState {
   id: string;
@@ -49,6 +49,9 @@ export interface LayoutState {
   lastEnvId: string | null;
 }
 
+/** The "install a plugin" flow: asking for a folder (browser mode), then the confirmation of what was found. */
+export type InstallState = { stage: "path" } | { stage: "preview"; folder: string; preview: InstallPreview };
+
 export interface UiState extends LayoutState {
   tasksOpen: boolean;
   paletteOpen: boolean;
@@ -60,6 +63,8 @@ export interface UiState extends LayoutState {
   confirmClose: string[] | null;
   /** Browser mode only: asks for a folder path, since there is no system dialog (pick-folder effect). */
   folderPrompt: { plugin: string } | null;
+  /** Installing a plugin package (round 4). */
+  install: InstallState | null;
   /** A command that asked to be confirmed before it runs again with `confirmed: true`. */
   confirmCommand: { message: Label; command: string; danger: boolean; context: CommandContext } | null;
   /** Most recently active tab that uses an environment. */
@@ -115,6 +120,7 @@ export function createStore(saved: Partial<LayoutState> | null, save: (layout: L
     renaming: null,
     confirmClose: null,
     folderPrompt: null,
+    install: null,
     confirmCommand: null,
     envTabId: null,
     searchFocus: 0,

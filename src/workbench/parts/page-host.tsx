@@ -5,6 +5,7 @@ import { AuditPage } from "../pages/audit-page";
 import { DeletedPage } from "../pages/deleted-page";
 import { EnvPage } from "../pages/env-page";
 import { PluginPage } from "../pages/plugin-page";
+import { SECRETS_TARGET, SecretsPage } from "../pages/secrets-page";
 import { ViewPage } from "../pages/view-page";
 import { useQuery, useWorkbench } from "../state/context";
 import type { TabState } from "../state/store";
@@ -19,6 +20,19 @@ function topicsFor(target: string): string[] {
 
 /** Resolves the tab's target into a page (§9.1) and draws it. Only the active tab is mounted. */
 export function PageHost({ tab }: { tab: TabState }) {
+  if (tab.target === SECRETS_TARGET) return <ShellSecrets tab={tab} />;
+  return <ResolvedPage tab={tab} />;
+}
+
+/** The secrets page belongs to the shell, not to a resolved target. */
+function ShellSecrets({ tab }: { tab: TabState }) {
+  const { actions } = useWorkbench();
+  const { t } = useI18n();
+  useEffect(() => actions.updateTab(tab.id, { title: t("secrets.title"), icon: "key-round" }), [tab.id, actions, t]);
+  return <SecretsPage tab={tab} />;
+}
+
+function ResolvedPage({ tab }: { tab: TabState }) {
   const { store, actions } = useWorkbench();
   const { t, tx } = useI18n();
   const page = useQuery((c) => c.page.resolve(tab.target, { envId: tab.envId, draft: store.get().drafts[tab.id] }), [tab.target, tab.envId, tab.reload], topicsFor(tab.target));

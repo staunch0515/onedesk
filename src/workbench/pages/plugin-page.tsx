@@ -1,33 +1,81 @@
-import { Badge, Banner, Button, DataGrid, FormField, Input, KeyValueList, LoadingState, Pane, Section, Select, Switch, Text, TextLink, useToast, type ActionBarItem, type DataGridColumn } from "../../design";
+import { useState } from "react";
+import { Badge, Banner, Button, Checkbox, DataGrid, Dialog, FormField, Input, KeyValueList, LoadingState, Pane, Section, Select, Switch, Text, TextLink, useToast, type ActionBarItem, type DataGridColumn } from "../../design";
 import { useI18n } from "../i18n";
-import type { Label, PageDescriptor, PluginPermission, PluginVersion } from "../protocol";
+import type { Label, NamedRef, PageDescriptor, PluginPermission, PluginVersion } from "../protocol";
 import { useQuery, useWorkbench } from "../state/context";
 import type { TabState } from "../state/store";
 import { Frame } from "../parts/frame";
+import { SECRETS_TARGET } from "./secrets-page";
+
+/** What the page is asking the user right now (all confirmations of the version table live here). */
+type Ask =
+  | { kind: "permissions"; version: string }
+  | { kind: "remove"; version: string; resources: number }
+  | { kind: "uninstall"; resources: number }
+  | { kind: "undo"; count: number }
+  | { kind: "pick"; batch: string; modified: NamedRef[]; chosen: string[] };
 
 /** Plugin page (ui-spec §4, I.6): description, versions, enable switch, settings, permissions, what it provides, load status. */
 export function PluginPage({ tab, descriptor }: { tab: TabState; descriptor: PageDescriptor }) {
   const { client, actions } = useWorkbench();
   const { t, tx, dateTime, permission } = useI18n();
   const { toast } = useToast();
+  const [ask, setAsk] = useState<Ask | null>(null);
   const id = tab.target.slice("plugin:".length);
   const plugin = useQuery((c) => c.plugin.get(id), [id], ["plugins"]);
   const p = plugin.data;
   if (!p) return <Frame tab={tab} descriptor={descriptor}>{plugin.loading ? <LoadingState label={t("common.loading")} /> : null}</Frame>;
 
-  // Kernel plugins: versions and permissions are shown read-only this round (no install, no permission prompts yet).
+  // Kernel plugins have real versions (switch, pin, remove, undo an upgrade) and a main-process installer; the demo's are fake.
   const real = client.demo !== undefined && !client.demo.target(descriptor.target);
   const installed = p.load.state !== "not-installed";
   const notYet = () => toast({ tone: "warning", title: t("common.notInPrototype") });
   const active = p.versions.find((v) => v.active);
+  const hasFiles = p.permissions.some((x) => x.id === "files");
+  const done = (text: string) => toast({ tone: "success", title: text });
+  const activate = async (v: PluginVersion, confirmed = false) => {
+    if (real && v.confirmed === false && !confirmed) return setAsk({ kind: "permissions", version: v.version });
+    try {
+      if (real && v.confirmed === false) await client.plugin.confirmPermissions(id, v.version);
+      const result = await client.plugin.activateVersion(id, v.version);
+      done(result.upgraded > 0 || result.kept > 0 ? t("plugin.upgraded", { version: v.version, upgraded: result.upgraded, kept: result.kept }) : t("plugin.activated", { version: v.version }));
+    } catch (error) {
+      actions.fail(error);
+    }
+  };
+  const removeVersion = async (version: string) => {
+    try {
+      await client.app?.removePlugin(id, version);
+      done(t("plugin.removed", { version }));
+    } catch (error) {
+      actions.fail(error);
+    }
+  };
+  const undo = async (batch: string, also: string[] = []) => {
+    try {
+      const result = await client.plugin.undoUpgrade(batch, also);
+      if (result.modified.length > 0 && also.length === 0) setAsk({ kind: "pick", batch, modified: result.modified, chosen: [] });
+      else done(t("plugin.undone", { count: result.restored }));
+    } catch (error) {
+      actions.fail(error);
+    }
+  };
+  const boundTotal = p.versions.reduce((n, v) => n + (v.resources ?? 0), 0);
   const items: ActionBarItem[] = [
     { key: "toggle", label: p.enabled ? t("plugin.disable") : t("plugin.enable"), icon: p.enabled ? "circle-slash" : "circle-check", primary: !p.enabled && installed, disabled: !installed, onSelect: () => client.plugin.setEnabled(id, !p.enabled).catch(actions.fail) },
     { key: "reload", label: t("plugin.reload"), icon: "rotate-cw", disabled: !installed || !p.enabled, onSelect: () => client.plugin.reload(id).then(() => toast({ tone: "success", title: t("plugin.reloaded") }), actions.fail) },
     ...(real ? [] : [{ key: "updates", label: t("plugin.checkUpdates"), icon: "cloud-download", onSelect: notYet }]),
+    ...(real && p.permissions.some((x) => x.id === "secrets") ? [{ key: "secrets", label: t("secrets.title"), icon: "key-round", onSelect: () => actions.open(SECRETS_TARGET) }] : []),
     ...(real
-      ? [{ key: "grant", label: t("plugin.grantFolder"), icon: "folder-plus", disabled: !installed || !p.enabled, onSelect: () => void actions.command("plugin.grantFolder", { args: { plugin: id } }) }]
+      ? hasFiles
+        ? [{ key: "grant", label: t("plugin.grantFolder"), icon: "folder-plus", disabled: !installed || !p.enabled, onSelect: () => void actions.command("plugin.grantFolder", { args: { plugin: id } }) }]
+        : []
       : [{ key: "folder", label: t("plugin.openFolder"), icon: "folder-open", disabled: !installed, onSelect: notYet }]),
-    { key: "uninstall", label: t("plugin.uninstall"), icon: "trash-2", danger: true, disabled: !installed || p.builtin, onSelect: notYet },
+    ...(real
+      ? client.app
+        ? [{ key: "uninstall", label: t("plugin.uninstall"), icon: "trash-2", danger: true, disabled: !installed, onSelect: () => setAsk({ kind: "uninstall", resources: boundTotal }) }]
+        : []
+      : [{ key: "uninstall", label: t("plugin.uninstall"), icon: "trash-2", danger: true, disabled: !installed || p.builtin, onSelect: notYet }]),
   ];
 
   const versionColumns: Array<DataGridColumn<PluginVersion>> = [
@@ -51,30 +99,37 @@ export function PluginPage({ tab, descriptor }: { tab: TabState; descriptor: Pag
               {t("plugin.pinned")}
             </Badge>
           )}
+          {v.confirmed === false && <Badge tone="warning">{t("plugin.unconfirmed")}</Badge>}
         </Pane>
       ),
     },
     { key: "installed", header: t("plugin.installedAt"), width: 160, value: (v) => v.installedAt, render: (v) => (v.installedAt ? dateTime(v.installedAt) : "—") },
+    ...(real ? [{ key: "resources", header: t("plugin.boundResources"), width: 120, numeric: true, value: (v: PluginVersion) => v.resources ?? 0 }] : []),
     { key: "notes", header: t("plugin.notes"), width: 380, value: (v) => v.notes },
-    ...(real ? [] : [{
+    {
       key: "actions",
       header: "",
-      width: 232,
+      width: real ? 330 : 232,
       sortable: false,
       resizable: false,
       render: (v: PluginVersion) => (
         <Pane direction="row" gap="xs" align="center" justify="end">
           {!v.active && (
-            <Button size="sm" onClick={() => client.plugin.activateVersion(id, v.version).then(() => toast({ tone: "success", title: t("plugin.activated", { version: v.version }) }), actions.fail)}>
+            <Button size="sm" onClick={() => void activate(v)}>
               {t("plugin.activate")}
             </Button>
           )}
           <Button size="sm" variant="ghost" icon={v.pinned ? "pin-off" : "pin"} onClick={() => client.plugin.setPinned(id, v.version, !v.pinned).catch(actions.fail)}>
             {v.pinned ? t("plugin.unpin") : t("plugin.pin")}
           </Button>
+          {real && client.app && (
+            <Button size="sm" variant="ghost" icon="trash-2" onClick={() => setAsk({ kind: "remove", version: v.version, resources: v.resources ?? 0 })}>
+              {t("plugin.removeVersion")}
+            </Button>
+          )}
         </Pane>
       ),
-    }]),
+    },
   ];
 
   const permissionColumns: Array<DataGridColumn<PluginPermission>> = [
@@ -98,7 +153,60 @@ export function PluginPage({ tab, descriptor }: { tab: TabState; descriptor: Pag
     );
   const missingGrant = p.permissions.some((x) => x.required && !x.granted);
 
+  const askDialog = (
+    <Dialog
+      open={ask !== null}
+      onOpenChange={(open) => !open && setAsk(null)}
+      size="md"
+      title={
+        ask?.kind === "permissions" ? t("plugin.confirmPermsTitle", { version: ask.version }) : ask?.kind === "remove" ? t("plugin.removeTitle", { version: ask.version }) : ask?.kind === "uninstall" ? t("plugin.uninstallTitle") : ask?.kind === "undo" ? t("plugin.undoTitle") : t("plugin.pickTitle")
+      }
+      description={
+        ask?.kind === "remove" ? (ask.resources > 0 ? t("plugin.removeBound", { count: ask.resources }) : t("plugin.removeFree")) : ask?.kind === "uninstall" ? (ask.resources > 0 ? t("plugin.removeBound", { count: ask.resources }) : t("plugin.removeFree")) : ask?.kind === "undo" ? t("plugin.undoBody", { count: ask.count }) : ask?.kind === "pick" ? t("plugin.pickBody") : undefined
+      }
+      footer={
+        <>
+          <Button onClick={() => setAsk(null)}>{t("common.cancel")}</Button>
+          <Button
+            variant={ask?.kind === "permissions" || ask?.kind === "pick" || ask?.kind === "undo" ? "primary" : "danger"}
+            onClick={() => {
+              const current = ask;
+              setAsk(null);
+              if (!current) return;
+              if (current.kind === "permissions") void activate(p.versions.find((v) => v.version === current.version)!, true);
+              else if (current.kind === "remove") void removeVersion(current.version);
+              else if (current.kind === "uninstall") void (async () => { for (const v of p.versions) await removeVersion(v.version); })();
+              else if (current.kind === "undo") void undo(p.lastUpgrade!.batch);
+              else void undo(current.batch, current.chosen);
+            }}
+          >
+            {ask?.kind === "permissions" ? t("plugin.confirmPermsOk") : ask?.kind === "remove" || ask?.kind === "uninstall" ? t("plugin.removeVersion") : ask?.kind === "undo" ? t("plugin.undoUpgrade") : t("plugin.pickOk")}
+          </Button>
+        </>
+      }
+    >
+      {ask?.kind === "permissions" && (
+        <Pane gap="xs">
+          {p.permissions.map((x) => (
+            <Pane key={x.id} direction="row" gap="sm" align="center" wrap>
+              <Text size="sm" weight="medium">{x.label ? tx(x.label) : permission(x.id)}</Text>
+              {x.detail && <Text size="xs" tone="muted" mono>{x.detail}</Text>}
+            </Pane>
+          ))}
+        </Pane>
+      )}
+      {ask?.kind === "pick" && (
+        <Pane gap="xs">
+          {ask.modified.map((m) => (
+            <Checkbox key={m.id} label={m.name} checked={ask.chosen.includes(m.id)} onCheckedChange={(on) => setAsk({ ...ask, chosen: on ? [...ask.chosen, m.id] : ask.chosen.filter((x) => x !== m.id) })} />
+          ))}
+        </Pane>
+      )}
+    </Dialog>
+  );
+
   return (
+    <>
     <Frame
       tab={tab}
       descriptor={descriptor}
@@ -151,6 +259,9 @@ export function PluginPage({ tab, descriptor }: { tab: TabState; descriptor: Pag
 
         {p.versions.length > 0 && (
           <Section title={t("plugin.versions")} description={t("plugin.versionsHint")}>
+            {real && p.lastUpgrade && (
+              <Banner tone="info" title={t("plugin.lastUpgrade", { count: p.lastUpgrade.count })} actions={<Button size="sm" onClick={() => setAsk({ kind: "undo", count: p.lastUpgrade!.count })}>{t("plugin.undoUpgrade")}</Button>} />
+            )}
             <DataGrid label={t("plugin.versions")} size="regular" framed autoHeight columns={versionColumns} rows={p.versions} getRowKey={(v) => v.version} nullText="" />
           </Section>
         )}
@@ -227,5 +338,7 @@ export function PluginPage({ tab, descriptor }: { tab: TabState; descriptor: Pag
         </Section>
       </Pane>
     </Frame>
+    {askDialog}
+    </>
   );
 }

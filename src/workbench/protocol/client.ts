@@ -1,4 +1,9 @@
 import type {
+  InstallPreview,
+  PluginVersionParams,
+  SecretInfo,
+  UndoUpgradeResult,
+  UpgradeResult,
   TreeNode,
   PageSaveResult,
   AuditFacets,
@@ -48,6 +53,20 @@ export interface ProtocolClient {
    * shell can mark them. Absent: all kernel (never in week 1) or all mock (the badge is global).
    */
   /** Things only the window around the interface can do. Absent in a plain browser. */
+  /** Installing and removing plugin packages (main process). Absent in pure demo mode. */
+  readonly app?: {
+    inspectPlugin(folder: string): Promise<InstallPreview>;
+    installPlugin(folder: string): Promise<PluginVersionParams>;
+    removePlugin(plugin: string, version: string): Promise<void>;
+  };
+
+  /** Secrets live in the system keychain; the interface can only list names and write values. Absent in pure demo mode. */
+  readonly secrets?: {
+    list(): Promise<SecretInfo[]>;
+    set(name: string, value: string): Promise<void>;
+    delete(name: string): Promise<void>;
+  };
+
   readonly platform?: { pickFolder?: () => Promise<string | null> };
 
   readonly demo?: { tree(id: string): boolean; target(target: string): boolean };
@@ -109,10 +128,14 @@ export interface ProtocolClient {
     revokeFolder(plugin: string, path: string): Promise<PluginGrants>;
     get(id: string): Promise<PluginDetail | null>;
     setEnabled(id: string, enabled: boolean): Promise<void>;
-    activateVersion(id: string, version: string): Promise<void>;
+    activateVersion(id: string, version: string): Promise<UpgradeResult>;
     setPinned(id: string, version: string, pinned: boolean): Promise<void>;
     setSetting(id: string, name: string, value: string): Promise<void>;
     setPermission(id: string, permission: string, granted: boolean): Promise<void>;
+    /** Reverts an upgrade batch; resources changed since are listed in `modified` and reverted only when named in `also`. */
+    undoUpgrade(batch: string, also?: string[]): Promise<UndoUpgradeResult>;
+    /** The user confirmed this version's permissions. */
+    confirmPermissions(id: string, version: string): Promise<void>;
     reload(id: string): Promise<void>;
   };
 
