@@ -567,7 +567,7 @@ impl Inner {
                 // D306: secret field values go to the keychain; the resource keeps the name.
                 let mut raw = p.changes.clone();
                 let secret_fields = self.secret_fields(&row.kind, row.plugin_version.as_deref());
-                self.take_secret_fields(&row.id, &secret_fields, &mut raw, Some(&row.body)).await?;
+                let pending = self.take_secret_fields(&row.id, &secret_fields, &mut raw, Some(&row.body))?;
                 let changes = Changes::from_bind_map(&raw)?;
                 let basis = match &p.basis {
                     Some(b) => Some(b.parse::<i64>().map_err(|_| invalid_params("basis is not a rev"))?),
@@ -576,6 +576,7 @@ impl Inner {
                 if !changes.is_empty() {
                     self.execute(Actor::User, Command::Update { id: id.clone(), changes, basis }).await?;
                 }
+                self.write_secrets(pending).await?;
                 let cx = PageContext { draft: None, ..cx };
                 Ok(PageSaveResult { page: self.resolve(&p.target, cx, client).await? })
             }
@@ -616,11 +617,12 @@ impl Inner {
                 let id = out.id.ok_or_else(|| internal("no id"))?;
                 if !secrets.is_empty() {
                     let mut raw = secrets;
-                    self.take_secret_fields(&id, &secret_fields, &mut raw, None).await?;
+                    let pending = self.take_secret_fields(&id, &secret_fields, &mut raw, None)?;
                     let changes = Changes::from_bind_map(&raw)?;
                     if !changes.is_empty() {
                         self.execute(Actor::User, Command::Update { id: id.clone(), changes, basis: None }).await?;
                     }
+                    self.write_secrets(pending).await?;
                 }
                 let cx = PageContext { draft: None, ..cx };
                 Ok(PageSaveResult { page: self.resolve(&format!("resource:{id}"), cx, client).await? })

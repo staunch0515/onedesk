@@ -23,6 +23,12 @@ pub const DEFAULT_TIMEOUT_MS: u64 = 30_000;
 pub const MAX_TIMEOUT_MS: u64 = 60_000;
 /// The configuration / environment parameter that narrows network access (§6.3).
 pub const ALLOW_PARAM: &str = "network.allow";
+/// D316: the methods a plugin may use.
+pub const METHODS: &[&str] = &["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"];
+/// D316: connection-level headers the host sets, never the plugin.
+const FORBIDDEN_HEADERS: &[&str] = &["host", "content-length", "transfer-encoding", "connection"];
+/// D316: dropped on a redirect to another host (with headers that carried a substituted secret).
+const CREDENTIAL_HEADERS: &[&str] = &["authorization", "cookie", "proxy-authorization"];
 
 /// The host of a URL (lower case), if it has one.
 pub fn host_of(url: &str) -> Option<String> {
@@ -170,16 +176,24 @@ impl Inner {
         }
         let o = args.get(0).and_then(Value::as_object).ok_or_else(|| invalid_params("request"))?;
         let mut method = o.get("method").and_then(Value::as_str).unwrap_or("GET").to_ascii_uppercase();
+        if !METHODS.contains(&method.as_str()) {
+            return Err(invalid("badMethod"));
+        }
         let raw_url = o.get("url").and_then(Value::as_str).ok_or_else(|| invalid_params("url"))?;
         let timeout = o.get("timeoutMs").and_then(Value::as_u64).unwrap_or(DEFAULT_TIMEOUT_MS).clamp(1, MAX_TIMEOUT_MS);
         let allowed_secrets = self.plugin_secret_names(p)?;
         let mut used = Vec::new();
         let url_text = self.substitute(p, raw_url, &allowed_secrets, &mut used)?;
-        let mut headers: Vec<(String, String)> = Vec::new();
+        // (name, value, carries a substituted secret)
+        let mut headers: Vec<(String, String, bool)> = Vec::new();
         if let Some(h) = o.get("headers").and_then(Value::as_object) {
             for (k, v) in h {
+                if FORBIDDEN_HEADERS.contains(&k.to_ascii_lowercase().as_str()) {
+                    return Err(err_p(ErrorCode::Invalid, &[("reason", "forbiddenHeader"), ("header", k)]));
+                }
                 let v = v.as_str().map(String::from).unwrap_or_else(|| v.to_string());
-                headers.push((k.clone(), self.substitute(p, &v, &allowed_secrets, &mut used)?));
+                let secret = !crate::secrets::references(&v).is_empty();
+                headers.push((k.clone(), self.substitute(p, &v, &allowed_secrets, &mut used)?, secret));
             }
         }
         let mut body = match o.get("body") {
@@ -192,9 +206,22 @@ impl Inner {
         let mut url = reqwest::Url::parse(&url_text).map_err(|_| invalid("badUrl"))?;
         let started = std::time::Instant::now();
         let mut hops = 0;
+        let deadline = Duration::from_millis(timeout);
+        let mut origin: Option<(String, u16)> = None;
         let (resp, host) = loop {
-            let (host, addr) = self.check_hop(&granted, &layers, &url).await?;
+            // D316: name resolution counts against the same time budget.
+            let (host, addr) = tokio::time::timeout(deadline.saturating_sub(started.elapsed()), self.check_hop(&granted, &layers, &url))
+                .await
+                .map_err(|_| err_p(ErrorCode::Invalid, &[("reason", "timeout")]))??;
+            // D316: on a hop to another host (or port), credentials and substituted secrets stay behind.
+            let here = (host.clone(), addr.port());
+            if origin.as_ref().is_some_and(|o| o != &here) {
+                headers.retain(|(k, _, secret)| !secret && !CREDENTIAL_HEADERS.contains(&k.to_ascii_lowercase().as_str()));
+            }
+            origin = Some(here);
             let client = reqwest::Client::builder()
+                // No proxy from the environment: it would bypass the pinned address and loopback check.
+                .no_proxy()
                 .redirect(reqwest::redirect::Policy::none())
                 .resolve(&host, addr)
                 .timeout(Duration::from_millis(timeout).saturating_sub(started.elapsed()).max(Duration::from_millis(1)))
@@ -202,7 +229,7 @@ impl Inner {
                 .map_err(internal)?;
             let m = reqwest::Method::from_bytes(method.as_bytes()).map_err(|_| invalid("badMethod"))?;
             let mut req = client.request(m, url.clone());
-            for (k, v) in &headers {
+            for (k, v, _) in &headers {
                 req = req.header(k, v);
             }
             if let Some(b) = &body {

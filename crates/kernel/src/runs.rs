@@ -261,7 +261,15 @@ impl Inner {
             status: "running".into(),
             params: serde_json::to_value(&p.params).map_err(internal)?,
             input: {
-                let fields = res.as_ref().map(|r| self.secret_fields(&r.kind, r.plugin_version.as_deref())).unwrap_or_default();
+                // D306 / review #3: secret fields never enter the snapshot — for a saved resource
+                // and for an unsaved `new:` page alike.
+                let fields = match &res {
+                    Some(r) => self.secret_fields(&r.kind, r.plugin_version.as_deref()),
+                    None => match crate::pages::parse_target(&p.target) {
+                        crate::pages::Target::New { kind, .. } => self.secret_fields(&kind, None),
+                        _ => vec![],
+                    },
+                };
                 Value::Object(p.input.clone().into_iter().filter(|(k, _)| !fields.contains(k)).collect())
             },
             in_task_panel: true,
@@ -585,11 +593,24 @@ impl Inner {
             Some(ch) if !ch.is_empty() => {
                 let shown = self.resolve(&p.target, PageContext { draft: cx.draft.clone(), ..cx.clone() }, None).await?;
                 let binds = crate::pages::bind_paths(&shown.view);
-                Some(ch.into_iter().filter(|(k, _)| binds.contains(k)).collect())
+                // D311: never the fields only the user may set (granting addresses, secret references).
+                let protected: Vec<String> = self.page_protected(&p.target);
+                Some(ch.into_iter().filter(|(k, _)| binds.contains(k) && !protected.contains(k)).collect())
             }
             other => other,
         };
         Ok(PageEventResult { changes, message: e.message })
+    }
+
+    /// `body.<key>` paths of the target's kind that only a user may change (D311).
+    fn page_protected(&self, target: &str) -> Vec<String> {
+        let kind = match crate::pages::parse_target(target) {
+            crate::pages::Target::Resource(id) => self.read(|c| store::get(c, &id)).ok().flatten().map(|r| r.kind),
+            crate::pages::Target::New { kind, .. } => Some(kind),
+            _ => None,
+        };
+        kind.and_then(|k| self.rules.read().unwrap().get(&k).map(|r| r.protected.iter().map(|f| format!("body.{f}")).collect()))
+            .unwrap_or_default()
     }
 
     /// The plugin page behind a target, with the base `ctx` for it.

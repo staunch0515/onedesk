@@ -353,7 +353,7 @@ async fn search_over_ten_thousand_resources_is_fast() {
     let tmp = tempfile::tempdir().unwrap();
     let ws = tmp.path().join("ws");
     {
-        let k = onedesk_kernel::Kernel::open(&ws, &fixtures(), test_config()).unwrap();
+        let k = onedesk_kernel::Kernel::open(&ws, &fixtures(), config_for(&fixtures())).unwrap();
         k.shutdown();
     }
     {
@@ -371,7 +371,7 @@ async fn search_over_ten_thousand_resources_is_fast() {
         tx.execute("DELETE FROM meta WHERE key = 'search_built'", []).unwrap();
         tx.commit().unwrap();
     }
-    let kernel = Arc::new(onedesk_kernel::Kernel::open(&ws, &fixtures(), test_config()).unwrap());
+    let kernel = Arc::new(onedesk_kernel::Kernel::open(&ws, &fixtures(), config_for(&fixtures())).unwrap());
     let c = Client::in_proc(kernel.clone());
     c.hello().await;
     let limit = if cfg!(debug_assertions) { Duration::from_millis(2000) } else { Duration::from_millis(200) };

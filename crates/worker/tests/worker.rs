@@ -13,7 +13,14 @@ fn fixtures() -> PathBuf {
 }
 
 fn spawn(ws: &Path, sock: &Path) -> Child {
-    Command::new(env!("CARGO_BIN_EXE_onedesk-worker"))
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_onedesk-worker"));
+    // The fixture packages play the built-in ones the main process names (D313).
+    for id in std::fs::read_dir(fixtures()).unwrap().flatten() {
+        for v in std::fs::read_dir(id.path()).unwrap().flatten() {
+            cmd.arg("--builtin").arg(format!("{}@{}", id.file_name().to_string_lossy(), v.file_name().to_string_lossy()));
+        }
+    }
+    cmd
         .arg("--workspace")
         .arg(ws)
         .arg("--plugins")

@@ -221,6 +221,17 @@ pub struct KindDecl {
     pub fields: BTreeMap<String, FieldDecl>,
 }
 
+impl KindDecl {
+    /// D311: body keys a plugin may not write — fields granting network access and secret fields.
+    pub fn protected_fields(&self) -> Vec<String> {
+        self.fields
+            .iter()
+            .filter(|(_, f)| f.grants.is_some() || f.ty == onedesk_protocol::FieldKind::Secret)
+            .map(|(n, _)| n.clone())
+            .collect()
+    }
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct PageDecl {
@@ -340,7 +351,12 @@ pub fn atom_id(atom: &str) -> &str {
     atom.split(':').next().unwrap_or(atom)
 }
 
-/// Fingerprint stored when a version's permissions are confirmed.
+/// The permission fingerprint shown and confirmed (D312): a hash of the atom list.
+pub fn perm_fingerprint(atoms: &BTreeSet<String>) -> String {
+    crate::util::fingerprint(atoms_fingerprint(atoms).as_bytes())
+}
+
+/// Atom list stored when a version's permissions are confirmed.
 pub fn atoms_fingerprint(atoms: &BTreeSet<String>) -> String {
     atoms.iter().cloned().collect::<Vec<_>>().join("\n")
 }
@@ -744,6 +760,10 @@ fn read_root(root: &Path, old: &BTreeMap<String, Vec<&'static Plugin>>) -> (BTre
             continue;
         }
         for vdir in dirs(&id_dir) {
+            // Temporary or hidden folders (`.tmp`, `.removed`…) are the main process's (#13).
+            if vdir.file_name().is_some_and(|n| n.to_string_lossy().starts_with('.')) {
+                continue;
+            }
             match load_package(&vdir) {
                 Ok(p) => {
                     let reuse = old
@@ -866,11 +886,19 @@ impl Registry {
         let all = self.state.read().unwrap().all.clone();
         for p in all.values().flatten() {
             for k in &p.manifest.contributes.kinds {
+                // A field protected by any installed version stays protected.
+                let mut protected = k.protected_fields();
+                if let Some(prev) = m.get(&p.full(&k.id)) {
+                    protected.extend(prev.protected.iter().cloned());
+                    protected.sort();
+                    protected.dedup();
+                }
                 m.insert(
                     p.full(&k.id),
                     KindRule {
                         tree: k.tree.as_deref().map(|t| p.tree_ref(t)),
                         accepts: k.accepts.iter().map(|a| p.kind_ref(a)).collect(),
+                        protected,
                     },
                 );
             }

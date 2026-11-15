@@ -1,6 +1,9 @@
 //! Worker process: hosts the kernel for exactly one workspace (week1-protocol §2).
 //!
-//! `onedesk-worker --workspace <dir> --plugins <dir> --socket <path>`
+//! `onedesk-worker --workspace <dir> --plugins <dir> --socket <path> [--builtin <id>@<version>]…`
+//!
+//! `--builtin` (repeatable, D313): built-in packages the main process copied; only these are
+//! confirmed without asking.
 //!
 //! Listens on `--socket`, accepts exactly one connection (the main process), and exits with 0 when
 //! it closes, after the running requests finish their transactions. Exit codes: 3 = the workspace
@@ -21,14 +24,24 @@ struct Args {
     workspace: PathBuf,
     plugins: PathBuf,
     socket: PathBuf,
+    builtin: Vec<String>,
 }
 
 fn parse_args() -> Result<Args, String> {
     let mut workspace = None;
     let mut plugins = None;
     let mut socket = None;
+    let mut builtin = Vec::new();
     let mut it = std::env::args().skip(1);
     while let Some(a) = it.next() {
+        if a == "--builtin" {
+            let v = it.next().ok_or("--builtin needs a value")?;
+            if !v.contains('@') {
+                return Err(format!("--builtin expects <id>@<version>, got {v}"));
+            }
+            builtin.push(v);
+            continue;
+        }
         let slot = match a.as_str() {
             "--workspace" => &mut workspace,
             "--plugins" => &mut plugins,
@@ -38,8 +51,8 @@ fn parse_args() -> Result<Args, String> {
         *slot = Some(PathBuf::from(it.next().ok_or_else(|| format!("{a} needs a value"))?));
     }
     match (workspace, plugins, socket) {
-        (Some(workspace), Some(plugins), Some(socket)) => Ok(Args { workspace, plugins, socket }),
-        _ => Err("usage: onedesk-worker --workspace <dir> --plugins <dir> --socket <path>".into()),
+        (Some(workspace), Some(plugins), Some(socket)) => Ok(Args { workspace, plugins, socket, builtin }),
+        _ => Err("usage: onedesk-worker --workspace <dir> --plugins <dir> --socket <path> [--builtin <id>@<version>]…".into()),
     }
 }
 
@@ -67,7 +80,8 @@ fn main() -> ExitCode {
         Err(e) => return fail(format!("runtime: {e}")),
     };
     rt.block_on(async move {
-        let kernel = match Kernel::open(&args.workspace, &args.plugins, KernelConfig::default()) {
+        let cfg = KernelConfig { builtin: args.builtin.clone(), ..KernelConfig::default() };
+        let kernel = match Kernel::open(&args.workspace, &args.plugins, cfg) {
             Ok(k) => Arc::new(k),
             Err(e) => return fail(format!("cannot open workspace: {e}")),
         };

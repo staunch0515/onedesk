@@ -113,6 +113,13 @@ const MIGRATE_V2: &str = r#"async migrate(body, from, ctx) {
     return { ...body, note: "from " + from, writeError, old };
   }"#;
 
+/// Confirms a version with the fingerprint the plugin page shows for it (D312).
+async fn confirm(c: &Client, plugin: &str, version: &str) -> Result<Value, onedesk_protocol::ProtocolError> {
+    let d = c.ok("plugin.get", json!({ "plugin": plugin })).await;
+    let fp = d["versions"].as_array().unwrap().iter().find(|v| v["version"] == version).unwrap()["fingerprint"].clone();
+    c.call("plugin.confirmPermissions", json!({ "plugin": plugin, "version": version, "fingerprint": fp })).await
+}
+
 async fn doc(c: &Client, text: &str) -> String {
     let r = c.ok("page.save", json!({ "target": "new:test.vers:doc", "changes": { "body.text": text } })).await;
     r["page"]["resourceId"].as_str().unwrap().to_string()
@@ -184,7 +191,7 @@ async fn versions_install_confirm_take_over_switch_back_undo_and_remove() {
     assert_eq!(view_text(c, &a).await, "v1");
 
     // Confirm → automatic switch with takeover (migrate: note, refused write, readFrom).
-    c.ok("plugin.confirmPermissions", json!({ "plugin": "test.vers", "version": "0.2.0" })).await;
+    confirm(c, "test.vers", "0.2.0").await.unwrap();
     let r = c.ok("resource.get", json!({ "id": a })).await;
     assert_eq!(r["pluginVersion"], "0.2.0");
     assert_eq!(r["body"]["note"], "from 0.1.0");
@@ -250,7 +257,7 @@ async fn failed_migrate_changes_nothing_subset_needs_no_confirmation_and_old_ran
     package(&w.plugins, "test.vers", "0.2.0", vers_manifest(Some(">=0.1.0"), true), &vers_main("v2", MIGRATE_V2));
     c.ok("plugin.rescan", Value::Null).await;
     // One migrate fails: nothing is written, the active version does not change.
-    let e = c.call("plugin.confirmPermissions", json!({ "plugin": "test.vers", "version": "0.2.0" })).await.unwrap_err();
+    let e = confirm(c, "test.vers", "0.2.0").await.unwrap_err();
     assert_eq!((e.code, e.params["reason"].as_str(), e.params["resource"].as_str()), (ErrorCode::PluginError, "migrateFailed", bad.as_str()));
     for id in [&a, &bad] {
         assert_eq!(c.ok("resource.get", json!({ "id": id })).await["pluginVersion"], "0.1.0");
@@ -263,10 +270,13 @@ async fn failed_migrate_changes_nothing_subset_needs_no_confirmation_and_old_ran
     // takes over 0.2.0 data — a 0.1.0 resource stays where it is.
     package(&w.plugins, "test.vers", "0.3.0", vers_manifest(Some(">=0.2.0"), true), &vers_main("v3", ""));
     let old = {
+        // Going back by hand pins 0.1.0 (D314), so the scan below does not switch yet.
         c.ok("plugin.activateVersion", json!({ "plugin": "test.vers", "version": "0.1.0" })).await;
         doc(c, "old").await
     };
     c.ok("plugin.rescan", Value::Null).await;
+    assert_eq!(c.ok("resource.get", json!({ "id": a })).await["pluginVersion"], "0.2.0", "pinned: no automatic switch");
+    c.ok("plugin.setPinned", json!({ "plugin": "test.vers", "version": "0.1.0", "pinned": false })).await;
     let d = c.ok("plugin.get", json!({ "plugin": "test.vers" })).await;
     assert_eq!(d["unconfirmed"], json!([]));
     assert_eq!(c.ok("resource.get", json!({ "id": a })).await["pluginVersion"], "0.3.0");
@@ -277,12 +287,13 @@ async fn failed_migrate_changes_nothing_subset_needs_no_confirmation_and_old_ran
     package(&w.plugins, "test.vers", "0.4.0", vers_manifest(Some(">=0.1.0"), true), &vers_main("v4", ""));
     c.ok("plugin.rescan", Value::Null).await;
     assert_eq!(c.ok("resource.get", json!({ "id": a })).await["pluginVersion"], "0.3.0");
-    // History restore of a pre-upgrade value works on the current version.
+    // History restore of a pre-upgrade value (review #10): the snapshot was bound to 0.1.0, which
+    // is still installed, so the restored content goes back to 0.1.0.
     let h = c.ok("resource.history", json!({ "id": a })).await;
     let entry = h.as_array().unwrap().iter().find(|e| e["field"] == "body.note").unwrap()["id"].clone();
     c.ok("resource.restore", json!({ "id": a, "entryId": entry })).await;
     let r = c.ok("resource.get", json!({ "id": a })).await;
-    assert_eq!((r["pluginVersion"].as_str(), r["body"].get("note")), (Some("0.3.0"), None));
+    assert_eq!((r["pluginVersion"].as_str(), r["body"].get("note")), (Some("0.1.0"), None));
 }
 
 /* ------------------------------------------------------------------ local HTTP server */
@@ -333,7 +344,7 @@ async fn server() -> u16 {
 
 fn net_plugins(p: &Path, port: u16) {
     let net = json!({
-        "requires": { "network": { "hosts": [format!("127.0.0.1:{port}"), "*.localhost"], "fromResources": true },
+        "requires": { "network": { "hosts": [format!("127.0.0.1:{port}"), "127.0.0.1", "*.localhost"], "fromResources": true },
                       "secrets": { "names": ["api-key"] } },
         "contributes": {
             "kinds": [{ "id": "call", "label": "k", "icon": "globe", "tree": "resources", "page": "p", "newName": "k",
@@ -527,4 +538,270 @@ async fn network_request_ends_when_the_run_is_cancelled() {
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
     assert!(t.elapsed() < Duration::from_secs(2), "cancel did not wait for the slow server");
+}
+
+/* ------------------------------------------------------------------ after the round-4 review */
+
+fn grant_plugin(p: &Path, version: &str, upgrades: Option<&str>) {
+    let mut m = json!({
+        "requires": { "network": { "fromResources": true } },
+        "contributes": {
+            "kinds": [{ "id": "site", "label": "k", "icon": "globe", "tree": "resources", "page": "p", "newName": "k",
+                        "fields": { "url": { "type": "text", "grants": "network" } } }],
+            "pages": [{ "id": "p" }],
+            "commands": [{ "id": "probe", "label": "c" }]
+        }
+    });
+    if let Some(u) = upgrades {
+        m["upgradesFrom"] = json!(u);
+    }
+    let main = format!(
+        r#"{PROBE}
+export default {{ activate(host) {{
+  host.commands.handle("probe", probe);
+  host.pages.handle("p", {{
+    async render() {{ return {{ view: [{{ type: "form", id: "f", layout: "stack", fields: [
+      {{ name: "url", label: "u", kind: "text", bind: "body.url" }}, {{ name: "t", label: "t", kind: "text", bind: "body.text" }}] }}] }}; }},
+    async onEvent() {{ return {{ changes: {{ "body.url": "http://evil.example/", "body.text": "ok" }} }}; }},
+  }});
+  host.kinds.handle("site", {{ migrate(body) {{ return {{ ...body, url: "http://evil.example/" }}; }} }});
+}} }};"#
+    );
+    package(p, "test.grant", version, m, &main);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn review1_plugins_cannot_grant_themselves_hosts_or_secrets() {
+    let port = server().await;
+    let w = world(|p| {
+        grant_plugin(p, "0.1.0", None);
+        net_plugins(p, port);
+    })
+    .await;
+    let c = &w.c;
+    let grant = |e: &Value| e["params"]["reason"].as_str().unwrap_or_default().to_string();
+    // Creating or changing a granting field from plugin code: refused.
+    let r = c.probe("test.grant", "resources.create", json!([{ "kind": "site", "name": "x", "body": { "url": "http://evil.example/" } }])).await;
+    assert_eq!((r["error"].as_str(), grant(&r).as_str()), (Some("denied"), "grantField"));
+    let r = c.probe("test.net", "resources.create", json!([{ "kind": "call", "name": "x", "body": { "token": { "secret": "api-key" } } }])).await;
+    assert_eq!(grant(&r), "grantField", "secret references too");
+    let id = c.ok("page.save", json!({ "target": "new:test.grant:site", "changes": { "body.url": "http://good.example/" } })).await["page"]["resourceId"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let r = c.probe("test.grant", "resources.update", json!([id, { "body.url": "http://evil.example/" }])).await;
+    assert_eq!(grant(&r), "grantField");
+    assert!(c.probe("test.grant", "resources.update", json!([id, { "body.text": "fine" }])).await.get("ok").is_some());
+    // A page event cannot change it either (the field is dropped, the rest kept).
+    let ev = c.ok("page.event", json!({ "target": format!("resource:{id}"), "event": "x", "context": { "draft": {} } })).await;
+    assert_eq!(ev["changes"], json!({ "body.text": "ok" }));
+    // Nor can a takeover: the whole batch fails and nothing changes.
+    grant_plugin(&w.plugins, "0.2.0", Some(">=0.1.0"));
+    c.ok("plugin.rescan", Value::Null).await;
+    let r = c.ok("resource.get", json!({ "id": id })).await;
+    assert_eq!((r["pluginVersion"].as_str(), r["body"]["url"].as_str()), (Some("0.1.0"), Some("http://good.example/")));
+    let e = c.call("plugin.activateVersion", json!({ "plugin": "test.grant", "version": "0.2.0" })).await.unwrap_err();
+    assert_eq!((e.code, e.params["reason"].as_str()), (ErrorCode::Denied, "grantField"));
+    assert_eq!(audit_ops(&w.env, "network.grant"), vec!["good.example"], "only the user's save granted a host");
+    let n: i64 = db(&w.env).query_row("SELECT count(*) FROM resources WHERE body LIKE '%evil.example%'", [], |r| r.get(0)).unwrap();
+    assert_eq!(n, 0);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn review2_4_each_version_has_its_permissions_and_confirmation_checks_the_fingerprint() {
+    let w = world(|p| {
+        package(p, "test.vers", "0.1.0", vers_manifest(None, false), &vers_main("v1", ""));
+    })
+    .await;
+    let c = &w.c;
+    let incoming = w.env.path().join("incoming/test.vers/0.2.0");
+    std::fs::create_dir_all(&incoming).unwrap();
+    package(&w.env.path().join("incoming"), "test.vers", "0.2.0", vers_manifest(Some(">=0.1.0"), true), &vers_main("v2", ""));
+    let pv = c.ok("plugin.inspect", json!({ "folder": incoming.display().to_string() })).await;
+    let shown = pv["fingerprint"].as_str().unwrap().to_string();
+    assert!(!shown.is_empty());
+    package(&w.plugins, "test.vers", "0.2.0", vers_manifest(Some(">=0.1.0"), true), &vers_main("v2", ""));
+    c.ok("plugin.rescan", Value::Null).await;
+    let d = c.ok("plugin.get", json!({ "plugin": "test.vers" })).await;
+    let v = |ver: &str| d["versions"].as_array().unwrap().iter().find(|x| x["version"] == ver).unwrap().clone();
+    assert_eq!(v("0.2.0")["permissions"][0]["id"], "network", "the unconfirmed version's own permissions");
+    assert_eq!(v("0.1.0")["permissions"], json!([]));
+    assert_eq!(v("0.2.0")["fingerprint"], shown.as_str(), "the same fingerprint as in the install preview");
+    let e = c.call("plugin.confirmPermissions", json!({ "plugin": "test.vers", "version": "0.2.0", "fingerprint": "not-it" })).await.unwrap_err();
+    assert_eq!((e.code, e.params["reason"].as_str()), (ErrorCode::Invalid, "fingerprintMismatch"));
+    assert_eq!(c.ok("plugin.get", json!({ "plugin": "test.vers" })).await["unconfirmed"], json!(["0.2.0"]));
+    c.ok("plugin.confirmPermissions", json!({ "plugin": "test.vers", "version": "0.2.0", "fingerprint": shown })).await;
+    assert_eq!(c.ok("plugin.get", json!({ "plugin": "test.vers" })).await["unconfirmed"], json!([]));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn review3_secret_fields_of_a_new_page_never_reach_the_run_or_the_database() {
+    let port = server().await;
+    let w = world(|p| net_plugins(p, port)).await;
+    let c = &w.c;
+    let value = "NewPageSecret-55x";
+    let id = c
+        .ok("run.start", json!({ "action": "fetch", "target": "new:test.net:call", "tabId": "t",
+                                 "input": { "url": format!("http://127.0.0.1:{port}/ok"), "auth": "a", "body.token": value } }))
+        .await;
+    let run = loop {
+        let r = c.ok("run.get", json!({ "id": id })).await;
+        if r["status"] != "running" {
+            break r;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    };
+    assert!(run["input"].get("body.token").is_none(), "{run}");
+    drop(db(&w.env).query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(())));
+    let dir = w.env.kernel.db_path().parent().unwrap().to_path_buf();
+    for f in ["workspace.db", "workspace.db-wal"] {
+        let bytes = std::fs::read(dir.join(f)).unwrap_or_default();
+        assert!(!bytes.windows(value.len()).any(|x| x == value.as_bytes()), "{value} in {f}");
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn review5_only_builtin_packages_are_confirmed_without_asking() {
+    let port = server().await;
+    let tmp = tempfile::tempdir().unwrap();
+    let plugins = tmp.path().join("plugins");
+    std::fs::create_dir_all(&plugins).unwrap();
+    net_plugins(&plugins, port);
+    let mut cfg = test_config();
+    cfg.builtin = vec!["test.other@0.1.0".into()];
+    let env = open_exact(tmp, &plugins, cfg);
+    let c = Client::in_proc(env.kernel.clone());
+    c.hello().await;
+    // Not built in, never confirmed: present but not usable.
+    assert_eq!(c.ok("plugin.get", json!({ "plugin": "test.net" })).await["unconfirmed"], json!(["0.1.0"]));
+    assert_eq!(c.ok("plugin.get", json!({ "plugin": "test.net" })).await["enabled"], false, "no usable version");
+    assert_eq!(c.probe("test.other", "storage.keys", json!([])).await["ok"], json!([]), "the built-in one runs");
+    assert_eq!(c.ok("plugin.get", json!({ "plugin": "test.other" })).await["unconfirmed"], json!([]));
+    // The main process names it as built-in on a later scan: confirmed then.
+    c.ok("plugin.rescan", json!({ "builtin": ["test.net@0.1.0"] })).await;
+    let d = c.ok("plugin.get", json!({ "plugin": "test.net" })).await;
+    assert_eq!((d["unconfirmed"].clone(), d["enabled"].as_bool()), (json!([]), Some(true)));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn review6_7_undo_stays_put_and_unconfirmed_code_never_runs() {
+    let w = world(|p| {
+        package(p, "test.vers", "0.1.0", vers_manifest(None, false), &vers_main("v1", ""));
+    })
+    .await;
+    let c = &w.c;
+    let a = doc(c, "a").await;
+    package(&w.plugins, "test.vers", "0.2.0", vers_manifest(Some(">=0.1.0"), true), &vers_main("v2", MIGRATE_V2));
+    c.ok("plugin.rescan", Value::Null).await;
+    confirm(c, "test.vers", "0.2.0").await.unwrap();
+    let batch = c.ok("plugin.get", json!({ "plugin": "test.vers" })).await["lastUpgrade"]["batch"].clone();
+    c.ok("plugin.undoUpgrade", json!({ "batch": batch, "also": [] })).await;
+    // D314: back on the version that was active before, pinned — a scan does not upgrade again.
+    c.ok("plugin.rescan", Value::Null).await;
+    let d = c.ok("plugin.get", json!({ "plugin": "test.vers" })).await;
+    let active: Vec<(String, bool)> = d["versions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|v| v["active"] == true)
+        .map(|v| (v["version"].as_str().unwrap().to_string(), v["pinned"].as_bool().unwrap()))
+        .collect();
+    assert_eq!(active, vec![("0.1.0".to_string(), true)]);
+    assert_eq!(c.ok("resource.get", json!({ "id": a })).await["pluginVersion"], "0.1.0");
+    // D315: a resource bound to 0.2.0, then 0.2.0 replaced by a package asking for more: disabled, not run.
+    c.ok("plugin.setPinned", json!({ "plugin": "test.vers", "version": "0.2.0", "pinned": true })).await;
+    assert_eq!(c.ok("resource.get", json!({ "id": a })).await["pluginVersion"], "0.2.0");
+    std::fs::remove_dir_all(w.plugins.join("test.vers/0.2.0")).unwrap();
+    let mut more = vers_manifest(Some(">=0.1.0"), true);
+    more["requires"]["network"]["hosts"] = json!(["example.invalid", "more.example"]);
+    package(&w.plugins, "test.vers", "0.2.0", more, &vers_main("v2-more", ""));
+    c.ok("plugin.rescan", Value::Null).await;
+    let node = c.ok("tree.children", json!({ "tree": "resources" })).await["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|n| n["key"] == a.as_str())
+        .unwrap()
+        .clone();
+    assert_eq!((node["state"].as_str(), node["stateReason"].as_str()), (Some("disabled"), Some("unconfirmedVersion")));
+    let p = c.ok("page.resolve", json!({ "target": format!("resource:{a}") })).await;
+    assert_eq!(p["view"], json!([]), "its page code is not run");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn review8_11_redirects_drop_credentials_and_requests_are_limited() {
+    let port = server().await;
+    let port2 = server().await;
+    let w = world(|p| net_plugins(p, port)).await;
+    let c = &w.c;
+    c.ok("secrets.set", json!({ "name": "api-key", "value": "RedirectSecret-1" })).await;
+    // Same host and port: the header stays (and its value is scrubbed in the answer).
+    let same = format!("http://127.0.0.1:{port}/redirect?to=/ok");
+    assert_eq!(c.probe("test.net", "network.request", req(same, "Bearer {{secret:api-key}}")).await["ok"]["body"], "hello auth=Bearer ***");
+    // Another origin: Authorization and the substituted header are dropped.
+    let other = format!("http://127.0.0.1:{port}/redirect?to=http://127.0.0.1:{port2}/ok");
+    assert_eq!(c.probe("test.net", "network.request", req(other, "Bearer {{secret:api-key}}")).await["ok"]["body"], "hello auth=");
+    // Methods and connection-level headers.
+    let ok = format!("http://127.0.0.1:{port}/ok");
+    let r = c.probe("test.net", "network.request", json!([{ "method": "TRACE", "url": ok }])).await;
+    assert_eq!(r["params"]["reason"], "badMethod");
+    for h in ["Host", "content-length", "Transfer-Encoding", "Connection"] {
+        let r = c.probe("test.net", "network.request", json!([{ "url": ok, "headers": { h: "x" } }])).await;
+        assert_eq!(r["params"]["reason"], "forbiddenHeader", "{h}");
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn review10_restore_follows_version_rules_and_audits_grants() {
+    let w = world(|p| {
+        package(p, "test.vers", "0.1.0", vers_manifest(None, false), &vers_main("v1", ""));
+        grant_plugin(p, "0.1.0", None);
+    })
+    .await;
+    let c = &w.c;
+    // Grants coming back through a restore are audited like a save.
+    let id = c.ok("page.save", json!({ "target": "new:test.grant:site", "changes": { "body.url": "http://first.example/" } })).await["page"]["resourceId"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    c.ok("page.save", json!({ "target": format!("resource:{id}"), "changes": { "body.url": "http://second.example/" } })).await;
+    let h = c.ok("resource.history", json!({ "id": id })).await;
+    c.ok("resource.restore", json!({ "id": id, "entryId": h[0]["id"] })).await;
+    assert_eq!(audit_ops(&w.env, "network.grant"), vec!["first.example", "second.example", "first.example"]);
+    // A snapshot bound to a version that is gone, and the active one cannot take it over: refused.
+    let a = doc(c, "a").await;
+    c.ok("page.save", json!({ "target": format!("resource:{a}"), "changes": { "body.text": "a2" } })).await;
+    package(&w.plugins, "test.vers", "0.2.0", vers_manifest(Some(">=0.1.0"), false), &vers_main("v2", ""));
+    c.ok("plugin.rescan", json!({ "builtin": ["test.vers@0.2.0"] })).await;
+    package(&w.plugins, "test.vers", "0.3.0", vers_manifest(Some(">=0.2.0"), false), &vers_main("v3", ""));
+    c.ok("plugin.rescan", json!({ "builtin": ["test.vers@0.3.0"] })).await;
+    assert_eq!(c.ok("resource.get", json!({ "id": a })).await["pluginVersion"], "0.3.0");
+    std::fs::remove_dir_all(w.plugins.join("test.vers/0.1.0")).unwrap();
+    std::fs::remove_dir_all(w.plugins.join("test.vers/0.2.0")).unwrap();
+    c.ok("plugin.rescan", Value::Null).await;
+    let h = c.ok("resource.history", json!({ "id": a })).await;
+    let entry = h.as_array().unwrap().iter().find(|e| e["field"] == "body.text" && e["after"] == "a2").unwrap()["id"].clone();
+    let e = c.call("resource.restore", json!({ "id": a, "entryId": entry })).await.unwrap_err();
+    assert_eq!((e.code, e.params["reason"].as_str()), (ErrorCode::Invalid, "needsVersion"));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn review14_a_failed_save_does_not_touch_the_keychain() {
+    let port = server().await;
+    let w = world(|p| net_plugins(p, port)).await;
+    let c = &w.c;
+    let saved = c.ok("page.save", json!({ "target": "new:test.net:call", "changes": { "body.token": "first-value" } })).await;
+    let id = saved["page"]["resourceId"].as_str().unwrap().to_string();
+    let account = w.secrets.accounts().into_iter().find(|a| a.ends_with(&format!("{id}.token"))).unwrap();
+    use onedesk_kernel::secrets::SecretStore;
+    assert_eq!(w.secrets.get(&account).unwrap().as_deref(), Some("first-value"));
+    c.ok("page.save", json!({ "target": format!("resource:{id}"), "changes": { "body.url": "http://a.example/" } })).await;
+    // A stale basis on the same field conflicts; the secret in the same save is not written.
+    let e = c
+        .call("page.save", json!({ "target": format!("resource:{id}"), "basis": "1",
+                                   "changes": { "body.url": "http://b.example/", "body.token": "second-value" } }))
+        .await
+        .unwrap_err();
+    assert_eq!(e.code, ErrorCode::Conflict);
+    assert_eq!(w.secrets.get(&account).unwrap().as_deref(), Some("first-value"));
 }
