@@ -81,7 +81,7 @@ export function createMixedClient(kernel: KernelClient, mock: ProtocolClient): P
       return isDemoTree(tree) ? "demo" : "kernel";
     }
     // `core:audit`, `core:deleted`: kernel pages. `plugin:<id>`: plugins are the kernel's.
-    if (target.startsWith("core:") || target.startsWith("plugin:")) return "kernel";
+    if (target.startsWith("core:") || target.startsWith("plugin:") || target.startsWith("shell:")) return "kernel";
     if (target.startsWith("run:")) return demoRuns.has(target.slice(4)) ? "demo" : "kernel";
     return "demo";
   };
@@ -98,7 +98,7 @@ export function createMixedClient(kernel: KernelClient, mock: ProtocolClient): P
         if (target.startsWith("resource:")) return demoIds.has(target.slice(9));
         if (target.startsWith("new:")) return isDemoNew(target);
         if (target.startsWith("node:")) return isDemoTree(decodeURIComponent(target.slice(5).split("/")[0] ?? ""));
-        if (target.startsWith("core:") || target.startsWith("plugin:")) return false;
+        if (target.startsWith("core:") || target.startsWith("plugin:") || target.startsWith("shell:")) return false;
         if (target.startsWith("run:")) return demoRuns.has(target.slice(4));
         return true;
       },

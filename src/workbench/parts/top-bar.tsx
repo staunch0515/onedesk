@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Button, DropdownMenu, IconButton, SearchBox, TopBar, useToast, type MenuEntry, type OptionListItem } from "../../design";
 import { useI18n } from "../i18n";
+import { SECRETS_TARGET } from "../pages/secrets-page";
 import type { SearchHit } from "../protocol";
 import { useQuery, useUi, useWorkbench } from "../state/context";
 
@@ -106,7 +107,19 @@ export function TopBarPart({ onSettings }: { onSettings: () => void }) {
             }
           />
           <IconButton icon="square-terminal" label={t("topbar.commandPalette")} shortcut={["⌘", "⇧", "P"]} tooltipSide="bottom" onClick={() => store.set({ paletteOpen: true })} />
-          <IconButton icon="settings" label={t("topbar.settings")} shortcut={["⌘", ","]} tooltipSide="bottom" onClick={onSettings} />
+          {client.secrets ? (
+            // Connected to a kernel: settings has more than one page (D298 §6: the secrets page lives under settings).
+            <DropdownMenu
+              align="end"
+              items={[
+                { key: "settings", label: t("topbar.settings"), icon: "settings", shortcut: ["⌘", ","], onSelect: onSettings },
+                { key: "secrets", label: t("secrets.title"), icon: "key-round", onSelect: () => actions.open(SECRETS_TARGET) },
+              ]}
+              trigger={<IconButton icon="settings" label={t("topbar.settings")} tooltipSide="bottom" />}
+            />
+          ) : (
+            <IconButton icon="settings" label={t("topbar.settings")} shortcut={["⌘", ","]} tooltipSide="bottom" onClick={onSettings} />
+          )}
         </>
       }
     />
