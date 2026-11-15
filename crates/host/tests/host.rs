@@ -21,7 +21,7 @@ fn write_plugin(root: &Path, id: &str, version: &str) {
 
 async fn start(tmp: &Path) -> Arc<Host> {
     let builtin = tmp.join("builtin");
-    write_plugin(&builtin, "org.test.note", "0.1.0");
+    write_plugin(&builtin, "org.test.alpha", "0.1.0");
     Host::start(HostConfig { data_dir: tmp.join("data"), worker_bin: fake_worker(), builtin_plugins: Some(builtin) }).await.unwrap()
 }
 
@@ -63,7 +63,7 @@ async fn hello_is_answered_and_version_mismatch_refused() {
 async fn builtin_plugins_are_copied_into_the_data_dir() {
     let tmp = tempfile::tempdir().unwrap();
     let host = start(tmp.path()).await;
-    let main = tmp.path().join("data/plugins/org.test.note/0.1.0/main.js");
+    let main = tmp.path().join("data/plugins/org.test.alpha/0.1.0/main.js");
     assert_eq!(std::fs::read_to_string(main).unwrap(), "export default {};");
     host.shutdown().await;
 }
@@ -153,4 +153,27 @@ async fn websocket_round_trip_uses_the_client_parameter_and_filters_events() {
     let next: Value = serde_json::from_str(a.next().await.unwrap().unwrap().to_text().unwrap()).unwrap();
     assert_eq!(next["id"], 8, "a got its answer, not b's event");
     host.shutdown().await;
+}
+
+#[tokio::test]
+async fn websocket_accepts_a_url_encoded_token_and_refuses_an_empty_one() {
+    let tmp = tempfile::tempdir().unwrap();
+    let host = start(tmp.path()).await;
+    let port = ws_server(host.clone(), "a/b c").await;
+    assert!(tokio_tungstenite::connect_async(format!("ws://127.0.0.1:{port}/?token=a%2Fb%20c")).await.is_ok());
+    let open = ws_server(host.clone(), "").await;
+    assert!(tokio_tungstenite::connect_async(format!("ws://127.0.0.1:{open}/?token=")).await.is_err());
+    assert!(tokio_tungstenite::connect_async(format!("ws://127.0.0.1:{open}/")).await.is_err());
+    host.shutdown().await;
+}
+
+#[test]
+fn devhost_refuses_to_start_without_a_token() {
+    let tmp = tempfile::tempdir().unwrap();
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_onedesk-devhost"))
+        .args(["--data-dir", tmp.path().to_str().unwrap(), "--port", "0", "--token", ""])
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("token"));
 }

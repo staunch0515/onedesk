@@ -40,3 +40,11 @@
 - 日期时间控件显示为 `11/15/2026, 12:30 P`，右侧被截断（原生控件在 WKWebView 里比 Chromium 宽）——**未修**，需要时调 `src/design` 里该字段的宽度 token。
 - 没有看到启动失败的提示条（截图时可能已消失，或没出现）——**未确认**。
 - ⌘W/⌘N/⌘1…9 没有试（我没有办法向窗口发键盘事件）。
+
+## 审查后的修改
+- 已合并 `claude/week1-slice-3b4ae5`（无冲突）。
+- 审查 #5：`onedesk-devhost` 空令牌退出码 2；`ws.rs` 比较前对地址里的 `token`/`client` 做 `%XX`/`+` 解码，且 `serve` 遇到空令牌拒绝所有连接。新增测试：解码单元测试、编码令牌通过且空令牌被拒的集成测试、devhost 空令牌拒绝启动。
+- `ui` 主题事件：`WorkbenchProvider` 订阅 `ui`，载荷当作 `CommandEffect` 执行（`actions.runEffects`）。主进程已只把带 `client` 的事件发给对应窗口/WebSocket；WebSocket 传输里还补了一道 `client` 不符就丢弃。没有对真插件跑过（`open` 新标签页、`notify`、`copy` 只靠既有的效果处理）。
+- `src-tauri/src` 只剩 `lib.rs`、`main.rs`，旧文件已无。
+- 为通过 `pnpm lint` 把我测试里的插件相关词（`note`）改成 `alpha`。**`pnpm lint` 仍失败（25 条），全部在 `crates/kernel/**`（如 `tests/pipeline.rs` 出现 "sql"），不是外壳文件**，由内核会话/协调会话处理。
+- 通过：`cargo test -p onedesk-host`（3+11）、clippy（`onedesk-host`、`onedesk`）、`pnpm typecheck`、`pnpm test`（87）。

@@ -80,15 +80,15 @@ mod tests {
     fn copies_each_package_once_and_replaces_changed_ones() {
         let tmp = tempfile::tempdir().unwrap();
         let (src, dst) = (tmp.path().join("src"), tmp.path().join("dst"));
-        package(&src, "org.x.note", "0.1.0", "a");
+        package(&src, "org.x.alpha", "0.1.0", "a");
         let first = install_builtin(&src, &dst).unwrap();
-        assert_eq!(first, vec!["org.x.note@0.1.0"]);
-        assert_eq!(std::fs::read_to_string(dst.join("org.x.note/0.1.0/main.js")).unwrap(), "a");
-        assert!(dst.join("org.x.note/0.1.0/locales/en-US.json").is_file());
+        assert_eq!(first, vec!["org.x.alpha@0.1.0"]);
+        assert_eq!(std::fs::read_to_string(dst.join("org.x.alpha/0.1.0/main.js")).unwrap(), "a");
+        assert!(dst.join("org.x.alpha/0.1.0/locales/en-US.json").is_file());
         assert!(install_builtin(&src, &dst).unwrap().is_empty());
-        package(&src, "org.x.note", "0.1.0", "b");
+        package(&src, "org.x.alpha", "0.1.0", "b");
         assert_eq!(install_builtin(&src, &dst).unwrap().len(), 1);
-        assert_eq!(std::fs::read_to_string(dst.join("org.x.note/0.1.0/main.js")).unwrap(), "b");
+        assert_eq!(std::fs::read_to_string(dst.join("org.x.alpha/0.1.0/main.js")).unwrap(), "b");
     }
 
     #[test]
