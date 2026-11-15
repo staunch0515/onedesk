@@ -4,4 +4,8 @@ export type RunRenderParams = { id: string,
 /**
  * A result tab of type `view` declared by the page.
  */
-tabId: string, };
+tabId: string, 
+/**
+ * Current interface language.
+ */
+locale?: string, };
