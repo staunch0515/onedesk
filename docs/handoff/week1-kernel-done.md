@@ -123,3 +123,15 @@ sh scripts/gen-types.sh --check      # = pnpm check:types
 | 8 | `page.save` 的 `node:` 目标若不是提供树，返回 `notFound` | `page_save_on_a_node_of_a_stored_tree_is_not_found` |
 
 结果：`cargo test -p onedesk-kernel -p onedesk-worker` 共 51 个测试全部通过（新增 5 个）；`cargo clippy -p onedesk-kernel -p onedesk-worker --all-targets -- -D warnings` 无警告。#7（改名前目录被换成符号链接）按审查意见留在 todo，没有动。
+
+## 收尾
+
+先合并了 `claude/week1-slice-3b4ae5`（d7169ae，无冲突）。
+
+1. **命令的 `ctx.locale`（D272）**：`command.execute` 把 `context.locale` 作为插件命令处理函数的 `ctx.locale`（以前固定为 `null`）；没给时仍是 `null`。测试 `tests/plugins.rs::command_context_locale_reaches_the_plugin_handler`。
+2. **审查 #7**：`files::write_text` 不再按路径写。先从 `/` 起逐级用 `openat(O_RDONLY|O_DIRECTORY|O_NOFOLLOW)` 打开已解析的目录（任何一级是符号链接都失败 → `denied`），之后的 basis 读取（`openat(O_NOFOLLOW)`）、读取目标的权限（`fstatat(AT_SYMLINK_NOFOLLOW)`）、建临时文件（`openat(O_CREAT|O_EXCL|O_NOFOLLOW)`）、`renameat` 都以这个目录描述符为基准。目录在此之后被换成符号链接，写入仍然落在原来那个真实目录里；目标名字上被人放了符号链接，改名替换的是链接本身，不跟随。
+   - 测试（确定性的，不靠竞争时机）：`write_text_with` 带一个钩子，在目录被固定之后、写临时文件之前执行。`files::tests::files_folder_swapped_for_outside_symlink_during_write_leaves_outside_alone` 在钩子里把授权目录移走、换成指向外面的符号链接，外面同名文件未被改动，内容写进了被移走的原目录，外面没有临时文件残留。`files_link_planted_at_the_target_name_is_replaced_not_followed` 在钩子里把目标名换成指向外面的链接，外面的文件不变。
+   - 没覆盖：`resolve()` 与逐级打开之间某一级被换成链接——此时逐级打开会因 `O_NOFOLLOW` 失败，返回 `denied`，不会写到外面，但没有专门测试。读操作（`readText`/`list`/`stat`）仍按路径，只读不写，留在 todo 的范围里。
+   - 新依赖：`libc = "0.2"`（锁定 0.2.191，MIT OR Apache-2.0），只在 `crates/kernel/Cargo.toml` 里直接写。
+
+结果：`cargo test -p onedesk-kernel -p onedesk-worker` 共 54 个测试全部通过（新增 3 个）；`cargo clippy -p onedesk-kernel -p onedesk-worker --all-targets -- -D warnings` 无警告。

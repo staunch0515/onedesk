@@ -2435,6 +2435,7 @@ dependencies = [
 name = "onedesk-kernel"
 version = "0.2.0"
 dependencies = [
+ "libc",
  "onedesk-protocol",
  "rquickjs",
  "rusqlite",
