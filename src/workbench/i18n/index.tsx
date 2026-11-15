@@ -1,7 +1,7 @@
 import { createContext, useContext, useMemo, type ReactNode } from "react";
 import { kernelErrorCode, type Label, type Locale } from "../protocol";
 import { enUS, type MessageKey } from "./en-US";
-import { AUDIT_OPERATIONS, PERMISSIONS, RUN_ERRORS, interpolate, KERNEL_CONFIRMS, KERNEL_ERRORS, KERNEL_LABELS } from "./kernel-texts";
+import { AUDIT_OPERATIONS, PERMISSIONS, RUN_ERRORS, RUN_FALLBACK, interpolate, KERNEL_CONFIRMS, KERNEL_ERRORS, KERNEL_LABELS } from "./kernel-texts";
 import { zhCN } from "./zh-CN";
 
 const TABLES: Record<Locale, Partial<Record<MessageKey, string>>> = { "en-US": enUS, "zh-CN": zhCN };
@@ -68,7 +68,7 @@ function build(locale: Locale): I18n {
       if (known && text) return interpolate(text, known.params);
       return error instanceof Error ? error.message : String(error);
     },
-    runError: (e) => RUN_ERRORS[locale][e.code] ?? RUN_ERRORS["en-US"][e.code] ?? KERNEL_ERRORS[locale][e.code] ?? KERNEL_ERRORS["en-US"][e.code] ?? e.message,
+    runError: (e) => RUN_ERRORS[locale][e.code] ?? RUN_ERRORS["en-US"][e.code] ?? KERNEL_ERRORS[locale][e.code] ?? KERNEL_ERRORS["en-US"][e.code] ?? (e.message.trim() ? e.message : interpolate(RUN_FALLBACK[locale], { code: e.code })),
     permission: (id) => PERMISSIONS[locale][id] ?? PERMISSIONS["en-US"][id] ?? id,
     operation: (id) => AUDIT_OPERATIONS[locale][id] ?? AUDIT_OPERATIONS["en-US"][id] ?? id,
     dateTime: (at) => dt.format(at),

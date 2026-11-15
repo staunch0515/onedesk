@@ -104,13 +104,13 @@ export async function createKernelClient(transport: Transport, locale?: () => st
       event: async (target, event, context) => call<PageEventResult>("page.event", compact({ target, event, context: pageContext(context, locale?.()) })),
     },
     run: {
-      start: (request) => call<string>("run.start", compact({ action: request.action, resourceId: request.resourceId, target: request.target, tabId: request.tabId, envId: request.envId, input: request.input, params: request.params })),
+      start: (request) => call<string>("run.start", compact({ locale: locale?.(), action: request.action, resourceId: request.resourceId, target: request.target, tabId: request.tabId, envId: request.envId, input: request.input, params: request.params })),
       get: async (id) => ((await call<Run | null>("run.get", { id })) ?? null),
       cancel: async (id) => void (await call("run.cancel", { id })),
       listFor: (resourceId) => call<Run[]>("run.listFor", { id: resourceId }),
       tasks: () => call<Run[]>("run.tasks"),
       clearFinished: async () => void (await call("run.clearFinished")),
-      render: (id, tabId) => call<ViewNode[]>("run.render", { id, tabId }),
+      render: (id, tabId) => call<ViewNode[]>("run.render", compact({ id, tabId, locale: locale?.() })),
       setKept: async (id, kept) => void (await call("run.setKept", { id, kept })),
     },
     command: {

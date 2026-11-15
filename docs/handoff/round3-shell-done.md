@@ -42,3 +42,12 @@
   2. 命令面板里“Duplicate”（笔记的命令）在没有节点上下文时也出现，从面板执行会怎样没试。
   3. 运行记录树里失败的运行带删除线，且和“插件被停用”的灰色删除线样式一样，容易混淆（`state: broken` 的通用样式）；纯界面问题，暂不改。
 - 检查：`pnpm typecheck`、`pnpm lint`、`pnpm test`（135）通过；纯假数据 `e2e/workbench.spec.ts` 23 过 1 跳过；截图已还原。
+
+## 第三轮审查后的修改
+- 已合并 `claude/week1-slice-3b4ae5`（c75425a）。
+- #7 运行失败原因：表里的 `badInput` 早已改成 `invalidInput`（上一节）；这次再按内核实际会发的码补齐：内核自己的 + 透传的 `denied/invalid/conflict/notFound/invalidParams/internal`（走通用错误文字）。没有文字、运行也没带消息的失败码，显示“运行失败（原因：<码>）。”（`RUN_FALLBACK`），不再留空白；状态栏、任务面板、结果区都经 `i18n.runError`。
+- #6 语言：`run.start`、`run.render` 现在带 `locale`（测试在 `real-client.test.ts`）。
+- #13 审计操作名：按内核文档里实际会写的对齐——`resource.*`、`params.set/unset/acknowledge`、`workspace.setConfig/startup`、`plugin.state`、`plugin.grant`、`files.write`（原来写成 `file.write`）、`run.start/end/keep/unkeep`，以及插件被拒的宿主调用名（`resources.*`、`files.*`、`settings.get`）；去掉了我臆造的 `plugin.setSetting`、`run.cancel`（审计表里；`run.cancel` 作为命令的文字还在）。演示用的几个操作名保留。测试清单同步（`kernel-texts.test.ts`）。
+- 错误原因：按内核文档补齐全部 `reason`（`emptyName`、`parentNotFound`、…、`cancelled`、`timeout`、`threw`、`badOutput`、`outOfMemory`、`engine` 等，英中），所以“停用插件的资源 `page.save` → `denied/pluginDisabled`”、“取消后的宿主调用 → `cancelled`”“超时 → `timeout`”都有文字；清单被拒的原因（`schema`、`apiVersion`、`mainMissing`…）也配了文字，插件树里 `stateReason` 会显示出来。测试：`i18n/index.test.tsx`（失败文字不空白、回退句、`denied/pluginDisabled`、`cancelled`、`timeout`）、`kernel-texts.test.ts`（全部原因都有英中文字）。
+- 内核还在修，我是按它文档里列出的名字对的；它提交后再合并时若有出入，改 `kernel-texts.ts` 的表和测试清单即可。没有再对着真内核实跑这几处。
+- 检查：`pnpm typecheck`、`pnpm lint`、`pnpm test`（143）通过；纯假数据 e2e 22 过 1 失败 1 跳过，失败的仍是早已知道的“tree: drag onto a group”偶发项（干净提交上也会失败）；截图已还原。

@@ -105,4 +105,13 @@ describe("kernel client", () => {
     await client.run.start({ action: "run", resourceId: "x", target: "resource:x", tabId: "t", envId: null, input: { "body.limit": 5 }, params: { id: "7" } });
     expect(calls[1]?.params).toEqual({ action: "run", resourceId: "x", target: "resource:x", tabId: "t", input: { "body.limit": 5 }, params: { id: "7" } });
   });
+
+  it("hands the interface language to run.start and run.render", async () => {
+    const { transport, calls } = fakeTransport({ hello, "run.start": () => "r1", "run.render": () => [] });
+    const client = await createKernelClient(transport, () => "zh-CN");
+    await client.run.start({ action: "run", target: "resource:x", tabId: "t", envId: null, input: {}, params: {} });
+    await client.run.render("r1", "final");
+    expect(calls[1]?.params).toMatchObject({ locale: "zh-CN" });
+    expect(calls[2]?.params).toEqual({ id: "r1", tabId: "final", locale: "zh-CN" });
+  });
 });
