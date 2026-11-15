@@ -1650,6 +1650,176 @@ pub struct SecretNameParams {
     pub name: String,
 }
 
+/* ================================================================== round 5 (D321–D328)
+   References (§10), export and import (§3.5), protection policies and known parameters (§6.3),
+   exporting a run's table (§9.5). */
+
+/// Method names of round 5; see docs/handoff/round5-plan.md §3.
+pub mod method5 {
+    pub const REFS_OUTGOING: &str = "refs.outgoing";
+    pub const REFS_INCOMING: &str = "refs.incoming";
+    pub const PARAMS_KNOWN: &str = "params.known";
+    pub const WORKSPACE_EXPORT: &str = "workspace.export";
+    pub const WORKSPACE_IMPORT_PREVIEW: &str = "workspace.importPreview";
+    pub const WORKSPACE_IMPORT: &str = "workspace.import";
+    pub const RUN_EXPORT: &str = "run.export";
+}
+
+/// `refs.outgoing` / `refs.incoming`: the resource whose references are asked for.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct RefsParams {
+    pub id: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum RefState {
+    /// The target exists.
+    Ok,
+    /// The target is in "deleted" (it can be restored).
+    Deleted,
+    /// No resource of that name (or the target was purged). The row stays (§10).
+    Missing,
+}
+
+/// One row of `refs` (§10). `source` is the resource that holds the reference.
+#[skip_serializing_none]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, optional_fields)]
+pub struct RefInfo {
+    pub source: NamedRef,
+    /// Body field the reference was found in (`body.text`).
+    pub field: String,
+    /// What was written (`[[text]]`), or the target's name when the field is a single reference.
+    pub text: String,
+    /// The target with its current name; absent when `state` is `missing`.
+    pub target: Option<NamedRef>,
+    pub state: RefState,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum PolicyMerge {
+    /// Any layer that forbids, forbids (`protection.readonly`).
+    Deny,
+    /// The layers' lists are intersected (`network.allow`).
+    AllowList,
+    /// Not a policy: an ordinary parameter the kernel reads (`ui.language`).
+    Plain,
+}
+
+/// A parameter the kernel itself interprets (§6.3): configuration and environment pages offer these by name.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct KnownParam {
+    pub name: String,
+    #[serde(rename = "type")]
+    pub param_type: ParamType,
+    pub merge: PolicyMerge,
+    /// Where it may be set: `config`, `env`.
+    pub layers: Vec<String>,
+}
+
+/// `workspace.export`, `workspace.importPreview`: an absolute folder path.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct WorkspaceFolderParams {
+    pub folder: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ExportResult {
+    pub folder: String,
+    pub resources: u32,
+    pub revisions: u32,
+    pub runs: u32,
+    pub audit: u32,
+    pub blobs: u32,
+}
+
+/// A resource of an export that will not be (or was not) imported.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ImportSkip {
+    pub name: String,
+    pub kind: String,
+    /// `needsVersion` (no installed version can handle it, §7.6), `unknownKind`, `invalid`.
+    pub reason: String,
+}
+
+/// What the user is shown before anything is imported (§3.5).
+#[skip_serializing_none]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, optional_fields)]
+pub struct ImportPreview {
+    /// False when the folder is not a readable export; `problem` says why.
+    pub valid: bool,
+    pub problem: Option<ProtocolError>,
+    /// Name of the workspace the export came from.
+    pub source: String,
+    pub exported_at: i64,
+    /// Resources that would be created as new data.
+    pub create: u32,
+    /// Resources with an external key this workspace already has: those are updated.
+    pub update: u32,
+    pub skipped: Vec<ImportSkip>,
+    /// Hash of the export's manifest: `workspace.import` refuses when it changed since the preview.
+    pub fingerprint: String,
+}
+
+#[skip_serializing_none]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, optional_fields)]
+pub struct ImportParams {
+    pub folder: String,
+    pub fingerprint: String,
+    /// Group to import into; absent = a new top-level group named after the source workspace.
+    pub parent: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ImportResult {
+    pub created: u32,
+    pub updated: u32,
+    pub skipped: Vec<ImportSkip>,
+    /// The group everything new was put under.
+    pub group: NamedRef,
+}
+
+/// `run.export`: write a finished run's table to a file.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct RunExportParams {
+    pub run: String,
+    /// Absolute path of the file to create; an existing file is refused.
+    pub path: String,
+    /// Only `csv` in round 5.
+    pub format: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct RunExportResult {
+    pub path: String,
+    pub rows: u32,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
