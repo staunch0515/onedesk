@@ -31,3 +31,9 @@
 - #12 默认名：`env.newChild`、`config.newChild`、`node.newGroup` 在 `args.name` 里带当前语言的默认名（`default.newEnv/newConfig/newGroup`，英中）；调用方给了名字就不覆盖。演示实现忽略 `args`，纯演示外观不变。
 - 文字：审计操作名 `params.set/unset/acknowledge` 早已有；新增错误原因 `invalid.secretUnsupported`（英中）。
 - 检查：`pnpm typecheck`、`pnpm lint`、`pnpm test`（99）通过；纯演示 e2e 22 过 1 失败 1 跳过，失败项仍是上一节说的、干净提交上也会失败的“tree: drag onto a group”。截图已还原。
+
+## 界面检查后的修改（G1、A1）
+- G1：信息面板（`parts/info-panel.tsx`）底部新增“修改记录”区，默认折叠（一个“查看修改记录”幽灵按钮）。展开后才调 `resource.history`（新的在前），每条显示 时间·操作者、字段、`改前 → 改后`（各截到 40 字加省略号）、已恢复标记、“恢复”按钮（`resource.restore`，只读资源不显示）；订阅 `resource:<id>` 刷新。只用 `Pane/Text/Badge/Button/InfoField` 与 toast，没有新样式。演示资源经混合客户端照旧走假实现。
+- A1：`StatusItem`（`src/design/components/workbench.tsx`）在没有文字、只有 `title` 时把 `title` 作为 `aria-label`（调用方传的 `aria-label` 优先）；状态栏里只有主题按钮是这种情况，其余都有文字或已有 `aria-label`。
+- 测试：`parts/info-panel.test.tsx`（默认折叠且不读历史、新的在前+截断+恢复、空记录），`design/components/status-item.test.tsx`。`pnpm typecheck`、`pnpm lint`、`pnpm test`（104）通过；纯假数据 `e2e/workbench.spec.ts` 23 过 1 跳过（这次连“tree: drag”那个偶发项也过了）。
+- 基准截图：信息面板底部多了一行“修改记录 / 查看修改记录 ›”（在“版本”之后），所以带信息面板的页面会有这点变化：`workbench-{light,dark}-sql.png`、`-tasks.png`（SQL 资源页）、`-env.png`（环境页）。`-plugin.png`、`-tree-menu.png` 不应有变化；e2e 重新生成它们时有些字节差异，我没有提交任何截图（已还原），请协调会话决定是否更新基准。

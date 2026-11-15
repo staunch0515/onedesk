@@ -161,8 +161,10 @@ export function StatusItem({ icon, children, title, tone = "default", busy, pres
   );
   const className = cx("od-status-item", `od-status-item--${tone}`);
   const interactive = Boolean(onClick) || Object.keys(rest).length > 0;
+  // An icon-only item has no text to name it: the tooltip text is its accessible name.
+  const iconOnlyName = children === undefined || children === null ? title : undefined;
   const node = interactive ? (
-    <button ref={ref} type="button" className={cx(className, "od-status-item--button")} aria-pressed={pressed} onClick={onClick} {...rest}>
+    <button ref={ref} type="button" className={cx(className, "od-status-item--button")} aria-pressed={pressed} aria-label={iconOnlyName} onClick={onClick} {...rest}>
       {content}
     </button>
   ) : (
