@@ -71,14 +71,14 @@ impl Inner {
             M::PARAMS_SET => match parse::<ParamSetParams>(params) {
                 Ok(p) => {
                     let ch = ParamChange::Set { value: p.value, ty: p.param_type };
-                    self.param_command(&p.node, &p.name, ch).await.map(|_| Value::Null)
+                    self.param_command(&p.node, &p.name, ch, p.basis, "params.set").await.map(|_| Value::Null)
                 }
                 Err(e) => Err(e),
             },
             M::PARAMS_UNSET | M::PARAMS_ACKNOWLEDGE => match parse::<ParamNameParams>(params) {
                 Ok(p) => {
                     let ch = if m == M::PARAMS_UNSET { ParamChange::Unset } else { ParamChange::Acknowledge };
-                    self.param_command(&p.node, &p.name, ch).await.map(|_| Value::Null)
+                    self.param_command(&p.node, &p.name, ch, p.basis, m).await.map(|_| Value::Null)
                 }
                 Err(e) => Err(e),
             },
@@ -117,11 +117,12 @@ impl Inner {
         Ok(r)
     }
 
-    pub async fn param_command(&self, node: &str, name: &str, ch: ParamChange) -> KResult<()> {
+    pub async fn param_command(&self, node: &str, name: &str, ch: ParamChange, basis: Option<i64>, op: &str) -> KResult<()> {
         let row = self.param_node(node)?;
         let mut changes = Changes::default();
         changes.params.insert(name.to_string(), ch);
-        self.execute(Actor::User, Command::Update { id: row.id, changes, basis: None }).await?;
+        // #3: with a basis, the same parameter changed after it is a conflict.
+        self.execute(Actor::User, Command::Params { id: row.id, changes, basis, op: op.into() }).await?;
         Ok(())
     }
 
@@ -245,14 +246,30 @@ impl Inner {
 
     async fn set_config(&self, p: ConfigSetParams) -> KResult<()> {
         let node = match self.config_holder(&p.name)? {
-            Some((r, _)) => r,
-            None => self
-                .read(|c| store::children(c, store::TREE_CONFIG, None, 0, 1))?
-                .into_iter()
-                .next()
-                .ok_or_else(|| not_found("config"))?,
+            Some((r, _)) => r.id,
+            None => match self.read(|c| store::children(c, store::TREE_CONFIG, None, 0, 1))?.into_iter().next() {
+                Some(r) => r.id,
+                // #8: every root was deleted; make a new one rather than failing.
+                None => self
+                    .execute(
+                        Actor::Core,
+                        Command::Create(crate::pipeline::NewResource {
+                            kind: KIND_CONFIG.into(),
+                            tree: None,
+                            parent: None,
+                            name: "Workspace".into(),
+                            description: String::new(),
+                            tags: vec![],
+                            body: JsonMap::new(),
+                            plugin_version: None,
+                        }),
+                    )
+                    .await?
+                    .id
+                    .ok_or_else(|| internal("no id"))?,
+            },
         };
-        self.param_command(&node.id, &p.name, ParamChange::Set { value: p.value, ty: None }).await
+        self.param_command(&node, &p.name, ParamChange::Set { value: p.value, ty: None }, None, "params.set").await
     }
 
     /* ---------------------------------------------------------------- history */
@@ -432,7 +449,7 @@ impl Inner {
             .collect();
         args.push(limit.to_string());
         let sql = format!(
-            "SELECT r.id FROM search s JOIN resources r ON r.id = s.id
+            "SELECT r.id FROM search s JOIN resources r ON r.rowid = s.rowid
              LEFT JOIN resource_meta m ON m.resource_id = r.id
              WHERE {}
              ORDER BY ({}) DESC, COALESCE(m.favorite, 0) DESC, COALESCE(m.last_used_at, 0) DESC, r.name COLLATE NOCASE
@@ -487,9 +504,13 @@ impl Inner {
             None => {}
         }
         if let Some(t) = f.text.as_ref().filter(|t| !t.is_empty()) {
-            let like = format!("%{t}%");
+            let like = format!("%{}%", t.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_"));
             // Every `?` of the clause becomes the same numbered argument.
-            push("(op LIKE ? OR object LIKE ? OR summary LIKE ? OR actor LIKE ?)", json!(like), &mut wheres);
+            push(
+                "(op LIKE ? ESCAPE '\\' OR object LIKE ? ESCAPE '\\' OR summary LIKE ? ESCAPE '\\' OR actor LIKE ? ESCAPE '\\')",
+                json!(like),
+                &mut wheres,
+            );
         }
         let limit = f.limit.unwrap_or(200).clamp(1, 1000);
         let sql = format!(

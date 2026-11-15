@@ -416,3 +416,135 @@ async fn audit_list_filters_and_facets() {
     assert!(f["actors"].as_array().unwrap().contains(&json!("user")));
     assert!(f["operations"].as_array().unwrap().contains(&json!("resource.update")));
 }
+
+/* ------------------------------------------------------------------ after the round-2 review */
+
+async fn cfg_child(c: &Client, parent: &str, name: &str) -> String {
+    let eff = c.ok("command.execute", json!({ "id": "config.newChild", "context": { "tree": "config", "nodeKey": parent, "args": { "name": name } } })).await;
+    eff[0]["key"].as_str().unwrap().to_string()
+}
+
+fn reason(e: &onedesk_protocol::ProtocolError) -> (ErrorCode, String) {
+    (e.code, e.params.get("reason").cloned().unwrap_or_default())
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn review1_secret_parameters_are_refused() {
+    let (env, c) = setup().await;
+    let def = root(&c, "env").await;
+    let e = c.call("params.set", json!({ "node": def, "name": "token", "value": "s3cr3t-value", "type": "secret" })).await.unwrap_err();
+    assert_eq!(reason(&e), (ErrorCode::Invalid, "secretUnsupported".into()));
+    let n: i64 = db(&env).query_row("SELECT count(*) FROM resources WHERE body LIKE '%s3cr3t-value%'", [], |r| r.get(0)).unwrap();
+    assert_eq!(n, 0);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn review2_config_same_name_rule_cannot_be_bypassed() {
+    let (_env, c) = setup().await;
+    let ws = root(&c, "config").await;
+    let a = cfg_child(&c, &ws, "A").await;
+    let b = cfg_child(&c, &ws, "B").await;
+    set(&c, &a, "dup", "1").await;
+    let dup = |e: onedesk_protocol::ProtocolError| assert_eq!(reason(&e), (ErrorCode::Invalid, "duplicateName".into()));
+    // 1. Replacing the whole table through `body.params`.
+    let e = c
+        .call("page.save", json!({ "target": format!("resource:{b}"), "changes": { "body.params": { "dup": { "type": "text", "value": "2" } } } }))
+        .await
+        .unwrap_err();
+    assert_eq!(reason(&e), (ErrorCode::Invalid, "reservedField".into()));
+    // 2. Moving a holder onto another line: C (under A, allowed) moved under B.
+    let cc = cfg_child(&c, &a, "C").await;
+    set(&c, &cc, "dup", "child overrides").await;
+    dup(c.call("tree.move", json!({ "tree": "config", "key": cc, "target": b, "position": "inside" })).await.unwrap_err());
+    assert_eq!(c.ok("resource.get", json!({ "id": cc })).await["parentId"], a.as_str(), "the move was rolled back");
+    // 3. Undeleting a holder after a sibling took the name.
+    let d = cfg_child(&c, &ws, "D").await;
+    set(&c, &d, "dup2", "d").await;
+    c.ok("resource.delete", json!({ "id": d })).await;
+    set(&c, &b, "dup2", "b").await;
+    dup(c.call("resource.undelete", json!({ "id": d })).await.unwrap_err());
+    assert_eq!(c.ok("resource.listDeleted", Value::Null).await[0]["id"], d.as_str());
+    // 4. Restoring a parameter from history after a sibling took the name.
+    let f = cfg_child(&c, &ws, "F").await;
+    set(&c, &f, "dup3", "f").await;
+    c.ok("params.unset", json!({ "node": f, "name": "dup3" })).await;
+    set(&c, &b, "dup3", "b").await;
+    let h = c.ok("resource.history", json!({ "id": f })).await;
+    assert_eq!((h[0]["field"].as_str(), h[0]["before"].as_str()), (Some("params.dup3"), Some("f")));
+    dup(c.call("resource.restore", json!({ "id": f, "entryId": h[0]["id"] })).await.unwrap_err());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn review3_params_set_with_basis_conflicts_on_the_same_name_only() {
+    let (_env, c) = setup().await;
+    let def = root(&c, "env").await;
+    let rev = c.ok("params.env", json!({ "envId": def })).await["rev"].as_i64().unwrap();
+    c.ok("params.set", json!({ "node": def, "name": "a", "value": "1", "basis": rev })).await;
+    c.ok("params.set", json!({ "node": def, "name": "b", "value": "2", "basis": rev })).await;
+    let e = c.call("params.set", json!({ "node": def, "name": "a", "value": "3", "basis": rev })).await.unwrap_err();
+    assert_eq!(e.code, ErrorCode::Conflict);
+    let e = c.call("params.unset", json!({ "node": def, "name": "b", "basis": rev })).await.unwrap_err();
+    assert_eq!(e.code, ErrorCode::Conflict);
+    let v = c.ok("params.env", json!({ "envId": def })).await;
+    assert_eq!((param(&v, "a")["value"].as_str(), param(&v, "b")["value"].as_str()), (Some("1"), Some("2")));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn review4_purge_leaves_descendants_of_another_batch() {
+    let (_env, c) = setup().await;
+    let g = c.ok("tree.createGroup", json!({ "tree": "resources", "name": "G" })).await["key"].as_str().unwrap().to_string();
+    let child = c.ok("page.save", json!({ "target": format!("new:test.alpha:item?parent={g}"), "changes": { "name": "Child" } })).await["page"]["resourceId"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    c.ok("resource.delete", json!({ "id": child })).await; // batch 1
+    c.ok("resource.delete", json!({ "id": g })).await; // batch 2
+    c.ok("resource.purge", json!({ "id": g })).await;
+    let del = c.ok("resource.listDeleted", Value::Null).await;
+    assert_eq!(del.as_array().unwrap().len(), 1);
+    assert_eq!(del[0]["id"], child.as_str());
+    // Its parent is gone: restoring puts it at the top level.
+    c.ok("resource.undelete", json!({ "id": child })).await;
+    assert_eq!(c.ok("tree.children", json!({ "tree": "resources" })).await["nodes"][0]["key"], child.as_str());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn review5_13_audit_has_param_operations_but_no_param_names() {
+    let (env, c) = setup().await;
+    let ws = root(&c, "config").await;
+    let a = cfg_child(&c, &ws, "A").await;
+    let b = cfg_child(&c, &ws, "B").await;
+    set(&c, &a, "privatename", "v").await;
+    c.ok("params.acknowledge", json!({ "node": a, "name": "privatename" })).await;
+    c.call("params.set", json!({ "node": b, "name": "privatename", "value": "x" })).await.unwrap_err();
+    c.ok("params.unset", json!({ "node": a, "name": "privatename" })).await;
+    let conn = db(&env);
+    let n: i64 = conn.query_row("SELECT count(*) FROM audit WHERE summary LIKE '%privatename%' OR object LIKE '%privatename%'", [], |r| r.get(0)).unwrap();
+    assert_eq!(n, 0);
+    let ops: Vec<String> = {
+        let mut st = conn.prepare("SELECT op || ':' || result FROM audit WHERE object IN (?1, ?2) AND op LIKE 'params.%' ORDER BY seq").unwrap();
+        st.query_map([&a, &b], |r| r.get(0)).unwrap().map(|r| r.unwrap()).collect()
+    };
+    assert_eq!(ops, vec!["params.set:ok", "params.set:failed:invalid", "params.unset:ok"], "acknowledge without change records nothing");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn review8_set_config_recreates_a_deleted_root() {
+    let (_env, c) = setup().await;
+    let ws = root(&c, "config").await;
+    c.ok("resource.delete", json!({ "id": ws })).await;
+    assert_eq!(c.ok("tree.children", json!({ "tree": "config" })).await["nodes"], json!([]));
+    c.ok("workspace.setConfig", json!({ "name": "ui.theme", "value": "dark" })).await;
+    assert_eq!(c.ok("workspace.getConfig", json!({ "name": "ui.theme" })).await, "dark");
+    assert_eq!(c.ok("tree.children", json!({ "tree": "config" })).await["nodes"][0]["label"], "Workspace");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn review11_audit_text_filter_treats_wildcards_literally() {
+    let (_env, c) = setup().await;
+    item(&c, "x", "y").await;
+    assert!(!c.ok("audit.list", json!({})).await.as_array().unwrap().is_empty());
+    assert_eq!(c.ok("audit.list", json!({ "text": "%" })).await, json!([]));
+    assert_eq!(c.ok("audit.list", json!({ "text": "_" })).await.as_array().unwrap().len(),
+               c.ok("audit.list", json!({ "text": "_" })).await.as_array().unwrap().iter().filter(|r| r.to_string().contains('_')).count());
+}

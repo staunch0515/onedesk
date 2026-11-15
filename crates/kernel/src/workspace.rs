@@ -16,6 +16,7 @@ pub const LOCK_FILE: &str = ".lock";
 pub const MIGRATIONS: &[(&str, &str)] = &[
     ("0001_init", include_str!("../migrations/0001_init.sql")),
     ("0002_search_restore", include_str!("../migrations/0002_search_restore.sql")),
+    ("0003_search_rowid", include_str!("../migrations/0003_search_rowid.sql")),
 ];
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -92,8 +93,10 @@ impl Workspace {
     /// Returns the workspace and the writable connection (the caller hands it to the writer).
     pub fn open(dir: &Path) -> Result<(Workspace, Connection), String> {
         std::fs::create_dir_all(dir).map_err(|e| format!("create {}: {e}", dir.display()))?;
-        // D280: before migrations touch it.
-        snapshot(dir, crate::util::now_ms()).map_err(|e| format!("snapshot: {e}"))?;
+        // D280: before migrations touch it. A failed snapshot must not keep the workspace closed (#9).
+        if let Err(e) = snapshot(dir, crate::util::now_ms()) {
+            eprintln!("onedesk: startup snapshot of {} failed: {e}", dir.display());
+        }
         let mut conn = Connection::open(dir.join(DB_FILE)).map_err(|e| format!("open db: {e}"))?;
         conn.pragma_update(None, "journal_mode", "WAL").map_err(|e| format!("wal: {e}"))?;
         configure(&conn).map_err(|e| e.to_string())?;
@@ -136,6 +139,21 @@ impl Workspace {
 }
 
 pub const BACKUPS_DIR: &str = "backups";
+
+/// `YYYY-MM-DD-HHMMSS.db`
+fn is_snapshot_name(n: &str) -> bool {
+    let b = n.as_bytes();
+    n.len() == 20
+        && n.ends_with(".db")
+        && b[..17].iter().enumerate().all(|(i, c)| if [4, 7, 10].contains(&i) { *c == b'-' } else { c.is_ascii_digit() })
+}
+
+/// Whether opening this database will run a migration.
+fn pending_migrations(db: &Path) -> bool {
+    let Ok(conn) = Connection::open_with_flags(db, OpenFlags::SQLITE_OPEN_READ_ONLY) else { return false };
+    let v: Option<String> = conn.query_row("SELECT value FROM meta WHERE key = 'schema_version'", [], |r| r.get(0)).ok();
+    v.and_then(|v| v.parse::<usize>().ok()).is_none_or(|v| v < MIGRATIONS.len())
+}
 pub const BACKUPS_KEPT: usize = 7;
 
 /// `YYYY-MM-DD-HHMMSS` (UTC) of a millisecond timestamp.
@@ -166,16 +184,22 @@ pub fn snapshot(dir: &Path, now: i64) -> Result<Option<PathBuf>, String> {
     std::fs::create_dir_all(&backups).map_err(|e| e.to_string())?;
     let name = format!("{}.db", stamp(now));
     let today = &name[..10];
+    // Only files this function made (#10): a user's own files in `backups/` are left alone.
     let mut existing: Vec<String> = std::fs::read_dir(&backups)
         .map_err(|e| e.to_string())?
         .filter_map(|e| e.ok())
         .map(|e| e.file_name().to_string_lossy().into_owned())
-        .filter(|n| n.ends_with(".db"))
+        .filter(|n| is_snapshot_name(n))
         .collect();
-    let made = if existing.iter().any(|n| n.starts_with(today)) {
+    // #15: a migration is about to run — always keep a copy of the database before it.
+    let pending = pending_migrations(&db);
+    let made = if existing.iter().any(|n| n.starts_with(today)) && !pending {
         None
     } else {
         let target = backups.join(&name);
+        if target.exists() {
+            let _ = std::fs::remove_file(&target);
+        }
         let conn = Connection::open(&db).map_err(|e| e.to_string())?;
         conn.execute("VACUUM INTO ?1", [target.display().to_string()]).map_err(|e| e.to_string())?;
         existing.push(name);
@@ -291,9 +315,70 @@ mod tests {
         assert_eq!(name, "Old");
         let rf: Option<String> = conn.query_row("SELECT restored_from FROM revisions WHERE resource_id = 'r1'", [], |r| r.get(0)).unwrap();
         assert!(rf.is_none());
-        conn.execute("INSERT INTO search (id, name, text) VALUES ('r1', 'Old', '')", []).unwrap();
+        conn.execute("INSERT INTO search (rowid, name, text) VALUES (1, 'Old', '')", []).unwrap();
         let v: String = conn.query_row("SELECT value FROM meta WHERE key='schema_version'", [], |r| r.get(0)).unwrap();
-        assert_eq!(v, "2");
+        assert_eq!(v, MIGRATIONS.len().to_string());
+    }
+
+    #[test]
+    fn snapshot_failure_does_not_block_opening_and_user_files_are_kept() {
+        let dir = tempfile::tempdir().unwrap();
+        let ws = dir.path();
+        drop(Workspace::open(ws).unwrap());
+        // `backups` is a file: the snapshot fails, the workspace opens anyway.
+        std::fs::write(ws.join(BACKUPS_DIR), b"not a folder").unwrap();
+        assert!(snapshot(ws, 1_763_200_000_000).is_err());
+        drop(Workspace::open(ws).unwrap());
+        std::fs::remove_file(ws.join(BACKUPS_DIR)).unwrap();
+        let backups = ws.join(BACKUPS_DIR);
+        std::fs::create_dir_all(&backups).unwrap();
+        for i in 1..=9 {
+            std::fs::write(backups.join(format!("2020-01-0{i}-000000.db")), b"old").unwrap();
+        }
+        std::fs::write(backups.join("my-own.db"), b"mine").unwrap();
+        snapshot(ws, 1_763_200_000_000).unwrap();
+        assert!(backups.join("my-own.db").exists());
+        let ours = std::fs::read_dir(&backups).unwrap().filter(|e| is_snapshot_name(&e.as_ref().unwrap().file_name().to_string_lossy())).count();
+        assert_eq!(ours, BACKUPS_KEPT);
+    }
+
+    #[test]
+    fn snapshot_is_taken_again_the_same_day_when_a_migration_is_pending() {
+        let dir = tempfile::tempdir().unwrap();
+        let ws = dir.path();
+        drop(Workspace::open(ws).unwrap());
+        let day = 1_763_200_000_000;
+        assert!(snapshot(ws, day).unwrap().is_some());
+        assert!(snapshot(ws, day + 1000).unwrap().is_none());
+        let conn = Connection::open(ws.join(DB_FILE)).unwrap();
+        conn.execute("UPDATE meta SET value = '1' WHERE key = 'schema_version'", []).unwrap();
+        drop(conn);
+        assert!(snapshot(ws, day + 2000).unwrap().is_some(), "pending migration → another copy");
+    }
+
+    #[test]
+    fn migration_0003_rebuilds_search_by_rowid_without_losing_data() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        let tx = conn.transaction().unwrap();
+        tx.execute_batch(MIGRATIONS[0].1).unwrap();
+        tx.execute_batch(MIGRATIONS[1].1).unwrap();
+        tx.execute("INSERT INTO meta (key, value) VALUES ('schema_version', '2'), ('search_built', '1')", []).unwrap();
+        tx.execute(
+            "INSERT INTO resources (id, kind, name, rev, created_at, created_by, updated_at, updated_by)
+             VALUES ('r1', 'core:group', 'Kept', 1, 0, 'user', 0, 'user')",
+            [],
+        )
+        .unwrap();
+        tx.execute("INSERT INTO search (id, name, text) VALUES ('r1', 'Kept', '')", []).unwrap();
+        tx.commit().unwrap();
+        migrate(&mut conn).unwrap();
+        let name: String = conn.query_row("SELECT name FROM resources WHERE id = 'r1'", [], |r| r.get(0)).unwrap();
+        assert_eq!(name, "Kept");
+        assert!(conn.query_row("SELECT id FROM search", [], |r| r.get::<_, String>(0)).is_err(), "no id column any more");
+        let built: i64 = conn.query_row("SELECT count(*) FROM meta WHERE key = 'search_built'", [], |r| r.get(0)).unwrap();
+        assert_eq!(built, 0, "the kernel rebuilds the index on start");
+        let v: String = conn.query_row("SELECT value FROM meta WHERE key='schema_version'", [], |r| r.get(0)).unwrap();
+        assert_eq!(v, "3");
     }
 
     #[test]
