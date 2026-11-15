@@ -741,7 +741,8 @@ impl Inner {
         ];
         for p in self.registry.plugins.iter().filter(|p| self.plugin_enabled(&p.id)) {
             let group = p.label(&p.manifest.name);
-            for c in &p.manifest.contributes.commands {
+            // D296: only commands that ask for it; node commands stay in their context menus.
+            for c in p.manifest.contributes.commands.iter().filter(|c| c.palette) {
                 out.push(PaletteCommand {
                     id: p.full(&c.id),
                     label: p.label(&c.label),

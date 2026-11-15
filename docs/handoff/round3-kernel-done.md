@@ -150,3 +150,10 @@ sh scripts/gen-types.sh --check                                                 
 | `unknownMethod` | 带 `method` |
 
 插件树里被拒绝的包，`stateReason` 是清单拒绝原因：`noManifest`、`badJson`、`schema`、`apiVersion`、`badId`、`idMismatch`、`badVersion`、`versionMismatch`、`mainMissing`、`badName`、`duplicate`、`unknownPage`、`unknownTree`、`unknownCommand`、`unknownKind`、`missingAction`、`unknownAction`、`badSetting`、`localeMissing`、`badLocale`。
+
+## 界面检查后的修改（K-R1、K-R2）
+
+- **K-R1**：`page.resolve` 对 `new:<类型>` 目标也带上清单页面的 `resultTabs`、`recompute`、`usesEnv` 和动作项的 `action`/`confirm`（与资源目标同一段代码 `page_frame`）。测试 `tests/round3.rs::new_pages_carry_the_page_frame_from_the_manifest`。
+- **K-R2（D296）**：清单 `commands[]` 增加可选的 `palette`（布尔，默认 `false`，类型不对即清单被拒）。命令面板只列 `palette: true` 的插件命令；只出现在类型 `menu` 里的命令仍只在右键菜单。内核命令仍是不需要节点的四个：`node.newGroup`、`env.newChild`、`open.audit`、`open.deleted`（“新建”项照旧）。测试 `palette_plugins_tree_and_broken_packages`（加了断言）、清单校验多两条。
+- **给插件会话**：内置插件要进命令面板的命令须在清单里加 `"palette": true`，否则从面板消失。
+- 105 个测试全部通过，clippy 无警告。

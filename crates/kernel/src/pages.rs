@@ -478,19 +478,19 @@ impl Inner {
         let ctx = json!({ "target": target, "resource": resource, "draft": cx.draft, "locale": cx.locale, "envId": cx.env_id });
         let out = self.render(plugin, &page, ctx, client).await?;
         let values = binds(&out.view).into_iter().filter_map(|b| store::value_at(&draft_row, &b).map(|v| (b, v))).collect();
-        Ok(PageDescriptor {
+        let mut d = PageDescriptor {
             title: name,
             icon: decl.icon.clone(),
             kind_label: Some(plugin.label(&decl.label)),
             breadcrumb,
-            actions: actions(plugin, &page),
             has_info: true,
             values,
             view: out.view,
-            recompute: plugin.page(&page).is_some_and(|p| p.recompute),
-            uses_env: plugin.page(&page).is_some_and(|p| p.uses_env),
             ..blank(target)
-        })
+        };
+        // K-R1: an unsaved page can run, so it has the same frame (result tabs…) as a saved one.
+        page_frame(&mut d, plugin, &page);
+        Ok(d)
     }
 
     async fn resolve_node(

@@ -11,35 +11,149 @@
   "homepage": "https://example.invalid/runner",
   "contributes": {
     "kinds": [
-      { "id": "job", "label": "kind.job", "icon": "play", "tree": "resources", "page": "editor",
-        "newName": "kind.job.new", "defaults": { "text": "" }, "draggable": true }
+      {
+        "id": "job",
+        "label": "kind.job",
+        "icon": "play",
+        "tree": "resources",
+        "page": "editor",
+        "newName": "kind.job.new",
+        "defaults": {
+          "text": ""
+        },
+        "draggable": true,
+        "menu": [
+          "inspect"
+        ]
+      }
     ],
     "actions": [
-      { "id": "run", "label": "action.run", "icon": "play", "kinds": ["job"], "output": "table", "shortcut": ["Mod", "Enter"] },
-      { "id": "say", "label": "action.say", "icon": "message-square", "output": "text", "confirm": "action.say.confirm" }
+      {
+        "id": "run",
+        "label": "action.run",
+        "icon": "play",
+        "kinds": [
+          "job"
+        ],
+        "output": "table",
+        "shortcut": [
+          "Mod",
+          "Enter"
+        ]
+      },
+      {
+        "id": "say",
+        "label": "action.say",
+        "icon": "message-square",
+        "output": "text",
+        "confirm": "action.say.confirm"
+      }
     ],
     "pages": [
-      { "id": "editor", "recompute": true, "usesEnv": true,
+      {
+        "id": "editor",
+        "recompute": true,
+        "usesEnv": true,
         "actions": [
-          { "id": "run", "role": "run", "action": "run", "label": "action.run", "icon": "play", "primary": true },
-          { "id": "save", "role": "save", "label": "action.save", "icon": "save" },
-          { "id": "save-run", "role": "save-run", "action": "run", "label": "action.saveRun", "icon": "play" },
-          { "id": "tidy", "role": "event", "label": "action.tidy", "icon": "align-left" }
+          {
+            "id": "run",
+            "role": "run",
+            "action": "run",
+            "label": "action.run",
+            "icon": "play",
+            "primary": true
+          },
+          {
+            "id": "save",
+            "role": "save",
+            "label": "action.save",
+            "icon": "save"
+          },
+          {
+            "id": "save-run",
+            "role": "save-run",
+            "action": "run",
+            "label": "action.saveRun",
+            "icon": "play"
+          },
+          {
+            "id": "tidy",
+            "role": "event",
+            "label": "action.tidy",
+            "icon": "align-left"
+          }
         ],
         "resultTabs": [
-          { "id": "result", "type": "output", "label": "tab.result", "icon": "table" },
-          { "id": "final", "type": "view", "label": "tab.final", "icon": "code" },
-          { "id": "history", "type": "history", "label": "tab.history", "icon": "history" }
-        ] }
+          {
+            "id": "result",
+            "type": "output",
+            "label": "tab.result",
+            "icon": "table"
+          },
+          {
+            "id": "final",
+            "type": "view",
+            "label": "tab.final",
+            "icon": "code"
+          },
+          {
+            "id": "history",
+            "type": "history",
+            "label": "tab.history",
+            "icon": "history"
+          }
+        ]
+      }
     ],
-    "commands": [ { "id": "probe", "label": "command.probe" } ],
-    "menus": { "new": ["job"] },
+    "commands": [
+      {
+        "id": "probe",
+        "label": "command.probe",
+        "palette": true
+      },
+      {
+        "id": "inspect",
+        "label": "command.probe"
+      }
+    ],
+    "menus": {
+      "new": [
+        "job"
+      ]
+    },
     "settings": [
-      { "name": "rowLimit", "label": "setting.rowLimit", "type": "number", "default": "5", "hint": "setting.rowLimit.hint" },
-      { "name": "style", "label": "setting.style", "type": "enum", "default": "upper",
-        "options": [ { "value": "upper", "label": "setting.style.upper" }, { "value": "lower", "label": "setting.style.lower" } ] },
-      { "name": "verbose", "label": "setting.verbose", "type": "boolean", "default": "false" }
+      {
+        "name": "rowLimit",
+        "label": "setting.rowLimit",
+        "type": "number",
+        "default": "5",
+        "hint": "setting.rowLimit.hint"
+      },
+      {
+        "name": "style",
+        "label": "setting.style",
+        "type": "enum",
+        "default": "upper",
+        "options": [
+          {
+            "value": "upper",
+            "label": "setting.style.upper"
+          },
+          {
+            "value": "lower",
+            "label": "setting.style.lower"
+          }
+        ]
+      },
+      {
+        "name": "verbose",
+        "label": "setting.verbose",
+        "type": "boolean",
+        "default": "false"
+      }
     ],
-    "locales": { "en-US": "locales/en-US.json" }
+    "locales": {
+      "en-US": "locales/en-US.json"
+    }
   }
 }
