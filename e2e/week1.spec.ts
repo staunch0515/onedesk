@@ -220,6 +220,7 @@ for (const theme of ["light", "dark"] as const) {
       await expect(ui.nodeKey(page, granted)).toBeVisible();
       await ui.nodeKey(page, granted).click();
       await page.keyboard.press("ArrowRight"); // expand (the chevron has no accessible name)
+      await expect(ui.tab(page, "docs")).toHaveCount(0); // folders have no page (K1)
       await expect(ui.nodeKey(page, path.join(granted, "sub"))).toBeVisible();
       await expect(ui.nodeKey(page, path.join(granted, "readme.md"))).toBeVisible();
       await expect(ui.nodeKey(page, path.join(granted, ".hidden"))).toHaveCount(0);
@@ -236,7 +237,7 @@ for (const theme of ["light", "dark"] as const) {
       await ui.editor(page).fill(`# edited in ${theme}\n`);
       await expect(ui.tab(page, "readme.md")).toHaveClass(/od-tab--dirty/);
       await shot(page, theme, "text-dirty");
-      // (saving a node: page from the UI is the fixme test below)
+      // (saving from the UI is the next test)
 
       // closing with unsaved changes asks first
       await ui.tab(page, "readme.md").getByRole("button").click();
@@ -259,10 +260,7 @@ for (const theme of ["light", "dark"] as const) {
   });
 }
 
-// FIXME(shell): `save` in src/workbench/state/context.tsx only handles `new:` and `resource:` targets, so
-// ⌘S / the Save button on a `node:` page (text files) sends nothing and the tab stays dirty. See the
-// handoff file, "第二阶段发现的问题" #S1. Remove `.fixme` when the shell calls `page.save` for `node:` targets.
-test.fixme("files: saving a text file writes it to disk and clears the unsaved mark", async ({ page }) => {
+test("files: saving a text file writes it to disk and clears the unsaved mark", async ({ page }) => {
   await openKernel(page, host);
   await ui.activity(page, "Files").click();
   const file = path.join(granted, "readme.md");

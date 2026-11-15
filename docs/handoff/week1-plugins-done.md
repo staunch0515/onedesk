@@ -56,3 +56,7 @@
 ## e2e 运行情况（最终）
 `E2E_PORT=1432 pnpm e2e`：**28 通过、0 失败、2 跳过**（1 个 `test.fixme`：S1；1 个 workbench.spec 原本就跳过的“review shots”）。`week1.spec.ts` 6 个：5 通过 + 1 fixme。另：全量跑时 `workbench.spec.ts` 的“new query … cancel a run”在机器很忙时偶发超时（单独跑 39 秒通过，最终全量也通过），与我的改动无关。
 `pnpm test` 75 通过、`pnpm lint`、`pnpm typecheck` 通过；改了 `week1.spec.ts` 里的输入框定位（“Content”、“New name”）使它不依赖输入时机。
+
+## 第三轮（合并 a050a05 后）
+K1、S1 已在协调分支修好。去掉了 S1 的 `test.fixme`（保存文本文件的测试现在真跑并通过），并加了断言：点击授权文件夹不会打开标签（K1）。没有其他变通需要去掉。
+`E2E_PORT=1432 pnpm e2e`：**29 通过、0 失败、1 跳过**（workbench.spec 原本就跳过的“review shots”）。`week1.spec.ts` 6 个全过。
