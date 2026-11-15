@@ -46,7 +46,11 @@ impl Env {
 
 /// A kernel on a fresh temporary workspace with the given plugins folder.
 pub fn open(plugins: &Path) -> Env {
-    let tmp = tempfile::tempdir().unwrap();
+    open_in(tempfile::tempdir().unwrap(), plugins)
+}
+
+/// Like `open`, in a temporary folder the caller already filled (e.g. with a plugins folder).
+pub fn open_in(tmp: tempfile::TempDir, plugins: &Path) -> Env {
     let kernel = Arc::new(Kernel::open(&tmp.path().join("ws"), plugins, test_config()).unwrap());
     Env { tmp, kernel }
 }
