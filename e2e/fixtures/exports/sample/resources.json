@@ -1,0 +1,100 @@
+[
+  {
+    "body": {},
+    "createdAt": 1763251200000,
+    "description": "",
+    "externalKey": null,
+    "id": "g-src",
+    "kind": "core:group",
+    "name": "Export sample",
+    "parentId": null,
+    "pluginId": null,
+    "pluginVersion": null,
+    "pos": 0,
+    "rev": 1,
+    "state": "ok",
+    "tags": [],
+    "tree": "resources",
+    "updatedAt": 1763251200000
+  },
+  {
+    "body": {
+      "text": "See [[Beta]] for details."
+    },
+    "createdAt": 1763251200000,
+    "description": "",
+    "externalKey": null,
+    "id": "n-alpha",
+    "kind": "org.onedesk.note:note",
+    "name": "Alpha",
+    "parentId": "g-src",
+    "pluginId": "org.onedesk.note",
+    "pluginVersion": "0.1.0",
+    "pos": 0,
+    "rev": 1,
+    "state": "ok",
+    "tags": [],
+    "tree": "resources",
+    "updatedAt": 1763251200000
+  },
+  {
+    "body": {
+      "text": "Back to [[Alpha]]. Missing: [[Nowhere]]."
+    },
+    "createdAt": 1763251200000,
+    "description": "",
+    "externalKey": null,
+    "id": "n-beta",
+    "kind": "org.onedesk.note:note",
+    "name": "Beta",
+    "parentId": "g-src",
+    "pluginId": "org.onedesk.note",
+    "pluginVersion": "0.1.0",
+    "pos": 1,
+    "rev": 1,
+    "state": "ok",
+    "tags": [],
+    "tree": "resources",
+    "updatedAt": 1763251200000
+  },
+  {
+    "body": {
+      "text": "Imported with an external key."
+    },
+    "createdAt": 1763251200000,
+    "description": "",
+    "externalKey": "fixture:shared-note",
+    "id": "n-ext",
+    "kind": "org.onedesk.note:note",
+    "name": "Shared note",
+    "parentId": "g-src",
+    "pluginId": "org.onedesk.note",
+    "pluginVersion": "0.1.0",
+    "pos": 2,
+    "rev": 1,
+    "state": "ok",
+    "tags": [],
+    "tree": "resources",
+    "updatedAt": 1763251200000
+  },
+  {
+    "body": {
+      "value": 42
+    },
+    "createdAt": 1763251200000,
+    "description": "",
+    "externalKey": null,
+    "id": "x-missing",
+    "kind": "com.example.missing:thing",
+    "name": "Orphan thing",
+    "parentId": "g-src",
+    "pluginId": "com.example.missing",
+    "pluginVersion": "1.0.0",
+    "pos": 3,
+    "rev": 1,
+    "state": "ok",
+    "tags": [],
+    "tree": "resources",
+    "updatedAt": 1763251200000
+  }
+]

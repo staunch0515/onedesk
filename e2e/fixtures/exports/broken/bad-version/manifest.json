@@ -1,0 +1,13 @@
+{
+  "appVersion": "0.0.0-fixture",
+  "counts": {
+    "resources": 0
+  },
+  "exportedAt": 1763251200000,
+  "format": "onedesk-export",
+  "version": 99,
+  "workspace": {
+    "id": "ws-x",
+    "name": "Broken"
+  }
+}

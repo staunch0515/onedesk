@@ -6,7 +6,7 @@
   "action.save": "Save",
   "command.duplicate": "Duplicate",
   "field.text": "Content",
-  "field.placeholder": "Write the note.",
+  "field.placeholder": "Write the note. Use [[Name]] to link another resource.",
   "copy.suffix": "copy",
   "error.notFound": "The note no longer exists."
 }

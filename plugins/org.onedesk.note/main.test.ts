@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 // @ts-ignore plain JS module, no types
 import plugin from "./main.js";
@@ -68,5 +69,18 @@ describe("note plugin", () => {
     const err = Object.assign(new Error("denied"), { code: "denied" });
     const host = { resources: { get: async () => { throw err; } }, ui: { open: vi.fn() } };
     await expect(commands.duplicate(ctxOf(host), { nodeKey: "other" })).rejects.toMatchObject({ code: "denied" });
+  });
+
+  it("the manifest declares the body text as a field that may contain [[references]]", () => {
+    const m = JSON.parse(readFileSync(new URL("./manifest.json", import.meta.url), "utf8"));
+    expect(m.contributes.kinds[0].fields).toEqual({ text: { type: "longtext", refs: true } });
+    expect(m.contributes.kinds[0].fields.text.grants).toBeUndefined();
+  });
+
+  it("the body placeholder mentions the [[name]] syntax in both languages", () => {
+    for (const [lang, token] of [["en-US", "[[Name]]"], ["zh-CN", "[[名称]]"]] as const) {
+      const l = JSON.parse(readFileSync(new URL(`./locales/${lang}.json`, import.meta.url), "utf8"));
+      expect(l["field.placeholder"]).toContain(token);
+    }
   });
 });

@@ -1,0 +1,9 @@
+[
+  {
+    "actor": "user",
+    "at": 1763251200000,
+    "op": "resource.create",
+    "summary": "fixture",
+    "target": "n-alpha"
+  }
+]

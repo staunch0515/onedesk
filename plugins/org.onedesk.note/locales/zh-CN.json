@@ -6,7 +6,7 @@
   "action.save": "保存",
   "command.duplicate": "创建副本",
   "field.text": "内容",
-  "field.placeholder": "写下笔记。",
+  "field.placeholder": "写下笔记。用 [[名称]] 可以引用其他资源。",
   "copy.suffix": "副本",
   "error.notFound": "这条笔记已不存在。"
 }
