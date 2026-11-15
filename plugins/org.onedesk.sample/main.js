@@ -49,14 +49,14 @@ export function fillParams(text, values) {
   return out + text.slice(last);
 }
 
-export function tidy(text, style) {
+export function tidy(text, casing) {
   const clean = blank(text);
   const chars = text.split("");
   for (const kw of KEYWORDS) {
     const re = new RegExp(`(^|[^A-Za-z0-9_:])(${kw.replace(" ", "\\s+")})(?![A-Za-z0-9_])`, "gi");
     for (let m = re.exec(clean); m; m = re.exec(clean)) {
       const start = m.index + m[1].length;
-      const word = (style === "lower" ? m[2].toLowerCase() : m[2].toUpperCase()).replace(/\s+/g, (s) => s);
+      const word = (casing === "lower" ? m[2].toLowerCase() : m[2].toUpperCase()).replace(/\s+/g, (s) => s);
       for (let i = 0; i < m[2].length; i++) chars[start + i] = word[i] || chars[start + i];
     }
   }
@@ -158,8 +158,8 @@ export default {
       async onEvent(ctx, event) {
         if (event !== "tidy") throw new Error(`unknown event ${event}`);
         const text = bodyText(ctx);
-        const style = (await ctx.host.settings.get("style")) || "upper";
-        const next = tidy(text, style);
+        const casing = (await ctx.host.settings.get("style")) || "upper";
+        const next = tidy(text, casing);
         if (next === text) return { message: ctx.t("message.tidyNothing") };
         return { changes: { "body.text": next }, message: ctx.t("message.tidied") };
       },
