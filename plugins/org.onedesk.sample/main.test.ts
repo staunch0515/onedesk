@@ -70,7 +70,7 @@ describe("sample: page", () => {
   it("registers what the manifest declares", () => {
     const r = registry(plugin);
     expect(Object.keys(r.pages)).toEqual(["editor"]);
-    expect(Object.keys(r.actions)).toEqual(["run"]);
+    expect(Object.keys(r.actions).sort()).toEqual(["explain", "run"]);
     expect(r.trees).toEqual({});
   });
 
@@ -183,10 +183,24 @@ describe("sample: run action", () => {
     expect(host.storage.set).not.toHaveBeenCalled();
   });
 
-  it("!text gives text output with the parameters filled in", async () => {
-    const res = await run(fakeHost(), "hello :who !text", { params: { who: "world" } }).done;
+  it("explain: text output listing each parameter, its value and where it comes from", async () => {
+    const { actions } = registry(plugin);
+    const host = fakeHost({
+      params: { get: vi.fn(async (n: string) => (n === "tenant_id" ? { found: true, value: "42", sourceName: "Prod" } : { found: false, value: "", sourceName: "" })) },
+    });
+    const res = await actions.explain(ctxOf(host, { params: { start_time: "2026-01-01T00:00" } }), { "body.text": "select :tenant_id, :start_time, :channel from t" });
     expect(checkActionResult(res)).toEqual([]);
-    expect(res.output).toEqual({ type: "text", text: "Output for: hello world !text" });
+    expect(res.output.type).toBe("text");
+    expect(res.output.text.split("\n")).toEqual([
+      "Parameters used by this text:",
+      "tenant_id = 42 (from environment Prod)",
+      "start_time = 2026-01-01T00:00 (entered here)",
+      "channel (not set)",
+    ]);
+    const none = await actions.explain(ctxOf(fakeHost()), { "body.text": "select 1" });
+    expect(none.output).toEqual({ type: "text", text: "This text uses no parameters." });
+    const zh = await actions.explain(ctxOf(fakeHost(), { locale: "zh-CN" }), { "body.text": "select 1" });
+    expect(zh.output.text).toBe("这段正文没有用到参数。");
   });
 
   it("!slow runs about twenty one-second steps and stops quickly when cancelled", async () => {

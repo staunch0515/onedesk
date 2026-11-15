@@ -9,7 +9,9 @@
   "author": "OneDesk",
   "license": "MIT",
   "homepage": "https://onedesk.example.com/plugins/sample",
-  "requires": { "files": false },
+  "requires": {
+    "files": false
+  },
   "contributes": {
     "kinds": [
       {
@@ -19,7 +21,9 @@
         "tree": "resources",
         "page": "editor",
         "newName": "kind.query.new",
-        "defaults": { "text": "" },
+        "defaults": {
+          "text": ""
+        },
         "draggable": true,
         "accepts": []
       }
@@ -29,9 +33,25 @@
         "id": "run",
         "label": "action.run",
         "icon": "play",
-        "kinds": ["query"],
+        "kinds": [
+          "query"
+        ],
         "output": "table",
-        "shortcut": ["Mod", "Enter"],
+        "shortcut": [
+          "Mod",
+          "Enter"
+        ],
+        "saveFirst": false,
+        "confirm": null
+      },
+      {
+        "id": "explain",
+        "label": "action.explain",
+        "icon": "info",
+        "kinds": [
+          "query"
+        ],
+        "output": "text",
         "saveFirst": false,
         "confirm": null
       }
@@ -42,32 +62,104 @@
         "recompute": true,
         "usesEnv": true,
         "actions": [
-          { "id": "run", "role": "run", "action": "run", "label": "action.run", "icon": "play", "primary": true, "shortcut": ["Mod", "Enter"] },
-          { "id": "save", "role": "save", "label": "action.save", "icon": "save", "shortcut": ["Mod", "S"] },
-          { "id": "save-run", "role": "save-run", "action": "run", "label": "action.saveRun", "icon": "save-all" },
-          { "id": "tidy", "role": "event", "label": "action.tidy", "icon": "align-left" }
+          {
+            "id": "run",
+            "role": "run",
+            "action": "run",
+            "label": "action.run",
+            "icon": "play",
+            "primary": true,
+            "shortcut": [
+              "Mod",
+              "Enter"
+            ]
+          },
+          {
+            "id": "save",
+            "role": "save",
+            "label": "action.save",
+            "icon": "save",
+            "shortcut": [
+              "Mod",
+              "S"
+            ]
+          },
+          {
+            "id": "save-run",
+            "role": "save-run",
+            "action": "run",
+            "label": "action.saveRun",
+            "icon": "save-all"
+          },
+          {
+            "id": "explain",
+            "role": "run",
+            "action": "explain",
+            "label": "action.explain",
+            "icon": "info"
+          },
+          {
+            "id": "tidy",
+            "role": "event",
+            "label": "action.tidy",
+            "icon": "align-left"
+          }
         ],
         "resultTabs": [
-          { "id": "result", "type": "output", "label": "tab.result", "icon": "table" },
-          { "id": "final", "type": "view", "label": "tab.final", "icon": "code" },
-          { "id": "history", "type": "history", "label": "tab.history", "icon": "history" }
+          {
+            "id": "result",
+            "type": "output",
+            "label": "tab.result",
+            "icon": "table"
+          },
+          {
+            "id": "final",
+            "type": "view",
+            "label": "tab.final",
+            "icon": "code"
+          },
+          {
+            "id": "history",
+            "type": "history",
+            "label": "tab.history",
+            "icon": "history"
+          }
         ]
       }
     ],
     "settings": [
-      { "name": "rowLimit", "label": "setting.rowLimit", "type": "number", "default": "200", "hint": "setting.rowLimit.hint" },
+      {
+        "name": "rowLimit",
+        "label": "setting.rowLimit",
+        "type": "number",
+        "default": "200",
+        "hint": "setting.rowLimit.hint"
+      },
       {
         "name": "style",
         "label": "setting.style",
         "type": "enum",
         "default": "upper",
         "options": [
-          { "value": "upper", "label": "setting.style.upper" },
-          { "value": "lower", "label": "setting.style.lower" }
+          {
+            "value": "upper",
+            "label": "setting.style.upper"
+          },
+          {
+            "value": "lower",
+            "label": "setting.style.lower"
+          }
         ]
       }
     ],
-    "menus": { "new": ["query"] },
-    "locales": { "en-US": "locales/en-US.json", "zh-CN": "locales/zh-CN.json" }
+    "menus": {
+      "new": [
+        "query"
+      ]
+    },
+    "locales": {
+      "en-US": "locales/en-US.json",
+      "zh-CN": "locales/zh-CN.json"
+    }
   }
 }

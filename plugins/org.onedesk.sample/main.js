@@ -172,6 +172,23 @@ export default {
       },
     });
 
+    host.actions.handle("explain", async (ctx, input) => {
+      const text = String((input && input["body.text"]) || "");
+      const names = paramNames(text);
+      if (names.length === 0) return { output: { type: "text", text: tr(ctx, "explain.none") }, summary: { message: tr(ctx, "summary.explain") } };
+      const lines = [tr(ctx, "explain.head")];
+      for (const name of names) {
+        const typed = ctx.params && ctx.params[name];
+        if (typed !== undefined && typed !== "") {
+          lines.push(`${name} = ${typed} (${tr(ctx, "explain.hand")})`);
+          continue;
+        }
+        const found = await ctx.host.params.get(name);
+        lines.push(found.found ? `${name} = ${found.value} (${tr(ctx, "explain.env", { source: found.sourceName })})` : `${name} (${tr(ctx, "explain.unset")})`);
+      }
+      return { output: { type: "text", text: lines.join("\n") }, summary: { message: tr(ctx, "summary.explain") } };
+    });
+
     host.actions.handle("run", async (ctx, input) => {
       const text = String((input && input["body.text"]) || "");
       if (text.includes("!fail")) throw new Error(tr(ctx, "error.fail"));
@@ -187,13 +204,6 @@ export default {
 
       ctx.progress(0.1, tr(ctx, "step.parse"));
       await ctx.host.util.sleep(250);
-
-      if (text.includes("!text")) {
-        ctx.progress(0.7, tr(ctx, "step.build"));
-        await ctx.host.util.sleep(250);
-        const out = tr(ctx, "text.out", { text: fillParams(text, ctx.params || {}) });
-        return { output: { type: "text", text: out }, summary: { message: tr(ctx, "summary.text") } };
-      }
 
       const limit = await intSetting(ctx, "rowLimit", 200);
       ctx.progress(0.4, tr(ctx, "step.fetch"));

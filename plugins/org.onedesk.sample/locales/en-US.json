@@ -16,7 +16,7 @@
   "setting.style.upper": "UPPER CASE",
   "setting.style.lower": "lower case",
   "field.text": "Text",
-  "field.placeholder": "Write something. Parameters are written as :name; !fail, !slow and !text change what a run does.",
+  "field.placeholder": "Write something. Parameters are written as :name; !fail and !slow change what a run does.",
   "message.tidied": "Keywords tidied",
   "message.tidyNothing": "Nothing to tidy",
   "last.none": "No run yet",
@@ -27,8 +27,13 @@
   "step.slow": "Working… {n}/20",
   "error.fail": "The text contains !fail, so this run fails on purpose.",
   "summary.rows": "{rows} rows",
-  "summary.text": "Text output",
   "summary.slow": "Slow run finished",
   "summary.cancelled": "Cancelled",
-  "text.out": "Output for: {text}"
+  "action.explain": "Explain",
+  "explain.head": "Parameters used by this text:",
+  "explain.none": "This text uses no parameters.",
+  "explain.hand": "entered here",
+  "explain.env": "from environment {source}",
+  "explain.unset": "not set",
+  "summary.explain": "Explained"
 }
