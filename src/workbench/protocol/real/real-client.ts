@@ -74,7 +74,7 @@ export async function createKernelClient(transport: Transport, locale?: () => st
     },
     command: {
       newItems: () => call<NewItem[]>("command.newItems"),
-      execute: (id, context: CommandContext) => call<CommandEffect[]>("command.execute", { id, context: compact(context) }),
+      execute: (id, context: CommandContext) => call<CommandEffect[]>("command.execute", { id, context: compact({ locale: locale?.(), ...context }) }),
     },
     plugin: {
       grants: (plugin) => call<PluginGrants>("plugin.grants", { plugin }),

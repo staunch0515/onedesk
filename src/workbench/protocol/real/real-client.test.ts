@@ -78,4 +78,11 @@ describe("kernel client", () => {
     emit({ topic: "connection", payload: "restored" });
     expect(topics.sort()).toEqual(["resource:7", "tree:resources"]);
   });
+
+  it("hands the interface language to commands", async () => {
+    const { transport, calls } = fakeTransport({ hello, "command.execute": () => [] });
+    const client = await createKernelClient(transport, () => "zh-CN");
+    await client.command.execute("a:b", { tree: "t", nodeKey: null });
+    expect(calls[1]).toEqual({ method: "command.execute", params: { id: "a:b", context: { locale: "zh-CN", tree: "t" } } });
+  });
 });
