@@ -8,6 +8,7 @@ pub mod kernel;
 pub mod manifest;
 mod pages;
 pub mod params;
+mod round2;
 pub mod pipeline;
 pub mod sandbox;
 pub mod store;

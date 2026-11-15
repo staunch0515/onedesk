@@ -163,6 +163,8 @@ impl Inner {
     /// Runs a command through the pipeline and publishes its events after commit.
     pub async fn execute(&self, actor: Actor, cmd: Command) -> KResult<Outcome> {
         let plugin_state = matches!(&cmd, Command::Update { .. } | Command::Create(_) | Command::Grant { .. });
+        let deletion = matches!(&cmd, Command::Delete { .. } | Command::Undelete { .. } | Command::Purge { .. });
+        let audited = !matches!(&cmd, Command::Meta { .. } | Command::UiSet { .. });
         let out = self.pipeline.execute(actor, cmd).await?;
         for t in out.topics() {
             if t == format!("{}{TREE_PLUGIN_STATE}", topic::TREE) {
@@ -172,6 +174,16 @@ impl Inner {
         }
         if plugin_state && out.rows.iter().any(|r| r.kind == store::KIND_PLUGIN_STATE) {
             self.emit(topic::PLUGINS, None, None);
+        }
+        if out.rows.iter().any(|r| r.kind == store::KIND_CONFIG) {
+            self.emit(onedesk_protocol::topic2::CONFIG, None, None);
+        }
+        if deletion {
+            self.emit(format!("{}{}", topic::TREE, store::TREE_DELETED), None, None);
+            self.emit(format!("{}{}", topic::TREE, store::TREE_FAVORITES), None, None);
+        }
+        if out.changed && audited {
+            self.emit(onedesk_protocol::topic2::AUDIT, None, None);
         }
         Ok(out)
     }
@@ -251,7 +263,10 @@ impl Inner {
                 self.pipeline.execute(Actor::User, Command::UiSet { client: c, key: p.key, value: p.value }).await?;
                 Ok(Value::Null)
             }
-            _ => Err(err_p(ErrorCode::UnknownMethod, &[("method", m)])),
+            _ => match self.handle2(client, m, params).await {
+                Some(r) => r,
+                None => Err(err_p(ErrorCode::UnknownMethod, &[("method", m)])),
+            },
         }
     }
 
@@ -262,6 +277,17 @@ impl Inner {
     /* ---------------------------------------------------------------- kinds and rows */
 
     pub fn kind_meta(&self, kind: &str) -> KindMeta {
+        if crate::params::is_param_kind(kind) {
+            return KindMeta {
+                label: Label::Text(kind.into()),
+                icon: if kind == store::KIND_ENV { "globe" } else { "settings" }.into(),
+                page: None,
+                draggable: true,
+                accepts: vec![kind.into()],
+                commands: vec![],
+                state: NodeState::Ok,
+            };
+        }
         if kind == KIND_GROUP {
             return KindMeta {
                 label: Label::Text(KIND_GROUP.into()),
@@ -346,7 +372,7 @@ impl Inner {
             origin: Origin::Original,
             origin_ref: r.origin_ref.clone(),
             location,
-            favorite: false,
+            favorite: self.read(|c| store::is_favorite(c, &r.id))?,
             deleted: r.deleted_at.is_some(),
             read_only: false,
             rev: r.rev,
@@ -362,7 +388,7 @@ impl Inner {
 
     /// A stored tree id the protocol may touch: `resources` or a plugin's stored tree.
     pub fn stored_tree(&self, tree: &str) -> KResult<()> {
-        if tree == TREE_RESOURCES {
+        if tree == TREE_RESOURCES || tree == store::TREE_ENV || tree == store::TREE_CONFIG {
             return Ok(());
         }
         match self.registry.tree(tree) {
@@ -387,6 +413,38 @@ impl Inner {
                 })
                 .collect()
         };
+        let list_tree = |id: &str, icon: &str, toolbar: Vec<MenuCommand>| TreeInfo {
+            id: id.into(),
+            title: Label::Text(id.into()),
+            icon: icon.into(),
+            source: TreeSource::Provided,
+            groups: false,
+            menu: toolbar.clone(),
+            toolbar,
+        };
+        let env_tools = vec![kernel_cmd("env.newChild", "plus")];
+        let mut kernel_trees = vec![
+            TreeInfo {
+                id: store::TREE_ENV.into(),
+                title: Label::Text(store::TREE_ENV.into()),
+                icon: "globe".into(),
+                source: TreeSource::Stored,
+                groups: false,
+                toolbar: env_tools.clone(),
+                menu: env_tools,
+            },
+            TreeInfo {
+                id: store::TREE_CONFIG.into(),
+                title: Label::Text(store::TREE_CONFIG.into()),
+                icon: "settings".into(),
+                source: TreeSource::Stored,
+                groups: false,
+                toolbar: vec![],
+                menu: vec![],
+            },
+            list_tree(store::TREE_FAVORITES, "star", vec![]),
+            list_tree(store::TREE_DELETED, "trash-2", vec![kernel_cmd("open.deleted", "external-link")]),
+        ];
         let mut out = vec![TreeInfo {
             id: TREE_RESOURCES.into(),
             title: Label::Text(TREE_RESOURCES.into()),
@@ -419,6 +477,7 @@ impl Inner {
                 });
             }
         }
+        out.append(&mut kernel_trees);
         out
     }
 
@@ -427,12 +486,23 @@ impl Inner {
         let group = r.kind == KIND_GROUP;
         let has_children = self.read(|c| store::has_children(c, &r.id))?;
         let mut menu = Vec::new();
-        if meta.page.is_some() {
+        if meta.page.is_some() || crate::params::is_param_kind(&r.kind) {
             menu.push(kernel_cmd("node.open", "external-link"));
+        }
+        if r.kind == store::KIND_ENV {
+            menu.push(kernel_cmd("env.newChild", "plus"));
+        }
+        if r.kind == store::KIND_CONFIG {
+            menu.push(kernel_cmd("config.newChild", "plus"));
         }
         menu.push(kernel_cmd("node.rename", "pencil"));
         if group {
             menu.push(kernel_cmd("node.newGroup", "folder-plus"));
+        }
+        if self.read(|c| store::is_favorite(c, &r.id))? {
+            menu.push(kernel_cmd("node.unfavorite", "star-off"));
+        } else {
+            menu.push(kernel_cmd("node.favorite", "star"));
         }
         menu.extend(meta.commands);
         let mut del = kernel_cmd("node.delete", "trash-2");
@@ -459,6 +529,9 @@ impl Inner {
 
     async fn tree_children(&self, p: TreeChildrenParams, client: Option<String>) -> KResult<TreePage> {
         let offset = p.offset.unwrap_or(0);
+        if p.tree == store::TREE_FAVORITES || p.tree == store::TREE_DELETED {
+            return self.list_tree_page(&p.tree, p.parent.as_deref(), offset);
+        }
         if self.stored_tree(&p.tree).is_ok() {
             let rows = self.read(|c| store::children(c, &p.tree, p.parent.as_deref(), offset, BATCH + 1))?;
             let more = rows.len() > BATCH as usize;
@@ -532,6 +605,9 @@ impl Inner {
     }
 
     async fn tree_path(&self, p: TreeNodeParams, client: Option<String>) -> KResult<Vec<String>> {
+        if p.tree == store::TREE_FAVORITES || p.tree == store::TREE_DELETED {
+            return Ok(vec![p.key]);
+        }
         if self.stored_tree(&p.tree).is_ok() {
             let r = self.row_in_tree(&p.tree, &p.key)?;
             let mut ids: Vec<String> = self.read(|c| store::ancestors(c, &r))?.into_iter().map(|a| a.id).collect();
@@ -557,9 +633,56 @@ impl Inner {
         Ok(())
     }
 
+    /// `favorites` / `deleted`: flat lists the kernel computes (D279); not draggable.
+    fn list_tree_page(&self, tree: &str, parent: Option<&str>, offset: u32) -> KResult<TreePage> {
+        if parent.is_some() {
+            return Ok(TreePage { nodes: vec![], next: None });
+        }
+        let favorites = tree == store::TREE_FAVORITES;
+        let rows = if favorites { self.read(store::favorites)? } else { self.read(store::deleted_tops)? };
+        let total = rows.len();
+        let nodes = rows
+            .iter()
+            .skip(offset as usize)
+            .take(BATCH as usize)
+            .map(|r| {
+                let meta = self.kind_meta(&r.kind);
+                let menu = if favorites {
+                    vec![kernel_cmd("node.open", "external-link"), kernel_cmd("node.unfavorite", "star-off")]
+                } else {
+                    let mut purge = kernel_cmd("deleted.purge", "trash-2");
+                    purge.danger = Some(true);
+                    purge.separator_before = Some(true);
+                    vec![kernel_cmd("deleted.restore", "undo-2"), purge]
+                };
+                TreeNode {
+                    key: r.id.clone(),
+                    tree: tree.into(),
+                    parent_key: None,
+                    label: r.name.clone(),
+                    icon: meta.icon,
+                    kind: r.kind.clone(),
+                    expandable: false,
+                    state: meta.state,
+                    state_reason: None,
+                    badge: None,
+                    target: (favorites && r.kind != KIND_GROUP).then(|| format!("resource:{}", r.id)),
+                    menu,
+                    draggable: false,
+                    accepts: vec![],
+                }
+            })
+            .collect();
+        let next = offset + BATCH;
+        Ok(TreePage { nodes, next: ((next as usize) < total).then_some(next) })
+    }
+
     /// Creates a `core:group`; an empty name gets a default that does not clash with its siblings.
     pub async fn create_group(&self, tree: &str, parent: Option<String>, name: &str) -> KResult<String> {
         self.stored_tree(tree)?;
+        if tree == store::TREE_ENV || tree == store::TREE_CONFIG {
+            return Err(invalid("noGroups"));
+        }
         let name = if name.trim().is_empty() {
             let sibs = self.read(|c| store::children(c, tree, parent.as_deref(), 0, u32::MAX))?;
             let taken = |n: &str| sibs.iter().any(|s| s.name == n);

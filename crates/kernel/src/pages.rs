@@ -15,6 +15,8 @@ pub enum Target {
     Resource(String),
     New { kind: String, parent: Option<String> },
     Node { tree: String, key: String },
+    /// Shell pages the kernel only names (`core:audit`, `core:deleted`).
+    Core(String),
     Other,
 }
 
@@ -31,6 +33,11 @@ pub fn parse_target(t: &str) -> Target {
             .and_then(|(_, v)| url_decode(v))
             .filter(|v| !v.is_empty());
         return Target::New { kind: kind.to_string(), parent };
+    }
+    if let Some(p) = t.strip_prefix("core:") {
+        if p == "audit" || p == "deleted" {
+            return Target::Core(p.to_string());
+        }
     }
     if let Some(rest) = t.strip_prefix("node:") {
         // Tree ids contain no `/`; the key is URL-encoded.
@@ -132,6 +139,45 @@ fn missing(target: &str) -> PageDescriptor {
     PageDescriptor { found: false, page: PageKind::Missing, title: target.to_string(), icon: "circle-help".into(), ..blank(target) }
 }
 
+fn core_page(target: &str, page: &str) -> PageDescriptor {
+    let (kind, icon) = if page == "audit" { (PageKind::Audit, "scroll-text") } else { (PageKind::Deleted, "trash-2") };
+    PageDescriptor { title: target.to_string(), icon: icon.into(), page: kind, ..blank(target) }
+}
+
+/// D276: a configuration node's page is a form the kernel builds from its parameter table.
+fn param_form(r: &Row) -> (Vec<ViewNode>, JsonMap) {
+    let mut fields = Vec::new();
+    let mut values = JsonMap::new();
+    for (name, p) in crate::params::params_of(r) {
+        let kind = match p.ty {
+            ParamType::Number => FieldKind::Number,
+            ParamType::Boolean => FieldKind::Boolean,
+            ParamType::List => FieldKind::Longtext,
+            ParamType::Secret => FieldKind::Secret,
+            ParamType::Text | ParamType::Ref => FieldKind::Text,
+        };
+        let bind = format!("params.{name}");
+        values.insert(bind.clone(), Value::String(p.value));
+        fields.push(ViewField {
+            label: Label::Text(name.clone()),
+            name,
+            kind,
+            bind: Some(bind),
+            param: None,
+            options: None,
+            presets: None,
+            fill: None,
+            language: None,
+            hint: None,
+            placeholder: None,
+            env_value: None,
+            env_source: None,
+            read_only: None,
+        });
+    }
+    (vec![ViewNode::Form { id: "params".into(), layout: FormLayout::Stack, label: None, fields }], values)
+}
+
 fn actions(p: &Plugin, page: &str) -> Vec<ActionDecl> {
     p.page(page)
         .map(|pg| {
@@ -156,9 +202,13 @@ impl Inner {
     pub async fn resolve(&self, target: &str, cx: PageContext, client: Option<String>) -> KResult<PageDescriptor> {
         match parse_target(target) {
             Target::Resource(id) => match self.read(|c| store::get(c, &id))? {
-                Some(r) if !self.hidden_tree(&r) => self.resolve_resource(target, &r, &cx, client).await,
+                Some(r) if !self.hidden_tree(&r) => {
+                    self.touch(&r.id).await;
+                    self.resolve_resource(target, &r, &cx, client).await
+                }
                 _ => Ok(missing(target)),
             },
+            Target::Core(page) => Ok(core_page(target, &page)),
             Target::New { kind, parent } => self.resolve_new(target, &kind, parent, &cx, client).await,
             Target::Node { tree, key } => self.resolve_node(target, &tree, &key, &cx, client).await,
             Target::Other => Ok(missing(target)),
@@ -211,6 +261,19 @@ impl Inner {
             ..blank(target)
         };
         if r.kind == KIND_GROUP {
+            return Ok(d);
+        }
+        if r.kind == store::KIND_ENV {
+            // Drawn by the shell from `params.env` (sources and inheritance), D276.
+            d.page = PageKind::Env;
+            d.uses_env = true;
+            return Ok(d);
+        }
+        if r.kind == store::KIND_CONFIG {
+            let (view, values) = param_form(r);
+            d.view = view;
+            d.values = values;
+            d.autosave = true;
             return Ok(d);
         }
         let Some((pid, page)) = meta.page else {
@@ -396,7 +459,7 @@ impl Inner {
                 }
                 Ok(PageSaveResult { page })
             }
-            Target::Other => Err(not_found("target")),
+            Target::Core(_) | Target::Other => Err(not_found("target")),
         }
     }
 }

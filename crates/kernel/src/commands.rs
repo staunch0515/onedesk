@@ -17,6 +17,17 @@ fn bad_effects(detail: String) -> onedesk_protocol::ProtocolError {
     }
 }
 
+pub const DEFAULT_ENV_NAME: &str = "New environment";
+pub const DEFAULT_CONFIG_NAME: &str = "New configuration";
+
+/// The resource a node command is about: `nodeKey`, or a `resource:` target.
+fn node_resource(c: &CommandContext) -> KResult<String> {
+    c.node_key
+        .clone()
+        .or_else(|| c.target.as_deref().and_then(|t| t.strip_prefix("resource:")).map(String::from))
+        .ok_or_else(|| invalid_params("nodeKey"))
+}
+
 impl Inner {
     pub async fn command(&self, p: CommandExecuteParams, client: Option<String>) -> KResult<Vec<CommandEffect>> {
         let c = p.context;
@@ -70,6 +81,70 @@ impl Inner {
                     .map(|r| CommandEffect::CloseTarget { target: format!("resource:{}", r.id) })
                     .collect())
             }
+            "env.newChild" | "config.newChild" => {
+                let env = p.id == "env.newChild";
+                let (tree, kind, default) = if env {
+                    (store::TREE_ENV, store::KIND_ENV, DEFAULT_ENV_NAME)
+                } else {
+                    (store::TREE_CONFIG, store::KIND_CONFIG, DEFAULT_CONFIG_NAME)
+                };
+                let parent = match &c.node_key {
+                    Some(k) => Some(self.row_in_tree(tree, k)?.id),
+                    None => None,
+                };
+                let sibs = self.read(|conn| store::children(conn, tree, parent.as_deref(), 0, u32::MAX))?;
+                let mut name = arg("name").filter(|n| !n.trim().is_empty()).unwrap_or_else(|| default.to_string());
+                let base = name.clone();
+                let mut i = 2;
+                while sibs.iter().any(|s| s.name == name) {
+                    name = format!("{base} {i}");
+                    i += 1;
+                }
+                let out = self
+                    .execute(
+                        Actor::User,
+                        Command::Create(crate::pipeline::NewResource {
+                            kind: kind.into(),
+                            tree: None,
+                            parent,
+                            name,
+                            description: String::new(),
+                            tags: vec![],
+                            body: JsonMap::new(),
+                            plugin_version: None,
+                        }),
+                    )
+                    .await?;
+                let id = out.id.ok_or_else(|| internal("no id"))?;
+                let tree = tree.to_string();
+                Ok(vec![CommandEffect::Reveal { tree: tree.clone(), key: id.clone() }, CommandEffect::Rename { tree, key: id }])
+            }
+            "node.favorite" | "node.unfavorite" => {
+                let id = node_resource(&c)?;
+                self.set_favorite(&id, p.id == "node.favorite").await?;
+                Ok(vec![])
+            }
+            "deleted.restore" => {
+                let id = c.node_key.clone().ok_or_else(|| invalid_params("nodeKey"))?;
+                self.undelete(&id).await?;
+                Ok(vec![])
+            }
+            "deleted.purge" => {
+                let id = c.node_key.clone().ok_or_else(|| invalid_params("nodeKey"))?;
+                let confirmed = c.args.as_ref().and_then(|a| a.get("confirmed")).and_then(Value::as_bool).unwrap_or(false);
+                if !confirmed {
+                    // Irreversible: ask first, then the shell runs the command again with `args.confirmed`.
+                    return Ok(vec![CommandEffect::Confirm {
+                        message: Label::Text("deleted.purge.confirm".into()),
+                        command: "deleted.purge".into(),
+                        danger: Some(true),
+                    }]);
+                }
+                self.purge(&id).await?;
+                Ok(vec![CommandEffect::CloseTarget { target: format!("resource:{id}") }])
+            }
+            "open.audit" => Ok(vec![CommandEffect::Open { target: "core:audit".into() }]),
+            "open.deleted" => Ok(vec![CommandEffect::Open { target: "core:deleted".into() }]),
             "plugin.grantFolder" => {
                 let plugin = arg("plugin")
                     .or_else(|| c.tree.as_deref().and_then(Registry::split).map(|(p, _)| p.to_string()))

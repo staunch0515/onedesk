@@ -243,6 +243,7 @@ pub struct Pipeline {
 impl Pipeline {
     pub fn start(conn: Connection, rules: Arc<HashMap<String, KindRule>>) -> Pipeline {
         let (tx, rx) = mpsc::channel::<Job>();
+        let (ready_tx, ready_rx) = mpsc::channel::<()>();
         let thread = std::thread::Builder::new()
             .name("onedesk-writer".into())
             .spawn(move || {
@@ -251,11 +252,14 @@ impl Pipeline {
                 if let Err(e) = w.run(&Actor::Core, Command::Startup) {
                     eprintln!("onedesk: startup command failed: {e:?}");
                 }
+                let _ = ready_tx.send(());
                 while let Ok((actor, cmd, reply)) = rx.recv() {
                     let _ = reply.send(w.run(&actor, cmd));
                 }
             })
             .expect("spawn writer thread");
+        // Readers use their own connection: they must not run before the startup command committed.
+        let _ = ready_rx.recv();
         Pipeline { tx: std::sync::Mutex::new(Some(tx)), thread: std::sync::Mutex::new(Some(thread)) }
     }
 
