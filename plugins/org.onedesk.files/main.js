@@ -104,7 +104,6 @@ export default {
         const crumbs = (chain(path, roots) || [path]).map((p) => ({
           label: baseName(p),
           key: p,
-          tree: "org.onedesk.files:files",
         }));
         const head = { title: name, icon: "file-text", breadcrumb: crumbs };
         try {
