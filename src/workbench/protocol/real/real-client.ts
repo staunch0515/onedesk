@@ -1,6 +1,6 @@
 import type { ConnectionState, EventMessage, HelloResult, TreePage } from "../generated";
 import type { ProtocolClient } from "../client";
-import type { AuditFacets, AuditFilter, AuditRow, EnvOption, EnvView, HistoryEntry, ResolvedParam, SearchHit, CommandContext, CommandEffect, NewItem, PageContext, PageDescriptor, PageSaveResult, PluginGrants, Resource, TreeInfo, TreeNode, WorkspaceInfo } from "../types";
+import type { PageEventResult, PaletteCommand, PluginDetail, Run, ViewNode, AuditFacets, AuditFilter, AuditRow, EnvOption, EnvView, HistoryEntry, ResolvedParam, SearchHit, CommandContext, CommandEffect, NewItem, PageContext, PageDescriptor, PageSaveResult, PluginGrants, Resource, TreeInfo, TreeNode, WorkspaceInfo } from "../types";
 import { EventBus } from "./event-bus";
 import { KernelError } from "../errors";
 import type { Transport } from "./transport";
@@ -18,13 +18,27 @@ export interface KernelClient {
   audit: ProtocolClient["audit"];
   tree: Pick<ProtocolClient["tree"], "list" | "children" | "path" | "move" | "createGroup" | "rename">;
   resource: Pick<ProtocolClient["resource"], "get" | "delete" | "history" | "restore" | "listDeleted" | "undelete" | "purge" | "setFavorite">;
-  page: Pick<ProtocolClient["page"], "resolve" | "save">;
-  command: Pick<ProtocolClient["command"], "newItems" | "execute">;
-  plugin: Pick<ProtocolClient["plugin"], "grants" | "grantFolder" | "revokeFolder">;
+  page: Pick<ProtocolClient["page"], "resolve" | "save" | "event">;
+  run: ProtocolClient["run"];
+  command: ProtocolClient["command"];
+  plugin: Pick<ProtocolClient["plugin"], "grants" | "grantFolder" | "revokeFolder" | "get" | "setEnabled" | "setSetting" | "reload">;
   ui: ProtocolClient["ui"];
   events: ProtocolClient["events"];
   /** Connection state as last reported by the main process. */
   connection(): ConnectionState;
+}
+
+/**
+ * `open` effects from the kernel may carry the initial page state as `params` / `envId` (§9.1);
+ * the shell keeps it under `state`.
+ */
+export function normalizeEffects(effects: CommandEffect[]): CommandEffect[] {
+  return effects.map((e) => {
+    const open = e as { type: string; target?: string; params?: Record<string, string>; envId?: string; state?: unknown };
+    if (open.type !== "open" || (open.params === undefined && open.envId === undefined)) return e;
+    const { params, envId, ...rest } = open;
+    return { ...rest, state: { ...(params ? { params } : {}), ...(envId !== undefined ? { envId } : {}) } } as CommandEffect;
+  });
 }
 
 /** Removes `null` and `undefined` members: the kernel's optional fields are absent, not null. */
@@ -100,15 +114,31 @@ export async function createKernelClient(transport: Transport, locale?: () => st
     page: {
       resolve: (target, context) => call<PageDescriptor>("page.resolve", compact({ target, context: pageContext(context, locale?.()) })),
       save: (target, changes, basis, context) => call<PageSaveResult>("page.save", compact({ target, changes, basis, context: pageContext(context, locale?.()) })),
+      event: async (target, event, context) => call<PageEventResult>("page.event", compact({ target, event, context: pageContext(context, locale?.()) })),
+    },
+    run: {
+      start: (request) => call<string>("run.start", compact({ action: request.action, resourceId: request.resourceId, target: request.target, tabId: request.tabId, envId: request.envId, input: request.input, params: request.params })),
+      get: async (id) => ((await call<Run | null>("run.get", { id })) ?? null),
+      cancel: async (id) => void (await call("run.cancel", { id })),
+      listFor: (resourceId) => call<Run[]>("run.listFor", { id: resourceId }),
+      tasks: () => call<Run[]>("run.tasks"),
+      clearFinished: async () => void (await call("run.clearFinished")),
+      render: (id, tabId) => call<ViewNode[]>("run.render", { id, tabId }),
+      setKept: async (id, kept) => void (await call("run.setKept", { id, kept })),
     },
     command: {
+      palette: () => call<PaletteCommand[]>("command.palette"),
       newItems: () => call<NewItem[]>("command.newItems"),
-      execute: (id, context: CommandContext) => call<CommandEffect[]>("command.execute", { id, context: compact({ locale: locale?.(), ...context }) }),
+      execute: async (id, context: CommandContext) => normalizeEffects(await call<CommandEffect[]>("command.execute", { id, context: compact({ locale: locale?.(), ...context }) })),
     },
     plugin: {
       grants: (plugin) => call<PluginGrants>("plugin.grants", { plugin }),
       grantFolder: (plugin, path) => call<PluginGrants>("plugin.grantFolder", { plugin, path }),
       revokeFolder: (plugin, path) => call<PluginGrants>("plugin.revokeFolder", { plugin, path }),
+      get: async (id) => ((await call<PluginDetail | null>("plugin.get", { plugin: id })) ?? null),
+      setEnabled: async (id, enabled) => void (await call("plugin.setEnabled", { plugin: id, enabled })),
+      setSetting: async (id, name, value) => void (await call("plugin.setSetting", { plugin: id, name, value })),
+      reload: async (id) => void (await call("plugin.reload", { plugin: id })),
     },
     ui: {
       get: async <T,>(key: string) => ((await call<T | null>("ui.get", { key })) ?? null) as T | null,

@@ -1454,6 +1454,7 @@ export function createMockClient(options: MockOptions = {}): ProtocolClient {
             ? { state: "error", message: p.bad!.reason }
             : { state: "loaded", at: Date.now() - 2 * HOUR, ms: p.loadMs || 18 },
       resourceCount: Object.values(db.rows).filter((r) => live(r) && kinds.includes(r.kind)).length,
+      folders: [...(demoGrants.get(p.id) ?? [])],
     };
   }
 

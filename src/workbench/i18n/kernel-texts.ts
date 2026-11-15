@@ -32,6 +32,15 @@ export const KERNEL_LABELS: Record<Locale, Table> = {
     "deleted.purge": "Delete permanently…",
     "open.audit": "Open audit log",
     "open.deleted": "Open deleted items",
+    "plugin.enable": "Enable plugin",
+    "plugin.disable": "Disable plugin",
+    "run.cancel": "Cancel run",
+    "run.keep": "Keep this run",
+    "run.unkeep": "Stop keeping this run",
+    "run.openResource": "Open the resource",
+    "run.reuse": "Run again with these parameters",
+    plugins: "Plugins",
+    runs: "Run records",
     "deleted.purge.confirm":
       "Delete this permanently? This cannot be undone. The resource and its whole history are erased. Copies in the startup snapshots (backups/) may remain there until they are rotated out.",
   },
@@ -59,6 +68,15 @@ export const KERNEL_LABELS: Record<Locale, Table> = {
     "deleted.purge": "永久删除…",
     "open.audit": "打开审计",
     "open.deleted": "打开已删除",
+    "plugin.enable": "启用插件",
+    "plugin.disable": "停用插件",
+    "run.cancel": "取消运行",
+    "run.keep": "保留这次运行",
+    "run.unkeep": "不再保留这次运行",
+    "run.openResource": "打开所属资源",
+    "run.reuse": "用这些参数再运行",
+    plugins: "插件",
+    runs: "运行记录",
     "deleted.purge.confirm":
       "永久删除？此操作不可撤销：这条资源及其全部历史都会被清除。启动快照（backups/）里可能仍保留一份，直到被轮换掉。",
   },
@@ -134,6 +152,8 @@ export const AUDIT_OPERATIONS: Record<Locale, Table> = {
     "params.unset": "Remove parameter value",
     "params.acknowledge": "Accept inherited value",
     "workspace.setConfig": "Change configuration",
+    "plugin.setSetting": "Change plugin setting",
+    "run.cancel": "Cancel run",
     "workspace.startup": "Workspace startup",
     "resource.move": "Move resource",
     "file.write": "Write file",
@@ -161,6 +181,8 @@ export const AUDIT_OPERATIONS: Record<Locale, Table> = {
     "params.unset": "移除参数值",
     "params.acknowledge": "接受继承值",
     "workspace.setConfig": "修改配置",
+    "plugin.setSetting": "修改插件设置",
+    "run.cancel": "取消运行",
     "workspace.startup": "工作区启动",
     "resource.move": "移动资源",
     "file.write": "写入文件",
@@ -179,4 +201,30 @@ export const AUDIT_OPERATIONS: Record<Locale, Table> = {
 export const KERNEL_CONFIRMS: Record<Locale, Record<string, { title: string; ok: string }>> = {
   "en-US": { "deleted.purge.confirm": { title: "Delete permanently?", ok: "Delete permanently" } },
   "zh-CN": { "deleted.purge.confirm": { title: "永久删除？", ok: "永久删除" } },
+};
+
+/** Plugin permission ids as words. */
+export const PERMISSIONS: Record<Locale, Table> = {
+  "en-US": { files: "Files in granted folders", storage: "Plugin storage", params: "Read parameters", settings: "Read settings", resources: "Own resources" },
+  "zh-CN": { files: "已授权文件夹里的文件", storage: "插件存储", params: "读取参数", settings: "读取设置", resources: "自己的资源" },
+};
+
+/** Run failure codes the kernel reports (`Run.error.code`) as words; other codes keep the message they came with. */
+export const RUN_ERRORS: Record<Locale, Table> = {
+  "en-US": {
+    pluginDisabled: "The plugin is disabled. Enable it to run.",
+    interrupted: "The run was interrupted because the workspace service restarted.",
+    badOutput: "The plugin returned output that does not fit its declaration.",
+    timeout: "The run took too long and was stopped.",
+    unknownAction: "This action does not exist.",
+    badInput: "The input is not valid for this action.",
+  },
+  "zh-CN": {
+    pluginDisabled: "插件已停用，启用后才能运行。",
+    interrupted: "工作区服务重启，这次运行被中断。",
+    badOutput: "插件返回的输出与它的声明不符。",
+    timeout: "运行时间太长，已停止。",
+    unknownAction: "没有这个动作。",
+    badInput: "输入不符合这个动作的要求。",
+  },
 };

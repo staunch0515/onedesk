@@ -6,11 +6,14 @@
  * The UI knows no resource kind: it draws what these shapes describe.
  */
 import type {
+  ActionDecl as KernelActionDecl,
   CommandContext as KernelCommandContext,
   CommandEffect as KernelEffect,
-  FieldOption,
+  PluginDetail as KernelPluginDetail,
+  PluginPermission as KernelPluginPermission,
+  Run as KernelRun,
+  RunOutput as KernelRunOutput,
   Label,
-  OutputColumn,
   PageContext as KernelPageContext,
   PageDescriptor as KernelPageDescriptor,
   Resource as KernelResource,
@@ -18,7 +21,6 @@ import type {
 } from "./generated";
 
 export type {
-  ActionDecl,
   ActionRole,
   AuditFacets,
   AuditFilter,
@@ -33,6 +35,16 @@ export type {
   HistoryEntry,
   InheritedValue,
   NamedRef,
+  PaletteCommand,
+  PluginLoad,
+  PluginLoadState,
+  PluginProvides,
+  PluginSetting,
+  PluginVersion,
+  RunError,
+  RunProgress,
+  RunStatus,
+  RunSummary,
   ParamType,
   ResolvedParam,
   SearchHit,
@@ -74,6 +86,12 @@ export type Resource = Omit<KernelResource, "body"> & { body: Record<string, unk
 export type PageDescriptor = Omit<KernelPageDescriptor, "view" | "values"> & { view: ViewNode[]; values: Record<string, unknown> };
 
 export type PageSaveResult = { page: PageDescriptor };
+
+/**
+ * Round 3: an action declaration may name the plugin action it runs (`action`, full id) and ask for a
+ * confirmation before running (`confirm`). Becomes the generated type once the protocol has the fields (round3-plan §6).
+ */
+export type ActionDecl = KernelActionDecl & { action?: string; confirm?: Label };
 
 /** Demo only: the workspace switcher list (the kernel has one workspace in week 1). */
 export interface WorkspaceEntry {
@@ -119,91 +137,17 @@ export interface PageEventResult {
 
 /* ------------------------------------------------------------------ params & environments (§6) */
 
-/* ------------------------------------------------------------------ plugins (§7) */
+/* ------------------------------------------------------------------ plugins (§7) and runs (§8) */
 
-export interface PluginVersion {
-  version: string;
-  installedAt: number;
-  active: boolean;
-  pinned: boolean;
-  notes: string;
-}
-
-export interface PluginSetting {
-  name: string;
-  label: Label;
-  kind: "text" | "number" | "boolean" | "enum";
-  value: string;
-  options?: FieldOption[];
-  hint?: Label;
-}
-
-export interface PluginPermission {
-  id: string;
-  label: Label;
-  detail: string;
-  granted: boolean;
-  required: boolean;
-}
-
-export interface PluginDetail {
-  id: string;
-  name: Label;
-  icon: string;
-  description: Label;
-  author: string;
-  license: string;
-  homepage: string;
-  enabled: boolean;
-  builtin: boolean;
-  versions: PluginVersion[];
-  settings: PluginSetting[];
-  permissions: PluginPermission[];
-  provides: { kinds: Label[]; actions: Label[]; trees: Label[]; resultTabs: Label[]; other: Label[] };
-  load: { state: "loaded" | "disabled" | "error" | "not-installed"; message?: string; at?: number; ms?: number };
-  resourceCount: number;
-}
-
-/* ------------------------------------------------------------------ runs (§8) */
-
-export type RunStatus = "running" | "success" | "error" | "cancelled";
+export type RunOutput = KernelRunOutput;
+/** Table cells the grids draw; the kernel sends any JSON value, grids show it as text. */
 export type OutputCell = string | number | null;
-
-export type RunOutput =
-  | { type: "table"; columns: OutputColumn[]; rows: OutputCell[][]; total: number; truncated: boolean }
-  | { type: "text"; text: string }
-  | { type: "none" };
-
-export interface Run {
-  id: string;
-  /** Short running number shown to the user. */
-  seq: number;
-  title: string;
-  icon: string;
-  resourceId?: string;
-  action: string;
-  actionLabel: Label;
-  tabId?: string;
-  envId?: string;
-  envName?: string;
-  actor: string;
-  source: "user" | "scheduled" | "ai" | "system";
-  startedAt: number;
-  endedAt?: number;
-  status: RunStatus;
-  params: Record<string, string>;
-  /** What was actually used, possibly unsaved (§8 input snapshot). */
-  input: Record<string, unknown>;
-  progress?: { fraction?: number; message?: string };
-  summary?: { rows?: number; message?: string; durationMs?: number };
-  error?: { code: string; message: string; detail?: string; hint?: string };
-  /** Output is carried by `run.get`; lists leave it out. */
-  output?: RunOutput;
-  kept: boolean;
-  /** Listed in the task panel until cleared. */
-  inTaskPanel: boolean;
-  cancellable: boolean;
-}
+/** The kernel's permission entry plus the demo's own label (the kernel gives an id; the shell words it). */
+export type PluginPermission = KernelPluginPermission & { label?: Label };
+/** UI-side `PluginDetail` using the permission superset above. */
+export type PluginDetail = Omit<KernelPluginDetail, "permissions"> & { permissions: PluginPermission[] };
+/** UI-side superset of the generated `Run`: `input` keeps loose JSON values. */
+export type Run = Omit<KernelRun, "input"> & { input: Record<string, unknown> };
 
 export interface RunRequest {
   action: string;
@@ -217,15 +161,6 @@ export interface RunRequest {
 }
 
 /* ------------------------------------------------------------------ search, audit, commands */
-
-export interface PaletteCommand {
-  id: string;
-  label: Label;
-  icon?: string;
-  group: Label;
-  shortcut?: string[];
-  keywords?: string[];
-}
 
 /* ------------------------------------------------------------------ events (§12) */
 

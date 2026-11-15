@@ -36,11 +36,22 @@ function fakeKernel(): KernelClient {
       setFavorite: async () => undefined,
     },
     page: {
+      event: async () => ({ message: "kernel event" }),
       resolve: async (target) => ({ target, title: "from kernel" }) as never,
       save: async (target) => ({ page: { target, title: "saved by kernel" } as never }),
     },
-    command: { newItems: async () => [{ id: "new:k", label: "k", icon: "file" }], execute: async () => [{ type: "reload" }] },
-    plugin: { grants: async (plugin) => ({ plugin, folders: [] }), grantFolder: async (plugin, path) => ({ plugin, folders: [path] }), revokeFolder: async (plugin) => ({ plugin, folders: [] }) },
+    run: {
+      start: async () => "kernel-run",
+      get: async (id) => ({ id, status: "running" }) as never,
+      cancel: async () => undefined,
+      listFor: async () => [],
+      tasks: async () => [{ id: "kernel-run" } as never],
+      clearFinished: async () => undefined,
+      render: async () => [],
+      setKept: async () => undefined,
+    },
+    command: { palette: async () => [{ id: "k:cmd", label: "k", group: "k" }], newItems: async () => [{ id: "new:k", label: "k", icon: "file" }], execute: async () => [{ type: "reload" }] },
+    plugin: { get: async (id: string) => ({ id } as never), setEnabled: async () => undefined, setSetting: async () => undefined, reload: async () => undefined, grants: async (plugin) => ({ plugin, folders: [] }), grantFolder: async (plugin, path) => ({ plugin, folders: [path] }), revokeFolder: async (plugin) => ({ plugin, folders: [] }) },
     ui: { get: async <T,>(k: string) => (ui.get(k) ?? null) as T | null, set: async (k, v) => void ui.set(k, v) },
     events: { subscribe: () => () => undefined },
     connection: () => "restored",
@@ -162,5 +173,33 @@ describe("mixed client", () => {
     expect(saved).toContain("resource:nowhere");
     expect(mockSaves).toBe(0);
     expect(client.demo?.target("resource:nowhere")).toBe(false);
+  });
+
+  it("runs kernel resources in the kernel and demo resources in the demo, and follows each run to its side", async () => {
+    const client = createMixedClient(fakeKernel(), createMockClient({ fresh: true, quiet: true }));
+    await client.tree.list();
+    const base = { action: "run", tabId: "t1", envId: null, input: {}, params: {} };
+    const kernelRun = await client.run.start({ ...base, target: "resource:kernel-1", resourceId: "kernel-1" });
+    expect(kernelRun).toBe("kernel-run");
+    expect((await client.run.get(kernelRun))?.status).toBe("running");
+    const demo = (await client.tree.children("demo:resources", null)).nodes.find((n) => n.target?.startsWith("resource:") && n.kind.endsWith(":query"));
+    if (demo?.target) {
+      const demoRun = await client.run.start({ ...base, target: demo.target, resourceId: demo.target.slice(9) });
+      expect(demoRun).not.toBe("kernel-run");
+      expect((await client.run.get(demoRun))?.id).toBe(demoRun);
+      expect(client.demo?.target(`run:${demoRun}`)).toBe(true);
+    }
+    expect(client.demo?.target("run:kernel-run")).toBe(false);
+    expect((await client.run.tasks())[0]?.id).toBe("kernel-run");
+  });
+
+  it("takes plugin pages, plugin state and the command palette from the kernel", async () => {
+    const client = createMixedClient(fakeKernel(), createMockClient({ fresh: true, quiet: true }));
+    await client.tree.list();
+    expect((await client.page.resolve("plugin:org.example")).title).toBe("from kernel");
+    expect((await client.plugin.get("org.example"))?.id).toBe("org.example");
+    expect((await client.command.palette())[0]?.id).toBe("k:cmd");
+    expect((await client.page.event("resource:kernel-1", "tidy", {})).message).toBe("kernel event");
+    expect(client.demo?.target("plugin:org.example")).toBe(false);
   });
 });
