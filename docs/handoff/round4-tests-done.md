@@ -27,3 +27,10 @@
 ## 第二阶段进度（协调会话 2026-11-16 记）
 
 旧测试会话没有提交就停在运行中；协调会话把它工作树里未提交的修改原样带进了协调分支（提交“tests: 带入旧测试会话未提交的第二阶段进度”）：HTTP 插件清单的 `secrets: true`（D318）与相应的 `main.js`/语言文件/vitest 修改、`0.2.0` 夹具的 `upgradesFrom` 改成带逗号的写法（内核用 Rust `semver` 的范围语法，`">=0.1.0, <0.2.0"`；不带逗号被拒 `badUpgradesFrom`）、`e2e/kernel-host.ts`、`e2e/round3.spec.ts`、`e2e/round4.spec.ts`（约 2.3 万字节，**没跑过，状态不明**）。带入后 `pnpm exec vitest run plugins` 73 个通过。新测试会话从这里接着做：先跑一遍 `round4.spec.ts` 看哪些过、哪些没写。
+
+## 第二阶段结果（协调会话 2026-11-16）
+
+新测试会话没能自动开起来，协调会话自己把草稿跑通：`E2E_PORT=1437 pnpm exec playwright test e2e/round4.spec.ts` **13 个全部通过**，没有 `test.fixme`。
+- 草稿第一遍 9 过 1 败 2 未跑。失败的是“重定向到另一台服务器时不带密钥头”：按 D317 重定向到别的端口整个被拒，用例已过时，改写为“重定向到别的端口被拒、第二台服务器什么都没收到、审计原因 `hostNotAllowed`”。D316（跳到**已授权**的别的主机时丢掉密钥头）界面上到不了（`fromResources` 的一条资源只授权一个主机:端口），只有内核测试覆盖。
+- 新增一个用例：同一主机换端口被拒（D317）；草稿里新写、已保存资源里没有的密钥名被拒（`secretNotAllowed`，D318）。
+- 没覆盖：真钥匙串、https、桌面窗口。其余 e2e（`workbench`、`week1`、`round2`、`round3`）由完整 `pnpm check` 跑。

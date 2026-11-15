@@ -349,18 +349,46 @@ test("HTTP request: another host than the saved address is refused and the serve
   expect(seen).toEqual([]);
 });
 
-test("HTTP request: a redirect to another server does not carry the secret header", async ({ page }) => {
+test("HTTP request: a redirect to another port is refused (D317); the second server sees nothing", async ({ page }) => {
+  // The saved address grants 127.0.0.1:<portA> only. Server A redirects to server B on another port:
+  // every hop is checked again, so the run is denied and B never sees the request (nor the secret).
+  // (D316 — dropping secret headers on a redirect to an *allowed* other host — is covered by kernel tests:
+  // with fromResources a resource grants exactly one host:port, so the UI cannot reach that case.)
   seen.length = 0;
   await newRequest(page, "Redirected", urlA("/redirect"), "X-Plain: yes\nAuthorization: Bearer {{secret:api-token}}");
   await openKernel(page, host);
   await openRequest(page, "Redirected");
   await send(page).click();
-  await expect(page.getByRole("region", { name: "Result area" })).toContainText("landed on B", { timeout: 15_000 });
-  const first = seen.find((x) => x.url === "A/redirect")!;
-  const second = seen.find((x) => x.url === "B/landing")!;
-  expect(first.headers.authorization).toBe(`Bearer ${TOKEN2}`);
-  expect(second.headers.authorization).toBeUndefined();
-  expect(second.headers["x-plain"]).toBe("yes");
+  await expect(page.getByRole("region", { name: "Result area" })).toContainText(/denied/i, { timeout: 15_000 });
+  expect(seen.find((x) => x.url === "A/redirect")!.headers.authorization).toBe(`Bearer ${TOKEN2}`);
+  expect(seen.find((x) => x.url.startsWith("B/"))).toBeUndefined();
+  const denied = (await call<{ operation: string; result: string; detail: string }[]>(page, "audit.list", {})).find((x) => x.operation === "network.request" && x.result === "denied")!;
+  expect(denied.detail).toContain("hostNotAllowed");
+});
+
+test("HTTP request: the same host on another port is refused (D317), and a secret name written only in the draft is refused (D318)", async ({ page }) => {
+  await newRequest(page, "Strict", urlA("/ok"), "Authorization: Bearer {{secret:api-token}}");
+  await openKernel(page, host);
+  await call(page, "secrets.set", { name: "draft-only", value: "draft-only-value-91c2" });
+  try {
+    await openRequest(page, "Strict");
+    seen.length = 0;
+    // unsaved: same host, the other server's port
+    await page.getByRole("textbox", { name: "Address", exact: true }).fill(`http://127.0.0.1:${portB}/landing`);
+    await send(page).click();
+    await expect(page.getByRole("region", { name: "Result area" })).toContainText(/denied/i, { timeout: 15_000 });
+    expect(seen).toEqual([]);
+    let last = (await call<{ operation: string; result: string; detail: string }[]>(page, "audit.list", {})).find((x) => x.operation === "network.request")!;
+    expect(last.detail).toContain("hostNotAllowed");
+    // unsaved: back to the granted address, but a secret name the saved resource never mentioned
+    await page.getByRole("textbox", { name: "Address", exact: true }).fill(urlA("/ok"));
+    await page.getByRole("textbox", { name: "Headers", exact: true }).fill("Authorization: Bearer {{secret:draft-only}}");
+    await send(page).click();
+    await expect.poll(async () => (await call<{ operation: string; result: string; detail: string }[]>(page, "audit.list", {})).find((x) => x.operation === "network.request")!.detail, { timeout: 15_000 }).toContain("secretNotAllowed");
+    expect(seen).toEqual([]);
+  } finally {
+    await call(page, "secrets.delete", { name: "draft-only" });
+  }
 });
 
 test("network.allow in the workspace configuration narrows the allowed hosts; the environment page marks what the upper layer forbids", async ({ page }) => {
