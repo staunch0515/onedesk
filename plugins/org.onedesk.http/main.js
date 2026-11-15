@@ -104,7 +104,7 @@ export default {
             layout: "strip",
             fields: [
               withRO({ name: "method", label: ctx.t("field.method"), kind: "enum", bind: "body.method", options: METHODS.map((m) => ({ value: m, label: m })) }),
-              withRO({ name: "url", label: ctx.t("field.url"), kind: "text", bind: "body.url", placeholder: ctx.t("field.url.placeholder") }),
+              withRO({ name: "url", label: ctx.t("field.url"), kind: "text", bind: "body.url", placeholder: ctx.t("field.url.placeholder"), fill: true }),
             ],
           },
         ];
