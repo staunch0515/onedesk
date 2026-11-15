@@ -31,6 +31,9 @@ fn node_resource(c: &CommandContext) -> KResult<String> {
 impl Inner {
     pub async fn command(&self, p: CommandExecuteParams, client: Option<String>) -> KResult<Vec<CommandEffect>> {
         let c = p.context;
+        if let Some(r) = self.command3(&p.id, &c).await {
+            return r;
+        }
         let arg = |k: &str| c.args.as_ref().and_then(|a| a.get(k)).and_then(Value::as_str).map(String::from);
         match p.id.as_str() {
             "node.open" => {
@@ -154,7 +157,10 @@ impl Inner {
             }
             id if id.starts_with("new:") => {
                 let kind = &id[4..];
-                self.registry.kind(kind).ok_or_else(|| not_found("kind"))?;
+                let (owner, _) = self.registry.kind(kind).ok_or_else(|| not_found("kind"))?;
+                if !self.plugin_enabled(&owner.id) {
+                    return Err(denied("pluginDisabled"));
+                }
                 let parent = match &c.node_key {
                     Some(k) => self.read(|conn| store::get(conn, k))?.filter(|r| r.kind == KIND_GROUP).map(|r| r.id),
                     None => None,
@@ -169,6 +175,9 @@ impl Inner {
                 let (pid, name) = Registry::split(id).ok_or_else(|| not_found("command"))?;
                 let plugin = self.registry.plugin(pid).ok_or_else(|| not_found("command"))?;
                 plugin.command(name).ok_or_else(|| not_found("command"))?;
+                if !self.plugin_enabled(pid) {
+                    return Err(denied("pluginDisabled"));
+                }
                 let ctx = json!({ "target": c.target, "locale": c.locale });
                 let context = serde_json::to_value(&c).map_err(internal)?;
                 let out = self.call_plugin(pid, "commands", name, "", json!([ctx, context]), client).await?;

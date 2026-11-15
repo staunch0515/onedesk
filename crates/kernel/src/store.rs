@@ -17,6 +17,12 @@ pub const TREE_CONFIG: &str = "config";
 /// Lists the kernel computes (D279); not stored trees.
 pub const TREE_FAVORITES: &str = "favorites";
 pub const TREE_DELETED: &str = "deleted";
+/// Round 3 lists (D291): packages and their state; the latest runs.
+pub const TREE_PLUGINS: &str = "plugins";
+pub const TREE_RUNS: &str = "runs";
+/// Node kinds of those lists (not resource kinds).
+pub const KIND_PLUGIN: &str = "core:plugin";
+pub const KIND_RUN: &str = "core:run";
 
 /// One `resources` row; serialized as the revision snapshot.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

@@ -17,6 +17,10 @@ pub enum Target {
     Node { tree: String, key: String },
     /// Shell pages the kernel only names (`core:audit`, `core:deleted`).
     Core(String),
+    /// `plugin:<id>`: the plugin page, drawn by the shell from `plugin.get`.
+    Plugin(String),
+    /// `run:<id>`: a past run, shown read-only with its input snapshot.
+    Run(String),
     Other,
 }
 
@@ -33,6 +37,12 @@ pub fn parse_target(t: &str) -> Target {
             .and_then(|(_, v)| url_decode(v))
             .filter(|v| !v.is_empty());
         return Target::New { kind: kind.to_string(), parent };
+    }
+    if let Some(p) = t.strip_prefix("plugin:").filter(|p| !p.is_empty()) {
+        return Target::Plugin(p.to_string());
+    }
+    if let Some(r) = t.strip_prefix("run:").filter(|r| !r.is_empty()) {
+        return Target::Run(r.to_string());
     }
     if let Some(p) = t.strip_prefix("core:") {
         if p == "audit" || p == "deleted" {
@@ -192,12 +202,26 @@ fn actions(p: &Plugin, page: &str) -> Vec<ActionDecl> {
                     shortcut: a.shortcut.clone(),
                     role: a.role,
                     disabled: None,
-                    action: None,
-                    confirm: None,
+                    action: a.action.as_ref().map(|x| p.full(x)),
+                    confirm: a.action.as_deref().and_then(|x| p.action(x)).and_then(|d| d.confirm.as_deref()).map(|k| p.label(k)),
                 })
                 .collect()
         })
         .unwrap_or_default()
+}
+
+/// Manifest page settings the frame needs (D284): actions, result tabs, recompute, environment use.
+fn page_frame(d: &mut PageDescriptor, p: &Plugin, page: &str) {
+    d.actions = actions(p, page);
+    if let Some(pg) = p.page(page) {
+        d.recompute = pg.recompute;
+        d.uses_env = pg.uses_env;
+        d.result_tabs = pg
+            .result_tabs
+            .iter()
+            .map(|t| ResultTabDecl { id: t.id.clone(), label: p.label(&t.label), icon: t.icon.clone(), tab_type: t.tab_type })
+            .collect();
+    }
 }
 
 impl Inner {
@@ -211,6 +235,8 @@ impl Inner {
                 _ => Ok(missing(target)),
             },
             Target::Core(page) => Ok(core_page(target, &page)),
+            Target::Plugin(id) => Ok(self.resolve_plugin(target, &id)),
+            Target::Run(id) => self.resolve_run(target, &id, &cx, client).await,
             Target::New { kind, parent } => self.resolve_new(target, &kind, parent, &cx, client).await,
             Target::Node { tree, key } => self.resolve_node(target, &tree, &key, &cx, client).await,
             Target::Other => Ok(missing(target)),
@@ -236,10 +262,16 @@ impl Inner {
         &self,
         plugin: &Plugin,
         page: &str,
-        ctx: Value,
+        mut ctx: Value,
         client: Option<String>,
     ) -> KResult<RenderOut> {
-        let out = self.call_plugin(&plugin.id, "pages", page, "render", json!([ctx]), client).await?;
+        let env = ctx.get("envId").and_then(Value::as_str).map(String::from);
+        ctx["envId"] = json!(env);
+        let info = crate::sandbox::CallInfo { client, env_id: env, run_id: None };
+        let out = self
+            .call_plugin_with(&plugin.id, "pages", page, "render", json!([ctx]), info, None, None)
+            .await
+            .map_err(|e| e.to_protocol())?;
         serde_json::from_value::<RenderOut>(out).map_err(|e| bad_output(&plugin.id, e))
     }
 
@@ -285,10 +317,101 @@ impl Inner {
             return Ok(d);
         };
         let plugin = self.registry.plugin(&pid).ok_or_else(|| err_p(ErrorCode::PluginError, &[("reason", "notLoaded")]))?;
-        let ctx = json!({ "target": target, "resource": self.resource(r)?, "draft": cx.draft, "locale": cx.locale });
+        if meta.state == NodeState::Disabled {
+            // D290: the data stays; the page says the plugin is off and shows nothing editable.
+            d.read_only = true;
+            return Ok(d);
+        }
+        let ctx = json!({ "target": target, "resource": self.resource(r)?, "draft": cx.draft, "locale": cx.locale, "envId": cx.env_id });
         let out = self.render(plugin, &page, ctx, client).await?;
         d.values = binds(&out.view).into_iter().filter_map(|b| store::value_at(r, &b).map(|v| (b, v))).collect();
-        d.actions = actions(plugin, &page);
+        page_frame(&mut d, plugin, &page);
+        d.view = out.view;
+        Ok(d)
+    }
+
+    fn resolve_plugin(&self, target: &str, id: &str) -> PageDescriptor {
+        match self.registry.plugin(id) {
+            Some(p) => PageDescriptor {
+                title: p.text(&p.manifest.name, None),
+                icon: p.manifest.icon.clone(),
+                page: PageKind::Plugin,
+                state: if self.plugin_enabled(id) { NodeState::Ok } else { NodeState::Disabled },
+                ..blank(target)
+            },
+            None if self.rejected_for(id).is_some() => {
+                PageDescriptor { title: id.into(), icon: "puzzle".into(), page: PageKind::Plugin, state: NodeState::Broken, ..blank(target) }
+            }
+            None => missing(target),
+        }
+    }
+
+    /// A past run: its resource's page, read-only, with the input snapshot as values (§8, round 3 §3).
+    async fn resolve_run(&self, target: &str, id: &str, cx: &PageContext, client: Option<String>) -> KResult<PageDescriptor> {
+        let Some(run) = self.read(|c| store::run_get(c, id))? else { return Ok(missing(target)) };
+        let live = run.resource_id.as_deref().and_then(|r| self.read(|c| store::get(c, r)).ok().flatten());
+        let values: JsonMap = serde_json::from_value(run.input.clone()).unwrap_or_default();
+        let mut breadcrumb = match &live {
+            Some(r) => self.crumbs(r)?,
+            None => vec![],
+        };
+        breadcrumb.push(Crumb { label: format!("#{}", run.seq), icon: Some("history".into()), tree: None, key: None, target: None });
+        let mut d = PageDescriptor {
+            title: run.title.clone(),
+            icon: run.icon.clone(),
+            breadcrumb,
+            resource_id: live.as_ref().map(|r| r.id.clone()),
+            run_id: Some(run.id.clone()),
+            read_only: true,
+            has_info: live.is_some(),
+            values: values.clone(),
+            ..blank(target)
+        };
+        let Some((plugin, page)) = run.resource_kind.as_deref().and_then(|k| self.registry.kind(k)).and_then(|(p, k)| Some((p, k.page.clone()?)))
+        else {
+            return Ok(d);
+        };
+        d.kind_label = run.resource_kind.as_deref().map(|k| self.kind_meta(k).label);
+        if !self.plugin_enabled(&plugin.id) {
+            d.state = NodeState::Disabled;
+            return Ok(d);
+        }
+        // The resource as it was: the live one with the snapshot applied, or one made from the snapshot.
+        let mut row = live.clone().unwrap_or_else(|| Row {
+            id: run.resource_id.clone().unwrap_or_default(),
+            kind: run.resource_kind.clone().unwrap_or_default(),
+            plugin_version: Some(plugin.version.clone()),
+            tree: None,
+            parent_id: None,
+            pos: 0,
+            name: run.title.clone(),
+            description: String::new(),
+            tags: vec![],
+            body: JsonMap::new(),
+            origin: "original".into(),
+            origin_ref: None,
+            state: "ok".into(),
+            rev: 0,
+            created_at: 0,
+            created_by: String::new(),
+            updated_at: 0,
+            updated_by: String::new(),
+            deleted_at: None,
+        });
+        for (k, v) in &values {
+            if let Some(b) = k.strip_prefix("body.") {
+                row.body.insert(b.to_string(), v.clone());
+            } else if k == "name" {
+                if let Some(n) = v.as_str() {
+                    row.name = n.to_string();
+                }
+            }
+        }
+        let protocol_run = self.run_to_protocol(run.clone(), false);
+        let ctx = json!({ "target": target, "resource": self.resource(&row)?, "draft": values, "run": protocol_run,
+                          "locale": cx.locale, "envId": run.env_id });
+        let out = self.render(plugin, &page, ctx, client).await?;
+        page_frame(&mut d, plugin, &page);
         d.view = out.view;
         Ok(d)
     }
@@ -302,6 +425,9 @@ impl Inner {
         client: Option<String>,
     ) -> KResult<PageDescriptor> {
         let Some((plugin, decl)) = self.registry.kind(kind) else { return Ok(missing(target)) };
+        if !self.plugin_enabled(&plugin.id) {
+            return Ok(PageDescriptor { state: NodeState::Disabled, read_only: true, ..missing(target) });
+        }
         let Some(page) = decl.page.clone() else { return Ok(missing(target)) };
         let name = decl.new_name.as_deref().map(|k| plugin.text(k, cx.locale.as_deref())).unwrap_or_default();
         let draft_row = Row {
@@ -334,7 +460,7 @@ impl Inner {
         };
         breadcrumb.push(Crumb { label: name.clone(), icon: Some(decl.icon.clone()), tree: None, key: None, target: None });
         let resource = self.resource(&draft_row)?;
-        let ctx = json!({ "target": target, "resource": resource, "draft": cx.draft, "locale": cx.locale });
+        let ctx = json!({ "target": target, "resource": resource, "draft": cx.draft, "locale": cx.locale, "envId": cx.env_id });
         let out = self.render(plugin, &page, ctx, client).await?;
         let values = binds(&out.view).into_iter().filter_map(|b| store::value_at(&draft_row, &b).map(|v| (b, v))).collect();
         Ok(PageDescriptor {
@@ -346,6 +472,8 @@ impl Inner {
             has_info: true,
             values,
             view: out.view,
+            recompute: plugin.page(&page).is_some_and(|p| p.recompute),
+            uses_env: plugin.page(&page).is_some_and(|p| p.uses_env),
             ..blank(target)
         })
     }
@@ -359,11 +487,14 @@ impl Inner {
         client: Option<String>,
     ) -> KResult<PageDescriptor> {
         let Some((plugin, decl)) = self.registry.tree(tree) else { return Ok(missing(target)) };
+        if !self.plugin_enabled(&plugin.id) {
+            return Ok(PageDescriptor { state: NodeState::Disabled, read_only: true, ..missing(target) });
+        }
         let Some(page) = decl.page.clone() else { return Ok(missing(target)) };
         if decl.source != TreeSource::Provided {
             return Ok(missing(target));
         }
-        let ctx = json!({ "target": target, "node": { "tree": tree, "key": key }, "draft": cx.draft, "locale": cx.locale });
+        let ctx = json!({ "target": target, "node": { "tree": tree, "key": key }, "draft": cx.draft, "locale": cx.locale, "envId": cx.env_id });
         let out = self.render(plugin, &page, ctx, client).await?;
         Ok(PageDescriptor {
             title: out.title.unwrap_or_else(|| key.to_string()),
@@ -461,7 +592,7 @@ impl Inner {
                 }
                 Ok(PageSaveResult { page })
             }
-            Target::Core(_) | Target::Other => Err(not_found("target")),
+            Target::Core(_) | Target::Plugin(_) | Target::Run(_) | Target::Other => Err(not_found("target")),
         }
     }
 }

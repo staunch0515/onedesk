@@ -30,6 +30,7 @@ pub fn test_config() -> KernelConfig {
             call_timeout: Duration::from_secs(5),
             ..SandboxConfig::default()
         },
+        action_timeout: Duration::from_secs(5),
     }
 }
 

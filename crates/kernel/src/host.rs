@@ -14,6 +14,10 @@ use crate::sandbox::{CallInfo, HostApi, HostFuture};
 use crate::store;
 use crate::util::*;
 
+pub const MAX_SLEEP_MS: u64 = 10_000;
+pub const MAX_STORAGE_VALUE: usize = 256 * 1024;
+pub const MAX_STORAGE_KEY: usize = 200;
+
 pub struct PluginHost {
     pub kernel: Weak<Inner>,
     pub plugin: String,
@@ -46,6 +50,21 @@ impl Inner {
             "resources" => self.host_resources(plugin, op, &args).await,
             "files" => self.host_files(plugin, op, &args).await,
             "ui" => self.host_ui(info, op, &args),
+            "params" => self.host_params(info, op, &args),
+            "storage" => self.host_storage(plugin, op, &args).await,
+            "settings" => self.host_settings(plugin, op, &args),
+            "util" if op == "sleep" => {
+                // D287: the engine has no timers. Cancellation ends the wait (host_call_inner).
+                let ms = args.get(0).and_then(Value::as_f64).unwrap_or(0.0).clamp(0.0, MAX_SLEEP_MS as f64) as u64;
+                tokio::time::sleep(std::time::Duration::from_millis(ms)).await;
+                Ok(Value::Null)
+            }
+            "runs" if op == "progress" => {
+                if let Some(run) = &info.run_id {
+                    self.run_progress(run, args.get(0).and_then(Value::as_f64), args.get(1).and_then(Value::as_str).map(String::from)).await;
+                }
+                Ok(Value::Null)
+            }
             _ => Err(err_p(ErrorCode::UnknownMethod, &[("method", method)])),
         };
         // A refused call is audited on its own (§4.3). Refusals inside the pipeline never happen
@@ -239,6 +258,69 @@ impl Inner {
             }
             _ => Err(err_p(ErrorCode::UnknownMethod, &[("method", &format!("files.{op}"))])),
         }
+    }
+
+    /* ---------------------------------------------------------------- params, storage, settings (D286) */
+
+    fn host_params(&self, info: &CallInfo, op: &str, args: &Value) -> KResult<Value> {
+        if op != "get" {
+            return Err(err_p(ErrorCode::UnknownMethod, &[("method", &format!("params.{op}"))]));
+        }
+        let name = arg_str(args, 0, "name")?;
+        let r = self.resolve_param(ParamsResolveParams { env_id: info.env_id.clone(), name })?;
+        Ok(json!({ "found": r.found, "value": r.value, "sourceName": r.source_name }))
+    }
+
+    async fn host_storage(&self, plugin: &Plugin, op: &str, args: &Value) -> KResult<Value> {
+        let (id, ver) = (plugin.id.as_str(), plugin.version.as_str());
+        let key = || -> KResult<String> {
+            let k = arg_str(args, 0, "key")?;
+            if k.is_empty() || k.chars().count() > MAX_STORAGE_KEY {
+                return Err(invalid("badKey"));
+            }
+            Ok(k)
+        };
+        match op {
+            "get" => {
+                let k = key()?;
+                let v = self.read(|c| store::storage_get(c, id, ver, &k))?;
+                Ok(v.and_then(|s| serde_json::from_str(&s).ok()).unwrap_or(Value::Null))
+            }
+            "set" => {
+                let k = key()?;
+                let v = arg(args, 1);
+                let text = v.to_string();
+                if text.len() > MAX_STORAGE_VALUE {
+                    return Err(invalid("tooLarge"));
+                }
+                let value = if v.is_null() { None } else { Some(text) };
+                self.pipeline
+                    .execute(plugin.actor(), Command::Storage { plugin: id.into(), version: ver.into(), key: k, value })
+                    .await?;
+                Ok(Value::Null)
+            }
+            "remove" => {
+                let k = key()?;
+                self.pipeline
+                    .execute(plugin.actor(), Command::Storage { plugin: id.into(), version: ver.into(), key: k, value: None })
+                    .await?;
+                Ok(Value::Null)
+            }
+            "keys" => Ok(json!(self.read(|c| store::storage_keys(c, id, ver))?)),
+            _ => Err(err_p(ErrorCode::UnknownMethod, &[("method", &format!("storage.{op}"))])),
+        }
+    }
+
+    fn host_settings(&self, plugin: &Plugin, op: &str, args: &Value) -> KResult<Value> {
+        if op != "get" {
+            return Err(err_p(ErrorCode::UnknownMethod, &[("method", &format!("settings.{op}"))]));
+        }
+        let name = arg_str(args, 0, "name")?;
+        // Only what its own manifest declares.
+        if plugin.setting(&name).is_none() {
+            return Err(denied("undeclaredSetting"));
+        }
+        Ok(json!(self.setting_value(plugin, &name)))
     }
 
     /* ---------------------------------------------------------------- ui */
