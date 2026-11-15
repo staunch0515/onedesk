@@ -1,0 +1,12 @@
+{
+  "plugin.name": "Files",
+  "plugin.description": "Browse authorized folders and edit text files.",
+  "tree.files": "Files",
+  "action.save": "Save",
+  "field.content": "Content",
+  "reason.tooLarge": "This file is too large to edit here (limit 2 MB).",
+  "reason.notText": "This file is not UTF-8 text, so it cannot be edited here.",
+  "reason.denied": "This file is outside the folders you authorized.",
+  "reason.notFound": "This file no longer exists.",
+  "reason.failed": "This file cannot be opened."
+}

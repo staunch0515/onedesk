@@ -1,0 +1,31 @@
+{
+  "id": "org.onedesk.files",
+  "version": "0.1.0",
+  "apiVersion": "2",
+  "name": "plugin.name",
+  "description": "plugin.description",
+  "icon": "folder-open",
+  "main": "main.js",
+  "requires": { "files": true },
+  "contributes": {
+    "pages": [
+      {
+        "id": "text",
+        "actions": [
+          { "id": "save", "role": "save", "label": "action.save", "icon": "save", "primary": true, "shortcut": ["Mod", "S"] }
+        ]
+      }
+    ],
+    "trees": [
+      {
+        "id": "files",
+        "label": "tree.files",
+        "icon": "folder-open",
+        "source": "provided",
+        "page": "text",
+        "toolbar": ["plugin.grantFolder"]
+      }
+    ],
+    "locales": { "en-US": "locales/en-US.json", "zh-CN": "locales/zh-CN.json" }
+  }
+}

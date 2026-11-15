@@ -1,0 +1,67 @@
+/** Test helper (not a plugin): mirrors the kernel's strict ViewNode validation. */
+import type { ViewNode } from "../../src/workbench/protocol/generated";
+
+const FIELD_KEYS = new Set(["name", "label", "kind", "bind", "param", "options", "presets", "fill", "language", "hint", "placeholder", "envValue", "envSource", "readOnly"]);
+const KINDS = new Set(["text", "longtext", "code", "number", "boolean", "date", "datetime", "enum", "secret"]);
+const NODE_KEYS: Record<string, string[]> = {
+  form: ["type", "id", "layout", "label", "fields"],
+  text: ["type", "id", "text", "mono", "language", "tone"],
+  table: ["type", "id", "columns", "rows", "rowTargets"],
+  link: ["type", "id", "label", "target"],
+};
+
+const isLabel = (l: unknown) =>
+  typeof l === "string" || (typeof l === "object" && l !== null && Object.values(l).every((v) => typeof v === "string"));
+
+/** Returns a list of problems; empty = valid. */
+export function checkView(view: unknown): string[] {
+  const errs: string[] = [];
+  if (!Array.isArray(view)) return ["view is not an array"];
+  for (const n of view as Record<string, unknown>[]) {
+    const keys = NODE_KEYS[String(n.type)];
+    if (!keys) {
+      errs.push(`unknown node type ${String(n.type)}`);
+      continue;
+    }
+    for (const k of Object.keys(n)) if (!keys.includes(k)) errs.push(`unknown node field ${k}`);
+    if (typeof n.id !== "string") errs.push("node without id");
+    if (n.type === "form") {
+      if (n.layout !== "strip" && n.layout !== "stack") errs.push("bad layout");
+      for (const f of (n.fields as Record<string, unknown>[]) ?? []) {
+        for (const k of Object.keys(f)) if (!FIELD_KEYS.has(k)) errs.push(`unknown field key ${k}`);
+        if (!KINDS.has(String(f.kind))) errs.push(`bad field kind ${String(f.kind)}`);
+        if (typeof f.name !== "string" || !isLabel(f.label)) errs.push("field needs name and label");
+      }
+    }
+    if (n.type === "text" && typeof n.text !== "string") errs.push("text node needs a string");
+    if (n.type === "text" && n.tone !== undefined && !["default", "muted", "danger"].includes(String(n.tone))) errs.push("bad tone");
+  }
+  return errs;
+}
+
+export function asViewNodes(view: unknown): ViewNode[] {
+  const errs = checkView(view);
+  if (errs.length) throw new Error(errs.join("; "));
+  return view as ViewNode[];
+}
+
+/** A host error as the sandbox throws it: an Error with `code` and `params`. */
+export function hostError(code: string, params: Record<string, string> = {}): Error {
+  return Object.assign(new Error(code), { code, params });
+}
+
+/** Records what the plugin registers with `activate(host)`. */
+export function registry(plugin: { activate(host: unknown): void }) {
+  const pages: Record<string, any> = {};
+  const trees: Record<string, any> = {};
+  const commands: Record<string, any> = {};
+  plugin.activate({
+    pages: { handle: (id: string, h: unknown) => (pages[id] = h) },
+    trees: { handle: (id: string, h: unknown) => (trees[id] = h) },
+    commands: { handle: (id: string, h: unknown) => (commands[id] = h) },
+  });
+  return { pages, trees, commands };
+}
+
+/** `ctx.t`: returns a localized Label like the kernel does. */
+export const t = (key: string) => ({ "en-US": key, "zh-CN": `zh:${key}` });
