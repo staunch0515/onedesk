@@ -5,4 +5,8 @@ export type CommandContext = { tree?: string, nodeKey?: string, target?: string,
 /**
  * Extra input for commands that take one (e.g. the group name for `node.newGroup`).
  */
-args?: { [key in string]: JsonValue }, };
+args?: { [key in string]: JsonValue }, 
+/**
+ * Current interface language, e.g. `zh-CN`; handed to plugin command handlers as `ctx.locale`.
+ */
+locale?: string, };

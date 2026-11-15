@@ -661,6 +661,8 @@ pub struct CommandContext {
     pub tab_id: Option<String>,
     /// Extra input for commands that take one (e.g. the group name for `node.newGroup`).
     pub args: Option<JsonMap>,
+    /// Current interface language, e.g. `zh-CN`; handed to plugin command handlers as `ctx.locale`.
+    pub locale: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]

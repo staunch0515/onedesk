@@ -399,3 +399,4 @@
 - **D269** 新依赖（规则 9）：`rquickjs` 0.14（MIT，JS 沙箱）、`tokio`（MIT，异步与套接字）、`ts-rs` 12（MIT，类型生成）、`tokio-tungstenite`（MIT，开发用 WebSocket）、`futures-util`（MIT/Apache-2.0）、`semver`（MIT/Apache-2.0）、`serde_with`（MIT/Apache-2.0，省略空字段，替代方案是每个字段手写属性）、`tempfile`、`libc`（MIT/Apache-2.0，测试）。前四个已在 §14 预先列出，阶段 0 已核对许可证。各任务另加的依赖在合并时补记于此。
 - **D270** 提供树里可展开的节点（容器）没有给打开目标时，内核不替它补页面目标；只有叶子节点才按树声明的页面补。（验收时发现文件夹被当成文件打开。）
 - **D271** 插件命令返回的效果只允许 `open`（目标合法）、`toast`、`reveal`、`rename`、`close-target`、`copy`、`reload`；`pick-folder`、`confirm` 一律拒绝。被拒绝的宿主调用也写一行失败的审计。（审查 #3、#4。）
+- **D272** `CommandContext` 增加可选的 `locale`（当前界面语言），内核交给插件命令处理函数的 `ctx.locale`；与 `PageContext.locale` 同一含义。（验收发现“创建副本”的后缀总是英文。）
