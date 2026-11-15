@@ -112,17 +112,16 @@ test("a failing run keeps its reason in the result area", async ({ page }) => {
   await shot(page, "run-failed");
 });
 
-// FIXME(shell): the page is not drawn again when a run ends, so the plugin's "Last run: N of M rows" line (which the
-// action stored with host.storage) stays at "No run yet" until the page is reopened. The kernel is right:
-// page.resolve after the run returns it. See round3-tests-done.md, S-R1.
-test.fixme("the page refreshes when a run ends and shows the stored last-run summary", async ({ page }) => {
+test("the page refreshes when a run ends and shows the stored last-run summary", async ({ page }) => {
   await newQuery(page, "Refresh me", "select 1");
   await openKernel(page, host);
   await openQuery(page, "Refresh me");
-  await expect(page.getByText("No run yet")).toBeVisible();
+  // (the plugin keeps one summary for all its resources, so earlier tests may have left one: compare with this run)
   await run(page).click();
   await expect(resultTable(page).locator("tbody tr").first()).toBeVisible({ timeout: 15_000 });
-  await expect(page.getByText(/Last run: \d+ of \d+ rows/)).toBeVisible();
+  const latest = (await call<{ id: string; seq: number }[]>(page, "run.tasks")).sort((a, b) => b.seq - a.seq)[0]!;
+  const full = await call<{ summary: { rows: number }; output: { total: number } }>(page, "run.get", { id: latest.id });
+  await expect(page.getByText(`Last run: ${full.summary.rows} of ${full.output.total} rows`)).toBeVisible();
 });
 
 test("after reopening the page the last-run summary is there", async ({ page }) => {
@@ -145,9 +144,8 @@ test("environment values: the strip shows the value and where it comes from; Exp
   await shot(page, "param-from-env");
   await page.getByRole("textbox", { name: "channel", exact: true }).fill("web");
   await page.getByRole("button", { name: "Explain", exact: true }).click();
-  // the interface sends the environment's value along with the typed ones, so both count as "entered here"
   const text = page.getByRole("region", { name: "Result area" });
-  await expect(text).toContainText("tenant_id = 42", { timeout: 15_000 });
+  await expect(text).toContainText("tenant_id = 42 (from environment Default)", { timeout: 15_000 });
   await expect(text).toContainText("channel = web (entered here)");
   await shot(page, "explain");
 });
@@ -203,7 +201,6 @@ const enabledSwitch = (page: Page) => page.getByRole("switch", { name: "Enabled 
 test("plugin tree and page: disable greys the resources and refuses work, enable restores", async ({ page }) => {
   await newQuery(page, "Plug target", "select 1");
   await openKernel(page, host);
-  await openQuery(page, "Plug target"); // a tab stays open while the plugin is disabled (greyed nodes cannot be clicked)
   await showTree(page, "Plugins");
   for (const name of ["Sample", "Notes", "Files"]) await expect(treeItem(page, new RegExp(`^${name} \\d`))).toBeVisible();
   await shot(page, "plugin-tree");
@@ -215,8 +212,7 @@ test("plugin tree and page: disable greys the resources and refuses work, enable
   await expect(enabledSwitch(page)).not.toBeChecked();
   await showTree(page, "Resources");
   await expect(page.locator('[data-tree-key]', { hasText: "Plug target" }).first()).toHaveAttribute("data-state", "disabled");
-  await expect(treeItem(page, "Plug target")).toHaveAttribute("aria-disabled", "true");
-  await tab(page, "Plug target").click();
+  await treeItem(page, "Plug target").click(); // greyed but still openable
   await expect(page.getByText(/disabled/i).first()).toBeVisible(); // the page says the plugin is disabled
   await shot(page, "plugin-disabled-page");
 
@@ -228,7 +224,7 @@ test("plugin tree and page: disable greys the resources and refuses work, enable
   const items = await call<{ id: string }[]>(page, "command.newItems");
   expect(items.map((i) => i.id)).not.toContain(`new:${SAMPLE}`);
 
-  await tab(page, "Sample").click(); // the greyed plugin node cannot be clicked; its page tab is still open
+  await openPlugin(page, "Sample"); // the greyed plugin node can still be opened
   await enabledSwitch(page).click();
   await expect(enabledSwitch(page)).toBeChecked();
   await showTree(page, "Resources");
@@ -274,6 +270,7 @@ test("command palette lists a kernel command and a plugin item and runs them", a
   await expect(box).toBeVisible();
   await expect(page.getByRole("option", { name: "New group" }).first()).toBeVisible(); // kernel command
   await expect(page.getByRole("option", { name: /Sample query/ }).first()).toBeVisible(); // from the sample plugin's menus.new
+  await expect(page.getByRole("option", { name: /Duplicate/ })).toHaveCount(0); // plugin commands only when the manifest says palette: true
   await shot(page, "palette");
   await box.fill("New group");
   await page.getByRole("option", { name: "New group" }).first().click();
@@ -301,11 +298,7 @@ test("running directly on an unsaved new page works", async ({ page }) => {
   expect(runs.some((r) => r.status === "success" && r.params.n_id === "5")).toBe(true);
 });
 
-// FIXME(kernel): `page.resolve` of a `new:` target returns `resultTabs: []` although the page declares three, so
-// the page has no result area and the table of a run on an unsaved page is never shown (the run itself works).
-// Repro: page.resolve {target:"new:org.onedesk.sample:query"} → resultTabs []; the same plugin's resource page has them.
-// See round3-tests-done.md, K-R1.
-test.fixme("running on an unsaved new page shows the result table", async ({ page }) => {
+test("running on an unsaved new page shows the result table", async ({ page }) => {
   await openKernel(page, host);
   await page.getByRole("button", { name: "New", exact: true }).click();
   await page.getByRole("menuitem", { name: "Sample query" }).click();
