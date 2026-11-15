@@ -1,0 +1,28 @@
+# OneDesk Rust workspace (kernel-design §2.6). Root file owned by the coordinating session.
+[workspace]
+resolver = "2"
+members = ["crates/protocol", "crates/kernel", "crates/worker", "crates/host", "src-tauri"]
+exclude = ["spikes"]
+
+[workspace.package]
+version = "0.2.0"
+edition = "2021"
+publish = false
+license = "MIT"
+
+[workspace.dependencies]
+onedesk-protocol = { path = "crates/protocol" }
+onedesk-kernel = { path = "crates/kernel" }
+onedesk-host = { path = "crates/host" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_with = { version = "3", default-features = false, features = ["macros"] }
+ts-rs = { version = "12.0.1", features = ["serde-json-impl", "no-serde-warnings"] }
+rquickjs = { version = "0.14.0", features = ["futures", "parallel", "loader"] }
+tokio = { version = "1.54", features = ["rt-multi-thread", "macros", "net", "io-util", "sync", "time", "process", "signal", "fs"] }
+tokio-tungstenite = "0.29"
+futures-util = "0.3"
+rusqlite = { version = "0.42.0", features = ["bundled"] }
+semver = "1"
+tempfile = "3.27"
+libc = "0.2"

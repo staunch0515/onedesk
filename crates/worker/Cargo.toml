@@ -1,0 +1,10 @@
+[package]
+name = "onedesk-worker"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[dependencies]
+onedesk-protocol.workspace = true
+onedesk-kernel.workspace = true

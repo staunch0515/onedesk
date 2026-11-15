@@ -378,3 +378,22 @@
 - **D255** 取消单进程模式，始终是主进程加每个工作区一个工作进程；内核库的进程内调用只用于测试。（取代或修改：D226）
 
 两份验收条件由用户确认：`docs/redesign/sqlpool-parity.md`（90 项）、`docs/redesign/vioros-parity.md`（56 项）。阶段安排见 `docs/redesign/dev-plan.md`。
+
+## 本周最小可展示版本（2026-11-15，协调会话）
+
+范围见 `docs/redesign/week1-slice.md`；协议与约定见 `docs/handoff/week1-protocol.md`。
+
+- **D256** 仓库结构：根目录一个 Cargo 工作区；`crates/protocol`（协议类型）、`crates/kernel`（内核库）、`crates/worker`（工作进程）、`crates/host`（主进程逻辑，不依赖 Tauri）、`src-tauri`（Tauri 主进程，只是外皮）；内置插件的包在 `plugins/<id>/`。主进程逻辑单独成库，是为了桌面版和无界面版（§2.4）共用，也便于不开窗口测试。
+- **D257** 第一版的 `src/kernel`、`src/shell`、`src/platform`、`src/plugins`、`src/plugin-api`、`index.html`、旧界面测试现在删除（留在 git 历史和标签 `v0.0.1` 里）；`src-tauri` 的旧源码由外壳任务重写。理由：它们依赖的 Tauri 命令随主进程重写而消失，留着只会让检查变慢、让人误在其上开发。旧库 `onedesk.db` 本周不读不改，升级留到阶段 1 的其余部分。
+- **D258** 协议线格式：每行一条 JSON；请求 `{id, method, params, client?}`，应答 `{id, result|error}`，事件 `{topic, payload?, client?}`；第一条请求是 `hello`。事件只表示“这个变了，重新读”。本周不做服务端的订阅过滤：工作进程把全部事件推给主进程，界面按主题过滤；主题的写法不变，以后加过滤不影响界面。
+- **D259** 页面的保存只有一个入口 `page.save(target, changes, basis)`：资源目标由内核变成写入管线的一条命令；`new:` 目标先创建；`node:`、`page:` 目标交给页面所属插件的 `save`。协议里不再有 `resource.update`、`resource.create`。理由：文件这类非资源目标也要有绑定字段、未保存标记和保存，一个概念一种机制。`basis` 是页面内容所依据的版本（资源是 `rev`，插件页面由插件给），用于发现别处的修改。
+- **D260** 内核自带一棵通用的存储树 `resources`；类型在清单里声明放在哪棵树。（§5 把“资源树”列为存储树但没说由谁声明。）
+- **D261** 授权文件夹：界面在系统对话框里让用户选文件夹，然后调 `plugin.grantFolder`；存在该插件的 `core:plugin-state` 节点里，经写入管线。树工具栏上的内核命令 `plugin.grantFolder` 返回效果 `pick-folder`。插件自己不能授权自己。插件页上的授权管理留到阶段 3。
+- **D262** 内核自带的命令、树、类型在协议里的文字就是它们的 id，外壳按 id 查自己的文字（§11 内核不含界面文字）；插件的文字由内核从插件语言文件取出，以多语言 `Label` 给出。
+- **D263** 本周的插件启用规则：插件文件夹里通过清单校验的插件一律启用；内置插件由主进程启动时复制到位。安装确认、清单缓存 `plugins/.index`、版本切换与升级、空闲回收留到阶段 3。
+- **D264** 开发构建的数据目录是 `~/Library/Application Support/onedesk-dev/`，发布构建是 `onedesk/`；`ONEDESK_DATA_DIR` 覆盖。理由：开发中的版本不碰用户现有的数据。
+- **D265** 原型的假数据暂时保留为“演示数据”：有真内核时，本周实现的方法走内核，其余走假实现并在界面上标明；没有内核时的纯假数据模式保留为外观基准（`e2e/workbench.spec.ts`）。阶段 2、3 换完后删除假实现（D223 的执行时间相应推后）。
+- **D266** 开发和测试用的无界面主进程 `onedesk-devhost`：WebSocket，只监听 127.0.0.1，一次性令牌（§12）。界面检查用浏览器经它连真实工作进程。
+- **D267** 清单 v2 的本周子集见 `week1-protocol.md` §6；文字是键，语言文件在包内（`locales/<语言>.json`），`en-US` 必须有。
+- **D268** 插件代码一侧的接口本周子集见 `week1-protocol.md` §7：`pages.handle`（`render`、`save`）、`trees.handle`（`children`、`path`）、`commands.handle`；`ctx.host` 的 `resources`、`files`、`ui`；`ctx.t`。`resources` 本周读写都只限自己的类型（依赖导出留到阶段 3）。`files` 本周只有“用户授权的文件夹”一种范围。
+- **D269** 新依赖（规则 9）：`rquickjs` 0.14（MIT，JS 沙箱）、`tokio`（MIT，异步与套接字）、`ts-rs` 12（MIT，类型生成）、`tokio-tungstenite`（MIT，开发用 WebSocket）、`futures-util`（MIT/Apache-2.0）、`semver`（MIT/Apache-2.0）、`serde_with`（MIT/Apache-2.0，省略空字段，替代方案是每个字段手写属性）、`tempfile`、`libc`（MIT/Apache-2.0，测试）。前四个已在 §14 预先列出，阶段 0 已核对许可证。各任务另加的依赖在合并时补记于此。

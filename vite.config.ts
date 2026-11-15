@@ -1,17 +1,11 @@
 import { defineConfig } from "vitest/config";
 import react from "@vitejs/plugin-react";
-import { fileURLToPath } from "node:url";
 
 const host = process.env.TAURI_DEV_HOST;
 
 export default defineConfig({
   plugins: [react()],
   clearScreen: false,
-  resolve: {
-    alias: {
-      "@onedesk/plugin-api": fileURLToPath(new URL("./src/plugin-api/index.ts", import.meta.url)),
-    },
-  },
   server: {
     port: 1420,
     strictPort: true,
@@ -26,12 +20,12 @@ export default defineConfig({
   },
   test: {
     environment: "node",
-    include: process.env.ONEDESK_PERF ? ["src/**/*.perf.test.{ts,tsx}"] : ["src/**/*.test.{ts,tsx}"],
-    exclude: process.env.ONEDESK_PERF ? [] : ["src/**/*.perf.test.{ts,tsx}", "node_modules/**"],
+    include: ["src/**/*.test.{ts,tsx}", "plugins/**/*.test.ts"],
+    exclude: ["node_modules/**"],
     coverage: {
       provider: "v8",
-      include: ["src/kernel/**/*.ts", "src/plugin-api/**/*.ts"],
-      exclude: ["**/*.test.ts", "**/testing/**"],
+      include: ["src/workbench/protocol/**/*.ts"],
+      exclude: ["**/*.test.ts", "**/mock/**", "**/generated/**"],
       thresholds: { lines: 80, functions: 80, statements: 80, branches: 70 },
     },
   },

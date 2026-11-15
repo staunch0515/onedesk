@@ -1,0 +1,4 @@
+[env]
+# ts-rs: i64/u64 are plain JSON numbers (ids are strings; counters stay below 2^53).
+TS_RS_LARGE_INT = "number"
+TS_RS_EXPORT_DIR = { value = "src/workbench/protocol/generated", relative = true }

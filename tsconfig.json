@@ -21,17 +21,13 @@
     "types": [
       "vite/client",
       "node"
-    ],
-    "paths": {
-      "@onedesk/plugin-api": [
-        "./src/plugin-api/index.ts"
-      ]
-    }
+    ]
   },
   "include": [
     "src",
     "scripts",
     "e2e",
+    "plugins",
     "vite.config.ts",
     "playwright.config.ts"
   ]
