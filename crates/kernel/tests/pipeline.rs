@@ -214,3 +214,37 @@ async fn grants_are_written_through_the_pipeline_and_validated() {
     assert_eq!(c.call("resource.delete", json!({ "id": id })).await.unwrap_err().code, ErrorCode::NotFound);
     assert_eq!(c.call("tree.children", json!({ "tree": "core:plugin-state" })).await.unwrap_err().code, ErrorCode::NotFound);
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn concurrent_grants_lose_nothing_and_make_one_state_node() {
+    let (env, c) = setup().await;
+    let c = std::sync::Arc::new(c);
+    let mut dirs = vec![];
+    for i in 0..8 {
+        let d = env.path().join(format!("d{i}"));
+        std::fs::create_dir_all(&d).unwrap();
+        dirs.push(d.display().to_string());
+    }
+    let tasks: Vec<_> = dirs
+        .iter()
+        .map(|d| {
+            let (c, d) = (c.clone(), d.clone());
+            tokio::spawn(async move { c.ok("plugin.grantFolder", json!({ "plugin": "test.alpha", "path": d })).await })
+        })
+        .collect();
+    for t in tasks {
+        t.await.unwrap();
+    }
+    let g = c.ok("plugin.grants", json!({ "plugin": "test.alpha" })).await;
+    assert_eq!(g["folders"].as_array().unwrap().len(), 8);
+    let conn = db(&env);
+    let n: i64 = conn.query_row("SELECT count(*) FROM resources WHERE kind = 'core:plugin-state'", [], |r| r.get(0)).unwrap();
+    assert_eq!(n, 1);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn page_save_on_a_node_of_a_stored_tree_is_not_found() {
+    let (_env, c) = setup().await;
+    let e = c.call("page.save", json!({ "target": "node:resources/x", "changes": {} })).await.unwrap_err();
+    assert_eq!(e.code, ErrorCode::NotFound);
+}

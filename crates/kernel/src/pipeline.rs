@@ -155,6 +155,11 @@ pub enum Command {
     Delete { id: String },
     /// Record-only audit entry for writes outside the database (e.g. a plugin writing a file).
     Audit { op: String, object: String, summary: Value },
+    /// A call refused before it reached the database (e.g. a plugin's out-of-bounds host call):
+    /// writes only the failure audit row (§4.3) and returns `error`.
+    Refused { op: String, object: String, error: onedesk_protocol::ProtocolError },
+    /// Adds or removes one granted folder of a plugin, read-modify-write in one transaction (D261).
+    Grant { plugin: String, folder: String, add: bool },
     /// Interface state (§9.2): not versioned, not audited.
     UiSet { client: String, key: String, value: Value },
 }
@@ -294,6 +299,8 @@ impl Writer {
                     cx.audit(&op, &object, &summary)?;
                     Outcome { changed: true, ..Default::default() }
                 }
+                Command::Refused { error, .. } => return Err(error),
+                Command::Grant { plugin, folder, add } => cx.grant(&plugin, &folder, add)?,
                 Command::UiSet { .. } => unreachable!("handled above"),
             }
         };
@@ -309,6 +316,8 @@ fn describe(cmd: &Command) -> (String, String) {
         Command::Move { id, .. } => ("resource.move".into(), id.clone()),
         Command::Delete { id } => ("resource.delete".into(), id.clone()),
         Command::Audit { op, object, .. } => (op.clone(), object.clone()),
+        Command::Refused { op, object, .. } => (op.clone(), object.clone()),
+        Command::Grant { plugin, .. } => ("plugin.grant".into(), plugin.clone()),
         Command::UiSet { key, .. } => ("ui.set".into(), key.clone()),
     }
 }
@@ -605,6 +614,48 @@ impl Tx<'_> {
         Ok(Outcome { id: Some(row.id.clone()), changed: true, rows: vec![row] })
     }
 
+    fn grant(&mut self, plugin: &str, folder: &str, add: bool) -> KResult<Outcome> {
+        let key = GRANTS_KEY;
+        let row = store::plugin_state(self.tx, plugin).map_err(sql)?;
+        let mut folders: Vec<String> = row
+            .as_ref()
+            .and_then(|r| r.body.get(key).cloned())
+            .and_then(|v| serde_json::from_value(v).ok())
+            .unwrap_or_default();
+        let before = folders.clone();
+        if add {
+            if !folders.iter().any(|f| f == folder) {
+                folders.push(folder.to_string());
+            }
+        } else {
+            folders.retain(|f| f != folder);
+        }
+        if folders == before {
+            return Ok(Outcome { changed: false, ..Default::default() });
+        }
+        match row {
+            Some(r) => {
+                let mut changes = Changes::default();
+                changes.body.insert(key.into(), json!(folders));
+                self.update(&r.id, &changes, None)
+            }
+            None => {
+                let mut body = JsonMap::new();
+                body.insert(key.into(), json!(folders));
+                self.create(NewResource {
+                    kind: KIND_PLUGIN_STATE.into(),
+                    tree: None,
+                    parent: None,
+                    name: plugin.into(),
+                    description: String::new(),
+                    tags: vec![],
+                    body,
+                    plugin_version: None,
+                })
+            }
+        }
+    }
+
     fn siblings(&self, tree: Option<&str>, parent: Option<&str>, except: &str) -> KResult<Vec<Row>> {
         let all = store::children(self.tx, tree.unwrap_or_default(), parent, 0, u32::MAX).map_err(sql)?;
         Ok(all.into_iter().filter(|r| r.id != except).collect())
@@ -644,6 +695,9 @@ fn dest_tree(cx: &Tx<'_>, dest: &MoveDest) -> KResult<Option<String>> {
     };
     Ok(store::get(cx.tx, id).map_err(sql)?.and_then(|r| r.tree))
 }
+
+/// Body key of `core:plugin-state` holding the granted folders.
+pub const GRANTS_KEY: &str = "files.folders";
 
 /// Rules of the kernel's own kinds; plugin kinds are added by the registry.
 pub fn core_rules() -> HashMap<String, KindRule> {

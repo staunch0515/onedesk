@@ -51,7 +51,11 @@ pub fn open(plugins: &Path) -> Env {
 
 /// Like `open`, in a temporary folder the caller already filled (e.g. with a plugins folder).
 pub fn open_in(tmp: tempfile::TempDir, plugins: &Path) -> Env {
-    let kernel = Arc::new(Kernel::open(&tmp.path().join("ws"), plugins, test_config()).unwrap());
+    open_with(tmp, plugins, test_config())
+}
+
+pub fn open_with(tmp: tempfile::TempDir, plugins: &Path, cfg: KernelConfig) -> Env {
+    let kernel = Arc::new(Kernel::open(&tmp.path().join("ws"), plugins, cfg).unwrap());
     Env { tmp, kernel }
 }
 

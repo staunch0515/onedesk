@@ -23,7 +23,7 @@ use crate::workspace::Workspace;
 pub const BATCH: u32 = 200;
 pub const DEFAULT_CLIENT: &str = "default";
 pub const DEFAULT_GROUP_NAME: &str = "New group";
-pub const GRANTS_KEY: &str = "files.folders";
+pub use crate::pipeline::GRANTS_KEY;
 
 #[derive(Debug, Clone, Default)]
 pub struct KernelConfig {
@@ -162,7 +162,7 @@ impl Inner {
 
     /// Runs a command through the pipeline and publishes its events after commit.
     pub async fn execute(&self, actor: Actor, cmd: Command) -> KResult<Outcome> {
-        let plugin_state = matches!(&cmd, Command::Update { .. } | Command::Create(_));
+        let plugin_state = matches!(&cmd, Command::Update { .. } | Command::Create(_) | Command::Grant { .. });
         let out = self.pipeline.execute(actor, cmd).await?;
         for t in out.topics() {
             if t == format!("{}{TREE_PLUGIN_STATE}", topic::TREE) {

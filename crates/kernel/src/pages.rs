@@ -378,6 +378,9 @@ impl Inner {
             }
             Target::Node { tree, key } => {
                 let (plugin, decl) = self.registry.tree(&tree).ok_or_else(|| not_found("tree"))?;
+                if decl.source != TreeSource::Provided {
+                    return Err(not_found("tree"));
+                }
                 let page = decl.page.clone().ok_or_else(|| not_found("page"))?;
                 let ctx = json!({ "target": p.target, "node": { "tree": tree, "key": key }, "locale": cx.locale });
                 let out = self
