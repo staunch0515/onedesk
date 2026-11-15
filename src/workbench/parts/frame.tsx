@@ -23,7 +23,7 @@ export interface FrameProps {
 
 /** The frame shared by every page: breadcrumb, title, actions, environment, info panel, result area (§9). */
 export function Frame({ tab, descriptor, meta, actions, children, panel }: FrameProps) {
-  const { store, actions: wb } = useWorkbench();
+  const { client, store, actions: wb } = useWorkbench();
   const { t, tx } = useI18n();
   const infoOpen = useUi((s) => s.infoOpen);
   const infoWidth = useUi((s) => s.infoWidth);
@@ -62,6 +62,11 @@ export function Frame({ tab, descriptor, meta, actions, children, panel }: Frame
             <>
               {descriptor.kindLabel && <Badge>{tx(descriptor.kindLabel)}</Badge>}
               {descriptor.state !== "ok" && <Badge tone={STATE_TONE[descriptor.state]}>{stateName[descriptor.state]}</Badge>}
+              {client.demo?.target(descriptor.target) && (
+                <Badge tone="warning" icon="flask-conical">
+                  {t("demo.badge")}
+                </Badge>
+              )}
               {dirty && <Badge tone="warning" dot>{t("page.unsaved")}</Badge>}
               {meta}
             </>

@@ -8,7 +8,7 @@ export function InfoPanelPart({ resourceId }: { resourceId: string }) {
   const { t, tx, dateTime } = useI18n();
   const { data: res } = useQuery((c) => c.resource.get(resourceId), [resourceId], [`resource:${resourceId}`, "plugins"]);
 
-  const update = (patch: Record<string, unknown>) => client.resource.update(resourceId, patch).catch(actions.fail);
+  const update = (patch: Record<string, unknown>) => client.page.save(`resource:${resourceId}`, patch).catch(actions.fail);
   const body = !res ? (
     <LoadingState layout="inline" label={t("common.loading")} />
   ) : (

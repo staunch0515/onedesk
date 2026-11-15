@@ -71,20 +71,21 @@ const TREES: TreeInfo[] = [
     icon: "folder-tree",
     source: "stored",
     groups: true,
+    toolbar: [],
     menu: [
       { id: "new:org.onedesk.sql:query", label: L("New SQL query", "新建 SQL 查询"), icon: "file-code" },
       { id: "new:org.onedesk.note:note", label: L("New note", "新建笔记"), icon: "notebook-pen" },
       NEW_GROUP,
     ],
   },
-  { id: "environments", title: L("Environments", "环境"), icon: "layers", source: "stored", groups: false, menu: [{ id: "new:core:env", label: L("New environment", "新建环境"), icon: "plus" }] },
-  { id: "config", title: L("Workspace configuration", "工作区配置"), icon: "sliders-horizontal", source: "stored", groups: false, menu: [] },
-  { id: "plugins", title: L("Plugins", "插件"), icon: "puzzle", source: "provided", groups: false, menu: [] },
-  { id: "datasources", title: L("Data sources", "数据源"), icon: "database", source: "stored", groups: true, menu: [{ id: "new:org.onedesk.sql:datasource", label: L("New data source", "新建数据源"), icon: "database" }, NEW_GROUP] },
-  { id: "files", title: L("Files", "文件"), icon: "hard-drive", source: "provided", groups: false, menu: [{ id: "import.folder", label: L("Import folder", "导入文件夹"), icon: "folder-input" }] },
-  { id: "runs", title: L("Run records", "运行记录"), icon: "history", source: "provided", groups: false, menu: [] },
-  { id: "favorites", title: L("Favorites", "收藏"), icon: "star", source: "provided", groups: false, menu: [] },
-  { id: "deleted", title: L("Deleted", "已删除"), icon: "trash-2", source: "provided", groups: false, menu: [] },
+  { id: "environments", title: L("Environments", "环境"), icon: "layers", source: "stored", groups: false, toolbar: [], menu: [{ id: "new:core:env", label: L("New environment", "新建环境"), icon: "plus" }] },
+  { id: "config", title: L("Workspace configuration", "工作区配置"), icon: "sliders-horizontal", source: "stored", groups: false, toolbar: [], menu: [] },
+  { id: "plugins", title: L("Plugins", "插件"), icon: "puzzle", source: "provided", groups: false, toolbar: [], menu: [] },
+  { id: "datasources", title: L("Data sources", "数据源"), icon: "database", source: "stored", groups: true, toolbar: [], menu: [{ id: "new:org.onedesk.sql:datasource", label: L("New data source", "新建数据源"), icon: "database" }, NEW_GROUP] },
+  { id: "files", title: L("Files", "文件"), icon: "hard-drive", source: "provided", groups: false, toolbar: [], menu: [{ id: "import.folder", label: L("Import folder", "导入文件夹"), icon: "folder-input" }] },
+  { id: "runs", title: L("Run records", "运行记录"), icon: "history", source: "provided", groups: false, toolbar: [], menu: [] },
+  { id: "favorites", title: L("Favorites", "收藏"), icon: "star", source: "provided", groups: false, toolbar: [], menu: [] },
+  { id: "deleted", title: L("Deleted", "已删除"), icon: "trash-2", source: "provided", groups: false, toolbar: [], menu: [] },
 ];
 
 const CONFIG_FIELDS: Record<string, Partial<ViewField> & { label: Label }> = {
@@ -444,7 +445,7 @@ export function createMockClient(options: MockOptions = {}): ProtocolClient {
     return {
       key: row.id,
       tree: row.tree,
-      parentKey: row.parentId,
+      parentKey: row.parentId ?? undefined,
       label: row.name,
       icon: def?.icon ?? "file",
       kind: row.kind,
@@ -467,7 +468,7 @@ export function createMockClient(options: MockOptions = {}): ProtocolClient {
       kindLabel: def?.label ?? row.kind,
       icon: def?.icon ?? "file",
       tree: row.tree,
-      parentId: row.parentId,
+      parentId: row.parentId ?? undefined,
       name: row.name,
       description: row.description,
       tags: [...row.tags],
@@ -903,7 +904,7 @@ export function createMockClient(options: MockOptions = {}): ProtocolClient {
     if (scheme === "plugin") {
       const p = db.plugins.find((x) => x.id === rest);
       if (!p) return missingPage(target, rest);
-      const name = typeof p.name === "string" ? p.name : p.name["en-US"];
+      const name = typeof p.name === "string" ? p.name : (p.name["en-US"] ?? "");
       return shellPage(target, name, p.icon, "plugin", [{ label: name, icon: p.icon, tree: "plugins", key: p.id }], {
         state: !p.installed ? "missing-plugin" : pluginBroken(p) ? "broken" : p.enabled ? "ok" : "disabled",
       });
@@ -1170,7 +1171,7 @@ export function createMockClient(options: MockOptions = {}): ProtocolClient {
   const runIcon = (r: StoredRun) => (r.status === "running" ? "loader" : r.status === "success" ? "circle-check" : r.status === "error" ? "circle-alert" : "circle-slash");
 
   function providedChildren(tree: string, parentKey: string | null): TreeNode[] {
-    const base = { tree, parentKey, expandable: false, state: "ok" as NodeState, draggable: false, accepts: [] as string[] };
+    const base = { tree, parentKey: parentKey ?? undefined, expandable: false, state: "ok" as NodeState, draggable: false, accepts: [] as string[] };
     if (tree === "plugins") {
       return [...db.plugins]
         .sort((a, b) => Number(b.installed) - Number(a.installed) || a.id.localeCompare(b.id))
@@ -1456,10 +1457,39 @@ export function createMockClient(options: MockOptions = {}): ProtocolClient {
   }
 
   /* ---------------------------------------------------------------- the client */
+  async function updateResource(id: string, patch: ResourcePatch): Promise<Resource> {
+    await wait(40);
+    const row = db.rows[id];
+    if (!row) throw new Error("Resource not found");
+    if (stateOf(row).state === "conflict") throw new Error("This resource has a conflict and is read-only");
+    applyPatch(row, patch);
+    return toResource(row);
+  }
+
+  async function createResource(newTarget: string, patch: ResourcePatch): Promise<Resource> {
+    await wait(40);
+    const [kind = "", query = ""] = newTarget.slice(4).split("?");
+    const def = KINDS[kind];
+    if (!def) throw new Error("Unknown kind");
+    const parentId = new URLSearchParams(query).get("parent");
+    const base = kind.endsWith(":query") ? "Untitled query" : kind.endsWith(":note") ? "Untitled note" : "New data source";
+    const row = createRow(kind, def.tree, parentId, uniqueName(def.tree, parentId, String(patch.name ?? base)), kind.endsWith(":query") ? { sql: "", sim: { dataset: "generic", rows: 25, ms: 900 } } : {});
+    for (const [path, value] of Object.entries(patch)) setPath(row, path, value);
+    persist();
+    touch(row);
+    return toResource(row);
+  }
+
+  const demoGrants = new Map<string, string[]>();
+
   const client: ProtocolClient = {
     version: "0.1-mock",
 
     workspace: {
+      async info() {
+        await wait();
+        return { id: "ws-shop", name: "电商数据 Shop Data" };
+      },
       async list() {
         await wait();
         return [
@@ -1492,8 +1522,8 @@ export function createMockClient(options: MockOptions = {}): ProtocolClient {
       async children(tree, parentKey) {
         await wait(tree === "files" && parentKey ? 120 : 8);
         const info = TREES.find((t) => t.id === tree);
-        if (!info) return [];
-        return clone(info.source === "stored" ? childrenOf(tree, parentKey).map(toNode) : providedChildren(tree, parentKey));
+        if (!info) return { nodes: [] };
+        return { nodes: clone(info.source === "stored" ? childrenOf(tree, parentKey).map(toNode) : providedChildren(tree, parentKey)) };
       },
       async path(tree, key) {
         await wait(2);
@@ -1541,26 +1571,10 @@ export function createMockClient(options: MockOptions = {}): ProtocolClient {
         const row = db.rows[id];
         return row ? toResource(row) : null;
       },
-      async update(id, patch) {
-        await wait(40);
+      async delete(id) {
+        await wait();
         const row = db.rows[id];
-        if (!row) throw new Error("Resource not found");
-        if (stateOf(row).state === "conflict") throw new Error("This resource has a conflict and is read-only");
-        applyPatch(row, patch);
-        return toResource(row);
-      },
-      async create(newTarget, patch) {
-        await wait(40);
-        const [kind = "", query = ""] = newTarget.slice(4).split("?");
-        const def = KINDS[kind];
-        if (!def) throw new Error("Unknown kind");
-        const parentId = new URLSearchParams(query).get("parent");
-        const base = kind.endsWith(":query") ? "Untitled query" : kind.endsWith(":note") ? "Untitled note" : "New data source";
-        const row = createRow(kind, def.tree, parentId, uniqueName(def.tree, parentId, String(patch.name ?? base)), kind.endsWith(":query") ? { sql: "", sim: { dataset: "generic", rows: 25, ms: 900 } } : {});
-        for (const [path, value] of Object.entries(patch)) setPath(row, path, value);
-        persist();
-        touch(row);
-        return toResource(row);
+        if (row) softDelete(row);
       },
       async history(id) {
         await wait();
@@ -1649,6 +1663,18 @@ export function createMockClient(options: MockOptions = {}): ProtocolClient {
     },
 
     plugin: {
+      // Demo only: folder grants live in memory; the real ones are the kernel's.
+      async grants(plugin) {
+        return { plugin, folders: [...(demoGrants.get(plugin) ?? [])] };
+      },
+      async grantFolder(plugin, path) {
+        demoGrants.set(plugin, [...new Set([...(demoGrants.get(plugin) ?? []), path])]);
+        return { plugin, folders: [...demoGrants.get(plugin)!] };
+      },
+      async revokeFolder(plugin, path) {
+        demoGrants.set(plugin, (demoGrants.get(plugin) ?? []).filter((p) => p !== path));
+        return { plugin, folders: [...demoGrants.get(plugin)!] };
+      },
       async get(id) {
         await wait();
         const p = db.plugins.find((x) => x.id === id);
@@ -1702,6 +1728,15 @@ export function createMockClient(options: MockOptions = {}): ProtocolClient {
     },
 
     page: {
+      async save(target, changes) {
+        if (target.startsWith("new:")) {
+          const created = await createResource(target, changes);
+          return { page: clone(resolvePage(`resource:${created.id}`, {})) };
+        }
+        if (!target.startsWith("resource:")) throw new Error("Unknown target");
+        await updateResource(target.slice(9), changes);
+        return { page: clone(resolvePage(target, {})) };
+      },
       async resolve(target, context = {}) {
         await wait(context.draft ? 20 : 10);
         return clone(resolvePage(target, context));
@@ -1809,8 +1844,8 @@ export function createMockClient(options: MockOptions = {}): ProtocolClient {
           });
         }
         for (const p of db.plugins) {
-          const name = typeof p.name === "string" ? p.name : `${p.name["en-US"]} ${p.name["zh-CN"] ?? ""}`;
-          if (words.every((w) => `${name} ${p.id}`.toLowerCase().includes(w))) hits.push({ target: `plugin:${p.id}`, title: typeof p.name === "string" ? p.name : p.name["en-US"], icon: p.icon, subtitle: `Plugins / ${p.id}`, state: "ok", score: 50 });
+          const name = typeof p.name === "string" ? p.name : `${p.name["en-US"] ?? ""} ${p.name["zh-CN"] ?? ""}`;
+          if (words.every((w) => `${name} ${p.id}`.toLowerCase().includes(w))) hits.push({ target: `plugin:${p.id}`, title: typeof p.name === "string" ? p.name : (p.name["en-US"] ?? ""), icon: p.icon, subtitle: `Plugins / ${p.id}`, state: "ok", score: 50 });
         }
         return hits.sort((a, b) => b.score - a.score).slice(0, limit).map(({ score: _s, ...hit }) => hit);
       },

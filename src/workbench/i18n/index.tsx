@@ -1,6 +1,7 @@
 import { createContext, useContext, useMemo, type ReactNode } from "react";
-import type { Label, Locale } from "../protocol";
+import { kernelErrorCode, type Label, type Locale } from "../protocol";
 import { enUS, type MessageKey } from "./en-US";
+import { interpolate, KERNEL_ERRORS, KERNEL_LABELS } from "./kernel-texts";
 import { zhCN } from "./zh-CN";
 
 const TABLES: Record<Locale, Partial<Record<MessageKey, string>>> = { "en-US": enUS, "zh-CN": zhCN };
@@ -14,8 +15,10 @@ export interface I18n {
   locale: Locale;
   /** Shell text by key; missing keys fall back to English, never to the key name (I.1). */
   t: (key: MessageKey, vars?: Record<string, string | number>) => string;
-  /** Text supplied by the kernel or a plugin. */
+  /** Text supplied by the kernel or a plugin. Kernel ids (`node.rename`) get their word; unknown ones show as they are (D262). */
   tx: (label: Label | undefined) => string;
+  /** A failed protocol call as a sentence: by error code for the kernel (D219), else the error's own message. */
+  error: (error: unknown) => string;
   dateTime: (at: number) => string;
   time: (at: number) => string;
   number: (n: number) => string;
@@ -34,7 +37,13 @@ function build(locale: Locale): I18n {
       const text: string = table[key] ?? enUS[key];
       return vars ? text.replace(/\{(\w+)\}/g, (whole: string, name: string) => (name in vars ? String(vars[name]) : whole)) : text;
     },
-    tx: (label) => (label === undefined ? "" : typeof label === "string" ? label : (label[locale] ?? label["en-US"])),
+    tx: (label) => (label === undefined ? "" : typeof label === "string" ? (KERNEL_LABELS[locale][label] ?? KERNEL_LABELS["en-US"][label] ?? label) : (label[locale] ?? label["en-US"] ?? "")),
+    error: (error) => {
+      const known = kernelErrorCode(error);
+      const text = known && (KERNEL_ERRORS[locale][known.code] ?? KERNEL_ERRORS["en-US"][known.code]);
+      if (known && text) return interpolate(text, known.params);
+      return error instanceof Error ? error.message : String(error);
+    },
     dateTime: (at) => dt.format(at),
     time: (at) => tm.format(at),
     number: (n) => nf.format(n),

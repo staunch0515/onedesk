@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useState } from "react";
-import { ThemeProvider, ToastProvider, type Density, type ThemePreference } from "../design";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { ThemeProvider, ToastProvider, useToast, type Density, type ThemePreference } from "../design";
 import { I18nProvider, useI18n } from "./i18n";
 import { ProtocolProvider, useClient, type Locale, type ProtocolClient } from "./protocol";
 import type { Settings } from "./parts/status-bar";
@@ -25,7 +25,29 @@ function Toasts({ children }: { children: React.ReactNode }) {
   );
 }
 
-function Shell({ store, initial }: { store: Store; initial: Settings }) {
+/** Says so when the workspace service could not be reached at start, when it stops and when it is back. */
+function ConnectionNotices({ startupError }: { startupError?: string }) {
+  const client = useClient();
+  const { toast } = useToast();
+  const { t } = useI18n();
+  const live = useRef({ toast, t });
+  live.current = { toast, t };
+  useEffect(() => {
+    if (startupError) live.current.toast({ tone: "warning", title: live.current.t("startup.failed", { reason: startupError }) });
+  }, [startupError]);
+  useEffect(
+    () =>
+      client.events.subscribe("connection", (_topic, payload) => {
+        const { toast: show, t: tr } = live.current;
+        if (payload === "lost") show({ tone: "warning", title: tr("connection.lost") });
+        else if (payload === "restored") show({ tone: "success", title: tr("connection.restored") });
+      }),
+    [client],
+  );
+  return null;
+}
+
+function Shell({ store, initial, startupError }: { store: Store; initial: Settings; startupError?: string }) {
   const client = useClient();
   const [settings, setSettings] = useState(initial);
 
@@ -48,6 +70,7 @@ function Shell({ store, initial }: { store: Store; initial: Settings }) {
     <I18nProvider locale={settings.locale}>
       <ThemeProvider theme={settings.theme} density={settings.density}>
         <Toasts>
+          <ConnectionNotices startupError={startupError} />
           <WorkbenchProvider store={store}>
             <Workbench settings={settings} onSetting={onSetting} />
           </WorkbenchProvider>
@@ -57,10 +80,10 @@ function Shell({ store, initial }: { store: Store; initial: Settings }) {
   );
 }
 
-export function App({ client, store, settings }: { client: ProtocolClient; store: Store; settings: Settings }) {
+export function App({ client, store, settings, startupError }: { client: ProtocolClient; store: Store; settings: Settings; startupError?: string }) {
   return (
     <ProtocolProvider client={client}>
-      <Shell store={store} initial={settings} />
+      <Shell store={store} initial={settings} startupError={startupError} />
     </ProtocolProvider>
   );
 }

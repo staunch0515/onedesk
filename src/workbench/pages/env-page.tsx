@@ -283,7 +283,7 @@ export function EnvPage({ tab, descriptor }: { tab: TabState; descriptor: PageDe
               defaultValue={env.data.description}
               placeholder={t("env.descriptionPlaceholder")}
               onBlur={(e) => {
-                if (e.currentTarget.value !== env.data!.description) client.resource.update(id, { description: e.currentTarget.value }).catch(actions.fail);
+                if (e.currentTarget.value !== env.data!.description) client.page.save(`resource:${id}`, { description: e.currentTarget.value }).catch(actions.fail);
               }}
             />
           </Section>

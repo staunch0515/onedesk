@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ContextMenu, EmptyState, IconButton, Input, LoadingState, SidePanel, Tree, type MenuEntry, type TreeDropPosition, type TreeRow } from "../../design";
+import { Badge, ContextMenu, EmptyState, IconButton, Input, LoadingState, SidePanel, Tree, type MenuEntry, type TreeDropPosition, type TreeRow } from "../../design";
 import { useI18n } from "../i18n";
-import type { MenuCommand, TreeInfo, TreeNode } from "../protocol";
+import { loadChildren, type MenuCommand, type TreeInfo, type TreeNode } from "../protocol";
 import { useUi, useWorkbench } from "../state/context";
 
 const ROOT = "";
@@ -55,7 +55,7 @@ export function TreePanel({ tree }: { tree: TreeInfo }) {
       pending.current.add(parentKey);
       setLoading((s) => new Set(s).add(parentKey));
       try {
-        const children = await client.tree.children(tree.id, parentKey === ROOT ? null : parentKey);
+        const children = await loadChildren(client, tree.id, parentKey === ROOT ? null : parentKey);
         commit((map) => map.set(parentKey, children));
       } catch (error) {
         actions.fail(error);
@@ -82,7 +82,7 @@ export function TreePanel({ tree }: { tree: TreeInfo }) {
   useEffect(() => {
     const refresh = () => {
       const keys = [...nodesRef.current.keys()];
-      void Promise.all(keys.map((k) => client.tree.children(tree.id, k === ROOT ? null : k).then((children) => [k, children] as const))).then((entries) => {
+      void Promise.all(keys.map((k) => loadChildren(client, tree.id, k === ROOT ? null : k).then((children) => [k, children] as const))).then((entries) => {
         commit((map) => {
           map.clear();
           for (const [k, children] of entries) map.set(k, children);
@@ -126,7 +126,7 @@ export function TreePanel({ tree }: { tree: TreeInfo }) {
       const key = queue.shift()!;
       let children = nodesRef.current.get(key);
       if (!children) {
-        children = await client.tree.children(tree.id, key === ROOT ? null : key);
+        children = await loadChildren(client, tree.id, key === ROOT ? null : key);
         const loaded = children;
         commit((map) => map.set(key, loaded));
       }
@@ -208,15 +208,30 @@ export function TreePanel({ tree }: { tree: TreeInfo }) {
 
   const commands = menu ? (menu.node ? menu.node.menu : tree.menu) : [];
   const title = tx(tree.title);
+  const demo = client.demo?.tree(tree.id) ?? false;
   const rootLoading = !nodes.has(ROOT);
 
   return (
     <SidePanel
       label={title}
-      title={title}
+      title={
+        <>
+          {title}
+          {demo && (
+            <Badge tone="warning" icon="flask-conical">
+              {t("demo.badge")}
+            </Badge>
+          )}
+        </>
+      }
       actions={
         <>
-          <IconButton icon="folder-plus" size="sm" label={t("tree.newGroup")} disabled={!tree.groups} onClick={() => void actions.command("node.newGroup", { tree: tree.id, nodeKey: selected })} />
+          {!tree.toolbar.some((c) => c.id === "node.newGroup") && (
+            <IconButton icon="folder-plus" size="sm" label={t("tree.newGroup")} disabled={!tree.groups} onClick={() => void actions.command("node.newGroup", { tree: tree.id, nodeKey: selected })} />
+          )}
+          {tree.toolbar.map((c) => (
+            <IconButton key={c.id} icon={c.icon ?? "circle"} size="sm" label={tx(c.label)} disabled={c.disabled} onClick={() => void actions.command(c.id, { tree: tree.id, nodeKey: selected })} />
+          ))}
           <IconButton icon="chevrons-up-down" size="sm" label={t("tree.expandAll")} onClick={expandAll} />
           <IconButton icon="chevrons-down-up" size="sm" label={t("tree.collapseAll")} onClick={() => actions.setExpanded(tree.id, [])} />
         </>

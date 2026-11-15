@@ -1,6 +1,8 @@
 import { useEffect, useMemo } from "react";
 import { ActivityBar, Button, CommandPalette, Dialog, Sized, Splitter, WorkbenchFrame, WorkbenchMain, useTheme, type CommandGroup } from "../design";
 import { LOCALES, useI18n } from "./i18n";
+import { loadChildren } from "./protocol";
+import { CommandDialogs } from "./parts/command-dialogs";
 import { NoTabs, PageHost } from "./parts/page-host";
 import { TreePanel } from "./parts/side-panel";
 import { StatusBarPart, type Settings } from "./parts/status-bar";
@@ -43,7 +45,7 @@ export function Workbench({ settings, onSetting }: WorkbenchProps) {
   const openSettings = async () => {
     store.set({ activity: "config", sideOpen: true });
     try {
-      const nodes = await client.tree.children("config", null);
+      const nodes = await loadChildren(client, "config", null);
       const preferred = nodes.find((n) => n.key.includes("appearance")) ?? nodes.find((n) => n.target);
       if (preferred?.target) actions.open(preferred.target);
     } catch (error) {
@@ -224,6 +226,7 @@ export function Workbench({ settings, onSetting }: WorkbenchProps) {
           </>
         }
       />
+      <CommandDialogs />
     </WorkbenchFrame>
   );
 }

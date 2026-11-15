@@ -138,7 +138,7 @@ export function ViewPage({ tab, descriptor: initial }: { tab: TabState; descript
   const paramFields = descriptor.view.flatMap((n) => (n.type === "form" ? n.fields.filter((f) => f.param) : []));
 
   const setBound = (bind: string, value: string) => {
-    if (descriptor.autosave && descriptor.resourceId) client.resource.update(descriptor.resourceId, { [bind]: value }).catch(actions.fail);
+    if (descriptor.autosave && descriptor.resourceId) client.page.save(`resource:${descriptor.resourceId}`, { [bind]: value }).catch(actions.fail);
     else actions.setDraft(tab.id, bind, value, String(values[bind] ?? ""));
   };
   const setParam = (name: string, value: string) => actions.updateTab(tab.id, { params: { ...tab.params, [name]: value } });

@@ -3,21 +3,34 @@
  * URL options, used by the screenshot script: ?reset (fresh demo data and layout), ?quiet (no
  * background run at start), ?theme=light|dark, ?density=compact, ?lang=zh-CN.
  *
- * This file is the only place that names the mock. To run against the real kernel, build a
- * ProtocolClient that talks to the worker process and pass it to <App> instead.
+ * This file is the only place that names the mock and the connection (week1-protocol §2):
+ *   - inside the Tauri window: the kernel through the main process (mixed with demo data, D265);
+ *   - `?kernel=ws://127.0.0.1:<port>&token=<token>`: the same, through `onedesk-devhost`;
+ *   - neither: pure demo data (the look reference; `e2e/workbench.spec.ts` runs this).
+ * If a connection was asked for and fails, the interface falls back to demo data and says so.
  */
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import "../design";
 import { App, readSettings } from "./app";
 import type { ProtocolClient } from "./protocol";
+import { createMixedClient } from "./protocol/mixed-client";
 import { createMockClient } from "./protocol/mock";
+import { connectKernel } from "./protocol/real";
 import { createStore, type LayoutState } from "./state/store";
 
 async function start() {
   const query = new URLSearchParams(window.location.search);
   const reset = query.has("reset");
-  const client: ProtocolClient = createMockClient({ fresh: reset, quiet: query.has("quiet") });
+  let client: ProtocolClient;
+  let startupError: string | undefined;
+  try {
+    const kernel = await connectKernel(query, () => query.get("lang") ?? document.documentElement.lang ?? "en-US");
+    client = kernel ? createMixedClient(kernel, createMockClient({ fresh: reset, quiet: true })) : createMockClient({ fresh: reset, quiet: query.has("quiet") });
+  } catch (error) {
+    startupError = error instanceof Error ? error.message : String(error);
+    client = createMockClient({ fresh: reset, quiet: query.has("quiet") });
+  }
 
   if (query.get("theme")) await client.workspace.setConfig("ui.theme", query.get("theme")!);
   if (query.get("density")) await client.workspace.setConfig("ui.density", query.get("density")!);
@@ -44,7 +57,7 @@ async function start() {
   const settings = await readSettings(client);
   createRoot(document.getElementById("root")!).render(
     <StrictMode>
-      <App client={client} store={store} settings={settings} />
+      <App client={client} store={store} settings={settings} startupError={startupError} />
     </StrictMode>,
   );
 }
