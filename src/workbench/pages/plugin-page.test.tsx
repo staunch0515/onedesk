@@ -22,11 +22,11 @@ const detail = (over: Partial<PluginDetail> = {}): PluginDetail => ({
   enabled: true,
   builtin: false,
   versions: [
-    { version: "0.1.0", installedAt: 1, active: true, pinned: false, notes: "", resourceCount: 3, confirmed: true },
-    { version: "0.2.0", installedAt: 2, active: false, pinned: false, notes: "", resourceCount: 0, confirmed: false },
+    { version: "0.1.0", installedAt: 1, active: true, pinned: false, notes: "", resourceCount: 3, confirmed: true, permissions: [], fingerprint: "fp1" },
+    { version: "0.2.0", installedAt: 2, active: false, pinned: false, notes: "", resourceCount: 0, confirmed: false, permissions: [{ id: "network", detail: "api.example.com", granted: false, required: true }], fingerprint: "fp2" },
   ],
   settings: [],
-  permissions: [{ id: "network", detail: "api.example.com", granted: false, required: true }],
+  permissions: [{ id: "files", detail: "", granted: true, required: false }],
   provides: { kinds: [], actions: [], trees: [], resultTabs: [], other: [] },
   load: { state: "loaded" },
   resourceCount: 3,
@@ -63,10 +63,12 @@ describe("plugin page versions (kernel plugin)", () => {
     const { plugin } = setup();
     fireEvent.click(await screen.findByRole("button", { name: "Activate" }));
     const dialog = await screen.findByRole("dialog");
+    // The pending version's own permissions, not the active version's (which only has files).
     expect(within(dialog).getByText("Network access")).toBeTruthy();
+    expect(within(dialog).queryByText("Files in granted folders")).toBeNull();
     expect(plugin.activateVersion).not.toHaveBeenCalled();
     fireEvent.click(within(dialog).getByRole("button", { name: "Allow and use" }));
-    await waitFor(() => expect(plugin.confirmPermissions).toHaveBeenCalledWith("org.example.web", "0.2.0"));
+    await waitFor(() => expect(plugin.confirmPermissions).toHaveBeenCalledWith("org.example.web", "0.2.0", "fp2"));
     await waitFor(() => expect(plugin.activateVersion).toHaveBeenCalledWith("org.example.web", "0.2.0"));
   });
 
@@ -94,7 +96,7 @@ describe("plugin page versions (kernel plugin)", () => {
   });
 
   it("hides folder grants for a plugin that does not ask for files and shows the uninstall action", async () => {
-    setup();
+    setup(detail({ permissions: [] }));
     await screen.findByText("0.2.0");
     expect(screen.queryByRole("button", { name: /Grant a folder/ })).toBeNull();
     expect(screen.getByText("Uninstall")).toBeTruthy();

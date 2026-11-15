@@ -49,3 +49,14 @@
   4. 控制台有一条 `Select is changing from uncontrolled to controlled` 警告，出现在打开示例查询页（带环境选择）时；仍没有追查来源，不影响功能。
   5. 插件页顶部标题写成“Sample 0.2.0”（取自该版本清单里的名字），切回 0.1.0 后写“Sample”——名字随版本变是夹具的写法，没问题，只是看起来像版本号。
 - 检查：`pnpm typecheck`、`pnpm lint`、`pnpm test`（194）、`cargo test -p onedesk-host`（8+16）、clippy 通过；纯假数据 e2e 23 过 1 跳过；截图已还原。
+
+## 第四轮审查后的修改（#2、#4、#5、#9、#12、#13）
+- 已合并 `claude/week1-slice-3b4ae5`（de1cbc9），协议类型用的是内核已生成的版本。
+- **#4（D312）主进程**：`app.installPlugin` 的参数是 `{folder, id, version, fingerprint}`（界面带回确认框里看到的）。步骤：①文件夹检查——现在**任何**符号链接都拒绝（`symlink`），不再区分包内包外；②`plugin.inspect` 原文件夹，`valid`、id、version、fingerprint 必须与确认的一致，否则 `changedSinceInspect`/`notValid`；③复制到 `plugins/.tmp/`，复制时不跟随链接（复制时才冒出的链接也拒绝）；④对**复制出来的文件夹**再 `plugin.inspect`，三样有一样不符就删掉复制品并拒绝；⑤一致才改名到 `plugins/<id>/<version>`、`plugin.rescan`、再 `plugin.confirmPermissions {plugin, version, fingerprint}`——确认由主进程在复制之后用这个指纹记下，界面安装对话框不再自己调确认。rescan 或确认失败（例如自动切换失败）仍是“已安装 + `warning`”。
+- **#5 主进程**：复制内置插件时记下“自己放着的”`<id>@<version>`（复制的和本来就一致的，不含被用户移除的），启动工作进程时每个传一个 `--builtin <id>@<version>`（重启也带），`plugin.rescan` 带 `{builtin: [...]}`；移除一个内置版本后它从列表里去掉。
+- **#13 主进程**：“已移除”改成 `.removed/<id>/<version>-<毫秒>`，按 `<id>` 目录再比整个版本号，`x-1.2.3` 这样的 id 不会撞，`1.0.0-beta` 这样带横线的版本整串匹配；所有临时复制（安装、内置）都放 `plugins/.tmp/`，不再在插件文件夹里留 `.<版本>.tmp-…`。
+- 主进程测试（`cargo test -p onedesk-host`：9 + 19，clippy 无警告；假工作进程新增 `--builtin` 记录、按 `main.js` 内容给指纹、可让复制品指纹不同、一份有序的调用日志）：确认的包被改过→拒绝且没有 rescan；改了版本号→拒绝；复制品与检查过的不同→删除复制品、拒绝、不 rescan/确认；任何链接（含包内的）→拒绝，复制时才出现的链接也拒绝；rescan 在文件就位之后、带内置列表，随后才确认并带指纹；`.tmp` 里不残留；工作进程重启后仍带内置列表；移除内置版本后 rescan 的列表不含它、下次启动不装回且列表为空；精确匹配（`x-1.2.3`、`1.0.0-beta`）。
+- **#2 界面**：确认权限的对话框列的是**该版本自己的** `PluginVersion.permissions`（不是活动版本的），确认时把该版本的 `fingerprint` 带给 `plugin.confirmPermissions(id, version, fingerprint)`。测试里活动版本只有 `files`、待确认版本是 `network`，对话框只显示后者。
+- **#9**：移除版本的对话框读 `resourceCount`（上一轮合并时已改，现在测试用生成类型的字段名）。
+- **#12**：`unconfirmedVersion`、`restrictedByUpperLayer` 的文字上一次已补；这次又补了内核新增的原因：`forbiddenHeader`、`grantField`、`unconfirmedVersion`（作为原因：绑定的版本未确认）、`symlink`、`changedSinceInspect`；文字齐全性测试已覆盖。
+- 检查：`pnpm typecheck`、`pnpm lint`、`pnpm test`（195）通过；纯假数据 e2e 23 过 1 跳过；截图已还原。没有再对着真内核实跑这一轮的改动（主进程用假工作进程测、界面用假客户端测）。

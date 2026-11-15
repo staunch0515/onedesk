@@ -207,7 +207,7 @@ describe("mixed client", () => {
 
   it("sends installing, removing, versions and secrets to the kernel", async () => {
     const client = createMixedClient(fakeKernel(), createMockClient({ fresh: true, quiet: true }));
-    expect((await client.app?.installPlugin("/x"))?.plugin).toBe("p");
+    expect((await client.app?.installPlugin("/x", "p", "1", "fp"))?.plugin).toBe("p");
     expect((await client.secrets?.list())?.[0]?.name).toBe("token");
     expect((await client.plugin.activateVersion("p", "2")).upgraded).toBe(1);
   });

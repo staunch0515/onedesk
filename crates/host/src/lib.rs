@@ -12,7 +12,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use onedesk_protocol::{
-    ConnectionState, ErrorCode, EventMessage, HelloParams, HelloResult, PluginFolderRef, PluginVersionParams, ProtocolError, Request, Response,
+    ConnectionState, ErrorCode, EventMessage, HelloParams, HelloResult, AppInstallParams, PluginFolderRef, PluginVersionParams, ProtocolError, Request, Response,
     PROTOCOL_VERSION,
 };
 use serde_json::{json, Value};
@@ -161,13 +161,18 @@ async fn spawn_worker(cfg: &HostConfig, shared: &Shared) -> Result<Started, Host
     let workspace = workspace_dir(&cfg.data_dir);
     let plugins = cfg.data_dir.join("plugins");
     let socket = socket_path();
-    let mut child = tokio::process::Command::new(&cfg.worker_bin)
+    let mut command = tokio::process::Command::new(&cfg.worker_bin);
+    command
         .arg("--workspace")
         .arg(&workspace)
         .arg("--plugins")
         .arg(&plugins)
         .arg("--socket")
-        .arg(&socket)
+        .arg(&socket);
+    for b in shared.builtin.lock().unwrap().iter() {
+        command.arg("--builtin").arg(b);
+    }
+    let mut child = command
         .stdin(Stdio::null())
         .kill_on_drop(true)
         .spawn()
@@ -216,6 +221,8 @@ struct Shared {
     next_id: AtomicU64,
     events: broadcast::Sender<EventMessage>,
     hello: Mutex<Value>,
+    /// `<id>@<version>` of the built-in plugins this process copied (D313); the worker may auto-confirm only these.
+    builtin: Mutex<Vec<String>>,
     current: watch::Sender<Option<Arc<Conn>>>,
     shutdown: watch::Sender<bool>,
 }
@@ -245,13 +252,14 @@ impl Host {
         std::fs::create_dir_all(workspace_dir(&cfg.data_dir)).map_err(|e| HostError(format!("data dir: {e}")))?;
         let plugin_root = cfg.data_dir.join("plugins");
         std::fs::create_dir_all(&plugin_root).map_err(|e| HostError(format!("plugins dir: {e}")))?;
+        let mut builtin = Vec::new();
         if let Some(src) = &cfg.builtin_plugins {
-            plugins::install_builtin(src, &plugin_root).map_err(|e| HostError(format!("copy built-in plugins: {e}")))?;
+            builtin = plugins::install_builtin(src, &plugin_root).map_err(|e| HostError(format!("copy built-in plugins: {e}")))?.present;
         }
         let (events, _) = broadcast::channel(1024);
         let (current, _) = watch::channel(None);
         let (shutdown, _) = watch::channel(false);
-        let shared = Arc::new(Shared { next_id: AtomicU64::new(1), events, hello: Mutex::new(Value::Null), current, shutdown });
+        let shared = Arc::new(Shared { next_id: AtomicU64::new(1), events, hello: Mutex::new(Value::Null), builtin: Mutex::new(builtin), current, shutdown });
         let first = spawn_worker(&cfg, &shared).await?;
         *shared.hello.lock().unwrap() = first.hello.clone();
         shared.current.send_replace(Some(first.conn.clone()));
@@ -299,43 +307,78 @@ impl Host {
         self.forward(client, "plugin.inspect", json!({ "folder": folder.folder })).await
     }
 
-    /// `app.installPlugin`: check the folder, check the manifest again (must be valid), copy to a
-    /// temporary folder, rename into `plugins/<id>/<version>`, ask the worker to rescan.
+    /// `plugin.rescan` with the built-in list (D313).
+    async fn rescan(&self, client: Option<&str>) -> Result<Value, ProtocolError> {
+        let builtin = self.shared.builtin.lock().unwrap().clone();
+        self.forward(client, "plugin.rescan", json!({ "builtin": builtin })).await
+    }
+
+    /// `app.installPlugin` (D312): the interface brings back the `id`, `version` and `fingerprint` the
+    /// user saw in the confirmation. The folder must be plain files; the worker looks at it again, the
+    /// package is copied without following links into `plugins/.tmp/`, and the worker looks at the
+    /// COPY once more. Only if all three still agree does it move into `plugins/<id>/<version>`, get
+    /// rescanned and recorded as confirmed with that fingerprint. Any difference deletes the copy and refuses.
     async fn install_plugin(&self, client: Option<&str>, params: Value) -> Result<Value, ProtocolError> {
-        let folder = parse::<PluginFolderRef>(params)?;
-        let src = PathBuf::from(&folder.folder);
-        install::check_package(&src, install::MAX_PACKAGE_BYTES).map_err(|p| invalid(p.reason()))?;
-        let preview = self.forward(client, "plugin.inspect", json!({ "folder": folder.folder })).await?;
-        if preview.get("valid").and_then(Value::as_bool) != Some(true) {
-            return Err(ProtocolError { code: ErrorCode::Invalid, params: [("reason".to_string(), "notValid".to_string())].into(), detail: Some(preview.get("problem").map(Value::to_string).unwrap_or_default()) });
+        let wanted = parse::<AppInstallParams>(params)?;
+        if !install::safe_segment(&wanted.id) || !install::safe_segment(&wanted.version) {
+            return Err(invalid("badTarget"));
         }
-        let (Some(id), Some(version)) = (preview["id"].as_str(), preview["version"].as_str()) else { return Err(invalid("notValid")) };
-        if !install::safe_segment(id) || !install::safe_segment(version) {
-            return Err(invalid("notValid"));
+        let src = PathBuf::from(&wanted.folder);
+        install::check_package(&src, install::MAX_PACKAGE_BYTES).map_err(|p| invalid(p.reason()))?;
+        let same = |preview: &Value| {
+            preview.get("valid").and_then(Value::as_bool) == Some(true)
+                && preview["id"].as_str() == Some(wanted.id.as_str())
+                && preview["version"].as_str() == Some(wanted.version.as_str())
+                && preview["fingerprint"].as_str() == Some(wanted.fingerprint.as_str())
+        };
+        let seen = self.forward(client, "plugin.inspect", json!({ "folder": wanted.folder })).await?;
+        if !same(&seen) {
+            return Err(invalid(if seen.get("valid").and_then(Value::as_bool) == Some(true) { "changedSinceInspect" } else { "notValid" }));
         }
         let _one_at_a_time = self.install_lock.lock().await;
         let plugin_root = self.data_dir.join("plugins");
-        let dest = plugin_root.join(id).join(version);
+        let dest = plugin_root.join(&wanted.id).join(&wanted.version);
         if dest.exists() {
             return Err(invalid("alreadyInstalled"));
         }
-        let tmp = plugin_root.join(id).join(format!(".{version}.tmp-{}", std::process::id()));
+        let tmp = install::tmp_dir(&plugin_root).join(format!("{}-{}-{}", wanted.id, wanted.version, std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp);
-        let copied = install::copy_package(&src, &tmp).and_then(|_| std::fs::rename(&tmp, &dest));
-        if let Err(e) = copied {
+        if let Err(e) = install::copy_package(&src, &tmp) {
             let _ = std::fs::remove_dir_all(&tmp);
-            return Err(err(ErrorCode::Internal, format!("copy plugin: {e}")));
+            return Err(if e.kind() == std::io::ErrorKind::InvalidInput { invalid("symlink") } else { err(ErrorCode::Internal, format!("copy plugin: {e}")) });
         }
-        // The files are installed whatever the rescan says. A rescan that fails (for example the automatic
-        // switch to this version could not take over a resource) is reported next to the result, not as a
-        // failure of the install: the version is there and can be switched by hand.
-        match self.forward(client, "plugin.rescan", Value::Null).await {
-            Ok(_) => Ok(json!({ "plugin": id, "version": version })),
-            Err(warning) => Ok(json!({ "plugin": id, "version": version, "warning": warning })),
+        // What is about to be installed is the copy, so that is what gets looked at.
+        let copy = match self.forward(client, "plugin.inspect", json!({ "folder": tmp })).await {
+            Ok(v) => v,
+            Err(e) => {
+                let _ = std::fs::remove_dir_all(&tmp);
+                return Err(e);
+            }
+        };
+        if !same(&copy) {
+            let _ = std::fs::remove_dir_all(&tmp);
+            return Err(invalid("changedSinceInspect"));
         }
+        let placed = std::fs::create_dir_all(dest.parent().expect("has parent")).and_then(|_| std::fs::rename(&tmp, &dest));
+        if let Err(e) = placed {
+            let _ = std::fs::remove_dir_all(&tmp);
+            return Err(err(ErrorCode::Internal, format!("install plugin: {e}")));
+        }
+        // The files are installed whatever comes next. A rescan or confirmation that fails (for example the
+        // automatic switch to this version could not take over a resource) is reported next to the result,
+        // not as a failure of the install: the version is there and can be switched by hand.
+        let mut warning = self.rescan(client).await.err();
+        let confirm = json!({ "plugin": wanted.id, "version": wanted.version, "fingerprint": wanted.fingerprint });
+        if let Err(e) = self.forward(client, "plugin.confirmPermissions", confirm).await {
+            warning = warning.or(Some(e));
+        }
+        Ok(match warning {
+            None => json!({ "plugin": wanted.id, "version": wanted.version }),
+            Some(w) => json!({ "plugin": wanted.id, "version": wanted.version, "warning": w }),
+        })
     }
 
-    /// `app.removePlugin`: move the version to `plugins/.removed/`, rescan.
+    /// `app.removePlugin`: move the version to `plugins/.removed/<id>/<version>-<time>`, rescan.
     async fn remove_plugin(&self, client: Option<&str>, params: Value) -> Result<Value, ProtocolError> {
         let p = parse::<PluginVersionParams>(params)?;
         if !install::safe_segment(&p.plugin) || !install::safe_segment(&p.version) {
@@ -347,7 +390,10 @@ impl Host {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Err(ProtocolError { code: ErrorCode::NotFound, params: [("what".to_string(), "plugin".to_string())].into(), detail: None }),
             Err(e) => return Err(err(ErrorCode::Internal, format!("remove plugin: {e}"))),
         }
-        self.forward(client, "plugin.rescan", Value::Null).await?;
+        // A removed built-in version is no longer the main process's own copy.
+        let key = format!("{}@{}", p.plugin, p.version);
+        self.shared.builtin.lock().unwrap().retain(|b| *b != key);
+        self.rescan(client).await?;
         Ok(Value::Null)
     }
 

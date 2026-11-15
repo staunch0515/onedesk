@@ -36,7 +36,7 @@ export function PluginPage({ tab, descriptor }: { tab: TabState; descriptor: Pag
   const activate = async (v: PluginVersion, confirmed = false) => {
     if (real && (v.confirmed === false || p.unconfirmed.includes(v.version)) && !confirmed) return setAsk({ kind: "permissions", version: v.version });
     try {
-      if (real && (v.confirmed === false || p.unconfirmed.includes(v.version))) await client.plugin.confirmPermissions(id, v.version);
+      if (real && (v.confirmed === false || p.unconfirmed.includes(v.version))) await client.plugin.confirmPermissions(id, v.version, v.fingerprint);
       const result = await client.plugin.activateVersion(id, v.version);
       done(result.upgraded > 0 ? t("plugin.upgraded", { version: v.version, upgraded: result.upgraded, kept: result.kept }) : result.kept > 0 ? t("plugin.switchedKept", { version: v.version, kept: result.kept }) : t("plugin.activated", { version: v.version }));
     } catch (error) {
@@ -187,7 +187,7 @@ export function PluginPage({ tab, descriptor }: { tab: TabState; descriptor: Pag
     >
       {ask?.kind === "permissions" && (
         <Pane gap="xs">
-          {p.permissions.map((x) => (
+          {((p.versions.find((v) => v.version === ask.version)?.permissions ?? []) as PluginPermission[]).map((x) => (
             <Pane key={x.id} direction="row" gap="sm" align="center" wrap>
               <Text size="sm" weight="medium">{x.label ? tx(x.label) : permission(x.id)}</Text>
               {x.detail && <Text size="xs" tone="muted" mono>{x.detail}</Text>}

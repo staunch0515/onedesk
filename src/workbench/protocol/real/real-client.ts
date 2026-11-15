@@ -79,7 +79,7 @@ export async function createKernelClient(transport: Transport, locale?: () => st
     },
     app: {
       inspectPlugin: (folder) => call<InstallPreview>("app.inspectPlugin", { folder }),
-      installPlugin: (folder) => call<PluginVersionParams>("app.installPlugin", { folder }),
+      installPlugin: (folder, id, version, fingerprint) => call<PluginVersionParams>("app.installPlugin", { folder, id, version, fingerprint }),
       removePlugin: async (plugin, version) => void (await call("app.removePlugin", { plugin, version })),
     },
     secrets: {
@@ -141,7 +141,7 @@ export async function createKernelClient(transport: Transport, locale?: () => st
       activateVersion: (id, version) => call<UpgradeResult>("plugin.activateVersion", { plugin: id, version }),
       setPinned: async (id, version, pinned) => void (await call("plugin.setPinned", { plugin: id, version, pinned })),
       undoUpgrade: (batch, also) => call<UndoUpgradeResult>("plugin.undoUpgrade", { batch, also: also ?? [] }),
-      confirmPermissions: async (id, version) => void (await call("plugin.confirmPermissions", { plugin: id, version })),
+      confirmPermissions: async (id, version, fingerprint) => void (await call("plugin.confirmPermissions", { plugin: id, version, fingerprint })),
     },
     ui: {
       get: async <T,>(key: string) => ((await call<T | null>("ui.get", { key })) ?? null) as T | null,

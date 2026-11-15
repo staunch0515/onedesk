@@ -13,8 +13,8 @@ pub enum Problem {
     NotAbsolute,
     NotFolder,
     NoManifest,
-    SymlinkOutside,
-    SymlinkFolder,
+    /// Any link at all (D312): a package is plain files and folders.
+    Symlink,
     TooBig,
 }
 
@@ -24,8 +24,7 @@ impl Problem {
             Problem::NotAbsolute => "notAbsolute",
             Problem::NotFolder => "notFolder",
             Problem::NoManifest => "noManifest",
-            Problem::SymlinkOutside => "symlinkOutside",
-            Problem::SymlinkFolder => "symlinkFolder",
+            Problem::Symlink => "symlink",
             Problem::TooBig => "tooBig",
         }
     }
@@ -36,7 +35,7 @@ pub fn safe_segment(s: &str) -> bool {
 }
 
 /// Looks at a package folder without copying it: a real folder with a readable manifest, no
-/// symbolic link that leaves the package (or points at a folder), at most `limit` bytes.
+/// symbolic link anywhere inside, at most `limit` bytes.
 pub fn check_package(root: &Path, limit: u64) -> Result<(), Problem> {
     if !root.is_absolute() {
         return Err(Problem::NotAbsolute);
@@ -48,28 +47,20 @@ pub fn check_package(root: &Path, limit: u64) -> Result<(), Problem> {
     if std::fs::read_to_string(root.join("manifest.json")).is_err() {
         return Err(Problem::NoManifest);
     }
-    let canonical = std::fs::canonicalize(root).map_err(|_| Problem::NotFolder)?;
     let mut total = 0u64;
-    walk(root, &canonical, limit, &mut total)
+    walk(root, limit, &mut total)
 }
 
-fn walk(dir: &Path, canonical_root: &Path, limit: u64, total: &mut u64) -> Result<(), Problem> {
+fn walk(dir: &Path, limit: u64, total: &mut u64) -> Result<(), Problem> {
     let entries = std::fs::read_dir(dir).map_err(|_| Problem::NotFolder)?;
     for entry in entries {
         let entry = entry.map_err(|_| Problem::NotFolder)?;
         let path = entry.path();
         let meta = std::fs::symlink_metadata(&path).map_err(|_| Problem::NotFolder)?;
         if meta.file_type().is_symlink() {
-            let target = std::fs::canonicalize(&path).map_err(|_| Problem::SymlinkOutside)?;
-            if !target.starts_with(canonical_root) {
-                return Err(Problem::SymlinkOutside);
-            }
-            if target.is_dir() {
-                return Err(Problem::SymlinkFolder);
-            }
-            *total += std::fs::metadata(&target).map(|m| m.len()).unwrap_or(0);
+            return Err(Problem::Symlink);
         } else if meta.is_dir() {
-            walk(&path, canonical_root, limit, total)?;
+            walk(&path, limit, total)?;
         } else {
             *total += meta.len();
         }
@@ -80,15 +71,18 @@ fn walk(dir: &Path, canonical_root: &Path, limit: u64, total: &mut u64) -> Resul
     Ok(())
 }
 
-/// Copies a checked package; links inside it are copied as the files they point to.
+/// Copies a package without following links: a link is refused (the check already did, this is the
+/// second line of defence against a package that changed in between).
 pub fn copy_package(src: &Path, dest: &Path) -> io::Result<()> {
     std::fs::create_dir_all(dest)?;
     for entry in std::fs::read_dir(src)? {
         let entry = entry?;
         let from = entry.path();
         let to = dest.join(entry.file_name());
-        let meta = std::fs::metadata(&from)?; // follows a link to a file
-        if meta.is_dir() {
+        let meta = std::fs::symlink_metadata(&from)?;
+        if meta.file_type().is_symlink() {
+            return Err(io::Error::new(io::ErrorKind::InvalidInput, "package contains a link"));
+        } else if meta.is_dir() {
             copy_package(&from, &to)?;
         } else {
             std::fs::copy(&from, &to)?;
@@ -97,29 +91,38 @@ pub fn copy_package(src: &Path, dest: &Path) -> io::Result<()> {
     Ok(())
 }
 
+/// `<plugins>/.tmp`: where packages are copied before the final rename and checked once more.
+pub fn tmp_dir(plugin_root: &Path) -> PathBuf {
+    plugin_root.join(".tmp")
+}
+
 /// `<plugins>/.removed`: removed versions are moved here, never deleted.
 pub fn removed_dir(plugin_root: &Path) -> PathBuf {
     plugin_root.join(".removed")
 }
 
-/// Moves `<plugins>/<id>/<version>` to `.removed/<id>-<version>-<millis>`.
+/// Moves `<plugins>/<id>/<version>` to `.removed/<id>/<version>-<millis>`. The folder is exact, so a
+/// plugin id like `x-1.2.3` cannot be mistaken for version `1.2.3` of plugin `x`.
 pub fn remove_version(plugin_root: &Path, id: &str, version: &str) -> io::Result<PathBuf> {
     let src = plugin_root.join(id).join(version);
     if !src.is_dir() {
         return Err(io::Error::new(io::ErrorKind::NotFound, "not installed"));
     }
-    let trash = removed_dir(plugin_root);
+    let trash = removed_dir(plugin_root).join(id);
     std::fs::create_dir_all(&trash)?;
     let millis = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0);
-    let dest = trash.join(format!("{id}-{version}-{millis}"));
+    let dest = trash.join(format!("{version}-{millis}"));
     std::fs::rename(&src, &dest)?;
     Ok(dest)
 }
 
-/// Whether a built-in version was removed by the user (so the next start must not put it back).
+/// Whether exactly `<id>@<version>` was removed by the user (so the next start must not put a built-in copy back).
 pub fn was_removed(plugin_root: &Path, id: &str, version: &str) -> bool {
-    let prefix = format!("{id}-{version}-");
-    std::fs::read_dir(removed_dir(plugin_root)).map(|rd| rd.filter_map(|e| e.ok()).any(|e| e.file_name().to_string_lossy().starts_with(&prefix))).unwrap_or(false)
+    let Ok(entries) = std::fs::read_dir(removed_dir(plugin_root).join(id)) else { return false };
+    entries.filter_map(|e| e.ok()).any(|e| {
+        let name = e.file_name().to_string_lossy().into_owned();
+        name.rsplit_once('-').is_some_and(|(v, millis)| v == version && !millis.is_empty() && millis.bytes().all(|b| b.is_ascii_digit()))
+    })
 }
 
 #[cfg(test)]
@@ -159,25 +162,35 @@ mod tests {
     }
 
     #[test]
-    fn refuses_links_that_leave_the_package_or_point_at_folders() {
+    fn refuses_any_link_inside_a_package() {
         let tmp = tempfile::tempdir().unwrap();
         let src = tmp.path().join("pkg");
         package(&src);
+        // Even a link that stays inside the package.
+        std::os::unix::fs::symlink(src.join("main.js"), src.join("alias.js")).unwrap();
+        assert_eq!(check_package(&src, MAX_PACKAGE_BYTES), Err(Problem::Symlink));
+        // Pointing outside, or at a folder: the same answer.
+        std::fs::remove_file(src.join("alias.js")).unwrap();
         let outside = tmp.path().join("secret.txt");
         std::fs::write(&outside, "secret").unwrap();
         std::os::unix::fs::symlink(&outside, src.join("leak.txt")).unwrap();
-        assert_eq!(check_package(&src, MAX_PACKAGE_BYTES), Err(Problem::SymlinkOutside));
+        assert_eq!(check_package(&src, MAX_PACKAGE_BYTES), Err(Problem::Symlink));
         std::fs::remove_file(src.join("leak.txt")).unwrap();
-        // A link to a file inside is fine and is copied as a file.
-        std::os::unix::fs::symlink(src.join("main.js"), src.join("alias.js")).unwrap();
-        assert_eq!(check_package(&src, MAX_PACKAGE_BYTES), Ok(()));
-        let dest = tmp.path().join("out");
-        copy_package(&src, &dest).unwrap();
-        assert!(!std::fs::symlink_metadata(dest.join("alias.js")).unwrap().file_type().is_symlink());
-        // A link to a folder is not.
         std::fs::create_dir_all(src.join("dir")).unwrap();
         std::os::unix::fs::symlink(src.join("dir"), src.join("dirlink")).unwrap();
-        assert_eq!(check_package(&src, MAX_PACKAGE_BYTES), Err(Problem::SymlinkFolder));
+        assert_eq!(check_package(&src, MAX_PACKAGE_BYTES), Err(Problem::Symlink));
+    }
+
+    #[test]
+    fn copy_never_follows_a_link_even_if_one_appears_after_the_check() {
+        let tmp = tempfile::tempdir().unwrap();
+        let src = tmp.path().join("pkg");
+        package(&src);
+        assert_eq!(check_package(&src, MAX_PACKAGE_BYTES), Ok(()));
+        let outside = tmp.path().join("secret.txt");
+        std::fs::write(&outside, "secret").unwrap();
+        std::os::unix::fs::symlink(&outside, src.join("late.txt")).unwrap();
+        assert!(copy_package(&src, &tmp.path().join("out")).is_err());
     }
 
     #[test]
@@ -191,15 +204,26 @@ mod tests {
     }
 
     #[test]
-    fn removal_moves_to_the_removed_folder_and_is_remembered() {
+    fn removal_moves_to_the_removed_folder_and_is_remembered_exactly() {
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path();
         package(&root.join("org.x.alpha").join("0.1.0"));
+        package(&root.join("x-1.2.3").join("0.1.0"));
         assert!(!was_removed(root, "org.x.alpha", "0.1.0"));
         let moved = remove_version(root, "org.x.alpha", "0.1.0").unwrap();
         assert!(moved.is_dir() && !root.join("org.x.alpha/0.1.0").exists());
         assert!(was_removed(root, "org.x.alpha", "0.1.0"));
         assert!(!was_removed(root, "org.x.alpha", "0.2.0"));
         assert!(remove_version(root, "org.x.alpha", "0.1.0").is_err());
+        // An id that looks like another plugin's id and version does not collide.
+        assert!(!was_removed(root, "x", "1.2.3"));
+        remove_version(root, "x-1.2.3", "0.1.0").unwrap();
+        assert!(was_removed(root, "x-1.2.3", "0.1.0"));
+        assert!(!was_removed(root, "x", "1.2.3-0.1.0"));
+        // A version with a dash is matched whole.
+        package(&root.join("org.x.beta").join("1.0.0-beta"));
+        remove_version(root, "org.x.beta", "1.0.0-beta").unwrap();
+        assert!(was_removed(root, "org.x.beta", "1.0.0-beta"));
+        assert!(!was_removed(root, "org.x.beta", "1.0.0"));
     }
 }

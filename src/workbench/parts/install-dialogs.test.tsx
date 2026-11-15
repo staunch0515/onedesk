@@ -11,6 +11,7 @@ const preview = (over: Partial<InstallPreview> = {}): InstallPreview => ({
   valid: true,
   id: "org.example.web",
   version: "0.2.0",
+  fingerprint: "fp-web-2",
   name: "Web tool",
   description: "Calls web services",
   icon: "globe",
@@ -45,14 +46,15 @@ describe("install flow", () => {
     expect(screen.getAllByText("New")).toHaveLength(1);
     expect(app.installPlugin).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "Install" }));
-    await waitFor(() => expect(confirmPermissions).toHaveBeenCalledWith("org.example.web", "0.2.0"));
-    expect(app.installPlugin).toHaveBeenCalledWith("/pkg");
+    // What was seen goes back with the request; the main process records the confirmation itself.
+    await waitFor(() => expect(app.installPlugin).toHaveBeenCalledWith("/pkg", "org.example.web", "0.2.0", "fp-web-2"));
+    expect(confirmPermissions).not.toHaveBeenCalled();
     await waitFor(() => expect(store.get().install).toBeNull());
   });
 
-  it("closes with a warning, not an error, when the kernel's automatic switch to the new version fails", async () => {
-    const { app, confirmPermissions, store, client } = setup(preview());
-    confirmPermissions.mockRejectedValueOnce(Object.assign(new Error("x"), { code: "pluginError", params: { reason: "migrateFailed" } }));
+  it("closes with a warning when the install result carries one (the automatic switch failed)", async () => {
+    const { app, store, client } = setup(preview());
+    app.installPlugin.mockResolvedValueOnce({ plugin: "org.example.web", version: "0.2.0", warning: { code: "pluginError", params: { reason: "migrateFailed" } } } as never);
     await act(async () => inspectFolder(client, store, "/pkg"));
     fireEvent.click(await screen.findByRole("button", { name: "Install" }));
     await waitFor(() => expect(store.get().install).toBeNull());
