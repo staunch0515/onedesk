@@ -35,6 +35,7 @@ export function createWsTransport(base: string, token: string, client: string): 
           if (msg.error) p.reject(toKernelError(msg.error));
           else p.resolve(msg.result ?? null);
         } else if (msg.topic) {
+          if (msg.client && msg.client !== client) return;
           handlers.forEach((h) => h(msg as EventMessage));
         }
       };

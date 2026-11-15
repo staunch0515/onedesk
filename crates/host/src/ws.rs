@@ -14,10 +14,35 @@ use tokio_tungstenite::tungstenite::Message;
 
 use crate::Host;
 
+/// Decodes `%XX` and `+` (the interface builds the address with `encodeURIComponent`).
+fn percent_decode(s: &str) -> String {
+    let bytes = s.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'%' if bytes.get(i + 1..i + 3).is_some_and(|h| h.iter().all(u8::is_ascii_hexdigit)) => {
+                out.push(u8::from_str_radix(std::str::from_utf8(&bytes[i + 1..i + 3]).expect("ascii"), 16).expect("hex"));
+                i += 3;
+            }
+            b'+' => {
+                out.push(b' ');
+                i += 1;
+            }
+            b => {
+                out.push(b);
+                i += 1;
+            }
+        }
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
 fn query_param(uri: &str, name: &str) -> Option<String> {
     let query = uri.split_once('?')?.1;
-    query.split('&').filter_map(|kv| kv.split_once('=')).find(|(k, _)| *k == name).map(|(_, v)| v.to_string())
+    query.split('&').filter_map(|kv| kv.split_once('=')).find(|(k, _)| *k == name).map(|(_, v)| percent_decode(v))
 }
+
 
 /// Accepts connections until the listener fails. A connection whose address lacks the right
 /// `token` is refused with 401 before the WebSocket upgrade completes.
@@ -38,7 +63,7 @@ async fn connection(host: Arc<Host>, stream: TcpStream, token: String, anon: u64
     #[allow(clippy::result_large_err)] // the callback type is fixed by tungstenite
     let check = |req: &HttpRequest, resp: HttpResponse| -> Result<HttpResponse, ErrorResponse> {
         let uri = req.uri().to_string();
-        if query_param(&uri, "token").as_deref() != Some(token.as_str()) {
+        if token.is_empty() || query_param(&uri, "token").as_deref() != Some(token.as_str()) {
             let mut r = ErrorResponse::new(Some("bad token".to_string()));
             *r.status_mut() = StatusCode::UNAUTHORIZED;
             return Err(r);
@@ -93,4 +118,16 @@ async fn connection(host: Arc<Host>, stream: TcpStream, token: String, anon: u64
     pusher.abort();
     writer.abort();
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn decodes_the_token_before_comparing() {
+        assert_eq!(query_param("/?token=a%2Fb%20c&client=x", "token").as_deref(), Some("a/b c"));
+        assert_eq!(query_param("/?token=100%", "token").as_deref(), Some("100%"));
+        assert_eq!(query_param("/?client=x", "token"), None);
+    }
 }

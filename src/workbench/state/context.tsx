@@ -23,6 +23,8 @@ export interface Actions {
   /** Writes a tab's unsaved bound values. Returns false when it failed. */
   save: (tabId: string) => Promise<boolean>;
   command: (id: string, context?: CommandContext) => Promise<void>;
+  /** Runs effects the kernel pushed (a plugin's `host.ui.open/notify/copy`). */
+  runEffects: (effects: CommandEffect[]) => Promise<void>;
   reveal: (tree: string, key: string) => Promise<void>;
   /** Gives a plugin access to a folder (the user chose it in a dialog). */
   grantFolder: (plugin: string, path: string) => Promise<void>;
@@ -212,6 +214,7 @@ export function WorkbenchProvider({ store, children }: { store: Store; children:
       save,
       reveal,
       grantFolder,
+      runEffects: (effects) => applyEffects(effects).catch(fail),
       activate: (tabId) => store.set({ activeTabId: tabId }),
       close: (tabIds) => {
         const s = store.get();
@@ -253,6 +256,16 @@ export function WorkbenchProvider({ store, children }: { store: Store; children:
       setExpanded: (tree, keys) => store.set((s) => ({ expanded: { ...s.expanded, [tree]: keys } })),
     };
   }, [client, store]);
+
+  // A plugin asked the interface to do something (`ui` event). The main process only sends it to the
+  // client that made the call (or to everyone when no client is named).
+  useEffect(
+    () =>
+      client.events.subscribe("ui", (_topic, payload) => {
+        if (payload && typeof payload === "object" && "type" in payload) void actions.runEffects([payload as CommandEffect]);
+      }),
+    [client, actions],
+  );
 
   const value = useMemo(() => ({ client, store, actions }), [client, store, actions]);
   return <WorkbenchContext.Provider value={value}>{children}</WorkbenchContext.Provider>;

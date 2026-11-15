@@ -17,6 +17,10 @@ async fn main() {
         eprintln!("usage: onedesk-devhost --data-dir <dir> --port <port> --token <token> [--plugins <dir>]");
         std::process::exit(2);
     };
+    if token.is_empty() {
+        eprintln!("onedesk-devhost: --token must not be empty");
+        std::process::exit(2);
+    }
     let port: u16 = arg(&args, "--port").and_then(|p| p.parse().ok()).unwrap_or(0);
     let builtin = arg(&args, "--plugins").map(PathBuf::from).or_else(|| {
         let default = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../plugins");
