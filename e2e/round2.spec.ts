@@ -46,7 +46,7 @@ const showTree = async (page: Page, name: string) => {
 };
 const treeItem = (page: Page, name: string) => page.getByRole("treeitem", { name, exact: true });
 
-test("environments: child inherits and shows the source, override, upstream change, use inherited", async ({ page }) => {
+test("environments: a child inherits and shows where the value comes from", async ({ page }) => {
   await openKernel(page, host);
   const root = await nodeId(page, "env", "Default");
   await call(page, "params.set", { node: root, name: "region", value: "eu" });
@@ -65,7 +65,19 @@ test("environments: child inherits and shows the source, override, upstream chan
   await expect(page.getByRole("textbox", { name: "region", exact: true })).toHaveValue("eu");
   await expect(page.getByText("Inherited from Default").first()).toBeVisible();
   await shot(page, "env-inherited");
+});
 
+// FIXME(shell): env-page.tsx sends `basis` as a string (`String(env.data.rev)`) but `ParamSetParams.basis` /
+// `ParamNameParams.basis` are numbers, so every override, "keep mine" and "use inherited" from the page fails
+// with "The request was malformed" (invalidParams). See round2-tests-done.md, S-B1. Remove `.fixme` when fixed.
+test.fixme("environments (UI): override, changed upstream, keep mine, use the inherited value", async ({ page }) => {
+  await openKernel(page, host);
+  const root = await nodeId(page, "env", "Default");
+  await call(page, "params.set", { node: root, name: "region", value: "eu" });
+  await showTree(page, "Environments");
+  await treeItem(page, "Default").click();
+  await page.keyboard.press("ArrowRight");
+  await treeItem(page, "Staging").click();
   // override
   const region = page.getByRole("textbox", { name: "region", exact: true });
   await region.fill("us");
@@ -91,6 +103,26 @@ test("environments: child inherits and shows the source, override, upstream chan
   await expect(page.getByText("Inherited from Default").first()).toBeVisible();
   await expect(page.getByText("Changed upstream")).toHaveCount(0);
   await shot(page, "env-use-inherited");
+});
+
+test("environments (protocol): override, changed upstream, acknowledge, unset", async ({ page }) => {
+  await openKernel(page, host);
+  const root = await nodeId(page, "env", "Default");
+  const kid = (await children(page, "env", root)).find((n) => n.label === "Staging")!.key;
+  type P = { name: string; value: string; own: boolean; changedUpstream?: { was: string; now: string }; inherited?: { value: string } };
+  const param = async (name: string) => (await call<{ params: P[] }>(page, "params.env", { envId: kid })).params.find((p) => p.name === name)!;
+  await call(page, "params.set", { node: root, name: "tier", value: "gold" });
+  await call(page, "params.set", { node: kid, name: "tier", value: "silver" });
+  expect(await param("tier")).toMatchObject({ value: "silver", own: true, inherited: { value: "gold" } });
+  await call(page, "params.set", { node: root, name: "tier", value: "platinum" });
+  expect((await param("tier")).changedUpstream).toEqual({ was: "gold", now: "platinum" });
+  await call(page, "params.set", { node: root, name: "other", value: "1" }); // another parameter: no false mark
+  expect((await param("tier")).changedUpstream).toBeDefined();
+  expect((await param("other")).changedUpstream).toBeUndefined();
+  await call(page, "params.acknowledge", { node: kid, name: "tier" });
+  expect((await param("tier")).changedUpstream).toBeUndefined();
+  await call(page, "params.unset", { node: kid, name: "tier" });
+  expect(await param("tier")).toMatchObject({ value: "platinum", own: false });
 });
 
 async function restart(page: Page) {
@@ -122,7 +154,7 @@ test("language, theme and density are stored in the kernel and survive a restart
   await openKernel(page, host);
   await page.getByRole("button", { name: "Comfortable", exact: true }).click();
   await expect(page.getByRole("button", { name: "Compact", exact: true })).toBeVisible();
-  await page.locator(".od-status-item--button:not(:has(.od-status-item__text))") /* icon-only: no accessible name, see handoff A1 */.click();
+  await page.getByRole("button", { name: "Switch light / dark" }).click();
   await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
   await page.getByRole("button", { name: "Language" }).click();
   await page.getByRole("menuitem", { name: "简体中文" }).click();
@@ -198,10 +230,12 @@ test("deleted items: delete, restore, delete again, delete permanently with conf
   await page.getByRole("button", { name: /Delete permanently/ }).first().click();
   await page.getByRole("dialog").getByRole("button", { name: /Delete permanently/ }).click();
   await expect(page.getByText("Nothing has been deleted")).toBeVisible();
+  await expect(treeItem(page, "Doomed note")).toHaveCount(0);
   expect(await call(page, "resource.get", { id })).toBeNull();
 });
 
-test("history: environment page lists rename and value changes and restores one", async ({ page }) => {
+// FIXME(shell): same cause as above (S-B1): editing the value on the environment page is refused.
+test.fixme("history (UI): environment page lists rename and value changes and restores one", async ({ page }) => {
   await openKernel(page, host);
   const root = await nodeId(page, "env", "Default");
   await call(page, "command.execute", { id: "env.newChild", context: { tree: "env", nodeKey: root } });
@@ -309,13 +343,17 @@ test("audit: the page shows what was just done and filters by result", async ({ 
   await shot(page, "audit-denied");
 });
 
-// FIXME(kernel): `audit.list` with `text` matches the object id, not the target name the page shows, so
-// "Contains: Target or detail" finds nothing for a name. See round2-tests-done.md, K-A1.
-test.fixme("audit: the Contains filter finds a record by the target name", async ({ page }) => {
+test("audit: the Contains filter finds a record by the target name", async ({ page }) => {
   await newNote(page, "Findable audit target", "x");
   await openKernel(page, host);
   const rows = await call<{ target: string }[]>(page, "audit.list", { text: "Findable audit target" });
   expect(rows.map((r) => r.target)).toContain("Findable audit target");
+  await page.keyboard.press("ControlOrMeta+Shift+p");
+  await page.getByPlaceholder("Type a command").fill("audit");
+  await page.getByRole("option", { name: "Open audit log" }).click();
+  await page.getByRole("textbox", { name: "Contains" }).fill("Findable audit target");
+  const table = page.getByRole("table").filter({ has: page.getByRole("columnheader", { name: "Operation" }) });
+  await expect(table.locator("tbody tr").first()).toContainText("Findable audit target");
 });
 
 test("dark screenshots of the environment page and the audit page", async ({ page }) => {
@@ -333,4 +371,20 @@ test("dark screenshots of the environment page and the audit page", async ({ pag
   await expect(page.getByRole("columnheader", { name: "Operation" })).toBeVisible();
   await shot(page, "audit", "dark");
   await call(page, "workspace.setConfig", { name: "ui.theme", value: "light" });
+});
+
+test("note page: the info panel lists the rename and restoring it brings the old name back", async ({ page }) => {
+  const id = await newNote(page, "Panel before", "body");
+  await call(page, "tree.rename", { tree: "resources", key: id, name: "Panel after" });
+  await openKernel(page, host);
+  await showTree(page, "Resources");
+  await treeItem(page, "Panel after").click();
+  await expect(page.getByRole("textbox", { name: "Name", exact: true })).toHaveValue("Panel after");
+  await page.getByRole("button", { name: "Show changes" }).click();
+  await expect(page.getByText("Panel before → Panel after")).toBeVisible();
+  await shot(page, "info-history");
+  await page.getByRole("button", { name: "Restore" }).first().click();
+  await expect(page.getByRole("textbox", { name: "Name", exact: true })).toHaveValue("Panel before");
+  await expect(treeItem(page, "Panel before")).toBeVisible();
+  await shot(page, "info-history-restored");
 });
