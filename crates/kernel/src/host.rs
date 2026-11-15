@@ -22,16 +22,17 @@ pub const MAX_STORAGE_TOTAL: usize = 16 * 1024 * 1024;
 
 pub struct PluginHost {
     pub kernel: Weak<Inner>,
-    pub plugin: String,
+    /// The version this runtime runs: host calls act as `plugin:<id>@<version>`.
+    pub plugin: &'static Plugin,
 }
 
 impl HostApi for PluginHost {
     fn call(&self, info: Arc<CallInfo>, method: String, args: Value) -> HostFuture {
         let kernel = self.kernel.clone();
-        let plugin = self.plugin.clone();
+        let plugin = self.plugin;
         Box::pin(async move {
             let k = kernel.upgrade().ok_or_else(|| internal("kernel stopped"))?;
-            k.host_call(&plugin, &info, &method, args).await
+            k.host_call(plugin, &info, &method, args).await
         })
     }
 }
@@ -45,13 +46,32 @@ fn arg_str(args: &Value, i: usize, what: &str) -> KResult<String> {
 }
 
 impl Inner {
-    pub async fn host_call(&self, plugin_id: &str, info: &CallInfo, method: &str, args: Value) -> KResult<Value> {
-        let plugin = self.registry.plugin(plugin_id).ok_or_else(|| internal("plugin gone"))?;
+    pub async fn host_call(&self, plugin: &'static Plugin, info: &CallInfo, method: &str, args: Value) -> KResult<Value> {
         let (cap, op) = method.split_once('.').ok_or_else(|| err_p(ErrorCode::UnknownMethod, &[("method", method)]))?;
-        let res = match cap {
+        // D301: `migrate` is pure computation — only reads; `storage.readFrom` only there.
+        const PURE_OK: &[&str] = &[
+            "resources.get", "resources.list", "files.roots", "files.list", "files.stat", "files.readText",
+            "params.get", "storage.get", "storage.keys", "storage.readFrom", "settings.get",
+        ];
+        let res = if info.pure && !PURE_OK.contains(&method) {
+            Err(denied("pureCall"))
+        } else if !info.pure && method == "storage.readFrom" {
+            Err(denied("notInMigrate"))
+        } else {
+            self.host_dispatch(plugin, info, cap, op, method, &args).await
+        };
+        self.audit_refusal(plugin, method, &args, &res).await;
+        res
+    }
+
+    async fn host_dispatch(&self, plugin: &'static Plugin, info: &CallInfo, cap: &str, op: &str, method: &str, args: &Value) -> KResult<Value> {
+        let args = args.clone();
+        match cap {
             "resources" => self.host_resources(plugin, op, &args).await,
             "files" => self.host_files(plugin, op, &args).await,
             "ui" => self.host_ui(info, op, &args),
+            "network" if op == "request" => self.host_network(plugin, info, &args).await,
+            "secrets" if op == "get" => self.host_secret_get(plugin, info, &args).await,
             "params" => self.host_params(info, op, &args),
             "storage" => self.host_storage(plugin, op, &args).await,
             "settings" => self.host_settings(plugin, op, &args),
@@ -68,24 +88,28 @@ impl Inner {
                 Ok(Value::Null)
             }
             _ => Err(err_p(ErrorCode::UnknownMethod, &[("method", method)])),
-        };
-        // A refused call is audited on its own (§4.3). Refusals inside the pipeline never happen
-        // for plugin calls (the checks above come first), so nothing is recorded twice.
-        if let Err(e) = &res {
+        }
+    }
+
+    /// A refused call is audited on its own (§4.3). Refusals inside the pipeline never happen
+    /// for plugin calls (the checks come first), so nothing is recorded twice.
+    async fn audit_refusal(&self, plugin: &Plugin, method: &str, args: &Value, res: &KResult<Value>) {
+        if let Err(e) = res {
             if e.code == ErrorCode::Denied {
-                let object = args.get(0).and_then(|a| a.as_str().map(String::from).or_else(|| {
-                    a.get("kind").and_then(Value::as_str).map(String::from)
-                }));
+                // Network calls are audited by host (never by URL, which may carry content).
+                let object = if method == "network.request" {
+                    args.get(0).and_then(|o| o.get("url")).and_then(Value::as_str).and_then(crate::network::host_of).unwrap_or_default()
+                } else {
+                    args.get(0)
+                        .and_then(|a| a.as_str().map(String::from).or_else(|| a.get("kind").and_then(Value::as_str).map(String::from)))
+                        .unwrap_or_default()
+                };
                 let _ = self
                     .pipeline
-                    .execute(
-                        plugin.actor(),
-                        Command::Refused { op: method.into(), object: object.unwrap_or_default(), error: e.clone() },
-                    )
+                    .execute(plugin.actor(), Command::Refused { op: method.into(), object, error: e.clone() })
                     .await;
             }
         }
-        res
     }
 
     /* ---------------------------------------------------------------- resources */
@@ -326,6 +350,13 @@ impl Inner {
                 Ok(Value::Null)
             }
             "keys" => Ok(json!(self.read(|c| store::storage_keys(c, id, ver))?)),
+            // D302: in `migrate`, the new version reads what an older version stored.
+            "readFrom" => {
+                let from = arg_str(args, 0, "version")?;
+                let k = arg_str(args, 1, "key")?;
+                let v = self.read(|c| store::storage_get(c, id, &from, &k))?;
+                Ok(v.and_then(|s| serde_json::from_str(&s).ok()).unwrap_or(Value::Null))
+            }
             _ => Err(err_p(ErrorCode::UnknownMethod, &[("method", &format!("storage.{op}"))])),
         }
     }

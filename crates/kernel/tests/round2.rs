@@ -433,7 +433,7 @@ async fn review1_secret_parameters_are_refused() {
     let (env, c) = setup().await;
     let def = root(&c, "env").await;
     let e = c.call("params.set", json!({ "node": def, "name": "token", "value": "s3cr3t-value", "type": "secret" })).await.unwrap_err();
-    assert_eq!(reason(&e), (ErrorCode::Invalid, "secretUnsupported".into()));
+    assert_eq!(reason(&e), (ErrorCode::Invalid, "unknownSecret".into()));
     let n: i64 = db(&env).query_row("SELECT count(*) FROM resources WHERE body LIKE '%s3cr3t-value%'", [], |r| r.get(0)).unwrap();
     assert_eq!(n, 0);
 }

@@ -30,11 +30,17 @@ pub struct KernelConfig {
     pub sandbox: SandboxConfig,
     /// Total time of one action invocation (D288: 60 s).
     pub action_timeout: std::time::Duration,
+    /// Where secret values live (D305): the keychain, or memory in tests.
+    pub secrets: crate::secrets::SecretStoreHandle,
 }
 
 impl Default for KernelConfig {
     fn default() -> Self {
-        KernelConfig { sandbox: SandboxConfig::default(), action_timeout: std::time::Duration::from_secs(60) }
+        KernelConfig {
+            sandbox: SandboxConfig::default(),
+            action_timeout: std::time::Duration::from_secs(60),
+            secrets: crate::secrets::SecretStoreHandle::from_env(),
+        }
     }
 }
 
@@ -55,6 +61,8 @@ pub(crate) struct Inner {
     pub activations: AtomicU64,
     pub me: Weak<Inner>,
     pub runs_active: crate::runs::ActiveRuns,
+    pub secret_cache: Mutex<HashMap<String, String>>,
+    pub rules: crate::pipeline::SharedRules,
 }
 
 pub(crate) fn parse<T: DeserializeOwned>(v: Value) -> KResult<T> {
@@ -114,6 +122,8 @@ impl Kernel {
             activations: AtomicU64::new(0),
             me: me.clone(),
             runs_active: Default::default(),
+            secret_cache: Default::default(),
+            rules,
         });
         Ok(Kernel { inner })
     }
@@ -141,9 +151,12 @@ impl Kernel {
     pub fn active_plugins(&self) -> Vec<String> {
         let slots: Vec<(String, Slot)> =
             self.inner.slots.lock().unwrap().iter().map(|(k, v)| (k.clone(), v.clone())).collect();
-        let mut out: Vec<String> =
+        let out: Vec<String> =
             slots.into_iter().filter(|(_, s)| s.try_lock().map(|g| g.is_some()).unwrap_or(true)).map(|(k, _)| k).collect();
+        // Slots are per version (`id@version`); callers ask about plugins.
+        let mut out: Vec<String> = out.into_iter().map(|k| k.split('@').next().unwrap_or_default().to_string()).collect();
         out.sort();
+        out.dedup();
         out
     }
 
@@ -786,12 +799,13 @@ impl Inner {
 
     /* ---------------------------------------------------------------- plugins: runtimes */
 
-    fn slot(&self, plugin: &str) -> Slot {
-        self.slots.lock().unwrap().entry(plugin.to_string()).or_default().clone()
+    /// One runtime per plugin *version* (§7.6): `id@version`.
+    fn slot(&self, p: &Plugin) -> Slot {
+        self.slots.lock().unwrap().entry(format!("{}@{}", p.id, p.version)).or_default().clone()
     }
 
-    async fn sandbox(&self, plugin: &Plugin) -> KResult<Arc<Sandbox>> {
-        let slot = self.slot(&plugin.id);
+    async fn sandbox(&self, plugin: &'static Plugin) -> KResult<Arc<Sandbox>> {
+        let slot = self.slot(plugin);
         let mut guard = slot.lock().await;
         if let Some(sb) = guard.as_ref() {
             return Ok(sb.clone());
@@ -805,17 +819,18 @@ impl Inner {
                 trees: plugin.manifest.contributes.trees.iter().map(|t| t.id.clone()).collect(),
                 commands: plugin.manifest.contributes.commands.iter().map(|c| c.id.clone()).collect(),
                 actions: plugin.manifest.contributes.actions.iter().map(|a| a.id.clone()).collect(),
+                kinds: plugin.manifest.contributes.kinds.iter().map(|k| k.id.clone()).collect(),
             },
             labels: plugin.all_labels(),
         };
-        let host = Arc::new(crate::host::PluginHost { kernel: self.me.clone(), plugin: plugin.id.clone() });
+        let host = Arc::new(crate::host::PluginHost { kernel: self.me.clone(), plugin });
         self.activations.fetch_add(1, Ordering::SeqCst);
         let sb = Arc::new(Sandbox::activate(pkg, host, self.cfg.sandbox.clone()).await.map_err(|e| e.to_protocol())?);
         *guard = Some(sb.clone());
         Ok(sb)
     }
 
-    /// Calls a plugin handler; activates the plugin first if needed; discards a poisoned runtime.
+    /// Calls a handler of the plugin's active version; activates it first if needed.
     pub async fn call_plugin(
         &self,
         plugin: &str,
@@ -829,7 +844,7 @@ impl Inner {
         self.call_plugin_with(plugin, kind, name, func, args, info, None, None).await.map_err(|e| e.to_protocol())
     }
 
-    /// The general form: the call's context, cancel token and time budget (actions get longer).
+    /// The general form on the active version: the call's context, cancel token and time budget.
     #[allow(clippy::too_many_arguments)]
     pub async fn call_plugin_with(
         &self,
@@ -844,7 +859,24 @@ impl Inner {
     ) -> Result<Value, SandboxError> {
         let host = |e: ProtocolError| SandboxError::Host(e);
         let p = self.registry.plugin(plugin).ok_or_else(|| host(err_p(ErrorCode::PluginError, &[("reason", "notLoaded")])))?;
-        if !self.plugin_enabled(plugin) {
+        self.call_version(p, kind, name, func, args, info, cancel, timeout).await
+    }
+
+    /// Calls a handler of one given version (a resource is handled by the version it is bound to).
+    #[allow(clippy::too_many_arguments)]
+    pub async fn call_version(
+        &self,
+        p: &'static Plugin,
+        kind: &str,
+        name: &str,
+        func: &str,
+        args: Value,
+        info: CallInfo,
+        cancel: Option<crate::sandbox::CancelToken>,
+        timeout: Option<std::time::Duration>,
+    ) -> Result<Value, SandboxError> {
+        let host = |e: ProtocolError| SandboxError::Host(e);
+        if !self.plugin_enabled(&p.id) {
             return Err(host(err_p(ErrorCode::PluginError, &[("reason", "pluginDisabled")])));
         }
         let sb = self.sandbox(p).await.map_err(host)?;
@@ -858,7 +890,7 @@ impl Inner {
         let res = call.await.unwrap_or_else(|e| Err(SandboxError::Engine(e.to_string())));
         if let Err(e) = &res {
             if e.poisons() {
-                let slot = self.slot(plugin);
+                let slot = self.slot(p);
                 let mut g = slot.lock().await;
                 if g.as_ref().is_some_and(|cur| Arc::ptr_eq(cur, &sb)) {
                     *g = None;
@@ -868,15 +900,20 @@ impl Inner {
         res
     }
 
-    /// Drops a plugin's runtime (disabled, reloaded); the next use activates it again.
+    /// Drops every runtime of a plugin (disabled, reloaded, version removed).
     pub async fn drop_runtime(&self, plugin: &str) {
-        let slot = self.slot(plugin);
-        *slot.lock().await = None;
+        let prefix = format!("{plugin}@");
+        let slots: Vec<Slot> =
+            self.slots.lock().unwrap().iter().filter(|(k, _)| k.starts_with(&prefix)).map(|(_, v)| v.clone()).collect();
+        for s in slots {
+            *s.lock().await = None;
+        }
     }
 
-    /// D290: a plugin is enabled unless its state node says `enabled = false`.
+    /// D290 / D299: enabled unless its state says `enabled = false`, and it has a usable
+    /// (installed, confirmed) active version.
     pub fn plugin_enabled(&self, plugin: &str) -> bool {
-        self.plugin_param(plugin, "enabled").is_none_or(|v| v != "false")
+        self.plugin_param(plugin, "enabled").is_none_or(|v| v != "false") && self.registry.active_version(plugin).is_some()
     }
 
     /// A parameter of the plugin's state node (`enabled`, `settings.<name>`).

@@ -109,6 +109,8 @@ pub struct CallInfo {
     pub env_id: Option<String>,
     /// Set for action invocations: progress goes to this run.
     pub run_id: Option<String>,
+    /// D301: a pure computation (`migrate`): writing host calls are refused.
+    pub pure: bool,
 }
 
 /// The only capability a plugin has. One instance per plugin version.
@@ -234,7 +236,7 @@ const BOOTSTRAP: &str = r#"
   "use strict";
   const declared = JSON.parse(declaredJson);
   const labels = JSON.parse(labelsJson);
-  const reg = { pages: {}, trees: {}, commands: {}, actions: {} };
+  const reg = { pages: {}, trees: {}, commands: {}, actions: {}, kinds: {} };
   const reg_host = {};
   for (const kind of Object.keys(reg)) {
     reg_host[kind] = Object.freeze({
@@ -272,9 +274,14 @@ const BOOTSTRAP: &str = r#"
       }),
       ui: Object.freeze({ open: c("ui.open"), notify: c("ui.notify"), copy: c("ui.copy") }),
       params: Object.freeze({ get: c("params.get") }),
-      storage: Object.freeze({ get: c("storage.get"), set: c("storage.set"), remove: c("storage.remove"), keys: c("storage.keys") }),
+      storage: Object.freeze({
+        get: c("storage.get"), set: c("storage.set"), remove: c("storage.remove"), keys: c("storage.keys"),
+        readFrom: c("storage.readFrom"),
+      }),
       settings: Object.freeze({ get: c("settings.get") }),
       util: Object.freeze({ sleep: c("util.sleep") }),
+      network: Object.freeze({ request: c("network.request") }),
+      secrets: Object.freeze({ get: c("secrets.get") }),
     });
   };
   const hostCodes = ["conflict", "denied", "invalid", "notFound", "invalidParams"];
@@ -282,6 +289,8 @@ const BOOTSTRAP: &str = r#"
   const dispatch = async (callId, kind, name, fn, argsJson) => {
     const h = reg[kind] && reg[kind][name];
     const f = fn === "" ? h : h && h[fn];
+    // A kind without `migrate` keeps its body as it is (§7.6): answered as `null`.
+    if (typeof f !== "function" && kind === "kinds") return JSON.stringify({ ok: null });
     if (typeof f !== "function") throw new Error("no handler: " + kind + "/" + name + (fn ? "." + fn : ""));
     const args = JSON.parse(argsJson);
     const ctx = Object.assign({}, args[0], {
@@ -294,7 +303,8 @@ const BOOTSTRAP: &str = r#"
       cancelled: () => isCancelled(callId),
     });
     try {
-      const out = await f.call(h, ctx, ...args.slice(1));
+      // `kinds` handlers take (body, fromVersion, ctx), as the manifest documentation writes them.
+    const out = kind === "kinds" ? await f.call(h, ...args.slice(1), ctx) : await f.call(h, ctx, ...args.slice(1));
       return JSON.stringify({ ok: out === undefined ? null : out });
     } catch (e) {
       // A host error the handler did not catch keeps its code.
@@ -313,6 +323,7 @@ pub struct Declarations {
     pub trees: Vec<String>,
     pub commands: Vec<String>,
     pub actions: Vec<String>,
+    pub kinds: Vec<String>,
 }
 
 pub struct Package {

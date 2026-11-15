@@ -43,6 +43,8 @@ pub struct ActiveRun {
     pub last_progress: Option<Instant>,
     /// Why it was stopped from outside: `cancelled` or `pluginDisabled`.
     pub stopped: Option<&'static str>,
+    /// Plain secret values the action read (§7.5): scrubbed from output, summary, progress.
+    pub secrets: Vec<String>,
 }
 
 pub type ActiveRuns = std::sync::Mutex<HashMap<String, ActiveRun>>;
@@ -309,7 +311,7 @@ impl Inner {
         let token = CancelToken::default();
         self.runs_active.lock().unwrap().insert(
             id.clone(),
-            ActiveRun { plugin: plugin.id.clone(), token: token.clone(), last_progress: None, stopped: None },
+            ActiveRun { plugin: plugin.id.clone(), token: token.clone(), last_progress: None, stopped: None, secrets: vec![] },
         );
         let resource = match res {
             Some(r) => Some(self.resource(r)?),
@@ -320,13 +322,16 @@ impl Inner {
         let args = json!([ctx, p.input]);
         let me = self.me.upgrade().ok_or_else(|| internal("kernel stopped"))?;
         let (run_id, pid, aid, declared) = (id.clone(), plugin.id.clone(), action.id.clone(), action.output);
-        let info = CallInfo { client, env_id: p.env_id.clone(), run_id: Some(id.clone()) };
+        let info = CallInfo { client, env_id: p.env_id.clone(), run_id: Some(id.clone()), pure: false };
         let started = Instant::now();
         // Executes in the background; `run.start` answers now.
         tokio::spawn(async move {
             let timeout = me.cfg.action_timeout;
             let res = me.call_plugin_with(&pid, "actions", &aid, "", args, info, Some(token), Some(timeout)).await;
-            let stopped = me.runs_active.lock().unwrap().remove(&run_id).and_then(|a| a.stopped);
+            let (stopped, secrets) = match me.runs_active.lock().unwrap().remove(&run_id) {
+                Some(a) => (a.stopped, a.secrets),
+                None => (None, vec![]),
+            };
             let plugin = me.registry.plugin(&pid);
             let ms = started.elapsed().as_millis() as i64;
             let (status, summary, error, output) = match (stopped, res) {
@@ -367,7 +372,11 @@ impl Inner {
                     ("error", None, Some(err), None)
                 }
             };
-            let summary = summary.or_else(|| Some(json!(RunSummary { rows: None, message: None, duration_ms: Some(ms) })));
+            let mut summary = summary.or_else(|| Some(json!(RunSummary { rows: None, message: None, duration_ms: Some(ms) })));
+            let (mut output, mut error) = (output, error);
+            for v in [&mut summary, &mut output, &mut error].into_iter().flatten() {
+                crate::secrets::scrub(v, &secrets);
+            }
             me.run_end(&run_id, plugin, status, summary, error, output).await;
         });
         Ok(())
@@ -402,7 +411,9 @@ impl Inner {
             }
             a.last_progress = Some(Instant::now());
         }
-        let progress = json!(RunProgress { fraction: fraction.map(|f| f.clamp(0.0, 1.0)), message });
+        let secrets = self.runs_active.lock().unwrap().get(id).map(|a| a.secrets.clone()).unwrap_or_default();
+        let mut progress = json!(RunProgress { fraction: fraction.map(|f| f.clamp(0.0, 1.0)), message });
+        crate::secrets::scrub(&mut progress, &secrets);
         if self.pipeline.execute(Actor::Core, Command::RunProgress { id: id.into(), progress }).await.is_ok() {
             self.run_events(id);
         }
@@ -536,7 +547,7 @@ impl Inner {
         ctx["draft"] = json!(cx.draft);
         ctx["locale"] = json!(cx.locale);
         ctx["envId"] = json!(cx.env_id);
-        let info = CallInfo { client, env_id: cx.env_id.clone(), run_id: None };
+        let info = CallInfo { client, env_id: cx.env_id.clone(), ..Default::default() };
         let out = self
             .call_plugin_with(&plugin.id, "pages", &page, "onEvent", json!([ctx, p.event]), info, None, None)
             .await

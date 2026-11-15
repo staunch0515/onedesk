@@ -282,7 +282,7 @@ impl Inner {
     ) -> KResult<RenderOut> {
         let env = ctx.get("envId").and_then(Value::as_str).map(String::from);
         ctx["envId"] = json!(env);
-        let info = crate::sandbox::CallInfo { client, env_id: env, run_id: None };
+        let info = crate::sandbox::CallInfo { client, env_id: env, ..Default::default() };
         let out = self
             .call_plugin_with(&plugin.id, "pages", page, "render", json!([ctx]), info, None, None)
             .await
