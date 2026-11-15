@@ -247,7 +247,8 @@ export interface EnvParam {
   /** What the parent chain would give without this environment's value. */
   inherited?: { value: string; sourceName: string };
   /**
-   * Present when an ancestor defines this parameter: every ancestor from the root down to the parent with the
+   * Present when an ancestor defines this parameter (the page shows the icon only when the value is inherited,
+   * not when this environment sets it itself): every ancestor from the root down to the parent with the
    * value it sets itself (null = not set there). `effective` marks the layer the inherited value comes from.
    */
   layers?: Array<{ envId: string; name: string; value: string | null; effective: boolean }>;

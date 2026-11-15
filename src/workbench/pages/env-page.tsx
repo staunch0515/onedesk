@@ -44,7 +44,7 @@ export function EnvPage({ tab, descriptor }: { tab: TabState; descriptor: PageDe
           <Text mono size="sm" truncate>
             {p.name}
           </Text>
-          {p.layers && (
+          {!p.own && p.layers && (
             <Popover
               size="md"
               title={t("env.layersTitle", { name: p.name })}

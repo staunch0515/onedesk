@@ -46,7 +46,7 @@ pnpm check                # 以上全部（= /check），失败不得提交
 6. 数据库结构变更只能新增迁移文件，不改已发布的迁移；每个迁移都有升级测试。
 7. 密钥只在钥匙串，数据库、清单、导出文件中不得出现明文。
 8. 测试只用内存库或临时目录；重建数据的测试需 `ONEDESK_TEST_DB=1`，并拒绝正式库路径。
-9. 新依赖先在 `docs/decisions.md` 写用途、替代方案、许可证（仅 MIT/Apache-2.0/BSD/ISC）。
+9. 新依赖先在 `docs/decisions.md` 写用途、替代方案、许可证（仅 MIT/Apache-2.0/BSD/ISC/Zlib/Unicode-3.0）。
 10. 接口（`src/plugin-api`、`src/kernel/contracts.ts`、`src/platform/contract.ts`）的变更由主会话决定，并记入 decisions.md；不因里程碑而冻结。
 
 ## 约定
