@@ -122,3 +122,7 @@ cargo test --release -p onedesk-kernel --test round2 -- search_over --nocapture 
 - 搜索表按 `resources.rowid` 对应：`resources` 的主键是文字 id，rowid 是隐式的。内核从不执行 `VACUUM`（快照用的 `VACUUM INTO` 不改原库），所以 rowid 稳定；以后如果要对原库做 `VACUUM`，要先重建搜索索引（删 `meta.search_built` 即可）。
 - 第一轮、第二轮已有的审计行里仍可能有参数名或资源名（审计表不可改）。
 - #14（成环数据会死循环）记到了 `docs/handoff/todo.md`。
+
+## 界面检查后的修改（K-A1）
+
+`audit.list` 的 `text` 过滤以前只匹配审计行自己的列（操作、对象 id、摘要、操作者），而审计页显示的 `target` 是资源的当前名称，按名称过滤什么都找不到。现在另外匹配“对象 id 对应的资源的当前名称”：查询时用子查询从 `resources` 取，审计行里仍然不写名称；永久删除后资源行不在了，按原名称就找不到。LIKE 照常转义。测试 `tests/round2.rs::audit_text_filter_matches_the_current_name_but_not_after_purge`（按当前名称找得到、旧名称找不到、删除后仍找得到、永久删除后找不到、审计行里没有名称；名称里带 `%` 顺带验证转义）。80 个测试全部通过，clippy 无警告。
