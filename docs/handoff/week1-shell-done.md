@@ -48,3 +48,11 @@
 - `src-tauri/src` 只剩 `lib.rs`、`main.rs`，旧文件已无。
 - 为通过 `pnpm lint` 把我测试里的插件相关词（`note`）改成 `alpha`。**`pnpm lint` 仍失败（25 条），全部在 `crates/kernel/**`（如 `tests/pipeline.rs` 出现 "sql"），不是外壳文件**，由内核会话/协调会话处理。
 - 通过：`cargo test -p onedesk-host`（3+11）、clippy（`onedesk-host`、`onedesk`）、`pnpm typecheck`、`pnpm test`（87）。
+
+## 验收后的修改
+- 已合并 `claude/week1-slice-3b4ae5`（e638f90 起），无冲突。
+- 保存（#1、#2）：保存逻辑抽到 `state/save.ts`（`saveTab`）。任何目标都走 `page.save`；`resource:`/`node:` 带标签页当前的 `basis`（`PageHost` 每次解析后写进 `TabState.basis`），`new:` 不带。成功后清掉已保存的草稿（保存期间新输入的保留）、用返回页面的 `basis` 更新标签页、`TabState.reload` 加一让页面重新解析。`conflict` 抛出后草稿和旧 basis 不变，提示用 `kernel-texts` 里已有的文字。
+- 授权文件夹对话框：回车等于“授权”。
+- 提供树（`groups` 为 false）不显示“新建分组”按钮。
+- locale（#5）：`page.resolve`/`page.save` 的 context 已带当前语言；`command.execute` 没有——`CommandContext` 协议类型里没有 locale 字段，内核 `commands.rs` 给命令处理函数的 ctx 里 `locale` 写死为 `null`。笔记“创建副本”的中文界面显示英文后缀就是这个原因，需要内核/协议加字段（外壳再带上），我没改。
+- 测试：`state/save.test.ts`（4 项）、混合客户端 `node:` 保存走内核（1 项）。`pnpm typecheck`、`pnpm lint`、`pnpm test`（92）通过；纯假数据 `e2e/workbench.spec.ts` 23 过 1 跳过（原来就跳过），截图已还原。未用真内核（devhost）实跑这几处。

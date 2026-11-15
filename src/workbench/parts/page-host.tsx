@@ -21,14 +21,14 @@ function topicsFor(target: string): string[] {
 export function PageHost({ tab }: { tab: TabState }) {
   const { store, actions } = useWorkbench();
   const { t, tx } = useI18n();
-  const page = useQuery((c) => c.page.resolve(tab.target, { envId: tab.envId, draft: store.get().drafts[tab.id] }), [tab.target, tab.envId], topicsFor(tab.target));
+  const page = useQuery((c) => c.page.resolve(tab.target, { envId: tab.envId, draft: store.get().drafts[tab.id] }), [tab.target, tab.envId, tab.reload], topicsFor(tab.target));
   const d = page.data;
 
   // Keep the tab's cached name, icon and flags in step with the page.
   useEffect(() => {
     if (!d) return;
     const last = d.breadcrumb[d.breadcrumb.length - 1];
-    actions.updateTab(tab.id, { title: d.title, icon: d.icon, usesEnv: d.usesEnv, missing: !d.found, node: last?.tree && last.key ? { tree: last.tree, key: last.key } : null });
+    actions.updateTab(tab.id, { title: d.title, icon: d.icon, usesEnv: d.usesEnv, basis: d.basis, missing: !d.found, node: last?.tree && last.key ? { tree: last.tree, key: last.key } : null });
   }, [d, tab.id, actions]);
   useEffect(() => {
     if (d?.usesEnv) store.set({ envTabId: tab.id });

@@ -11,6 +11,14 @@ export function CommandDialogs() {
   const confirm = useUi((s) => s.confirmCommand);
   const [path, setPath] = useState("");
 
+  const grant = () => {
+    const plugin = folderPrompt?.plugin;
+    if (!path.trim().startsWith("/")) return;
+    const chosen = path.trim();
+    closeFolder();
+    if (plugin) void actions.grantFolder(plugin, chosen);
+  };
+
   const closeFolder = () => {
     store.set({ folderPrompt: null });
     setPath("");
@@ -30,11 +38,7 @@ export function CommandDialogs() {
             <Button
               variant="primary"
               disabled={!path.trim().startsWith("/")}
-              onClick={() => {
-                const plugin = folderPrompt?.plugin;
-                closeFolder();
-                if (plugin) void actions.grantFolder(plugin, path.trim());
-              }}
+              onClick={grant}
             >
               {t("folder.grant")}
             </Button>
@@ -42,7 +46,7 @@ export function CommandDialogs() {
         }
       >
         <FormField label={t("folder.path")}>
-          <Input mono value={path} placeholder="/Users/…" onChange={(e) => setPath(e.target.value)} autoFocus />
+          <Input mono value={path} placeholder="/Users/…" onChange={(e) => setPath(e.target.value)} onKeyDown={(e) => e.key === "Enter" && grant()} autoFocus />
         </FormField>
       </Dialog>
       <Dialog

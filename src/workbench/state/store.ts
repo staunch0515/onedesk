@@ -23,6 +23,10 @@ export interface TabState {
   runId?: string | null;
   /** Cached from the page descriptor. */
   usesEnv?: boolean;
+  /** What the page's saved values are based on (`PageDescriptor.basis`); sent back with `page.save`. */
+  basis?: string;
+  /** Bumped after a save so the page is resolved again. */
+  reload?: number;
   missing?: boolean;
   /** Where the page's object sits in a tree (last breadcrumb), so the tree can follow the active tab. */
   node?: { tree: string; key: string } | null;
