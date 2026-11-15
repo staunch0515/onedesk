@@ -1,6 +1,7 @@
 //! Line-delimited JSON (one object per line) in both shapes:
 //! - `serve_connection`: a Unix socket (the worker's only peer, the main process);
 //! - `InProc`: the same lines handed over in memory (tests, single-process use).
+//!
 //! The first request of a connection must be `hello`.
 
 use std::sync::atomic::{AtomicBool, Ordering};
