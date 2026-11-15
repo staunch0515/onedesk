@@ -85,5 +85,6 @@ export default {
       },
     });
     host.commands.handle("probe", probe);
+    host.commands.handle("inspect", async () => []);
   },
 };

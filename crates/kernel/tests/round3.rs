@@ -384,9 +384,18 @@ async fn palette_plugins_tree_and_broken_packages() {
     c.hello().await;
     let palette = c.ok("command.palette", Value::Null).await;
     let ids: Vec<&str> = palette.as_array().unwrap().iter().map(|p| p["id"].as_str().unwrap()).collect();
-    for want in ["open.audit", "node.newGroup", "test.runner:probe", "new:test.runner:job", "test.alpha:probe"] {
+    for want in ["open.audit", "open.deleted", "node.newGroup", "env.newChild", "test.runner:probe", "new:test.runner:job"] {
         assert!(ids.contains(&want), "{want} in {ids:?}");
     }
+    // D296: commands without `palette: true` (node commands in a kind's menu) stay out, and so do
+    // kernel commands that need a node.
+    for unwanted in ["test.runner:inspect", "test.alpha:probe", "node.rename", "node.delete", "node.open", "run.cancel", "plugin.grantFolder"] {
+        assert!(!ids.contains(&unwanted), "{unwanted} not in {ids:?}");
+    }
+    let j0 = job(&c, "").await;
+    let node = &c.ok("tree.children", json!({ "tree": "resources" })).await["nodes"][0];
+    assert_eq!(node["key"], j0.as_str());
+    assert!(node["menu"].as_array().unwrap().iter().any(|m| m["id"] == "test.runner:inspect"), "still in the context menu");
     let runner = palette.as_array().unwrap().iter().find(|p| p["id"] == "test.runner:probe").unwrap();
     assert_eq!(runner["group"]["en-US"], "Runner");
     let nodes = c.ok("tree.children", json!({ "tree": "plugins" })).await;
@@ -517,4 +526,15 @@ async fn review11_storage_and_setting_size_limits() {
     assert!(c.probe("test.runner", "storage.set", json!(["n5", 2])).await.get("error").is_none(), "overwriting is fine");
     let e = c.call("plugin.setSetting", json!({ "plugin": "test.runner", "name": "style", "value": "u".repeat(4097) })).await.unwrap_err();
     assert_eq!(e.params["reason"], "tooLarge");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn new_pages_carry_the_page_frame_from_the_manifest() {
+    let (_env, c) = setup().await;
+    let p = c.ok("page.resolve", json!({ "target": "new:test.runner:job" })).await;
+    let tabs: Vec<&str> = p["resultTabs"].as_array().unwrap().iter().map(|t| t["id"].as_str().unwrap()).collect();
+    assert_eq!(tabs, vec!["result", "final", "history"]);
+    assert!(p["recompute"].as_bool().unwrap() && p["usesEnv"].as_bool().unwrap());
+    let run = p["actions"].as_array().unwrap().iter().find(|a| a["id"] == "run").unwrap();
+    assert_eq!(run["action"], "test.runner:run");
 }

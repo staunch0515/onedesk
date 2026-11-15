@@ -225,6 +225,9 @@ pub struct CommandDecl {
     pub label: String,
     #[serde(default)]
     pub icon: Option<String>,
+    /// D296: listed in the command palette (needs no node). Default false.
+    #[serde(default)]
+    pub palette: bool,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -709,6 +712,8 @@ mod tests {
         assert_eq!(reason(set(json!({ "name": "n", "label": "l", "type": "color", "default": "" }))), "schema");
         assert_eq!(reason(with(good(), &["contributes", "settings"], json!([{ "name": "n", "label": "l", "type": "text", "default": "" }, { "name": "n", "label": "l", "type": "text", "default": "" }]))), "duplicate");
         assert_eq!(reason(with(good(), &["author"], json!(5))), "schema");
+        assert_eq!(reason(with(good(), &["contributes", "commands", "0", "palette"], json!("yes"))), "schema");
+        assert_eq!(reason(with(good(), &["contributes", "commands", "0", "palette"], json!(true))), "ok");
         assert_eq!(reason(with(with(good(), &["author"], json!("me")), &["license"], json!("MIT"))), "ok");
     }
 
