@@ -94,7 +94,7 @@ impl Inner {
                 let (pid, name) = Registry::split(id).ok_or_else(|| not_found("command"))?;
                 let plugin = self.registry.plugin(pid).ok_or_else(|| not_found("command"))?;
                 plugin.command(name).ok_or_else(|| not_found("command"))?;
-                let ctx = json!({ "target": c.target, "locale": Value::Null });
+                let ctx = json!({ "target": c.target, "locale": c.locale });
                 let context = serde_json::to_value(&c).map_err(internal)?;
                 let out = self.call_plugin(pid, "commands", name, "", json!([ctx, context]), client).await?;
                 let out = if out.is_null() { json!([]) } else { out };

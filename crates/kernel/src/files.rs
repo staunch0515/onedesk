@@ -140,9 +140,60 @@ pub fn read_text(grants: &[PathBuf], raw: &str) -> KResult<Value> {
     Ok(json!({ "text": text, "basis": basis }))
 }
 
+/// Opens the already-resolved absolute folder `dir` one component at a time from `/`, never
+/// following a link (`O_NOFOLLOW | O_DIRECTORY`). The descriptor stays on that real folder even if
+/// the path is swapped for a symlink afterwards (review #7).
+fn open_dir_nofollow(dir: &Path) -> std::io::Result<std::os::fd::OwnedFd> {
+    use std::ffi::CString;
+    use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+    use std::os::unix::ffi::OsStrExt;
+    let flags = libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC;
+    let root = CString::new("/").expect("no nul");
+    // SAFETY: plain syscall with a valid C string; the result is checked before use.
+    let fd = unsafe { libc::open(root.as_ptr(), flags) };
+    if fd < 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    // SAFETY: `fd` is a fresh descriptor we own.
+    let mut cur = unsafe { OwnedFd::from_raw_fd(fd) };
+    for c in dir.components() {
+        let name = match c {
+            Component::RootDir => continue,
+            Component::Normal(n) => n,
+            _ => return Err(std::io::Error::other("path not normalized")),
+        };
+        let cname = CString::new(name.as_bytes()).map_err(std::io::Error::other)?;
+        // SAFETY: as above; `cur` is a valid directory descriptor.
+        let next = unsafe { libc::openat(cur.as_raw_fd(), cname.as_ptr(), flags) };
+        if next < 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        // SAFETY: fresh descriptor we own.
+        cur = unsafe { OwnedFd::from_raw_fd(next) };
+    }
+    Ok(cur)
+}
+
+fn cstr(s: &str) -> std::io::Result<std::ffi::CString> {
+    std::ffi::CString::new(s).map_err(std::io::Error::other)
+}
+
 /// Writes through a temporary file in the same folder, then renames over the target.
 /// Returns the resolved path (for the audit) and the new basis.
 pub fn write_text(grants: &[PathBuf], raw: &str, text: &str, basis: Option<&str>) -> KResult<(PathBuf, String)> {
+    write_text_with(grants, raw, text, basis, || {})
+}
+
+/// `write_text` with a hook that runs right after the folder is pinned (tests swap the folder there).
+pub fn write_text_with(
+    grants: &[PathBuf],
+    raw: &str,
+    text: &str,
+    basis: Option<&str>,
+    after_pin: impl FnOnce(),
+) -> KResult<(PathBuf, String)> {
+    use std::io::Read;
+    use std::os::fd::{AsRawFd, FromRawFd};
     let p = resolve(grants, raw)?;
     if p.is_dir() {
         return Err(invalid("notFile"));
@@ -150,26 +201,63 @@ pub fn write_text(grants: &[PathBuf], raw: &str, text: &str, basis: Option<&str>
     if text.len() as u64 > MAX_TEXT {
         return Err(invalid("tooLarge"));
     }
+    let dir = p.parent().ok_or_else(|| invalid_params("no parent"))?;
+    let name = p.file_name().map(|n| n.to_string_lossy().into_owned()).ok_or_else(|| invalid_params("no name"))?;
+    let dirfd = open_dir_nofollow(dir).map_err(|_| denied("outsideGrant"))?;
+    after_pin();
+    let d = dirfd.as_raw_fd();
+    let cname = cstr(&name).map_err(internal)?;
+    // Mode of the existing target (not following a link that may have appeared there).
+    // SAFETY: zeroed `stat` is a valid out-parameter; `d` and `cname` are valid.
+    let mut st: libc::stat = unsafe { std::mem::zeroed() };
+    let exists = unsafe { libc::fstatat(d, cname.as_ptr(), &mut st, libc::AT_SYMLINK_NOFOLLOW) } == 0;
     if let Some(b) = basis {
-        let current = std::fs::read(&p).ok().map(|c| crate::util::fingerprint(&c));
+        let current = if exists {
+            // SAFETY: valid descriptor and C string; result checked.
+            let fd = unsafe { libc::openat(d, cname.as_ptr(), libc::O_RDONLY | libc::O_NOFOLLOW | libc::O_CLOEXEC) };
+            if fd < 0 {
+                None
+            } else {
+                // SAFETY: fresh descriptor we own.
+                let mut f = unsafe { std::fs::File::from_raw_fd(fd) };
+                let mut buf = Vec::new();
+                f.read_to_end(&mut buf).ok().map(|_| crate::util::fingerprint(&buf))
+            }
+        } else {
+            None
+        };
         if current.as_deref() != Some(b) {
             return Err(err_p(ErrorCode::Conflict, &[("reason", "changedOnDisk")]));
         }
     }
-    let dir = p.parent().ok_or_else(|| invalid_params("no parent"))?;
-    let name = p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-    let tmp = dir.join(format!(".{name}.onedesk-{}.tmp", crate::util::new_id()));
+    let tmp = cstr(&format!(".{name}.onedesk-{}.tmp", crate::util::new_id())).map_err(internal)?;
+    let mode = if exists && (st.st_mode & libc::S_IFMT) == libc::S_IFREG { st.st_mode & 0o7777 } else { 0o644 };
     let res = (|| -> std::io::Result<()> {
-        let mut f = std::fs::File::create(&tmp)?;
+        // SAFETY: valid descriptor and C string; result checked.
+        let fd = unsafe {
+            libc::openat(
+                d,
+                tmp.as_ptr(),
+                libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+                libc::c_uint::from(mode),
+            )
+        };
+        if fd < 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        // SAFETY: fresh descriptor we own.
+        let mut f = unsafe { std::fs::File::from_raw_fd(fd) };
         f.write_all(text.as_bytes())?;
         f.sync_all()?;
-        if let Ok(md) = std::fs::metadata(&p) {
-            let _ = std::fs::set_permissions(&tmp, md.permissions());
+        // SAFETY: both names are relative to the same pinned folder.
+        if unsafe { libc::renameat(d, tmp.as_ptr(), d, cname.as_ptr()) } != 0 {
+            return Err(std::io::Error::last_os_error());
         }
-        std::fs::rename(&tmp, &p)
+        Ok(())
     })();
     if let Err(e) = res {
-        let _ = std::fs::remove_file(&tmp);
+        // SAFETY: valid descriptor and C string.
+        unsafe { libc::unlinkat(d, tmp.as_ptr(), 0) };
         return Err(internal(e));
     }
     Ok((p, crate::util::fingerprint(text.as_bytes())))
@@ -285,6 +373,40 @@ mod tests {
         std::fs::write(s.grant.join("in.txt"), "changed elsewhere").unwrap();
         assert_eq!(code(write_text(&g, &p, "mine", Some(&old))), ErrorCode::Conflict);
         assert_eq!(std::fs::read_to_string(s.grant.join("in.txt")).unwrap(), "changed elsewhere");
+    }
+
+    #[test]
+    fn files_folder_swapped_for_outside_symlink_during_write_leaves_outside_alone() {
+        let s = setup();
+        let g = vec![s.grant.clone()];
+        std::fs::write(s.outside.join("in.txt"), "outside original").unwrap();
+        let moved = s.grant.with_file_name("b-moved");
+        let p = s.grant.join("in.txt").display().to_string();
+        // After the folder is resolved and pinned, an outside process replaces it by a link
+        // to the outside folder, which has a file of the same name.
+        write_text_with(&g, &p, "written", None, || {
+            std::fs::rename(&s.grant, &moved).unwrap();
+            std::os::unix::fs::symlink(&s.outside, &s.grant).unwrap();
+        })
+        .unwrap();
+        assert_eq!(std::fs::read_to_string(s.outside.join("in.txt")).unwrap(), "outside original");
+        assert_eq!(std::fs::read_to_string(moved.join("in.txt")).unwrap(), "written");
+        assert!(std::fs::read_dir(&s.outside).unwrap().all(|e| !e.unwrap().file_name().to_string_lossy().ends_with(".tmp")));
+    }
+
+    #[test]
+    fn files_link_planted_at_the_target_name_is_replaced_not_followed() {
+        let s = setup();
+        let g = vec![s.grant.clone()];
+        let p = s.grant.join("planted.txt");
+        let target = p.display().to_string();
+        write_text_with(&g, &target, "mine", None, || {
+            std::os::unix::fs::symlink(s.outside.join("secret.txt"), &p).unwrap();
+        })
+        .unwrap();
+        assert_eq!(std::fs::read_to_string(s.outside.join("secret.txt")).unwrap(), "outside");
+        assert!(!std::fs::symlink_metadata(&p).unwrap().file_type().is_symlink());
+        assert_eq!(std::fs::read_to_string(&p).unwrap(), "mine");
     }
 
     #[test]

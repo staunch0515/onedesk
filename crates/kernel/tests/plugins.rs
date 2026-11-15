@@ -11,6 +11,7 @@ use serde_json::{json, Value};
 const GAMMA: &str = r#"
 export default { activate(host) {
   host.commands.handle("fx", async (ctx, context) => context.args.effects);
+  host.commands.handle("loc", async (ctx) => [{ type: "copy", text: String(ctx.locale) }]);
   host.pages.handle("p", { async render(ctx) {
     const k = ctx.node.key;
     const text = (id, v) => ({ view: [{ type: "text", id, text: typeof v === "string" ? v : JSON.stringify(v) }] });
@@ -57,7 +58,7 @@ async fn setup() -> (Env, Client) {
 async fn setup_with(cfg: onedesk_kernel::KernelConfig) -> (Env, Client) {
     let tmp = tempfile::tempdir().unwrap();
     let mut gamma = tree("t", "p");
-    gamma["commands"] = json!([{ "id": "fx", "label": "fx" }]);
+    gamma["commands"] = json!([{ "id": "fx", "label": "fx" }, { "id": "loc", "label": "loc" }]);
     let plugins = plugins_with(tmp.path(), &[("test.gamma", gamma, GAMMA), ("test.delta", tree("t2", "p2"), DELTA)]);
     std::fs::write(plugins.join("test.gamma/0.1.0/helper.js"), "export const x = 1;").unwrap();
     let env = open_with(tmp, &plugins, cfg);
@@ -341,4 +342,13 @@ async fn file_write_finished_after_call_timeout_is_still_audited() {
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
     assert_eq!(std::fs::read_to_string(&fifo).unwrap(), "new");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn command_context_locale_reaches_the_plugin_handler() {
+    let (_env, c) = setup().await;
+    let r = c.ok("command.execute", json!({ "id": "test.gamma:loc", "context": { "locale": "zh-CN" } })).await;
+    assert_eq!(r[0]["text"], "zh-CN");
+    let r = c.ok("command.execute", json!({ "id": "test.gamma:loc" })).await;
+    assert_eq!(r[0]["text"], "null");
 }
