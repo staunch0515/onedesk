@@ -17,6 +17,7 @@
         "page": "editor",
         "newName": "kind.note.new",
         "defaults": { "text": "" },
+        "fields": { "text": { "type": "longtext", "refs": true } },
         "draggable": true,
         "accepts": [],
         "menu": ["duplicate"]

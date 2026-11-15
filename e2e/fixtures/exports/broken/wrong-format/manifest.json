@@ -1,0 +1,13 @@
+{
+  "appVersion": "0.0.0-fixture",
+  "counts": {
+    "resources": 0
+  },
+  "exportedAt": 1763251200000,
+  "format": "something-else",
+  "version": 1,
+  "workspace": {
+    "id": "ws-x",
+    "name": "Broken"
+  }
+}
