@@ -1002,6 +1002,20 @@ mod tests {
         assert_eq!(reason(with(good(), &["contributes", "settings"], json!([{ "name": "n", "label": "l", "type": "text", "default": "" }, { "name": "n", "label": "l", "type": "text", "default": "" }]))), "duplicate");
         assert_eq!(reason(with(good(), &["author"], json!(5))), "schema");
         assert_eq!(reason(with(good(), &["contributes", "commands", "0", "palette"], json!("yes"))), "schema");
+        // Round 4.
+        assert_eq!(reason(with(good(), &["upgradesFrom"], json!("not a range"))), "badUpgradesFrom");
+        assert_eq!(reason(with(good(), &["upgradesFrom"], json!(">=0.1.0"))), "ok");
+        assert_eq!(reason(with(good(), &["requires", "network"], json!({ "hosts": ["Bad Host"] }))), "badHost");
+        assert_eq!(reason(with(good(), &["requires", "network"], json!({ "hosts": ["a.com:99999"] }))), "badHost");
+        assert_eq!(reason(with(good(), &["requires", "network"], json!({ "hosts": ["*.a.com", "b.com:8080"], "other": 1 }))), "schema");
+        assert_eq!(reason(with(good(), &["requires", "secrets"], json!({ "names": ["no spaces"] }))), "badSecretName");
+        assert_eq!(reason(with(good(), &["requires", "secrets"], json!({ "names": ["ok-name"], "plaintext": true }))), "ok");
+        let field = |f: Value| with(good(), &["contributes", "kinds", "0", "fields"], json!({ "url": f }));
+        assert_eq!(reason(field(json!({ "type": "text", "grants": "network" }))), "grantsUndeclared");
+        assert_eq!(reason(with(field(json!({ "type": "text", "grants": "files" })), &["requires", "network"], json!({ "fromResources": true }))), "badGrants");
+        assert_eq!(reason(with(field(json!({ "type": "secret", "grants": "network" })), &["requires", "network"], json!({ "fromResources": true }))), "badGrants");
+        assert_eq!(reason(with(field(json!({ "type": "text", "grants": "network" })), &["requires", "network"], json!({ "fromResources": true }))), "ok");
+        assert_eq!(reason(field(json!({ "type": "colour" }))), "schema");
         assert_eq!(reason(with(good(), &["contributes", "commands", "0", "palette"], json!(true))), "ok");
         assert_eq!(reason(with(with(good(), &["author"], json!("me")), &["license"], json!("MIT"))), "ok");
     }

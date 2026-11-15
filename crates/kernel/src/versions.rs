@@ -112,6 +112,10 @@ impl Inner {
                 continue;
             }
             let mut set = vec![("seen".to_string(), Some("1".to_string()))];
+            // The newest version present is the active one; later versions arrive by takeover.
+            if let Some(newest) = self.registry.versions(&id).last() {
+                set.push(("active".to_string(), Some(newest.version.clone())));
+            }
             for p in self.registry.versions(&id) {
                 set.push((format!("confirmed.{}", p.version), Some(atoms_fingerprint(&p.permissions()))));
             }
