@@ -118,6 +118,18 @@ export function ViewPage({ tab, descriptor: initial }: { tab: TabState; descript
 
   useEffect(() => setDescriptor(initial), [initial]);
 
+  // A plugin page may show what its last run left behind (e.g. a summary it stored): when this tab's run
+  // ends, ask for the page again.
+  const lastStatus = useRef(running.data?.status);
+  useEffect(() => {
+    const now = running.data?.status;
+    const was = lastStatus.current;
+    lastStatus.current = now;
+    if (was === "running" && now && now !== "running" && client.demo !== undefined && !client.demo.target(tab.target)) {
+      actions.updateTab(tab.id, { reload: (store.get().tabs.find((x) => x.id === tab.id)?.reload ?? 0) + 1 });
+    }
+  }, [running.data?.status, client, tab.id, tab.target, actions, store]);
+
   // "Recompute after the content changed" (§9.3): ask the plugin again 300 ms after typing stops.
   const draftKey = JSON.stringify(draft);
   useEffect(() => {

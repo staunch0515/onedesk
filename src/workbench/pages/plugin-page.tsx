@@ -23,7 +23,7 @@ export function PluginPage({ tab, descriptor }: { tab: TabState; descriptor: Pag
   const items: ActionBarItem[] = [
     { key: "toggle", label: p.enabled ? t("plugin.disable") : t("plugin.enable"), icon: p.enabled ? "circle-slash" : "circle-check", primary: !p.enabled && installed, disabled: !installed, onSelect: () => client.plugin.setEnabled(id, !p.enabled).catch(actions.fail) },
     { key: "reload", label: t("plugin.reload"), icon: "rotate-cw", disabled: !installed || !p.enabled, onSelect: () => client.plugin.reload(id).then(() => toast({ tone: "success", title: t("plugin.reloaded") }), actions.fail) },
-    { key: "updates", label: t("plugin.checkUpdates"), icon: "cloud-download", onSelect: notYet },
+    ...(real ? [] : [{ key: "updates", label: t("plugin.checkUpdates"), icon: "cloud-download", onSelect: notYet }]),
     ...(real
       ? [{ key: "grant", label: t("plugin.grantFolder"), icon: "folder-plus", disabled: !installed || !p.enabled, onSelect: () => void actions.command("plugin.grantFolder", { args: { plugin: id } }) }]
       : [{ key: "folder", label: t("plugin.openFolder"), icon: "folder-open", disabled: !installed, onSelect: notYet }]),
@@ -54,7 +54,7 @@ export function PluginPage({ tab, descriptor }: { tab: TabState; descriptor: Pag
         </Pane>
       ),
     },
-    { key: "installed", header: t("plugin.installedAt"), width: 160, value: (v) => v.installedAt, render: (v) => dateTime(v.installedAt) },
+    { key: "installed", header: t("plugin.installedAt"), width: 160, value: (v) => v.installedAt, render: (v) => (v.installedAt ? dateTime(v.installedAt) : "—") },
     { key: "notes", header: t("plugin.notes"), width: 380, value: (v) => v.notes },
     ...(real ? [] : [{
       key: "actions",
@@ -134,7 +134,7 @@ export function PluginPage({ tab, descriptor }: { tab: TabState; descriptor: Pag
         <Section title={t("plugin.status")}>
           <Pane gap="md">
             {p.load.state === "loaded" && (
-              <Banner tone="success" title={t("plugin.loadOk", { ms: p.load.ms ?? 0 })}>
+              <Banner tone="success" title={p.load.ms === undefined ? t("plugin.loadOkPlain") : t("plugin.loadOk", { ms: p.load.ms })}>
                 {missingGrant ? t("plugin.missingGrant") : undefined}
               </Banner>
             )}

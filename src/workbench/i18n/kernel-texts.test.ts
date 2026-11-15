@@ -35,9 +35,9 @@ describe("every key the kernel emits has words", () => {
   const locales = ["en-US", "zh-CN"] as const;
 
   // The kernel's own commands, trees, types and confirm messages (D262).
-  const LABELS = ["node.open", "node.rename", "node.newGroup", "node.delete", "node.favorite", "node.unfavorite", "env.newChild", "config.newChild", "deleted.restore", "deleted.purge", "open.audit", "open.deleted", "plugin.grantFolder", "deleted.purge.confirm", "resources", "env", "config", "favorites", "deleted", "core:group", "core:env", "core:config", "core:audit", "core:deleted", "plugin.enable", "plugin.disable", "run.cancel", "run.keep", "run.unkeep", "run.openResource", "run.reuse", "plugins", "runs"];
+  const LABELS = ["node.open", "node.rename", "node.newGroup", "node.delete", "node.favorite", "node.unfavorite", "env.newChild", "config.newChild", "deleted.restore", "deleted.purge", "open.audit", "open.deleted", "plugin.grantFolder", "deleted.purge.confirm", "resources", "env", "config", "favorites", "deleted", "core:group", "core:env", "core:config", "core:audit", "core:deleted", "core:plugin", "core:run", "plugin.enable", "plugin.disable", "run.cancel", "run.keep", "run.unkeep", "run.openResource", "run.reuse", "plugins", "runs"];
   // Operation names written to the audit log (`params.unset/acknowledge` are built from the command name).
-  const OPERATIONS = ["resource.create", "resource.update", "resource.delete", "resource.restore", "resource.undelete", "resource.purge", "resource.move", "params.set", "params.unset", "params.acknowledge", "workspace.setConfig", "workspace.startup", "tree.move", "file.write", "plugin.grantFolder", "plugin.setSetting", "run.start", "run.end", "plugin.enable", "plugin.disable"];
+  const OPERATIONS = ["resource.create", "resource.update", "resource.delete", "resource.restore", "resource.undelete", "resource.purge", "resource.move", "params.set", "params.unset", "params.acknowledge", "workspace.setConfig", "workspace.startup", "tree.move", "file.write", "plugin.grantFolder", "plugin.setSetting", "plugin.state", "run.start", "run.end", "run.keep", "run.unkeep", "plugin.enable", "plugin.disable"];
 
   it("has English and Chinese for each command, tree, type and confirm key", () => {
     for (const l of locales) for (const key of LABELS) expect(KERNEL_LABELS[l][key], `${l} ${key}`).toBeTruthy();
@@ -56,8 +56,10 @@ describe("every key the kernel emits has words", () => {
   it("notices a new key in the kernel sources that has no words yet", async () => {
     const src = await sources();
     const commandKeys = new Set([...src.matchAll(/"((?:node|env|config|deleted|open|run)\.[A-Za-z.]+)"/g)].map((m) => m[1]!));
-    for (const key of commandKeys) expect(LABELS, `kernel emits "${key}": add words to kernel-texts.ts and this list`).toContain(key);
-    const ignored = new Set(["resource.meta", "workspace.json", "workspace.db"]);
+    // Audit operations and protocol method names also contain these prefixes.
+    const notCommands = new Set(["run.start", "run.end", "run.clearFinished", "run.progress"]);
+    for (const key of commandKeys) if (!notCommands.has(key)) expect(LABELS, `kernel emits "${key}": add words to kernel-texts.ts and this list`).toContain(key);
+    const ignored = new Set(["resource.meta", "workspace.json", "workspace.db", "params.get"]);
     const opKeys = new Set([...src.matchAll(/"((?:resource|params|workspace)\.[A-Za-z]+)"/g)].map((m) => m[1]!));
     for (const key of opKeys) if (!ignored.has(key)) expect(OPERATIONS, `kernel emits "${key}": add an audit operation name and this list`).toContain(key);
   });
@@ -65,7 +67,7 @@ describe("every key the kernel emits has words", () => {
   it("has words for every error reason the kernel gives", async () => {
     const src = await sources();
     const reasons = new Set([...src.matchAll(/"reason",\s*"([A-Za-z]+)"/g)].map((m) => m[1]!));
-    for (const extra of ["tooLarge", "notText", "secretUnsupported", "duplicateName"]) reasons.add(extra);
+    for (const extra of ["tooLarge", "notText", "secretUnsupported", "duplicateName", "unknownSetting", "badValue", "badKey", "pluginDisabled", "callEnded"]) reasons.add(extra);
     for (const l of locales) {
       const table = KERNEL_ERRORS[l];
       for (const r of reasons) expect(Object.keys(table).some((k) => k === `reason.${r}` || k.endsWith(`.${r}`)), `${l} reason ${r}`).toBe(true);
@@ -74,6 +76,6 @@ describe("every key the kernel emits has words", () => {
 
   it("has words for the run failure codes the shell knows, in both languages", () => {
     expect(Object.keys(RUN_ERRORS["zh-CN"]).sort()).toEqual(Object.keys(RUN_ERRORS["en-US"]).sort());
-    for (const code of ["pluginDisabled", "interrupted", "badOutput", "timeout"]) expect(RUN_ERRORS["en-US"][code]).toBeTruthy();
+    for (const code of ["pluginDisabled", "interrupted", "badOutput", "timeout", "unknownAction", "invalidInput", "pluginError"]) expect(RUN_ERRORS["en-US"][code]).toBeTruthy();
   });
 });

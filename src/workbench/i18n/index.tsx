@@ -68,7 +68,7 @@ function build(locale: Locale): I18n {
       if (known && text) return interpolate(text, known.params);
       return error instanceof Error ? error.message : String(error);
     },
-    runError: (e) => RUN_ERRORS[locale][e.code] ?? RUN_ERRORS["en-US"][e.code] ?? e.message,
+    runError: (e) => RUN_ERRORS[locale][e.code] ?? RUN_ERRORS["en-US"][e.code] ?? KERNEL_ERRORS[locale][e.code] ?? KERNEL_ERRORS["en-US"][e.code] ?? e.message,
     permission: (id) => PERMISSIONS[locale][id] ?? PERMISSIONS["en-US"][id] ?? id,
     operation: (id) => AUDIT_OPERATIONS[locale][id] ?? AUDIT_OPERATIONS["en-US"][id] ?? id,
     dateTime: (at) => dt.format(at),

@@ -103,7 +103,12 @@ export function createMixedClient(kernel: KernelClient, mock: ProtocolClient): P
         return true;
       },
     },
-    workspace: { ...mock.workspace, info: () => kernel.workspace.info(), getConfig: (name) => kernel.workspace.getConfig(name), setConfig: (name, value) => kernel.workspace.setConfig(name, value) },
+    workspace: {
+      ...mock.workspace,
+      info: () => kernel.workspace.info(),
+      // One workspace this round: the switcher lists the kernel's, and no demo tabs are opened on first start.
+      list: async () => [{ ...(await kernel.workspace.info()), current: true }],
+      startTargets: async () => [], getConfig: (name) => kernel.workspace.getConfig(name), setConfig: (name, value) => kernel.workspace.setConfig(name, value) },
     params: kernel.params,
     search: kernel.search,
     audit: kernel.audit,

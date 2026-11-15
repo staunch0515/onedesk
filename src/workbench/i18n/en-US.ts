@@ -11,6 +11,7 @@ export const enUS = {
   "common.notifications": "Notifications ({hotkey})",
   "common.notInPrototype": "Not part of this prototype",
   "error.title": "That did not work",
+  "plugin.loadOkPlain": "Loaded",
   "plugin.grantFolder": "Grant a folder…",
   "plugin.folders": "Granted folders",
   "plugin.foldersHint": "The plugin may read and write files inside these folders.",

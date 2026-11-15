@@ -23,3 +23,22 @@
 - 命令面板的分组名 `group` 是内核给的 `Label`，若是文字键，需要补文字（齐全性测试看不到，因为内核代码还没合进来）。
 - 插件页的设置项沿用现有控件，数字设置按文字发送（协议 `plugin.setSetting` 的 `value` 就是字符串）。
 - 插件树的 `plugin:<id>` 页面里“版本”只读、权限只读，按计划本轮不做安装/权限确认。
+
+## 合并后的对齐（对着真内核跑过）
+- 已合并 `claude/week1-slice-3b4ae5`（8f86dc8）。
+- 文字：补了 `core:plugin`、`core:run`，审计操作 `plugin.state`、`run.keep`、`run.unkeep`，错误原因 `unknownSetting/badValue/badKey/pluginDisabled/callEnded`，运行失败码 `invalidInput`（我原先写成 `badInput`，已改）、`pluginError`，命令面板分组名 `core`（“工作区”）；`runError` 对没有专门文字的失败码退到通用错误码文字（`denied`、`conflict` 等）再退到运行自带的消息。文字齐全性测试的清单跟着更新（`params.get` 是宿主方法不是审计操作，已列入忽略）。`pnpm test` 135 项全过。
+- 类型对齐：`ActionDecl` 直接用生成类型（`action`、`confirm` 已在内）；`open` 效果用生成类型的 `params/envId`（界面的 `open()` 现在直接读 `effect.params/effect.envId`，演示效果的 `state` 仍支持）；删掉了我的 `normalizeEffects` 与它的测试。
+- 读了“我做的决定”，与我假设不一致、已改的：失败码名（见上）；`plugin.get` 的 `load.ms/at` 不给、`versions[].installedAt` 为 0——插件页对此不再显示“0 ms”和“1970 年”（显示“已加载”和“—”）；`builtin` 恒为 false（没有“内置”徽标，需要的话要主进程告诉）；`plugin.reload` 不重读清单（界面“重新加载”按钮保留，提示不变）；对内核插件隐藏“检查更新”。
+- **对着真内核实跑**（`cargo build -p onedesk-worker -p onedesk-host`；devhost + 临时目录；Vite 开发服务器；一个不提交的临时 Playwright 脚本，已删除）。看到的：
+  - 启动：树按 内核 + 演示 排列；工作区名取自内核（之前误用演示的名字，已改：混合模式下 `workspace.list` 只列内核的工作区，`startTargets` 为空，不再开出演示标签页——之前会开出一个指向不存在的演示插件的坏标签页）。
+  - “新建”菜单里有“示例查询”；新建后页面有参数条、动作区（运行 / 保存 / 保存并运行 / 整理）、结果区三个页签。
+  - 在编辑区输入 `:user_id`、`:limit`，约 300 ms 后参数条出现这两项（重算有效）。保存并运行：状态栏出现运行摘要，结果区先显示进度再出表格（59 行，有行号、排序），任务面板和“历史”页签都有这次运行。运行结束后页面上的“上次运行：59 / 59 行”也会刷新（我加了：运行状态从进行中变为结束时让页面重新解析）。
+  - `!fail`：结果区留着 `pluginError — 插件运行时出错（详情见下）`和异常全文；`!slow`：显示“取消运行”按钮，点了得到“这次运行已取消”，历史里记为已取消（1.6 s）。
+  - 运行记录树：`#4…#1`，状态徽标，失败的带删除线；点一条在新标签页打开 `run:<id>`：只读的输入快照、状态/时间/耗时/环境、编辑区内容是当时的。
+  - 插件树三个插件；插件页：停用后树里变灰、页面写“已停用”；再启用恢复。改设置 `rowLimit=5` 后再运行得 5 行（设置有效）。“整理”把 `select a from b` 改成 `SELECT a FROM b`。命令面板列出内核命令（组名原来是原始键 `core`，已补文字）、各插件的命令和“新建”项。
+  - 浏览器控制台全程没有错误或警告。
+- **发现的内核/插件问题（没改它们的文件）**：
+  1. 示例插件的 `!text` 路径返回文字输出，但清单里动作声明的是 `output: "table"`，内核按声明拒绝（`badOutput — declared table, got "text"`）。要么清单声明改成可变，要么 `!text` 不可行；任务书说含 `!text` 时输出文字，两者矛盾，需要插件会话/协调会话定。
+  2. 命令面板里“Duplicate”（笔记的命令）在没有节点上下文时也出现，从面板执行会怎样没试。
+  3. 运行记录树里失败的运行带删除线，且和“插件被停用”的灰色删除线样式一样，容易混淆（`state: broken` 的通用样式）；纯界面问题，暂不改。
+- 检查：`pnpm typecheck`、`pnpm lint`、`pnpm test`（135）通过；纯假数据 `e2e/workbench.spec.ts` 23 过 1 跳过；截图已还原。

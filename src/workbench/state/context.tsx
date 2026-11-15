@@ -139,7 +139,8 @@ export function WorkbenchProvider({ store, children }: { store: Store; children:
       for (const effect of effects) {
         switch (effect.type) {
           case "open":
-            open(effect.target, effect.state);
+            // The kernel names the initial page state `params` / `envId`; the demo's effects carry it under `state`.
+            open(effect.target, { params: effect.params ?? effect.state?.params, envId: effect.envId ?? effect.state?.envId });
             break;
           case "toast":
             show({ tone: effect.tone ?? "neutral", title: i.tx(effect.message) });

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { EventMessage } from "../generated";
 import { KernelError } from "../errors";
-import { createKernelClient, normalizeEffects } from "./real-client";
+import { createKernelClient } from "./real-client";
 import type { Transport } from "./transport";
 
 function fakeTransport(answers: Record<string, (params: unknown) => unknown>) {
@@ -104,12 +104,5 @@ describe("kernel client", () => {
     const client = await createKernelClient(transport);
     await client.run.start({ action: "run", resourceId: "x", target: "resource:x", tabId: "t", envId: null, input: { "body.limit": 5 }, params: { id: "7" } });
     expect(calls[1]?.params).toEqual({ action: "run", resourceId: "x", target: "resource:x", tabId: "t", input: { "body.limit": 5 }, params: { id: "7" } });
-  });
-
-  it("folds an open effect's params and envId into the shell's state", () => {
-    expect(normalizeEffects([{ type: "open", target: "resource:x", params: { a: "1" }, envId: "e1" } as never, { type: "reload" }])).toEqual([
-      { type: "open", target: "resource:x", state: { params: { a: "1" }, envId: "e1" } },
-      { type: "reload" },
-    ]);
   });
 });
