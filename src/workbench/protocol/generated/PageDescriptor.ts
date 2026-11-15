@@ -32,4 +32,8 @@ values: { [key in string]: JsonValue }, autosave: boolean,
  * What `values` is based on; sent back with `page.save` so a change made elsewhere is
  * detected. Resources: the `rev`. Plugin pages: opaque, from the plugin.
  */
-basis?: string, };
+basis?: string, 
+/**
+ * Round 5 (§6.3): policies in force for this page — `readonly`, `noExport`. Absent = none.
+ */
+restrictions?: Array<string>, };

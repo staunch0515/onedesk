@@ -605,6 +605,8 @@ pub struct PageDescriptor {
     /// What `values` is based on; sent back with `page.save` so a change made elsewhere is
     /// detected. Resources: the `rev`. Plugin pages: opaque, from the plugin.
     pub basis: Option<String>,
+    /// Round 5 (§6.3): policies in force for this page — `readonly`, `noExport`. Absent = none.
+    pub restrictions: Option<Vec<String>>,
 }
 
 #[skip_serializing_none]
