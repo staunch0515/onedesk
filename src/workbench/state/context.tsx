@@ -24,6 +24,8 @@ export interface Actions {
   save: (tabId: string) => Promise<boolean>;
   command: (id: string, context?: CommandContext) => Promise<void>;
   reveal: (tree: string, key: string) => Promise<void>;
+  /** Gives a plugin access to a folder (the user chose it in a dialog). */
+  grantFolder: (plugin: string, path: string) => Promise<void>;
   setExpanded: (tree: string, keys: string[]) => void;
   /** Shows a failed protocol call as a toast. */
   fail: (error: unknown) => void;
@@ -50,7 +52,7 @@ export function WorkbenchProvider({ store, children }: { store: Store; children:
   const actions = useMemo<Actions>(() => {
     const fail = (error: unknown) => {
       const { toast: show, i18n: i } = live.current;
-      show({ tone: "danger", title: i.t("error.title"), description: error instanceof Error ? error.message : String(error) });
+      show({ tone: "danger", title: i.t("error.title"), description: i.error(error) });
     };
 
     const forceClose = (tabIds: string[]) => {
@@ -90,15 +92,19 @@ export function WorkbenchProvider({ store, children }: { store: Store; children:
       if (!tab || !draft || Object.keys(draft).length === 0) return true;
       try {
         if (tab.target.startsWith("new:")) {
-          const created = await client.resource.create(tab.target, draft);
+          const { page } = await client.page.save(tab.target, draft);
           store.set((st) => {
             const drafts = { ...st.drafts };
             delete drafts[tabId];
-            return { drafts, tabs: st.tabs.map((t) => (t.id === tabId ? { ...t, target: `resource:${created.id}`, title: created.name } : t)) };
+            return { drafts, tabs: st.tabs.map((t) => (t.id === tabId ? { ...t, target: page.target, title: page.title } : t)) };
           });
-          void actions.reveal(created.tree, created.id);
+          // The tab now points at the created resource: show it in its tree.
+          if (page.resourceId) {
+            const created = await client.resource.get(page.resourceId);
+            if (created) void actions.reveal(created.tree, created.id);
+          }
         } else if (tab.target.startsWith("resource:")) {
-          await client.resource.update(tab.target.slice(9), draft);
+          await client.page.save(tab.target, draft);
           // Keep what was typed while the save was in flight.
           store.set((st) => {
             const now = { ...(st.drafts[tabId] ?? {}) };
@@ -127,7 +133,16 @@ export function WorkbenchProvider({ store, children }: { store: Store; children:
       }
     };
 
-    const applyEffects = async (effects: CommandEffect[]) => {
+    const grantFolder: Actions["grantFolder"] = async (plugin, path) => {
+      try {
+        const grants = await client.plugin.grantFolder(plugin, path);
+        live.current.toast({ tone: "success", title: live.current.i18n.t("folder.granted", { path: grants.folders[grants.folders.length - 1] ?? path }) });
+      } catch (error) {
+        fail(error);
+      }
+    };
+
+    const applyEffects = async (effects: CommandEffect[], context: CommandContext = {}) => {
       const { toast: show, i18n: i } = live.current;
       for (const effect of effects) {
         switch (effect.type) {
@@ -165,6 +180,27 @@ export function WorkbenchProvider({ store, children }: { store: Store; children:
           case "reload":
             window.location.reload();
             break;
+          case "pick-folder": {
+            const pick = client.platform?.pickFolder;
+            if (!pick) {
+              store.set({ folderPrompt: { plugin: effect.plugin } });
+              break;
+            }
+            const path = await pick();
+            if (path) await grantFolder(effect.plugin, path);
+            break;
+          }
+          case "confirm":
+            store.set({ confirmCommand: { message: effect.message, command: effect.command, danger: effect.danger ?? false, context } });
+            break;
+          case "copy":
+            try {
+              await navigator.clipboard.writeText(effect.text);
+              show({ tone: "success", title: i.t("copy.done") });
+            } catch (error) {
+              fail(error);
+            }
+            break;
         }
       }
     };
@@ -175,6 +211,7 @@ export function WorkbenchProvider({ store, children }: { store: Store; children:
       forceClose,
       save,
       reveal,
+      grantFolder,
       activate: (tabId) => store.set({ activeTabId: tabId }),
       close: (tabIds) => {
         const s = store.get();
@@ -207,7 +244,8 @@ export function WorkbenchProvider({ store, children }: { store: Store; children:
         try {
           const s = store.get();
           const active = s.tabs.find((t) => t.id === s.activeTabId);
-          await applyEffects(await client.command.execute(id, { tabId: active?.id, ...context }));
+          const full = { tabId: active?.id, ...context };
+          await applyEffects(await client.command.execute(id, full), full);
         } catch (error) {
           fail(error);
         }
@@ -243,6 +281,9 @@ export interface Query<T> {
  */
 export function useQuery<T>(fn: (client: ProtocolClient) => Promise<T>, deps: DependencyList, topics: string[] = []): Query<T> {
   const client = useClient();
+  const i18n = useI18n();
+  const i18nRef = useRef(i18n);
+  i18nRef.current = i18n;
   const [state, setState] = useState<{ data: T | undefined; loading: boolean; error: string | null }>({ data: undefined, loading: true, error: null });
   const [tick, setTick] = useState(0);
   const fnRef = useRef(fn);
@@ -258,7 +299,7 @@ export function useQuery<T>(fn: (client: ProtocolClient) => Promise<T>, deps: De
     setState((s) => ({ data: fresh ? undefined : s.data, loading: true, error: null }));
     fnRef.current(client).then(
       (data) => !cancelled && setState({ data, loading: false, error: null }),
-      (error: unknown) => !cancelled && setState((s) => ({ data: s.data, loading: false, error: error instanceof Error ? error.message : String(error) })),
+      (error: unknown) => !cancelled && setState((s) => ({ data: s.data, loading: false, error: i18nRef.current.error(error) })),
     );
     return () => {
       cancelled = true;

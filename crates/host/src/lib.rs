@@ -1,1 +1,357 @@
-//! Placeholder; see docs/handoff/week1-shell.md.
+//! `onedesk-host`: main-process logic (week1-protocol §2). No Tauri, no plugin names.
+//!
+//! It starts one worker process for the workspace, forwards requests to it (filling `client`),
+//! broadcasts its events, restarts it when it dies and tells the interface with `connection`
+//! events. The interface reaches it through the Tauri window shell or `onedesk-devhost`.
+
+use std::collections::HashMap;
+use std::path::PathBuf;
+use std::process::Stdio;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
+
+use onedesk_protocol::{
+    ConnectionState, ErrorCode, EventMessage, HelloParams, HelloResult, ProtocolError, Request, Response,
+    PROTOCOL_VERSION,
+};
+use serde_json::Value;
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::net::unix::OwnedWriteHalf;
+use tokio::net::UnixStream;
+use tokio::sync::{broadcast, oneshot, watch};
+
+pub mod data_dir;
+pub mod plugins;
+pub mod ws;
+
+pub use data_dir::{default_data_dir, resolve_worker_bin, workspace_dir};
+
+/// How long a request waits for a restarting worker before it gives up with `workerGone`.
+const WAIT_FOR_WORKER: Duration = Duration::from_secs(20);
+/// How long the worker gets to finish after the connection is closed.
+const SHUTDOWN_GRACE: Duration = Duration::from_secs(3);
+const START_TIMEOUT: Duration = Duration::from_secs(15);
+
+#[derive(Debug, Clone)]
+pub struct HostConfig {
+    /// Holds `workspaces/default/` and `plugins/`.
+    pub data_dir: PathBuf,
+    /// The `onedesk-worker` executable.
+    pub worker_bin: PathBuf,
+    /// Folder with one sub-folder per built-in plugin package; copied into the data dir.
+    pub builtin_plugins: Option<PathBuf>,
+}
+
+#[derive(Debug)]
+pub struct HostError(pub String);
+
+impl std::fmt::Display for HostError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for HostError {}
+
+fn err(code: ErrorCode, detail: impl Into<String>) -> ProtocolError {
+    ProtocolError { code, params: Default::default(), detail: Some(detail.into()) }
+}
+
+/* ---------------------------------------------------------------- connection to the worker */
+
+type Pending = Mutex<HashMap<u64, oneshot::Sender<Response>>>;
+
+struct Conn {
+    write: tokio::sync::Mutex<OwnedWriteHalf>,
+    pending: Pending,
+    closed: AtomicBool,
+}
+
+enum SendError {
+    /// Nothing was written; the caller may try the next worker.
+    NotSent,
+    /// The request was (maybe) sent and the worker went away before answering.
+    Gone,
+}
+
+impl Conn {
+    fn new(write: OwnedWriteHalf) -> Arc<Self> {
+        Arc::new(Conn { write: tokio::sync::Mutex::new(write), pending: Mutex::new(HashMap::new()), closed: AtomicBool::new(false) })
+    }
+
+    fn is_closed(&self) -> bool {
+        self.closed.load(Ordering::SeqCst)
+    }
+
+    async fn send(&self, id: u64, method: &str, params: Value, client: Option<String>) -> Result<Response, SendError> {
+        let (tx, rx) = oneshot::channel();
+        {
+            let mut pending = self.pending.lock().unwrap();
+            if self.is_closed() {
+                return Err(SendError::NotSent);
+            }
+            pending.insert(id, tx);
+        }
+        let mut line = serde_json::to_string(&Request { id, method: method.to_string(), params, client }).expect("request serializes");
+        line.push('\n');
+        if self.write.lock().await.write_all(line.as_bytes()).await.is_err() {
+            self.pending.lock().unwrap().remove(&id);
+            return Err(SendError::NotSent);
+        }
+        rx.await.map_err(|_| SendError::Gone)
+    }
+
+    async fn close_write(&self) {
+        let _ = self.write.lock().await.shutdown().await;
+    }
+}
+
+async fn read_loop(read: tokio::net::unix::OwnedReadHalf, conn: Arc<Conn>, events: broadcast::Sender<EventMessage>) {
+    let mut lines = BufReader::new(read).lines();
+    while let Ok(Some(line)) = lines.next_line().await {
+        let Ok(value) = serde_json::from_str::<Value>(&line) else { continue };
+        if value.get("id").is_some() {
+            if let Ok(resp) = serde_json::from_value::<Response>(value) {
+                if let Some(tx) = conn.pending.lock().unwrap().remove(&resp.id) {
+                    let _ = tx.send(resp);
+                }
+            }
+        } else if let Ok(ev) = serde_json::from_value::<EventMessage>(value) {
+            let _ = events.send(ev);
+        }
+    }
+    // Worker gone: every request still waiting gets `workerGone` (their senders are dropped).
+    let mut pending = conn.pending.lock().unwrap();
+    conn.closed.store(true, Ordering::SeqCst);
+    pending.clear();
+}
+
+fn socket_path() -> PathBuf {
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let name = format!("od-{}-{}.sock", std::process::id(), COUNTER.fetch_add(1, Ordering::SeqCst));
+    // macOS limits Unix socket paths to 103 bytes.
+    let base = std::env::temp_dir();
+    let path = base.join(&name);
+    if path.as_os_str().len() < 100 {
+        path
+    } else {
+        PathBuf::from("/tmp").join(name)
+    }
+}
+
+struct Started {
+    child: tokio::process::Child,
+    conn: Arc<Conn>,
+    hello: Value,
+    socket: PathBuf,
+}
+
+async fn spawn_worker(cfg: &HostConfig, shared: &Shared) -> Result<Started, HostError> {
+    let workspace = workspace_dir(&cfg.data_dir);
+    let plugins = cfg.data_dir.join("plugins");
+    let socket = socket_path();
+    let mut child = tokio::process::Command::new(&cfg.worker_bin)
+        .arg("--workspace")
+        .arg(&workspace)
+        .arg("--plugins")
+        .arg(&plugins)
+        .arg("--socket")
+        .arg(&socket)
+        .stdin(Stdio::null())
+        .kill_on_drop(true)
+        .spawn()
+        .map_err(|e| HostError(format!("cannot start worker {}: {e}", cfg.worker_bin.display())))?;
+    let deadline = Instant::now() + START_TIMEOUT;
+    let stream = loop {
+        match UnixStream::connect(&socket).await {
+            Ok(s) => break s,
+            Err(_) => {
+                if let Ok(Some(status)) = child.try_wait() {
+                    return Err(HostError(match status.code() {
+                        Some(3) => "workspace is locked by another worker (exit 3)".to_string(),
+                        _ => format!("worker exited during start: {status}"),
+                    }));
+                }
+                if Instant::now() > deadline {
+                    let _ = child.start_kill();
+                    return Err(HostError("worker did not listen in time".into()));
+                }
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        }
+    };
+    let (read, write) = stream.into_split();
+    let conn = Conn::new(write);
+    tokio::spawn(read_loop(read, conn.clone(), shared.events.clone()));
+    let params = serde_json::to_value(HelloParams { protocol: PROTOCOL_VERSION.to_string() }).expect("hello params");
+    let resp = match conn.send(shared.next_id(), "hello", params, None).await {
+        Ok(r) => r,
+        Err(_) => return Err(HostError("worker closed the connection during hello".into())),
+    };
+    if let Some(e) = resp.error {
+        return Err(HostError(format!("worker refused hello: {:?} {}", e.code, e.detail.unwrap_or_default())));
+    }
+    let hello = resp.result.unwrap_or(Value::Null);
+    match serde_json::from_value::<HelloResult>(hello.clone()) {
+        Ok(h) if h.protocol == PROTOCOL_VERSION => {}
+        _ => return Err(HostError("worker speaks another protocol version".into())),
+    }
+    Ok(Started { child, conn, hello, socket })
+}
+
+/* ---------------------------------------------------------------- host */
+
+struct Shared {
+    next_id: AtomicU64,
+    events: broadcast::Sender<EventMessage>,
+    hello: Mutex<Value>,
+    current: watch::Sender<Option<Arc<Conn>>>,
+    shutdown: watch::Sender<bool>,
+}
+
+impl Shared {
+    fn next_id(&self) -> u64 {
+        self.next_id.fetch_add(1, Ordering::SeqCst)
+    }
+
+    fn connection_event(&self, state: ConnectionState) {
+        let payload = serde_json::to_value(state).expect("state serializes");
+        let _ = self.events.send(EventMessage { topic: onedesk_protocol::topic::CONNECTION.into(), payload: Some(payload), client: None });
+    }
+}
+
+pub struct Host {
+    shared: Arc<Shared>,
+    monitor: Mutex<Option<tokio::task::JoinHandle<()>>>,
+    restarts: Arc<std::sync::atomic::AtomicU32>,
+}
+
+impl Host {
+    /// Prepares the data directory, copies built-in plugins, starts the worker and says hello.
+    pub async fn start(cfg: HostConfig) -> Result<Arc<Host>, HostError> {
+        std::fs::create_dir_all(workspace_dir(&cfg.data_dir)).map_err(|e| HostError(format!("data dir: {e}")))?;
+        let plugin_root = cfg.data_dir.join("plugins");
+        std::fs::create_dir_all(&plugin_root).map_err(|e| HostError(format!("plugins dir: {e}")))?;
+        if let Some(src) = &cfg.builtin_plugins {
+            plugins::install_builtin(src, &plugin_root).map_err(|e| HostError(format!("copy built-in plugins: {e}")))?;
+        }
+        let (events, _) = broadcast::channel(1024);
+        let (current, _) = watch::channel(None);
+        let (shutdown, _) = watch::channel(false);
+        let shared = Arc::new(Shared { next_id: AtomicU64::new(1), events, hello: Mutex::new(Value::Null), current, shutdown });
+        let first = spawn_worker(&cfg, &shared).await?;
+        *shared.hello.lock().unwrap() = first.hello.clone();
+        shared.current.send_replace(Some(first.conn.clone()));
+        let restarts = Arc::new(std::sync::atomic::AtomicU32::new(0));
+        let monitor = tokio::spawn(monitor(cfg, shared.clone(), first, restarts.clone()));
+        Ok(Arc::new(Host { shared, monitor: Mutex::new(Some(monitor)), restarts }))
+    }
+
+    /// Every event of the worker plus the main process's own `connection` events.
+    pub fn events(&self) -> broadcast::Receiver<EventMessage> {
+        self.shared.events.subscribe()
+    }
+
+    /// How many times the worker was restarted so far.
+    pub fn restart_count(&self) -> u32 {
+        self.restarts.load(Ordering::SeqCst)
+    }
+
+    /// Forwards one request. `client` identifies the window or browser (§9.2).
+    pub async fn request(&self, client: Option<&str>, method: &str, params: Value) -> Result<Value, ProtocolError> {
+        if method == onedesk_protocol::method::HELLO {
+            let ok = params.get("protocol").and_then(Value::as_str) == Some(PROTOCOL_VERSION);
+            if !ok {
+                return Err(ProtocolError {
+                    code: ErrorCode::VersionMismatch,
+                    params: [("expected".to_string(), PROTOCOL_VERSION.to_string())].into(),
+                    detail: None,
+                });
+            }
+            return Ok(self.shared.hello.lock().unwrap().clone());
+        }
+        let id = self.shared.next_id();
+        let mut rx = self.shared.current.subscribe();
+        let deadline = tokio::time::Instant::now() + WAIT_FOR_WORKER;
+        loop {
+            let live = |c: &Option<Arc<Conn>>| c.as_ref().is_some_and(|c| !c.is_closed());
+            let conn = match tokio::time::timeout_at(deadline, rx.wait_for(live)).await {
+                Ok(Ok(c)) => c.clone().expect("checked by wait_for"),
+                _ => return Err(err(ErrorCode::WorkerGone, "worker is not running")),
+            };
+            match conn.send(id, method, params.clone(), client.map(str::to_string)).await {
+                Ok(resp) => {
+                    return match resp.error {
+                        Some(e) => Err(e),
+                        None => Ok(resp.result.unwrap_or(Value::Null)),
+                    }
+                }
+                Err(SendError::Gone) => return Err(err(ErrorCode::WorkerGone, "worker went away before answering")),
+                Err(SendError::NotSent) => {
+                    // The worker had died already: wait for its successor.
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+            }
+        }
+    }
+
+    /// Closes the worker connection so it can finish its transaction and exit; kills it after a grace period.
+    pub async fn shutdown(&self) {
+        self.shared.shutdown.send_replace(true);
+        let handle = self.monitor.lock().unwrap().take();
+        if let Some(h) = handle {
+            let _ = h.await;
+        }
+    }
+}
+
+impl Drop for Host {
+    fn drop(&mut self) {
+        // The monitor owns the child with kill_on_drop; make it stop restarting.
+        self.shared.shutdown.send_replace(true);
+    }
+}
+
+async fn monitor(cfg: HostConfig, shared: Arc<Shared>, first: Started, restarts: Arc<std::sync::atomic::AtomicU32>) {
+    let mut started = first;
+    let mut shutdown_rx = shared.shutdown.subscribe();
+    let mut quick_failures: u32 = 0;
+    loop {
+        let began = Instant::now();
+        tokio::select! {
+            _ = started.child.wait() => {}
+            _ = async { let _ = shutdown_rx.wait_for(|s| *s).await; } => {
+                shared.current.send_replace(None);
+                started.conn.close_write().await;
+                if tokio::time::timeout(SHUTDOWN_GRACE, started.child.wait()).await.is_err() {
+                    let _ = started.child.kill().await;
+                }
+                let _ = std::fs::remove_file(&started.socket);
+                return;
+            }
+        }
+        let _ = std::fs::remove_file(&started.socket);
+        shared.current.send_replace(None);
+        shared.connection_event(ConnectionState::Lost);
+        quick_failures = if began.elapsed() < Duration::from_secs(10) { quick_failures + 1 } else { 0 };
+        // Restart; the interval grows with every consecutive failure.
+        let mut attempt = quick_failures.saturating_sub(1);
+        started = loop {
+            let wait = Duration::from_millis(100u64 << attempt.min(6));
+            tokio::select! {
+                _ = tokio::time::sleep(wait) => {}
+                _ = async { let _ = shutdown_rx.wait_for(|s| *s).await; } => return,
+            }
+            match spawn_worker(&cfg, &shared).await {
+                Ok(s) => break s,
+                Err(_) => attempt += 1,
+            }
+        };
+        *shared.hello.lock().unwrap() = started.hello.clone();
+        restarts.fetch_add(1, Ordering::SeqCst);
+        shared.current.send_replace(Some(started.conn.clone()));
+        shared.connection_event(ConnectionState::Restored);
+    }
+}
+

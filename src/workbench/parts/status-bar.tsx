@@ -66,8 +66,8 @@ export function StatusBarPart({ settings, onSetting, resolvedTheme }: { settings
       }
       end={
         <>
-          <StatusItem icon="flask-conical" tone="warning" title={t("status.mockHint", { version: client.version })}>
-            {t("status.mock")}
+          <StatusItem icon="flask-conical" tone="warning" title={client.demo ? t("status.partialDemoHint") : t("status.mockHint", { version: client.version })}>
+            {client.demo ? t("status.partialDemo") : t("status.mock")}
           </StatusItem>
           <StatusItem icon={running > 0 ? "loader" : failed > 0 ? "circle-alert" : "list-checks"} busy={running > 0} tone={running > 0 ? "accent" : "default"} pressed={tasksOpen} title={t("status.tasksHint")} onClick={() => store.set({ tasksOpen: !tasksOpen })}>
             {running > 0 ? t("status.running", { count: running }) : t("status.tasks", { count: tasks.data?.length ?? 0 })}

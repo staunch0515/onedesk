@@ -18,3 +18,11 @@
 - 根 `Cargo.toml` 的 `[workspace.dependencies]` 里 `futures-util`、`libc`、`onedesk-host`、`tokio-tungstenite` 未被任何包用到时，每次 cargo 都打 4 条 “unused workspace dependency” 警告（外壳分支用上之后自然消失；否则删掉）。
 - 架构检查（`scripts/check-arch.mjs`）给 Rust 内核加规则时：`files`（宿主能力名、清单 `requires.files`）、`text`（视图节点和字段类型）是协议里的机制名，不是插件名；应检查的是内置插件 id（`org.onedesk.*`）和它们的类型名。
 - 审计的“合并计数”（kernel-design §4.3）未做：`audit` 禁止 UPDATE，需要另设计存法并加迁移。
+## 外壳会话（week1/shell）追加
+
+- 发布构建：`pnpm build` / `tauri build` 还没验证。入口是 `workbench.html`，Tauri 的 `frontendDist` 默认找 `index.html`；需要把 `vite.config.ts` 的 `build.rollupOptions.input` 指向 `workbench.html` 并让打包后的首页叫 `index.html`（或加一个重定向页），内置插件目录要放进应用包的 `Resources/plugins`（主进程已按这个位置找）。
+- 工作进程可执行文件的打包：发布构建里 `onedesk-worker` 要作为同目录的附带可执行文件（Tauri `externalBin` 或自定义打包步骤）。
+- `playwright.config.ts` 的 `webServer.url` 是 `http://localhost:<port>`，而界面入口是 `/workbench.html`，Vite 对根路径返回 404，Playwright 会等到超时。插件与测试会话的分支已把它改成 `/workbench.html`；合并时保留那处改动。
+- 大树分页：外壳现在一次把一层所有批次读完（上限 5000 个节点，`protocol/children.ts`）。文件树里有几万项时需要真正的虚拟滚动 + 按需分批。
+- 混合客户端判断资源归谁用“先问内核、再回退演示”并缓存；演示数据与真数据的 id 万一相同会判错（真 id 是随机的，本周不会发生）。
+- `page.event`（SQL 格式化等）仍由演示实现；内核没有对应方法。

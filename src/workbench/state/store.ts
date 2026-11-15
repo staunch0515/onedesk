@@ -4,6 +4,7 @@
  * memory only.
  */
 import { useSyncExternalStore } from "react";
+import type { CommandContext, Label } from "../protocol/types";
 
 export interface TabState {
   id: string;
@@ -53,6 +54,10 @@ export interface UiState extends LayoutState {
   renaming: { tree: string; key: string } | null;
   /** Tabs waiting for the "unsaved changes" answer. */
   confirmClose: string[] | null;
+  /** Browser mode only: asks for a folder path, since there is no system dialog (pick-folder effect). */
+  folderPrompt: { plugin: string } | null;
+  /** A command that asked to be confirmed before it runs again with `confirmed: true`. */
+  confirmCommand: { message: Label; command: string; danger: boolean; context: CommandContext } | null;
   /** Most recently active tab that uses an environment. */
   envTabId: string | null;
   /** Bumped to move keyboard focus to the search box. */
@@ -105,6 +110,8 @@ export function createStore(saved: Partial<LayoutState> | null, save: (layout: L
     selected: {},
     renaming: null,
     confirmClose: null,
+    folderPrompt: null,
+    confirmCommand: null,
     envTabId: null,
     searchFocus: 0,
   };

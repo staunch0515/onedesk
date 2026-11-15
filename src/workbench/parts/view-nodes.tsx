@@ -30,7 +30,7 @@ export function ViewNodes({ nodes }: { nodes: ViewNode[] }) {
                 key={node.id}
                 label={node.id}
                 columns={columns}
-                rows={node.rows.map((cells, index) => ({ cells, index }))}
+                rows={node.rows.map((cells, index) => ({ cells: cells as OutputCell[], index }))}
                 getRowKey={(row) => String(row.index)}
                 nullText=""
                 onRowSelect={targets ? () => undefined : undefined}

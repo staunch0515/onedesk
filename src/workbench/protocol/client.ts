@@ -1,4 +1,6 @@
 import type {
+  TreeNode,
+  PageSaveResult,
   AuditFacets,
   AuditFilter,
   AuditRow,
@@ -13,17 +15,19 @@ import type {
   PageContext,
   PageDescriptor,
   PageEventResult,
+
   PaletteCommand,
   PluginDetail,
+  PluginGrants,
   ResolvedParam,
   Resource,
-  ResourcePatch,
   Run,
   RunRequest,
   SearchHit,
   TreeInfo,
-  TreeNode,
+  TreePage,
   ViewNode,
+  WorkspaceEntry,
   WorkspaceInfo,
 } from "./types";
 
@@ -39,8 +43,19 @@ export interface ProtocolClient {
   /** Protocol version; both ends compare it when connecting (§12). */
   readonly version: string;
 
+  /**
+   * Present on the mixed client (D265): says which trees and targets are still demo data, so the
+   * shell can mark them. Absent: all kernel (never in week 1) or all mock (the badge is global).
+   */
+  /** Things only the window around the interface can do. Absent in a plain browser. */
+  readonly platform?: { pickFolder?: () => Promise<string | null> };
+
+  readonly demo?: { tree(id: string): boolean; target(target: string): boolean };
+
   workspace: {
-    list(): Promise<WorkspaceInfo[]>;
+    info(): Promise<WorkspaceInfo>;
+    /** Demo only (no kernel method yet): the workspace switcher. */
+    list(): Promise<WorkspaceEntry[]>;
     /** Targets to open the first time this client connects (the welcome set, D196). */
     startTargets(): Promise<string[]>;
     /** Workspace-level configuration parameter by name (§6.2), e.g. `ui.language`. */
@@ -50,8 +65,8 @@ export interface ProtocolClient {
 
   tree: {
     list(): Promise<TreeInfo[]>;
-    /** Children of a node; `parentKey` null = top level. Provided trees answer in batches (§5). */
-    children(tree: string, parentKey: string | null): Promise<TreeNode[]>;
+    /** One batch of children (≤ 200); `parentKey` null = top level; `offset` from the previous `next` (§5). Use `loadChildren` to get them all. */
+    children(tree: string, parentKey: string | null, offset?: number): Promise<TreePage>;
     /** Keys from the root down to the node (for "reveal in tree"). */
     path(tree: string, key: string): Promise<string[]>;
     move(tree: string, key: string, targetKey: string | null, position: DropPosition): Promise<void>;
@@ -61,9 +76,8 @@ export interface ProtocolClient {
 
   resource: {
     get(id: string): Promise<Resource | null>;
-    /** Applies a patch; with `create` the resource of a `new:` target is created first (§9.1). */
-    update(id: string, patch: ResourcePatch): Promise<Resource>;
-    create(newTarget: string, patch: ResourcePatch): Promise<Resource>;
+    /** Marks the resource (a group with its descendants) deleted (§3.4). */
+    delete(id: string): Promise<void>;
     history(id: string): Promise<HistoryEntry[]>;
     /** Puts the field back to the value before this entry; recorded as a new entry (I.4). */
     restore(id: string, entryId: string): Promise<void>;
@@ -86,6 +100,10 @@ export interface ProtocolClient {
   };
 
   plugin: {
+    /** Folders the plugin's `files` capability may use (D184). */
+    grants(plugin: string): Promise<PluginGrants>;
+    grantFolder(plugin: string, path: string): Promise<PluginGrants>;
+    revokeFolder(plugin: string, path: string): Promise<PluginGrants>;
     get(id: string): Promise<PluginDetail | null>;
     setEnabled(id: string, enabled: boolean): Promise<void>;
     activateVersion(id: string, version: string): Promise<void>;
@@ -98,6 +116,11 @@ export interface ProtocolClient {
   page: {
     /** Target → title, icon, breadcrumb, page, actions, result tabs (§9.1). */
     resolve(target: string, context?: PageContext): Promise<PageDescriptor>;
+    /**
+     * The only way bound fields are written (D259). `resource:<id>` and `new:<kind>` targets go to the
+     * kernel; `changes` keys are bind paths. For `new:` the result's `target` is the new resource.
+     */
+    save(target: string, changes: Record<string, unknown>, basis?: string, context?: PageContext): Promise<PageSaveResult>;
     /** A page event with the current unsaved content (§9.3). */
     event(target: string, event: string, context: PageContext): Promise<PageEventResult>;
   };
