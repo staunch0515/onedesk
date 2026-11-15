@@ -3,6 +3,7 @@ import { useI18n } from "../i18n";
 import type { OutputCell, PageDescriptor, Run, RunStatus } from "../protocol";
 import { useQuery, useUi, useWorkbench } from "../state/context";
 import type { TabState } from "../state/store";
+import { startRunExport } from "./transfer-dialogs";
 import { ViewNodes } from "./view-nodes";
 
 export const STATUS_TONE: Record<RunStatus, Tone> = { running: "accent", success: "success", error: "danger", cancelled: "neutral" };
@@ -155,6 +156,7 @@ export function ResultArea({ tab, descriptor }: { tab: TabState; descriptor: Pag
     </>
   ) : undefined;
 
+  const noExport = descriptor.restrictions?.includes("noExport") ?? false;
   const hasTable = r?.status === "success" && r.output?.type === "table";
   const canCopy = r?.status === "success" && (r.output?.type === "table" || r.output?.type === "text");
   return (
@@ -173,11 +175,14 @@ export function ResultArea({ tab, descriptor }: { tab: TabState; descriptor: Pag
           <IconButton
             icon="download"
             size="sm"
-            label={t("result.exportCsv")}
-            disabled={!hasTable}
-            onClick={() => client.page.event(tab.target, "export-csv", {}).then((res) => toast({ tone: "success", title: tx(res.message) }), actions.fail)}
+            label={noExport ? t("restrict.noExportShort") : r && !hasTable ? t("result.exportNeedsTable") : t("result.exportCsv")}
+            disabled={!hasTable || noExport || !r}
+            onClick={() =>
+              r &&
+              void startRunExport(client, store, actions, r.id, `${descriptor.title.replace(/[\\/:]/g, "-") || "result"}-${r.seq}.csv`, (rows, path) => toast({ tone: "success", title: t("result.exported", { rows, path }) }))
+            }
           />
-          <IconButton icon="copy" size="sm" label={t("result.copy")} disabled={!canCopy} onClick={() => toast({ tone: "success", title: t("result.copied") })} />
+          <IconButton icon="copy" size="sm" label={noExport ? t("restrict.noExportShort") : t("result.copy")} disabled={!canCopy || noExport} onClick={() => toast({ tone: "success", title: t("result.copied") })} />
           <IconButton icon="eraser" size="sm" label={t("result.clear")} disabled={!tab.runId || Boolean(descriptor.runId)} onClick={() => actions.updateTab(tab.id, { runId: null })} />
           <IconButton icon={panelOpen ? "panel-bottom-close" : "panel-bottom-open"} size="sm" label={panelOpen ? t("result.collapse") : t("result.expand")} shortcut={["⌘", "J"]} onClick={() => store.set({ panelOpen: !panelOpen })} />
         </>

@@ -6,6 +6,7 @@ import { runParams } from "./run-params";
 import { useRunEndRefresh } from "./run-refresh";
 import { useQuery, useUi, useWorkbench } from "../state/context";
 import type { TabState } from "../state/store";
+import { AddParamDialog } from "./add-param-dialog";
 import { Frame } from "../parts/frame";
 import { ResultArea, STATUS_TONE } from "../parts/result-area";
 import { TOKENIZERS } from "../parts/sql-tokens";
@@ -105,6 +106,11 @@ function RunHeader({ runId }: { runId: string }) {
   );
 }
 
+/** `protection.readonly` refuses saving and running (the run writes its record); the page says why in its banner. */
+function blockedByProtection(descriptor: PageDescriptor, action: ActionDecl): boolean {
+  return Boolean(descriptor.restrictions?.includes("readonly")) && (action.role === "save" || action.role === "save-run" || action.role === "run");
+}
+
 /**
  * A plugin page drawn from its view tree (§9.3). Bound fields edit the resource and stay unsaved
  * until Save; parameter fields live in the tab. Typing never leaves the browser: the page is only
@@ -118,6 +124,7 @@ export function ViewPage({ tab, descriptor: initial }: { tab: TabState; descript
   const [descriptor, setDescriptor] = useState(initial);
   const [busy, setBusy] = useState<string | null>(null);
   const [ask, setAsk] = useState<ActionDecl | null>(null);
+  const [addingParam, setAddingParam] = useState(false);
   const running = useQuery((c) => (tab.runId ? c.run.get(tab.runId) : Promise.resolve(null)), [tab.runId], tab.runId ? [`run:${tab.runId}`] : []);
   const isRunning = running.data?.status === "running";
 
@@ -129,6 +136,19 @@ export function ViewPage({ tab, descriptor: initial }: { tab: TabState; descript
   useRunEndRefresh(tab.runId, running.data, () => {
     if (kernelRun) actions.updateTab(tab.id, { reload: (store.get().tabs.find((x) => x.id === tab.id)?.reload ?? 0) + 1 });
   });
+
+  // The plugin version this resource is bound to changed (an upgrade took it over): the result on screen belongs to
+  // the old version and what the page shows from its last run may differ, so drop the result and read the page again.
+  const resourceId = descriptor.resourceId;
+  const bound_ = useQuery((c) => (kernelRun && resourceId ? c.resource.get(resourceId).then((r) => r?.pluginVersion ?? null) : Promise.resolve(undefined)), [kernelRun, resourceId], resourceId ? [`resource:${resourceId}`, "plugins"] : []);
+  const seenVersion = useRef<string | null | undefined>(undefined);
+  useEffect(() => {
+    const version = bound_.data;
+    if (version === undefined) return;
+    const before = seenVersion.current;
+    seenVersion.current = version;
+    if (before !== undefined && before !== version) actions.updateTab(tab.id, { runId: null, reload: (store.get().tabs.find((x) => x.id === tab.id)?.reload ?? 0) + 1 });
+  }, [bound_.data, tab.id, actions, store]);
 
   // "Recompute after the content changed" (§9.3): ask the plugin again 300 ms after typing stops.
   const draftKey = JSON.stringify(draft);
@@ -225,13 +245,15 @@ export function ViewPage({ tab, descriptor: initial }: { tab: TabState; descript
       const action = e.key === "s" && !e.shiftKey ? list.find((a) => a.role === "save") : e.key === "Enter" ? list.find((a) => a.role === "run") : undefined;
       if (!action) return;
       e.preventDefault();
-      if (!action.disabled) void invokeRef.current(action);
+      if (!action.disabled && !blockedByProtection(latest.current.descriptor, action)) void invokeRef.current(action);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
   const dirty = Object.keys(draft).length > 0;
+  // A workspace configuration page is a list of parameters: it can add the ones the kernel knows (round 5).
+  const isConfig = descriptor.breadcrumb[descriptor.breadcrumb.length - 1]?.tree === "config" && Boolean(descriptor.resourceId) && descriptor.autosave;
   const items: ActionBarItem[] = descriptor.actions.map((a) => ({
     key: a.id,
     label: tx(a.label),
@@ -240,9 +262,10 @@ export function ViewPage({ tab, descriptor: initial }: { tab: TabState; descript
     danger: a.danger,
     shortcut: a.shortcut,
     loading: busy === a.id || (a.role === "run" && a.primary && isRunning),
-    disabled: a.disabled || (a.role === "save" && !dirty) || (busy !== null && busy !== a.id),
+    disabled: a.disabled || blockedByProtection(descriptor, a) || (a.role === "save" && !dirty) || (busy !== null && busy !== a.id),
     onSelect: () => void invoke(a),
   }));
+  if (isConfig) items.push({ key: "params.add", label: t("params.add"), icon: "plus", onSelect: () => setAddingParam(true) });
 
   const renderForm = (node: Extract<ViewNode, { type: "form" }>) => {
     if (node.layout === "strip") {
@@ -311,6 +334,15 @@ export function ViewPage({ tab, descriptor: initial }: { tab: TabState; descript
         {descriptor.view.map((node) => (node.type === "form" ? renderForm(node) : <ViewNodes key={node.id} nodes={[node]} />))}
       </Pane>
     </Frame>
+      {isConfig && (
+        <AddParamDialog
+          layer="config"
+          own={new Set(Object.keys(descriptor.values).map((k) => k.replace(/^params?[.:]/, "")))}
+          open={addingParam}
+          onOpenChange={setAddingParam}
+          onAdd={(name, value) => client.params.set(descriptor.resourceId!, name, value).catch((error) => { actions.fail(error); throw error; })}
+        />
+      )}
       <Dialog
         open={ask !== null}
         onOpenChange={(open) => !open && setAsk(null)}

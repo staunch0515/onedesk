@@ -40,6 +40,16 @@ export function SecretsPage({ tab }: { tab: TabState }) {
   const { client, actions } = useWorkbench();
   const { t, dateTime } = useI18n();
   const list = useQuery((c) => (c.secrets ? c.secrets.list() : Promise.resolve([] as SecretInfo[])), [], ["secrets", "plugins"]);
+  // `usedBy` holds resource ids: show their names (an id that is not a resource stays as it is).
+  const users = useQuery(
+    async (c) => {
+      const ids = [...new Set((list.data ?? []).flatMap((s) => s.usedBy))].slice(0, 200);
+      const names = await Promise.all(ids.map(async (id) => [id, (await c.resource.get(id).catch(() => null))?.name ?? id] as const));
+      return Object.fromEntries(names) as Record<string, string>;
+    },
+    [(list.data ?? []).map((s) => s.usedBy.join(",")).join(";")],
+    ["plugins"],
+  );
   const [name, setName] = useState("");
   const [value, setValue] = useState("");
   const [ask, setAsk] = useState<Ask | null>(null);
@@ -58,7 +68,7 @@ export function SecretsPage({ tab }: { tab: TabState }) {
   const columns: Array<DataGridColumn<SecretInfo>> = [
     { key: "name", header: t("secrets.name"), width: 180, mono: true, value: (s) => s.name },
     { key: "updated", header: t("secrets.updated"), width: 150, value: (s) => s.updatedAt, render: (s) => dateTime(s.updatedAt) },
-    { key: "usedBy", header: t("secrets.usedBy"), width: 200, value: (s) => s.usedBy.join(", ") },
+    { key: "usedBy", header: t("secrets.usedBy"), width: 200, value: (s) => s.usedBy.map((id) => users.data?.[id] ?? id).join(", ") },
     {
       key: "actions",
       header: "",
