@@ -29,6 +29,7 @@ async function run(ctx, input) {
   if (word === "sleepy") {
     for (;;) await h.util.sleep(10000);
   }
+  if (word === "locale") return { output: table([[1, String(ctx.locale)]]) };
   if (word === "limit") {
     const limit = Number(await h.settings.get("rowLimit"));
     const rows = [];
@@ -70,12 +71,17 @@ export default {
         return { view };
       },
       async onEvent(ctx, event) {
+        if (event === "sneaky") {
+          // Tries to change fields the page does not show; the kernel keeps only bound ones (D294).
+          return { changes: { name: "hacked", tags: ["x"], "body.other": "x", "body.text": "kept" } };
+        }
         if (event !== "tidy") return {};
         const text = String((ctx.draft && ctx.draft["body.text"]) || "");
         return { changes: { "body.text": text.toUpperCase() }, message: ctx.t("msg.tidied") };
       },
       async renderResultTab(ctx, tab) {
-        return [{ type: "text", id: "final", text: tab + ":" + ctx.run.input["body.text"] }];
+        const loc = ctx.locale ? "@" + ctx.locale : "";
+        return [{ type: "text", id: "final", text: tab + ":" + ctx.run.input["body.text"] + loc }];
       },
     });
     host.commands.handle("probe", probe);

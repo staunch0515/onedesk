@@ -17,6 +17,8 @@ use crate::util::*;
 pub const MAX_SLEEP_MS: u64 = 10_000;
 pub const MAX_STORAGE_VALUE: usize = 256 * 1024;
 pub const MAX_STORAGE_KEY: usize = 200;
+pub const MAX_STORAGE_KEYS: usize = 1000;
+pub const MAX_STORAGE_TOTAL: usize = 16 * 1024 * 1024;
 
 pub struct PluginHost {
     pub kernel: Weak<Inner>,
@@ -292,6 +294,23 @@ impl Inner {
                 let text = v.to_string();
                 if text.len() > MAX_STORAGE_VALUE {
                     return Err(invalid("tooLarge"));
+                }
+                // D295: per plugin version at most 1000 keys and 16 MB in all.
+                if !v.is_null() {
+                    let (keys, total): (i64, i64) = self.read(|c| {
+                        c.query_row(
+                            "SELECT count(*), COALESCE(SUM(length(value)), 0) FROM plugin_storage
+                             WHERE plugin = ?1 AND version = ?2 AND key <> ?3",
+                            rusqlite::params![id, ver, k],
+                            |r| Ok((r.get(0)?, r.get(1)?)),
+                        )
+                    })?;
+                    if keys as usize >= MAX_STORAGE_KEYS {
+                        return Err(invalid("tooManyKeys"));
+                    }
+                    if total as usize + text.len() > MAX_STORAGE_TOTAL {
+                        return Err(invalid("tooLarge"));
+                    }
                 }
                 let value = if v.is_null() { None } else { Some(text) };
                 self.pipeline

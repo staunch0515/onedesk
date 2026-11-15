@@ -85,3 +85,68 @@ sh scripts/gen-types.sh --check                                                 
 - 动作的 60 秒时限只在测试里用 0.8 秒验证过；真实的 60 秒没跑。
 - 运行的输出存在 `runs.output`（JSON 文字），单次上限 8 MB；200 次 × 8 MB 的极端情况没有量过库的大小。
 - 一个插件的多个运行同时进行时，看门狗打断会让这个插件所有在途调用一起失败（沙箱的已知限制，第一轮起就是这样）。
+
+## 审查后的修改（`docs/handoff/round3-review.md` 中标给内核的各条）
+
+先合并了 `claude/week1-slice-3b4ae5`（c75425a，含 D293–D295）。标给内核的 #1–#6、#8、#9、#11、#13 全部修了；#10、#12 按审查意见留 todo（见末尾）。
+
+| # | 修改 | 测试（`tests/round3.rs`） |
+|---|---|---|
+| 1 | 没有资源时用 `new:<类型>` 目标里的类型判断动作是否适用：未保存的新页面上能运行 | `review1_runs_on_an_unsaved_new_page` |
+| 2 | 带资源的运行：资源的类型必须属于该动作的插件，否则 `invalidInput`，不交给插件（环境、配置、分组、别的插件的资源都不行） | `review2_actions_never_get_resources_of_other_plugins` |
+| 3 | 停用插件的类型：`page.save`（`resource:` 与 `new:`）、`tree.rename` 返回 `denied`（`reason: pluginDisabled`）；删除仍允许 | `review3_disabled_plugin_resources_cannot_be_saved_created_or_renamed` |
+| 4 | D294：`page.event` 的 `changes` 只保留本次渲染（带同一份 `draft`）的视图里出现的绑定路径 | `review4_event_changes_are_limited_to_bound_fields` |
+| 5 | D295：`run.start` 的 `input`、`params` 序列化后各 ≤ 8 MB（超出是一条 `invalidInput` 的运行）；`page.resolve`、`page.event` 的 `draft` ≤ 8 MB（超出 `invalidParams`，`reason: tooLarge`）；协议一行 ≤ 32 MB：超长的行不进内存，回一条 `id: 0` 的 `invalidParams/tooLarge` 并跳过到下一个换行，连接继续可用 | `review5_oversized_input_draft_and_lines_are_refused`（含经套接字的 33 MB 行） |
+| 6 | D293：`run.start` 的 `locale` → 动作的 `ctx.locale`；`run.render` 的 `locale` → 结果页签的 `ctx.locale` | `review6_locale_reaches_actions_and_result_tabs` |
+| 8 | 运行行写好之后再遇到内核内部错误，不再以协议错误返回、把运行留在 `running`：改为以 `error` 结束（原因 `pluginError`，`detail` 是内部错误） | （没有能稳定触发的路径，未单独测试） |
+| 9 | 被拒的宿主调用的原因：取消 → `cancelled`，调用超时或看门狗 → `timeout`，调用已结束或激活时的调用 → `callEnded` | （插件在取消后无法把被拒原因报出来，未单独测试） |
+| 11 | D295：`storage` 每个插件版本最多 1000 个键（`invalid/tooManyKeys`）、值总量 16 MB（`invalid/tooLarge`；覆盖已有键按差额算）；设置值 ≤ 4 KB（`invalid/tooLarge`） | `review11_storage_and_setting_size_limits` |
+| 13 | 启动时把遗留运行改为 `interrupted` 的同时，每条写一行 `run.end` 审计（操作者 `core`，摘要 `{status:"error", code:"interrupted"}`） | `leftover_running_runs_become_interrupted_after_restart`（加了断言） |
+
+结果：`cargo test -p onedesk-kernel -p onedesk-worker` 共 104 个测试全部通过；clippy 无警告；`sh scripts/gen-types.sh --check` 协议类型是最新的。
+
+### 内核实际会写的审计操作名（`audit.op`）
+
+成功的行：
+
+| 操作名 | 何时 |
+|---|---|
+| `resource.create` | 新建资源（含分组、环境、配置节点、插件状态节点；插件经 `host.resources` 建的也是） |
+| `resource.update` | 改资源字段（含授权文件夹的增删：落在插件状态节点上） |
+| `resource.move` | 移动 |
+| `resource.delete` | 删除（一批一行） |
+| `resource.undelete` | 整批恢复 |
+| `resource.purge` | 永久删除 |
+| `resource.restore` | 按字段从历史恢复（恢复父节点时是 `resource.move` 一行，修订的 op 记为 `restore`） |
+| `params.set` / `params.unset` / `params.acknowledge` | 参数命令（含 `workspace.setConfig`；`page.save` 改配置页的参数仍记 `resource.update`） |
+| `plugin.state` | 插件启用/停用、设置项 |
+| `files.write` | 插件经 `host.files.writeText` 写文件 |
+| `run.start` / `run.end` | 运行开始、结束（含启动时补记的 `interrupted`） |
+| `run.keep` / `run.unkeep` | 保留 / 取消保留 |
+
+失败或被拒的行（`result` 以 `failed:` 开头）用的是那条命令的操作名：上面所有的名字，再加 `plugin.grant`（授权文件夹失败；成功时记的是 `resource.create`/`resource.update`）、`workspace.startup`（启动命令失败）；以及插件被拒的宿主调用，操作名就是宿主方法名：`resources.get`、`resources.list`、`resources.create`、`resources.update`、`resources.move`、`resources.remove`、`files.roots`、`files.list`、`files.stat`、`files.readText`、`files.writeText`、`settings.get`（这些只在 `denied` 时写）。不写审计：`ui.set`、收藏与最近使用、运行进度、清除任务面板、插件 `storage`。
+
+`audit.result`：`ok`、`failed:<ErrorCode>`（`failed:denied`、`failed:invalid`、`failed:conflict`、`failed:notFound`、`failed:invalidParams`、`failed:internal`）。
+
+### 运行失败原因（`RunError.code`）
+
+内核自己的：`unknownAction`、`invalidInput`、`pluginDisabled`、`badOutput`、`timeout`、`interrupted`、`pluginError`（插件抛出：`message` 是第一行；也用于内核内部错误）。
+
+另外透传插件没接住的宿主错误的 `ErrorCode`：常见 `denied`、`invalid`、`conflict`、`notFound`、`invalidParams`，理论上可能有 `internal`。`cancelled` 不是失败原因而是运行状态。
+
+### 错误原因（`ProtocolError.params.reason`）
+
+| 错误码 | `reason` |
+|---|---|
+| `invalid` | `emptyName`、`unknownKind`、`parentNotFound`、`otherTree`、`notAccepted`、`notInTree`、`self`、`descendant`、`targetNotFound`、`noGroups`、`notParamNode`、`reservedField`、`secretUnsupported`、`duplicateName`（另带 `name`）、`notDeleted`、`notRestorable`、`nothingBefore`、`notAbsolute`、`notFolder`、`notFile`、`tooLarge`、`notText`、`badTarget`、`badKey`、`tooManyKeys`、`unknownSetting`、`badValue`、`helloFirst` |
+| `denied` | `foreignKind`、`notRequested`、`outsideGrant`、`notAbsolute`、`undeclaredSetting`、`pluginDisabled`、`callEnded`、`cancelled`、`timeout` |
+| `conflict` | `changedOnDisk`（文件）；资源与参数的字段冲突不带 `reason`，带 `field` 和 `rev` |
+| `invalidParams` | `tooLarge`（`draft` 或协议一行过大）；其余参数错误不带 `reason`，只有 `detail` |
+| `unsupported` | `providedTree` |
+| `pluginError` | `threw`、`badOutput`（另带 `plugin`）、`outOfMemory`、`cancelled`、`engine`、`notLoaded`、`pluginDisabled` |
+| `pluginTimeout` | `timeout` |
+| `notFound` | 不带 `reason`，带 `what`：`resource`、`node`、`tree`、`kind`、`page`、`plugin`、`command`、`target`、`entry`、`run`、`tab`、`path`、`config` |
+| `versionMismatch` | 带 `expected`、`got` |
+| `unknownMethod` | 带 `method` |
+
+插件树里被拒绝的包，`stateReason` 是清单拒绝原因：`noManifest`、`badJson`、`schema`、`apiVersion`、`badId`、`idMismatch`、`badVersion`、`versionMismatch`、`mainMissing`、`badName`、`duplicate`、`unknownPage`、`unknownTree`、`unknownCommand`、`unknownKind`、`missingAction`、`unknownAction`、`badSetting`、`localeMissing`、`badLocale`。

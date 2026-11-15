@@ -109,6 +109,10 @@ fn bad_output(plugin: &str, e: impl std::fmt::Display) -> ProtocolError {
     }
 }
 
+pub fn bind_paths(view: &[ViewNode]) -> Vec<String> {
+    binds(view)
+}
+
 fn binds(view: &[ViewNode]) -> Vec<String> {
     view.iter()
         .filter_map(|n| match n {
@@ -226,6 +230,9 @@ fn page_frame(d: &mut PageDescriptor, p: &Plugin, page: &str) {
 
 impl Inner {
     pub async fn resolve(&self, target: &str, cx: PageContext, client: Option<String>) -> KResult<PageDescriptor> {
+        if crate::runs::json_size(&cx.draft) > crate::runs::MAX_INPUT_BYTES {
+            return Err(err_p(ErrorCode::InvalidParams, &[("reason", "tooLarge")]));
+        }
         match parse_target(target) {
             Target::Resource(id) => match self.read(|c| store::get(c, &id))? {
                 Some(r) if !self.hidden_tree(&r) => {
@@ -240,6 +247,14 @@ impl Inner {
             Target::New { kind, parent } => self.resolve_new(target, &kind, parent, &cx, client).await,
             Target::Node { tree, key } => self.resolve_node(target, &tree, &key, &cx, client).await,
             Target::Other => Ok(missing(target)),
+        }
+    }
+
+    /// D290 / review #3: a disabled plugin's resources keep their data but cannot be edited.
+    pub fn kind_writable(&self, kind: &str) -> KResult<()> {
+        match self.registry.kind(kind) {
+            Some((p, _)) if !self.plugin_enabled(&p.id) => Err(denied("pluginDisabled")),
+            _ => Ok(()),
         }
     }
 
@@ -528,6 +543,7 @@ impl Inner {
                 if self.hidden_tree(&row) {
                     return Err(not_found("resource"));
                 }
+                self.kind_writable(&row.kind)?;
                 let changes = Changes::from_bind_map(&p.changes)?;
                 let basis = match &p.basis {
                     Some(b) => Some(b.parse::<i64>().map_err(|_| invalid_params("basis is not a rev"))?),
@@ -541,6 +557,7 @@ impl Inner {
             }
             Target::New { kind, parent } => {
                 let (plugin, decl) = self.registry.kind(&kind).ok_or_else(|| not_found("kind"))?;
+                self.kind_writable(&kind)?;
                 let changes = Changes::from_bind_map(&p.changes)?;
                 let default_name =
                     decl.new_name.as_deref().map(|k| plugin.text(k, cx.locale.as_deref())).unwrap_or_else(|| kind.clone());
