@@ -32,6 +32,9 @@ pub struct KernelConfig {
     pub action_timeout: std::time::Duration,
     /// Where secret values live (D305): the keychain, or memory in tests.
     pub secrets: crate::secrets::SecretStoreHandle,
+    /// D313: `<id>@<version>` of the built-in packages (given by the main process); only these
+    /// are confirmed without asking.
+    pub builtin: Vec<String>,
 }
 
 impl Default for KernelConfig {
@@ -40,6 +43,7 @@ impl Default for KernelConfig {
             sandbox: SandboxConfig::default(),
             action_timeout: std::time::Duration::from_secs(60),
             secrets: crate::secrets::SecretStoreHandle::from_env(),
+            builtin: vec![],
         }
     }
 }
@@ -208,13 +212,28 @@ impl Inner {
         let deletion = matches!(&cmd, Command::Delete { .. } | Command::Undelete { .. } | Command::Purge { .. });
         let audited = !matches!(&cmd, Command::Meta { .. } | Command::UiSet { .. });
         // D307: hosts a resource grants before the change, to audit newly granted ones after it.
-        let granted_before: Option<BTreeSet<String>> = match &cmd {
-            Command::Update { id, .. } | Command::Params { id, .. } => {
-                self.read(|c| store::get(c, id)).ok().flatten().map(|r| self.grant_hosts_of(&r.kind, r.plugin_version.as_deref(), &r.body))
-            }
-            Command::Create(_) => Some(BTreeSet::new()),
+        // Review #10: every path that can bring an address back (restore, undelete, upgrade, undo)
+        // is audited like a save. Rows not listed here count as granting nothing before.
+        let ids: Option<Vec<String>> = match &cmd {
+            Command::Update { id, .. } | Command::Params { id, .. } | Command::Restore { id, .. } => Some(vec![id.clone()]),
+            Command::Upgrade { items, .. } => Some(items.iter().map(|i| i.id.clone()).collect()),
+            Command::UndoUpgrade { batch, .. } => Some(
+                self.read(|c| {
+                    let mut st = c.prepare("SELECT resource_id FROM upgrade_items WHERE batch = ?1")?;
+                    let v = st.query_map([batch], |r| r.get(0))?;
+                    v.collect()
+                })
+                .unwrap_or_default(),
+            ),
+            Command::Create(_) | Command::Undelete { .. } => Some(vec![]),
             _ => None,
         };
+        let granted_before: Option<HashMap<String, BTreeSet<String>>> = ids.map(|ids| {
+            ids.into_iter()
+                .filter_map(|id| self.read(|c| store::get(c, &id)).ok().flatten())
+                .map(|r| (r.id.clone(), self.grant_hosts_of(&r.kind, r.plugin_version.as_deref(), &r.body)))
+                .collect()
+        });
         let grant_actor = actor.clone();
         let out = self.pipeline.execute(actor, cmd).await?;
         for t in out.topics() {
@@ -234,8 +253,10 @@ impl Inner {
             self.emit(format!("{}{}", topic::TREE, store::TREE_FAVORITES), None, None);
         }
         if let Some(before) = granted_before {
+            let none = BTreeSet::new();
             for r in out.rows.iter().filter(|r| r.deleted_at.is_none()) {
-                for host in self.grant_hosts_of(&r.kind, r.plugin_version.as_deref(), &r.body).difference(&before) {
+                let had = before.get(&r.id).unwrap_or(&none);
+                for host in self.grant_hosts_of(&r.kind, r.plugin_version.as_deref(), &r.body).difference(had) {
                     // A permission change (I.10h): the host is now reachable for the plugin.
                     let summary = json!({ "resource": r.id, "kind": r.kind });
                     let _ = self
@@ -403,6 +424,18 @@ impl Inner {
             v => self.registry.kind_at(kind, v),
         };
         match bound {
+            // D315: bound to a version whose permissions are not confirmed — shown off, never run.
+            Some((p, k)) if !self.version_confirmed(p) => KindMeta {
+                label: p.label(&k.label),
+                icon: k.icon.clone(),
+                page: None,
+                draggable: k.draggable,
+                accepts: vec![],
+                commands: vec![],
+                state: NodeState::Disabled,
+                reason: Some(Label::Text("unconfirmedVersion".into())),
+                plugin: None,
+            },
             Some((p, k)) => KindMeta {
                 label: p.label(&k.label),
                 icon: k.icon.clone(),
@@ -955,6 +988,10 @@ impl Inner {
         let host = |e: ProtocolError| SandboxError::Host(e);
         if !self.plugin_enabled(&p.id) {
             return Err(host(err_p(ErrorCode::PluginError, &[("reason", "pluginDisabled")])));
+        }
+        // D315: the code of a version whose permissions are not confirmed never runs.
+        if !self.version_confirmed(p) {
+            return Err(host(err_p(ErrorCode::PluginError, &[("reason", "unconfirmedVersion")])));
         }
         let sb = self.sandbox(p).await.map_err(host)?;
         let timeout = timeout.unwrap_or(self.cfg.sandbox.call_timeout);

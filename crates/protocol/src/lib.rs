@@ -1327,6 +1327,12 @@ pub struct PluginVersion {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub resource_count: Option<u64>,
+    /// This version's own permissions (D312), not the active version's.
+    #[serde(default)]
+    pub permissions: Vec<PluginPermission>,
+    /// Fingerprint of `permissions` (D312).
+    #[serde(default)]
+    pub fingerprint: String,
 }
 
 #[skip_serializing_none]
@@ -1506,6 +1512,10 @@ pub struct InstallPreview {
     /// Permission ids this version asks for that the confirmed version did not (§7.1).
     pub added_permissions: Vec<String>,
     pub provides: PluginProvides,
+    /// Fingerprint of this package's permission list (D312); sent back with the install and the
+    /// confirmation so the user confirms exactly what was shown.
+    #[serde(default)]
+    pub fingerprint: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -1514,6 +1524,36 @@ pub struct InstallPreview {
 pub struct PluginVersionParams {
     pub plugin: String,
     pub version: String,
+}
+
+/// `app.installPlugin` (D312): what the user saw in the confirmation, checked again after copying.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct AppInstallParams {
+    pub folder: String,
+    pub id: String,
+    pub version: String,
+    pub fingerprint: String,
+}
+
+/// `plugin.confirmPermissions` (D312): the fingerprint the user confirmed.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct PluginConfirmParams {
+    pub plugin: String,
+    pub version: String,
+    pub fingerprint: String,
+}
+
+/// `plugin.rescan` (D313): `<id>@<version>` of the built-in packages the main process copied.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct PluginRescanParams {
+    #[serde(default)]
+    pub builtin: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]

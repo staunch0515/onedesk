@@ -20,6 +20,7 @@ pub const MIGRATIONS: &[(&str, &str)] = &[
     ("0004_search_secure_delete", include_str!("../migrations/0004_search_secure_delete.sql")),
     ("0005_runs", include_str!("../migrations/0005_runs.sql")),
     ("0006_versions_secrets_counts", include_str!("../migrations/0006_versions_secrets_counts.sql")),
+    ("0007_upgrade_prev_active", include_str!("../migrations/0007_upgrade_prev_active.sql")),
 ];
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -449,6 +450,22 @@ mod tests {
             let n: i64 = conn.query_row(&format!("SELECT count(*) FROM {t}"), [], |r| r.get(0)).unwrap();
             assert_eq!(n, 0, "{t}");
         }
+    }
+
+    #[test]
+    fn migration_0007_records_the_previous_active_version_and_keeps_batches() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        let tx = conn.transaction().unwrap();
+        for (_, m) in &MIGRATIONS[..6] {
+            tx.execute_batch(m).unwrap();
+        }
+        tx.execute("INSERT INTO meta (key, value) VALUES ('schema_version', '6')", []).unwrap();
+        tx.execute("INSERT INTO upgrade_batches (id, plugin, from_version, to_version, at) VALUES ('b', 'p', '0.1.0', '0.2.0', 1)", []).unwrap();
+        tx.commit().unwrap();
+        migrate(&mut conn).unwrap();
+        let (to, prev): (String, Option<String>) =
+            conn.query_row("SELECT to_version, prev_active FROM upgrade_batches WHERE id = 'b'", [], |r| Ok((r.get(0)?, r.get(1)?))).unwrap();
+        assert_eq!((to.as_str(), prev), ("0.2.0", None));
     }
 
     #[test]

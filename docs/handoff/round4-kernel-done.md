@@ -177,3 +177,75 @@ const v = await ctx.host.secrets.get("token");
 - `secrets.list` 的 `usedBy` 里“引用它的资源”是对 body 文本的近似匹配。
 - 审计的合并计数只用于 `network.request`；“反复被拒的同一种调用”的合并没有做。
 - 重定向逐跳的审计只记最终主机。
+
+## 审查后的修改（`docs/handoff/round4-review.md` 中标给内核的各条）
+
+先合并了 `claude/week1-slice-3b4ae5`（de1cbc9）。协议补充（D312）按审查文件里的名字加进 `crates/protocol`（只增）并已 `pnpm gen:types`：`InstallPreview.fingerprint`、`AppInstallParams { folder, id, version, fingerprint }`、`PluginConfirmParams { plugin, version, fingerprint }`、`PluginVersion.permissions`、`PluginVersion.fingerprint`、`PluginRescanParams { builtin }`；工作进程命令行加可重复的 `--builtin <id>@<version>`。新迁移 `0007_upgrade_prev_active.sql`（升级批记下升级前的活动版本），带升级测试。
+
+| # | 修改 | 测试（`tests/round4.rs`） |
+|---|---|---|
+| 1 必须 | D311：操作者是插件时，写入管线拒绝新建或修改类型声明的“授权地址”字段（`grants`）和“密钥”字段（`denied`，`reason: grantField`，另带 `field`）；`null` 与空字符串视为未设置。升级接管时这两类字段（新旧两个版本声明的都算）必须与旧值相同，否则整批失败（`denied/grantField`，另带 `resource`）。`page.event` 的修改里去掉这两类字段。用户经 `page.save`、界面命令照常可改 | `review1_plugins_cannot_grant_themselves_hosts_or_secrets`（`resources.create/update` 写地址、写密钥引用、页面事件、自动和手动接管各被拒一次；库里没有插件写的地址；`network.grant` 只有用户保存的那一条） |
+| 2 必须 | `plugin.get` 的每个版本带它自己的 `permissions` 和 `fingerprint` | `review2_4_each_version_has_its_permissions_and_confirmation_checks_the_fingerprint` |
+| 3 必须 | 在 `new:` 目标上运行时，按类型的字段声明去掉密钥字段：交给插件的输入和存下的输入快照都去掉（与已保存资源同一规则） | `review3_secret_fields_of_a_new_page_never_reach_the_run_or_the_database`（直接读 `workspace.db` 和 `-wal` 的字节） |
+| 4 | `plugin.inspect` 给出 `fingerprint`；`plugin.confirmPermissions` 必须带回同一个指纹，否则 `invalid/fingerprintMismatch` | 同 #2 |
+| 5 | D313：工作区第一次见到插件时只自动确认主进程给出的内置清单（`--builtin`、`plugin.rescan` 的 `builtin`）里的版本，以及不要任何权限的版本；其余“已安装、未确认”。已见过的插件，在 `rescan` 的 `builtin` 里出现的版本同样自动确认 | `review5_only_builtin_packages_are_confirmed_without_asking` |
+| 6 | D314：升级批记下升级前的活动版本；撤销升级回到它并**固定**；手动切到较旧版本时也固定；版本比较一律用 semver | `review6_7_undo_stays_put_and_unconfirmed_code_never_runs`（撤销后 `rescan` 不会再自动升级） |
+| 7 | D315：未确认版本的代码绝不激活（`call_version` 拒绝，`pluginError/unconfirmedVersion`）；绑定它的资源状态 `disabled`、原因文字键 `unconfirmedVersion`，页面为空 | 同 #6（同版本号换成多要权限的包） |
+| 8 | D316：重定向到别的主机或端口时，丢掉含代入密钥的请求头和 `Authorization`、`Cookie`、`Proxy-Authorization` | `review8_11_redirects_drop_credentials_and_requests_are_limited` |
+| 10 | 历史恢复（`body.*` 字段）按 §7.6：快照绑定的版本还在 → 绑定回去；不在但活动版本能接管 → 对恢复后的内容跑 `migrate` 并绑定活动版本；都不行 → `invalid/needsVersion`。授权地址因恢复、恢复删除、升级、撤销升级而出现新主机时同样记 `network.grant` | `review10_restore_follows_version_rules_and_audits_grants`；`failed_migrate_…` 的最后一段（快照的版本还在：绑定回去） |
+| 11 | D316：`reqwest` 禁用环境代理（`no_proxy`）；名字解析计入同一个超时；方法只许 GET/HEAD/POST/PUT/PATCH/DELETE/OPTIONS（否则 `invalid/badMethod`）；插件设置 `Host`、`Content-Length`、`Transfer-Encoding`、`Connection` → `invalid/forbiddenHeader`（另带 `header`） | 同 #8（方法与请求头；代理和解析超时没有专门测试） |
+| 13 | 扫描插件文件夹时，`<id>/` 下以 `.` 开头的版本目录也跳过（`<plugins>/` 下的点目录本来就跳过） | （扫描逻辑的一行，已有的扫描测试覆盖其余） |
+| 14 | 表单密钥字段：先把值从修改里取出、写库提交，提交成功之后再写钥匙串；写钥匙串失败则返回错误（该字段算未保存） | `review14_a_failed_save_does_not_touch_the_keychain` |
+
+结果：`cargo test -p onedesk-kernel -p onedesk-worker` 共 122 个测试全部通过（新增 9 个）；clippy 无警告；`sh scripts/gen-types.sh --check` 协议类型是最新的。
+
+**给外壳会话**：
+
+- 主进程启动工作进程时为它自己复制的每个内置包加 `--builtin <id>@<version>`；安装或更新内置包后调 `plugin.rescan`，参数 `{ "builtin": [...] }` 列出这次复制的。用户安装的包：复制、重新检查一致之后调 `plugin.rescan`（`builtin` 为空），再用确认框里的 `fingerprint` 调 `plugin.confirmPermissions`。
+- 测试与开发时，`crates/kernel/tests/common` 的做法可参考：把插件文件夹里已有的包都当作内置包传入。
+
+### 内核实际写的审计操作名（完整，至第四轮审查后）
+
+| 何时 | 操作名 |
+|---|---|
+| 资源 | `resource.create`、`resource.update`、`resource.move`、`resource.delete`、`resource.undelete`、`resource.purge`、`resource.restore` |
+| 参数 | `params.set`、`params.unset`、`params.acknowledge` |
+| 插件 | `plugin.state`（启用/停用、设置、确认权限、活动版本、固定）、`plugin.install`、`plugin.remove`（对象 `<id>@<版本>`）、`plugin.upgrade`、`plugin.undoUpgrade` |
+| 运行 | `run.start`、`run.end`、`run.keep`、`run.unkeep` |
+| 文件、网络、密钥 | `files.write`、`network.request`（同一运行同一主机合并计数）、`network.grant`、`secrets.set`、`secrets.delete` |
+| 只在失败时出现 | `plugin.grant`（授权文件夹失败；成功时落在插件状态节点上，记 `resource.create`/`resource.update`）、`workspace.startup`；插件被拒绝的宿主调用以宿主方法名记：`resources.get/list/create/update/move/remove`、`files.roots/list/stat/readText/writeText`、`storage.get/set/remove/keys/readFrom`、`settings.get`、`params.get`、`ui.open/notify/copy`、`util.sleep`、`runs.progress`、`network.request`、`secrets.get`（被拒的原因在摘要的 `reason` 里） |
+| 不写审计 | `ui.set`（界面状态）、收藏与最近使用、运行进度、清除任务面板、插件 `storage` 的写入 |
+
+`audit.result`：`ok` 或 `failed:<ErrorCode>`。
+
+### 内核发出的全部错误原因（`ProtocolError.params.reason`，至第四轮审查后）
+
+| 错误码 | `reason` |
+|---|---|
+| `invalid` | `emptyName`、`unknownKind`、`parentNotFound`、`otherTree`、`notAccepted`、`notInTree`、`self`、`descendant`、`targetNotFound`、`noGroups`、`notParamNode`、`reservedField`、`duplicateName`（另带 `name`）、`unknownSecret`、`notDeleted`、`notRestorable`、`nothingBefore`、`needsVersion`、`notAbsolute`、`notFolder`、`notFile`、`tooLarge`、`notText`、`badTarget`、`badKey`、`tooManyKeys`、`unknownSetting`、`badValue`、`helloFirst`、`alreadyUndone`、`fingerprintMismatch`、`badSecretName`、`badScheme`、`badUrl`、`badMethod`、`forbiddenHeader`（另带 `header`）、`tooManyRedirects`、`timeout`（网络请求） |
+| `denied` | `foreignKind`、`notRequested`、`outsideGrant`、`notAbsolute`、`undeclaredSetting`、`pluginDisabled`、`callEnded`、`cancelled`、`timeout`、`notConfirmed`、`pureCall`、`notInMigrate`、`grantField`（另带 `field`，接管时还带 `resource`）、`secretNotAllowed`、`unknownSecret`、`plaintextUndeclared`、`hostNotAllowed`、`blockedByPolicy`、`localAddress` |
+| `conflict` | `changedOnDisk`、`changedDuringUpgrade`；资源与参数的字段冲突不带 `reason`，带 `field`、`rev` |
+| `invalidParams` | `tooLarge`；其余不带 `reason`，只有 `detail` |
+| `unsupported` | `providedTree` |
+| `pluginError` | `threw`、`badOutput`（另带 `plugin`）、`outOfMemory`、`cancelled`、`engine`、`notLoaded`、`pluginDisabled`、`unconfirmedVersion`、`migrateFailed`（另带 `resource`） |
+| `pluginTimeout` | `timeout` |
+| `notFound` | 不带 `reason`，带 `what`：`resource`、`node`、`tree`、`kind`、`page`、`plugin`、`command`、`target`、`entry`、`run`、`tab`、`path`、`config`、`batch`、`secret`、`host` |
+| `versionMismatch` / `unknownMethod` | 带 `expected`、`got` / `method` |
+
+运行失败原因（`RunError.code`）：`unknownAction`、`invalidInput`、`pluginDisabled`、`badOutput`、`timeout`、`interrupted`、`pluginError`，以及透传的宿主错误码（`denied`、`invalid`、`conflict`、`notFound`、`invalidParams`、`internal`）。
+
+清单拒绝原因（插件树 `stateReason`、`plugin.inspect` 的 `problem.params.reason`）：`noManifest`、`badJson`、`schema`、`apiVersion`、`badId`、`idMismatch`、`badVersion`、`versionMismatch`、`mainMissing`、`badName`、`duplicate`、`unknownPage`、`unknownTree`、`unknownCommand`、`unknownKind`、`missingAction`、`unknownAction`、`badSetting`、`localeMissing`、`badLocale`、`badUpgradesFrom`、`badHost`、`badSecretName`、`grantsUndeclared`、`badGrants`；`plugin.inspect` 另有 `notFolder`、`alreadyInstalled`。
+
+### 内核给出的文字键（`Label::Text`，外壳配文字）
+
+- `unconfirmedVersion`：插件树节点的 `stateReason`（有未确认的版本）；资源节点与页面的 `stateReason`（绑定的版本未确认，状态 `disabled`）。
+- `restrictedByUpperLayer`：环境页 `EnvParam.restricted`。
+- `deleted.purge.confirm`：`deleted.purge` 的确认效果的 `message`。
+- `core`：命令面板里内核命令的组名。
+- 内核命令、树、类型的 `label`/`title` 就是它们的 id（D262），如 `node.newGroup`、`resources`、`core:group`。
+- 缺少插件时的 `stateReason` 是 `<插件id>@<版本>`（不是键）。
+
+### 仍未验证
+
+- 环境代理确实被绕开（`no_proxy`）和名字解析的超时，没有专门测试（测试进程不改环境变量）。
+- 其余同上文“还缺什么 / 没验证的”。

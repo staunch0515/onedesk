@@ -365,7 +365,34 @@ impl Inner {
                 }
             }
         }
-        self.execute(Actor::User, Command::Restore { id: id.into(), changes, parent, entry: entry.into() }).await?;
+        // §7.6 “其他情形” (review #10): restored content from a snapshot bound to another version.
+        let mut version = None;
+        let snap_version = snap.as_ref().and_then(|s| s.plugin_version.clone());
+        if field.starts_with("body.") && snap_version.is_some() && snap_version != row.plugin_version {
+            let sv = snap_version.clone().unwrap_or_default();
+            let pid = crate::manifest::Registry::split(&row.kind).map(|(p, _)| p.to_string()).unwrap_or_default();
+            if self.registry.version(&pid, &sv).is_some() {
+                // That version is still installed: the restored content goes back to it.
+                version = Some(sv);
+            } else {
+                // Gone: the active version takes it over if it can, by `migrate`.
+                let to = self.registry.plugin(&pid).filter(|p| p.upgrades_from(&sv)).ok_or_else(|| invalid("needsVersion"))?;
+                let mut old = row.clone();
+                for (k, v) in &changes.body {
+                    if v.is_null() {
+                        old.body.remove(k);
+                    } else {
+                        old.body.insert(k.clone(), v.clone());
+                    }
+                }
+                old.plugin_version = Some(sv);
+                let item = self.migrate_rows(to, std::slice::from_ref(&old)).await?.remove(0);
+                changes.body = row.body.keys().map(|k| (k.clone(), Value::Null)).collect();
+                changes.body.extend(item.body);
+                version = Some(to.version.clone());
+            }
+        }
+        self.execute(Actor::User, Command::Restore { id: id.into(), changes, parent, entry: entry.into(), version }).await?;
         Ok(())
     }
 

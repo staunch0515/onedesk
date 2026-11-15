@@ -191,7 +191,7 @@ pub enum Command {
     /// Adds or removes one granted folder of a plugin, read-modify-write in one transaction (D261).
     Grant { plugin: String, folder: String, add: bool },
     /// Writes fields back from history as a `restore` revision (D278); `parent` restores the location.
-    Restore { id: String, changes: Changes, parent: Option<Option<String>>, entry: String },
+    Restore { id: String, changes: Changes, parent: Option<Option<String>>, entry: String, version: Option<String> },
     /// Brings a whole deletion batch back (§3.4).
     Undelete { id: String },
     /// Erases a deleted resource (and its batch descendants) with all its history (§3.4).
@@ -214,7 +214,7 @@ pub enum Command {
     /// Parameters of a plugin's state node (`enabled`, `settings.<name>`); `None` removes (D290).
     PluginState { plugin: String, set: Vec<(String, Option<String>)> },
     /// §7.6 takeover: every item (expected rev, new body) is written and rebound, or none is.
-    Upgrade { plugin: String, to: String, items: Vec<UpgradeItem>, set_active: bool },
+    Upgrade { plugin: String, to: String, items: Vec<UpgradeItem>, set_active: bool, prev_active: Option<String> },
     /// Rolls a batch back: items whose rev is still the upgraded one, plus `also` (D304).
     UndoUpgrade { batch: String, also: Vec<String> },
     /// A secret name exists (`true`) or not; the value is the keychain's (rule 7).
@@ -231,6 +231,8 @@ pub struct KindRule {
     pub tree: Option<String>,
     /// Full kind names, or `*` for any kind of the same tree.
     pub accepts: Vec<String>,
+    /// D311: body keys only a user may write (network-granting addresses, secret references).
+    pub protected: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -405,7 +407,7 @@ impl Writer {
                 }
                 Command::Refused { error, .. } => return Err(error),
                 Command::Grant { plugin, folder, add } => cx.grant(&plugin, &folder, add)?,
-                Command::Restore { id, changes, parent, entry } => cx.restore(&id, &changes, parent, &entry)?,
+                Command::Restore { id, changes, parent, entry, version } => cx.restore(&id, &changes, parent, &entry, version.as_deref())?,
                 Command::Undelete { id } => cx.undelete(&id)?,
                 Command::Purge { id } => cx.purge(&id)?,
                 Command::Meta { id, favorite, touch } => cx.meta(&id, favorite, touch)?,
@@ -435,7 +437,9 @@ impl Writer {
                     Outcome { changed: n > 0, ..Default::default() }
                 }
                 Command::PluginState { plugin, set } => cx.plugin_state(&plugin, &set)?,
-                Command::Upgrade { plugin, to, items, set_active } => cx.upgrade(&plugin, &to, items, set_active)?,
+                Command::Upgrade { plugin, to, items, set_active, prev_active } => {
+                    cx.upgrade(&plugin, &to, items, set_active, prev_active.as_deref())?
+                }
                 Command::UndoUpgrade { batch, also } => cx.undo_upgrade(&batch, &also)?,
                 Command::SecretName { name, present, audit } => {
                     if present {
@@ -669,8 +673,26 @@ impl Tx<'_> {
         Ok(())
     }
 
+    /// D311: a plugin may not set or change protected fields (grants are the user's to give).
+    fn guard_protected(&self, kind: &str, old: Option<&JsonMap>, new: &JsonMap) -> KResult<()> {
+        if !matches!(self.actor, Actor::Plugin { .. }) {
+            return Ok(());
+        }
+        let protected = self.rules.get(kind).map(|r| r.protected.as_slice()).unwrap_or(&[]);
+        for key in protected {
+            let set = |v: &&Value| !v.is_null() && v.as_str() != Some("");
+            let before = old.and_then(|b| b.get(key)).filter(set);
+            let after = new.get(key).filter(set);
+            if before != after {
+                return Err(err_p(ErrorCode::Denied, &[("reason", "grantField"), ("field", key)]));
+            }
+        }
+        Ok(())
+    }
+
     fn create(&mut self, n: NewResource) -> KResult<Outcome> {
         self.permit(&n.kind)?;
+        self.guard_protected(&n.kind, None, &n.body)?;
         let rule_tree = self.rule(&n.kind)?.tree.clone();
         let tree = if n.kind == KIND_GROUP { n.tree.clone().or(rule_tree) } else { rule_tree };
         if n.name.trim().is_empty() {
@@ -747,7 +769,9 @@ impl Tx<'_> {
                 }
             }
         }
+        let before_body = row.body.clone();
         let mut changed = changes.apply(&mut row);
+        self.guard_protected(&row.kind, Some(&before_body), &row.body)?;
         changed.extend(self.apply_params(&mut row, &changes.params)?);
         if changed.is_empty() {
             return Ok(Outcome { id: Some(row.id.clone()), changed: false, rows: vec![] });
@@ -969,7 +993,7 @@ impl Tx<'_> {
         Ok(())
     }
 
-    fn restore(&mut self, id: &str, changes: &Changes, parent: Option<Option<String>>, entry: &str) -> KResult<Outcome> {
+    fn restore(&mut self, id: &str, changes: &Changes, parent: Option<Option<String>>, entry: &str, version: Option<&str>) -> KResult<Outcome> {
         if let Some(p) = parent {
             let mut out = self.move_to(id, MoveDest::Inside(p))?;
             if out.changed {
@@ -984,7 +1008,22 @@ impl Tx<'_> {
             out.id = Some(id.to_string());
             return Ok(out);
         }
-        self.update_as(id, changes, None, "restore", Some(entry), "resource.restore")
+        let mut out = self.update_as(id, changes, None, "restore", Some(entry), "resource.restore")?;
+        // §7.6 / review #10: the restored content comes with the version that handles it.
+        if let Some(v) = version {
+            let mut row = self.live(id)?;
+            if row.plugin_version.as_deref() != Some(v) {
+                row.plugin_version = Some(v.to_string());
+                row.rev += 1;
+                row.updated_at = self.at;
+                row.updated_by = self.actor.as_text();
+                self.save(&row)?;
+                self.revision_from(&row, "restore", &["pluginVersion".to_string()], Some(entry))?;
+                out.rows = vec![row];
+                out.changed = true;
+            }
+        }
+        Ok(out)
     }
 
     fn undelete(&mut self, id: &str) -> KResult<Outcome> {
@@ -1260,7 +1299,7 @@ impl Tx<'_> {
         Ok(Outcome { id: Some(row.id.clone()), changed: true, rows: vec![row] })
     }
 
-    fn upgrade(&mut self, plugin: &str, to: &str, items: Vec<UpgradeItem>, set_active: bool) -> KResult<Outcome> {
+    fn upgrade(&mut self, plugin: &str, to: &str, items: Vec<UpgradeItem>, set_active: bool, prev_active: Option<&str>) -> KResult<Outcome> {
         let batch = new_id();
         let mut rows = Vec::new();
         let mut from: BTreeSet<String> = BTreeSet::new();
@@ -1299,8 +1338,8 @@ impl Tx<'_> {
             let from_text = from.into_iter().collect::<Vec<_>>().join(",");
             self.tx
                 .execute(
-                    "INSERT INTO upgrade_batches (id, plugin, from_version, to_version, at) VALUES (?1, ?2, ?3, ?4, ?5)",
-                    params![batch, plugin, from_text, to, self.at],
+                    "INSERT INTO upgrade_batches (id, plugin, from_version, to_version, at, prev_active) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                    params![batch, plugin, from_text, to, self.at, prev_active],
                 )
                 .map_err(sql)?;
         }
@@ -1312,10 +1351,10 @@ impl Tx<'_> {
     }
 
     fn undo_upgrade(&mut self, batch: &str, also: &[String]) -> KResult<Outcome> {
-        let (plugin, from, undone): (String, String, Option<i64>) = self
+        let (plugin, from, undone, prev_active): (String, String, Option<i64>, Option<String>) = self
             .tx
-            .query_row("SELECT plugin, from_version, undone_at FROM upgrade_batches WHERE id = ?1", [batch], |r| {
-                Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+            .query_row("SELECT plugin, from_version, undone_at, prev_active FROM upgrade_batches WHERE id = ?1", [batch], |r| {
+                Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))
             })
             .map_err(|_| not_found("batch"))?;
         if undone.is_some() {
@@ -1352,9 +1391,15 @@ impl Tx<'_> {
             rows.push(row);
         }
         self.tx.execute("UPDATE upgrade_batches SET undone_at = ?2 WHERE id = ?1", params![batch, self.at]).map_err(sql)?;
-        // D304: the active version goes back as well (the lowest version the batch came from).
-        if let Some(v) = from.split(',').next().filter(|v| !v.is_empty()) {
-            self.plugin_state(&plugin, &[("active".into(), Some(v.to_string()))])?;
+        // D304/D314: the active version goes back to what it was before the takeover (or the
+        // lowest version the batch came from, by semver), and is pinned so it is not upgraded again.
+        let lowest = from
+            .split(',')
+            .filter(|v| !v.is_empty())
+            .min_by_key(|v| semver::Version::parse(v).unwrap_or(semver::Version::new(0, 0, 0)))
+            .map(String::from);
+        if let Some(v) = prev_active.or(lowest) {
+            self.plugin_state(&plugin, &[("active".into(), Some(v.clone())), ("pinned".into(), Some(v))])?;
         }
         self.audit("plugin.undoUpgrade", &plugin, &json!({ "batch": batch, "restored": rows.len(), "modified": modified.len() }))?;
         Ok(Outcome { id: Some(json!(modified).to_string()), changed: true, rows })
@@ -1443,11 +1488,11 @@ pub const GRANTS_KEY: &str = "files.folders";
 /// Rules of the kernel's own kinds; plugin kinds are added by the registry.
 pub fn core_rules() -> HashMap<String, KindRule> {
     let mut m = HashMap::new();
-    m.insert(KIND_GROUP.to_string(), KindRule { tree: Some(store::TREE_RESOURCES.into()), accepts: vec!["*".into()] });
-    m.insert(KIND_PLUGIN_STATE.to_string(), KindRule { tree: Some(TREE_PLUGIN_STATE.into()), accepts: vec![] });
+    m.insert(KIND_GROUP.to_string(), KindRule { tree: Some(store::TREE_RESOURCES.into()), accepts: vec!["*".into()], protected: vec![] });
+    m.insert(KIND_PLUGIN_STATE.to_string(), KindRule { tree: Some(TREE_PLUGIN_STATE.into()), accepts: vec![], protected: vec![] });
     // D274: environments only under environments, configuration only under configuration.
-    m.insert(KIND_ENV.to_string(), KindRule { tree: Some(store::TREE_ENV.into()), accepts: vec![KIND_ENV.into()] });
-    m.insert(KIND_CONFIG.to_string(), KindRule { tree: Some(store::TREE_CONFIG.into()), accepts: vec![KIND_CONFIG.into()] });
+    m.insert(KIND_ENV.to_string(), KindRule { tree: Some(store::TREE_ENV.into()), accepts: vec![KIND_ENV.into()], protected: vec![] });
+    m.insert(KIND_CONFIG.to_string(), KindRule { tree: Some(store::TREE_CONFIG.into()), accepts: vec![KIND_CONFIG.into()], protected: vec![] });
     m
 }
 

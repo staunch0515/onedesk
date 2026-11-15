@@ -266,9 +266,11 @@ impl Inner {
             .unwrap_or_default()
     }
 
-    /// D306: secret field values go to the keychain; the resource keeps `{secret: <name>}`.
-    /// An empty value leaves the stored secret as it is.
-    pub async fn take_secret_fields(&self, resource_id: &str, fields: &[String], changes: &mut JsonMap, current: Option<&JsonMap>) -> KResult<()> {
+    /// D306: secret field values are taken out of `changes` (the resource keeps `{secret: <name>}`)
+    /// and returned as `(name, value)` to write to the keychain once the database change is
+    /// committed (review #14). An empty value leaves the stored secret as it is.
+    pub fn take_secret_fields(&self, resource_id: &str, fields: &[String], changes: &mut JsonMap, current: Option<&JsonMap>) -> KResult<Vec<(String, String)>> {
+        let mut pending = Vec::new();
         for path in fields {
             let Some(v) = changes.remove(path) else { continue };
             let key = &path["body.".len()..];
@@ -291,8 +293,19 @@ impl Inner {
                 .and_then(Value::as_str)
                 .map(String::from)
                 .unwrap_or_else(|| format!("{resource_id}.{key}"));
+            if !valid_secret_name(&name) {
+                return Err(invalid("badSecretName"));
+            }
+            changes.insert(path.clone(), json!({ "secret": name.clone() }));
+            pending.push((name, value));
+        }
+        Ok(pending)
+    }
+
+    /// Writes taken secret values after the commit; a failure is reported (the field counts as not saved).
+    pub async fn write_secrets(&self, pending: Vec<(String, String)>) -> KResult<()> {
+        for (name, value) in pending {
             self.secret_set(&name, &value, false).await?;
-            changes.insert(path.clone(), json!({ "secret": name }));
         }
         Ok(())
     }
