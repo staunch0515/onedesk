@@ -56,13 +56,15 @@ export function registry(plugin: { activate(host: unknown): void }) {
   const trees: Record<string, any> = {};
   const commands: Record<string, any> = {};
   const actions: Record<string, any> = {};
+  const kinds: Record<string, any> = {};
   plugin.activate({
+    kinds: { handle: (id: string, h: unknown) => (kinds[id] = h) },
     actions: { handle: (id: string, h: unknown) => (actions[id] = h) },
     pages: { handle: (id: string, h: unknown) => (pages[id] = h) },
     trees: { handle: (id: string, h: unknown) => (trees[id] = h) },
     commands: { handle: (id: string, h: unknown) => (commands[id] = h) },
   });
-  return { pages, trees, commands, actions };
+  return { pages, trees, commands, actions, kinds };
 }
 
 /** `ctx.t`: returns a localized Label like the kernel does. */

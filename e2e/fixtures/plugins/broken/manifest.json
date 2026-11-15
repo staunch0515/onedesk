@@ -1,0 +1,15 @@
+{
+  "id": "org.example.broken",
+  "version": "1.0.0",
+  "apiVersion": "2",
+  "name": "plugin.name",
+  "description": "plugin.description",
+  "icon": "bug",
+  "main": "main.js",
+  "unknownField": true,
+  "contributes": {
+    "locales": {
+      "en-US": "locales/en-US.json"
+    }
+  }
+}
