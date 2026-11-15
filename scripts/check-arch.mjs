@@ -109,7 +109,7 @@ for (const p of plugins) {
     const isTest = /\.test\.ts$/.test(f);
     const code = readFileSync(f, "utf8");
     for (const spec of importsOf(code)) {
-      if (isTest && (spec === "vitest" || spec.startsWith("../_testing/") || spec.startsWith("../../src/workbench/protocol/generated"))) continue;
+      if (isTest && (spec === "vitest" || spec === "node:fs" || spec === "node:path" || spec === "node:url" || spec.startsWith("../_testing/") || spec.startsWith("../../src/workbench/protocol/generated"))) continue;
       if (spec.startsWith(".")) {
         const target = resolve(dirname(f), spec);
         if (target === dir || target.startsWith(dir + sep)) continue;

@@ -55,12 +55,14 @@ export function registry(plugin: { activate(host: unknown): void }) {
   const pages: Record<string, any> = {};
   const trees: Record<string, any> = {};
   const commands: Record<string, any> = {};
+  const actions: Record<string, any> = {};
   plugin.activate({
+    actions: { handle: (id: string, h: unknown) => (actions[id] = h) },
     pages: { handle: (id: string, h: unknown) => (pages[id] = h) },
     trees: { handle: (id: string, h: unknown) => (trees[id] = h) },
     commands: { handle: (id: string, h: unknown) => (commands[id] = h) },
   });
-  return { pages, trees, commands };
+  return { pages, trees, commands, actions };
 }
 
 /** `ctx.t`: returns a localized Label like the kernel does. */
@@ -77,3 +79,20 @@ export const CRUMB_KEYS = ["label", "key"];
 export const SAVE_KEYS = ["basis"];
 export const TREE_PAGE_KEYS = ["nodes", "next"];
 export const TREE_NODE_KEYS = ["key", "label", "icon", "expandable", "target", "badge"];
+
+/** Mirrors the action result validation in crates/kernel (round 3): output is a RunOutput without `truncated`. */
+export const ACTION_RESULT_KEYS = ["output", "summary"];
+export const SUMMARY_KEYS = ["rows", "message"];
+export const OUTPUT_KEYS: Record<string, string[]> = { table: ["type", "columns", "rows", "total"], text: ["type", "text"], link: ["type", "label", "target"], none: ["type"] };
+export const EVENT_RESULT_KEYS = ["changes", "message"];
+
+export function checkActionResult(res: Record<string, any>): string[] {
+  const errs = onlyKeys(res, ACTION_RESULT_KEYS);
+  const out = res.output ?? {};
+  const keys = OUTPUT_KEYS[String(out.type)];
+  if (!keys) return [...errs, `unknown output type ${String(out.type)}`];
+  errs.push(...onlyKeys(out, keys));
+  if (res.summary) errs.push(...onlyKeys(res.summary, SUMMARY_KEYS));
+  if (out.type === "table") for (const c of out.columns) errs.push(...onlyKeys(c, ["key", "label", "numeric"]));
+  return errs;
+}
