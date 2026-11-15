@@ -46,7 +46,7 @@ impl Default for SandboxConfig {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum SandboxError {
     /// Thrown by plugin code (message + stack).
     Js(String),
@@ -56,6 +56,8 @@ pub enum SandboxError {
     OutOfMemory,
     Cancelled,
     Engine(String),
+    /// A host-call error the handler let through (e.g. `conflict` from `files.writeText`).
+    Host(ProtocolError),
 }
 
 impl SandboxError {
@@ -65,7 +67,11 @@ impl SandboxError {
     }
 
     pub fn to_protocol(&self) -> ProtocolError {
+        if let SandboxError::Host(e) = self {
+            return e.clone();
+        }
         let (code, reason) = match self {
+            SandboxError::Host(_) => unreachable!(),
             SandboxError::Timeout => (ErrorCode::PluginTimeout, "timeout"),
             SandboxError::OutOfMemory => (ErrorCode::PluginError, "outOfMemory"),
             SandboxError::Cancelled => (ErrorCode::PluginError, "cancelled"),
@@ -88,6 +94,7 @@ impl std::fmt::Display for SandboxError {
             SandboxError::OutOfMemory => write!(f, "plugin out of memory"),
             SandboxError::Cancelled => write!(f, "cancelled"),
             SandboxError::Engine(m) => write!(f, "engine error: {m}"),
+            SandboxError::Host(e) => write!(f, "host error: {:?}", e.code),
         }
     }
 }
@@ -252,6 +259,7 @@ const BOOTSTRAP: &str = r#"
       ui: Object.freeze({ open: c("ui.open"), notify: c("ui.notify"), copy: c("ui.copy") }),
     });
   };
+  const hostCodes = ["conflict", "denied", "invalid", "notFound", "invalidParams"];
   const t = (key) => (Object.prototype.hasOwnProperty.call(labels, key) ? labels[key] : String(key));
   const dispatch = async (callId, kind, name, fn, argsJson) => {
     const h = reg[kind] && reg[kind][name];
@@ -259,8 +267,14 @@ const BOOTSTRAP: &str = r#"
     if (typeof f !== "function") throw new Error("no handler: " + kind + "/" + name + (fn ? "." + fn : ""));
     const args = JSON.parse(argsJson);
     const ctx = Object.assign({}, args[0], { host: makeHost(callId), t });
-    const out = await f.call(h, ctx, ...args.slice(1));
-    return JSON.stringify(out === undefined ? null : out);
+    try {
+      const out = await f.call(h, ctx, ...args.slice(1));
+      return JSON.stringify({ ok: out === undefined ? null : out });
+    } catch (e) {
+      // A host error the handler did not catch keeps its code.
+      if (e && hostCodes.includes(e.code)) return JSON.stringify({ hostError: { code: e.code, params: e.params || {} } });
+      throw e;
+    }
   };
   return { host: Object.freeze(reg_host), dispatch };
 })
@@ -435,7 +449,7 @@ impl Sandbox {
                 Err(_) => { token.cancel(); Err(SandboxError::Timeout) }
                 Ok(_) if token.is_cancelled() => Err(SandboxError::Cancelled),
                 Ok(Err(msg)) => Err(classify(&self.ctl, msg)),
-                Ok(Ok(s)) => serde_json::from_str(&s).map_err(|e| SandboxError::Js(e.to_string())),
+                Ok(Ok(s)) => unwrap_envelope(&s),
             },
             _ = token.cancelled() => Err(SandboxError::Cancelled),
             // We cannot tell which invocation was spinning; every in-flight call fails.
@@ -461,6 +475,16 @@ impl Sandbox {
     pub async fn heap_bytes(&self) -> i64 {
         self.rt.memory_usage().await.malloc_size
     }
+}
+
+fn unwrap_envelope(s: &str) -> Result<Value, SandboxError> {
+    let mut v: Value = serde_json::from_str(s).map_err(|e| SandboxError::Js(e.to_string()))?;
+    if let Some(e) = v.get("hostError") {
+        return Err(serde_json::from_value::<ProtocolError>(e.clone())
+            .map(SandboxError::Host)
+            .unwrap_or_else(|e| SandboxError::Js(e.to_string())));
+    }
+    Ok(v.get_mut("ok").map(Value::take).unwrap_or(Value::Null))
 }
 
 async fn host_call_inner(
