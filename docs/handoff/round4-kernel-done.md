@@ -249,3 +249,25 @@ const v = await ctx.host.secrets.get("token");
 
 - 环境代理确实被绕开（`no_proxy`）和名字解析的超时，没有专门测试（测试进程不改环境变量）。
 - 其余同上文“还缺什么 / 没验证的”。
+
+## 验收后的修改（D317、D318）
+
+先合并了 `claude/week1-slice-3b4ae5`（含 D317、D318）。
+
+1. **D317 按“主机 + 端口”授权**：授权地址字段授予的是该地址的 `主机:端口`（没写端口取协议默认端口：http 80、https 443）；清单 `requires.network.hosts` 和 `network.allow` 的条目不带端口时只匹配 80 和 443，带端口精确匹配（通配 `*.x` 同理）；`network.grant` 审计的对象是 `主机:端口`；重定向逐跳按同样规则复查。测试 `tests/round4.rs::d317_a_granted_address_grants_its_port_only`（同一地址换端口被拒、重定向到别的端口被拒，运行的 `error.reason` 是 `hostNotAllowed`）；`network::tests` 加了端口规则的断言。
+2. **D318 可含密钥引用的文字字段**：类型字段声明 `{ "type": "text" | "longtext" | "code", "secrets": true }`（与 `grants` 同时用、或用在别的类型上 → 清单拒绝 `badSecretsField`）。
+   - 一次宿主调用可用的密钥名字 = 清单 `requires.secrets.names` + **这次调用所关于的资源**（运行的资源、渲染或事件的资源页）**已保存**的内容里：密钥字段指向的名字、`secrets: true` 字段里出现的 `{{secret:名字}}`。不关于某条资源的调用（命令、没有资源的运行）只有清单名单。**这是收紧**：第四轮原先是“本插件所有资源里出现过的名字”，现在按资源。
+   - 运行输入快照（未保存的草稿）里新写、而已保存的资源里没有的名字不算授权：`denied/secretNotAllowed`。
+   - 这类字段纳入 D311：插件不能写（`denied/grantField`）；升级接管时其中的**密钥名字集合**不得改变（文字本身可以变）；页面事件的修改里去掉它。
+   - 测试 `d318_saved_secret_references_are_usable_draft_ones_and_plugin_writes_are_not`（保存后可用且值被抹、草稿里新写的名字被拒、插件写入被拒、不关于资源的调用不能用、库文件和 WAL 里没有值）；清单校验多三条。
+3. **`RunError.reason`**（协议只增，已 `pnpm gen:types`）：运行因插件没接住的宿主错误而失败时，`code` 是宿主错误码（`denied`、`invalid`、`notFound`、`conflict`、`invalidParams`），`reason` 是它的原因码。可能出现的 `reason`（来自宿主调用）：
+   - `denied`：`secretNotAllowed`、`unknownSecret`、`plaintextUndeclared`、`hostNotAllowed`（含重定向到未授权的主机或端口）、`blockedByPolicy`（被 `network.allow` 限制）、`localAddress`、`notRequested`（未声明网络或文件能力）、`outsideGrant`、`foreignKind`、`grantField`、`pureCall`、`notInMigrate`、`undeclaredSetting`、`callEnded`、`cancelled`、`timeout`；
+   - `invalid`：`badScheme`、`badUrl`、`badMethod`、`forbiddenHeader`、`tooManyRedirects`、`timeout`（网络请求超时）、`tooLarge`、`notText`、`notFile`、`notFolder`、`badKey`、`tooManyKeys`、`badTarget`、`emptyName`、`unknownKind`、`notAccepted` 等（前几轮的 `invalid` 原因都可能透传）；
+   - `notFound`：没有 `reason`（主机解析不到时 `params.what = host`，不进 `reason`）；`conflict`：`changedOnDisk`。
+   - 内核自己判定的失败（`unknownAction`、`invalidInput`、`pluginDisabled`、`badOutput`、`timeout`、`interrupted`、`pluginError`）没有 `reason`。
+
+已有测试按新规则调整：测试插件的白名单写明端口（`*.localhost:<端口>` 等）；`network.grant` 的对象带端口；表单密钥字段的密钥在“关于该资源的运行”里可用、在不关于资源的探测里被拒。
+
+结果：`cargo test -p onedesk-kernel -p onedesk-worker` 共 124 个测试全部通过；clippy 无警告；`sh scripts/gen-types.sh --check` 协议类型是最新的。
+
+**给插件会话**：HTTP 请求插件的请求头字段（以及地址、正文里若要写密钥引用的字段）声明 `"secrets": true`；运行时要用的密钥名字必须先由用户保存在这条资源里。清单 `requires.network.hosts` 若写了主机而要用非 80/443 端口，须写明端口。

@@ -57,6 +57,11 @@ fn run_error(code: &str, message: impl Into<String>, detail: Option<String>) -> 
     json!({ "code": code, "message": message.into(), "detail": detail })
 }
 
+/// D318: a host refusal or failure keeps its reason code (`secretNotAllowed`, `hostNotAllowed`…).
+fn run_error_reason(code: &str, reason: Option<&String>, detail: Option<String>) -> Value {
+    json!({ "code": code, "message": "", "detail": detail, "reason": reason })
+}
+
 /// What an action handler returns (D285).
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -349,7 +354,13 @@ impl Inner {
         let me = self.me.upgrade().ok_or_else(|| internal("kernel stopped"))?;
         let (run_id, pid, aid, declared) = (id.clone(), plugin.id.clone(), action.id.clone(), action.output);
         let runner: &'static Plugin = plugin;
-        let info = CallInfo { client, env_id: p.env_id.clone(), run_id: Some(id.clone()), pure: false };
+        let info = CallInfo {
+            client,
+            env_id: p.env_id.clone(),
+            run_id: Some(id.clone()),
+            pure: false,
+            resource_id: res.map(|r| r.id.clone()),
+        };
         let started = Instant::now();
         // Executes in the background; `run.start` answers now.
         tokio::spawn(async move {
@@ -392,7 +403,7 @@ impl Inner {
                         SandboxError::Host(pe) => {
                             let code = serde_json::to_value(pe.code).ok().and_then(|v| v.as_str().map(String::from)).unwrap_or_default();
                             let code = pe.params.get("reason").filter(|r| r.as_str() == "pluginDisabled").cloned().unwrap_or(code);
-                            run_error(&code, "", pe.detail)
+                            run_error_reason(&code, pe.params.get("reason"), pe.detail)
                         }
                         other => run_error("pluginError", "", Some(other.to_string())),
                     };
@@ -581,7 +592,8 @@ impl Inner {
         ctx["draft"] = json!(crate::pages::strip(cx.draft.clone(), &fields));
         ctx["locale"] = json!(cx.locale);
         ctx["envId"] = json!(cx.env_id);
-        let info = CallInfo { client, env_id: cx.env_id.clone(), ..Default::default() };
+        let resource_id = ctx["resource"]["id"].as_str().map(String::from);
+        let info = CallInfo { client, env_id: cx.env_id.clone(), resource_id, ..Default::default() };
         let out = self
             .call_version(plugin, "pages", &page, "onEvent", json!([ctx, p.event]), info, None, None)
             .await

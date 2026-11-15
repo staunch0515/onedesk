@@ -329,12 +329,25 @@ impl Inner {
                     return Err(err_p(ErrorCode::PluginError, &[("reason", "migrateFailed"), ("resource", &r.id)]));
                 }
             };
-            // D311: a takeover may not touch what only the user grants.
-            let mut keys = to.kind(short).map(|k| k.protected_fields()).unwrap_or_default();
-            if let Some((_, old)) = self.registry.kind_at(&r.kind, r.plugin_version.as_deref()) {
+            // D311/D318: a takeover may not touch what only the user grants. Text fields that may
+            // hold secret references may change, but not the set of names in them.
+            let new_kind = to.kind(short);
+            let old_kind = self.registry.kind_at(&r.kind, r.plugin_version.as_deref()).map(|(_, k)| k);
+            let mut keys = new_kind.map(|k| k.protected_fields()).unwrap_or_default();
+            if let Some(old) = old_kind {
                 keys.extend(old.protected_fields());
             }
-            if let Some(k) = keys.iter().find(|k| r.body.get(k.as_str()) != body.get(k.as_str())) {
+            let refs_only = |k: &str| [new_kind, old_kind].iter().flatten().any(|d| d.fields.get(k).is_some_and(|f| f.secrets));
+            let names = |b: &JsonMap, k: &str| b.get(k).and_then(Value::as_str).map(crate::secrets::references).unwrap_or_default();
+            let changed = |k: &String| {
+                if refs_only(k) {
+                    let (a, b): (BTreeSet<String>, BTreeSet<String>) = (names(&r.body, k).into_iter().collect(), names(&body, k).into_iter().collect());
+                    a != b
+                } else {
+                    r.body.get(k.as_str()) != body.get(k.as_str())
+                }
+            };
+            if let Some(k) = keys.iter().find(|k| changed(k)) {
                 return Err(err_p(ErrorCode::Denied, &[("reason", "grantField"), ("field", k), ("resource", &r.id)]));
             }
             items.push(UpgradeItem { id: r.id.clone(), rev: r.rev, body });

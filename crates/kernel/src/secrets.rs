@@ -202,24 +202,20 @@ impl Inner {
             .collect())
     }
 
-    /// Secret names a plugin version may use: its manifest's, plus those its own resources'
-    /// secret fields point at (§7.5).
-    pub fn plugin_secret_names(&self, p: &Plugin) -> KResult<BTreeSet<String>> {
+    /// Secret names a plugin version may use in one call: its manifest's, plus — when the call is
+    /// about one of its own resources — the names that resource *as saved* points at (secret
+    /// fields, and `{{secret:…}}` in text fields declared `"secrets": true`; D306, D318).
+    pub fn plugin_secret_names(&self, p: &Plugin, resource: Option<&str>) -> KResult<BTreeSet<String>> {
         let mut names: BTreeSet<String> = p.manifest.requires.secrets.as_ref().map(|s| s.names.iter().cloned().collect()).unwrap_or_default();
-        for k in &p.manifest.contributes.kinds {
-            let secret_fields: Vec<&String> =
-                k.fields.iter().filter(|(_, f)| f.ty == FieldKind::Secret).map(|(n, _)| n).collect();
-            if secret_fields.is_empty() {
-                continue;
-            }
-            for r in self.read(|c| store::of_kind(c, &p.full(&k.id)))? {
-                for f in &secret_fields {
-                    if let Some(n) = r.body.get(f.as_str()).and_then(|v| v.get("secret")).and_then(Value::as_str) {
-                        names.insert(n.to_string());
-                    }
-                }
-            }
+        let Some(r) = resource.and_then(|id| self.read(|c| store::get(c, id)).ok().flatten()) else { return Ok(names) };
+        let Some((pid, short)) = crate::manifest::Registry::split(&r.kind) else { return Ok(names) };
+        if pid != p.id {
+            return Ok(names);
         }
+        let Some(k) = self.registry.kind_at(&r.kind, r.plugin_version.as_deref()).map(|(_, k)| k).or_else(|| p.kind(short)) else {
+            return Ok(names);
+        };
+        names.extend(resource_secret_names(k, &r.body));
         Ok(names)
     }
 
@@ -245,7 +241,7 @@ impl Inner {
             return Err(denied("plaintextUndeclared"));
         }
         let name = args.get(0).and_then(Value::as_str).ok_or_else(|| invalid_params("name"))?.to_string();
-        if !self.plugin_secret_names(p)?.contains(&name) {
+        if !self.plugin_secret_names(p, info.resource_id.as_deref())?.contains(&name) {
             return Err(denied("secretNotAllowed"));
         }
         let v = self.secret_value(&name)?.ok_or_else(|| denied("unknownSecret"))?;
@@ -326,4 +322,23 @@ impl Inner {
             }
         }
     }
+}
+
+/// Secret names a resource body points at: secret fields (`{secret: name}`) and references in
+/// text fields that may hold them (D318).
+pub fn resource_secret_names(k: &crate::manifest::KindDecl, body: &JsonMap) -> BTreeSet<String> {
+    let mut out = BTreeSet::new();
+    for (name, f) in &k.fields {
+        let Some(v) = body.get(name) else { continue };
+        if f.ty == FieldKind::Secret {
+            if let Some(n) = v.get("secret").and_then(Value::as_str) {
+                out.insert(n.to_string());
+            }
+        } else if f.secrets {
+            if let Some(text) = v.as_str() {
+                out.extend(references(text));
+            }
+        }
+    }
+    out
 }

@@ -90,6 +90,16 @@ pub struct FieldDecl {
     /// `network`: the host of this field's URL is granted to the plugin (D307).
     #[serde(default)]
     pub grants: Option<String>,
+    /// D318: text that may contain `{{secret:name}}`; names in the *saved* text are the secrets the
+    /// user lets the plugin use for this resource.
+    #[serde(default)]
+    pub secrets: bool,
+}
+
+impl FieldDecl {
+    pub fn holds_secret_refs(&self) -> bool {
+        self.secrets
+    }
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -226,7 +236,7 @@ impl KindDecl {
     pub fn protected_fields(&self) -> Vec<String> {
         self.fields
             .iter()
-            .filter(|(_, f)| f.grants.is_some() || f.ty == onedesk_protocol::FieldKind::Secret)
+            .filter(|(_, f)| f.grants.is_some() || f.secrets || f.ty == onedesk_protocol::FieldKind::Secret)
             .map(|(n, _)| n.clone())
             .collect()
     }
@@ -693,6 +703,10 @@ pub fn load_package_opts(dir: &Path, check_folder: bool) -> Result<Plugin, Rejec
     }
     for k in &c.kinds {
         for (name, f) in &k.fields {
+            use onedesk_protocol::FieldKind as F;
+            if f.secrets && (f.grants.is_some() || !matches!(f.ty, F::Text | F::Longtext | F::Code)) {
+                return Err(reject(dir, "badSecretsField", format!("kind {} field {name}", k.id)));
+            }
             match f.grants.as_deref() {
                 None => {}
                 Some("network") if f.ty == onedesk_protocol::FieldKind::Text => {
@@ -1044,6 +1058,9 @@ mod tests {
         assert_eq!(reason(with(field(json!({ "type": "secret", "grants": "network" })), &["requires", "network"], json!({ "fromResources": true }))), "badGrants");
         assert_eq!(reason(with(field(json!({ "type": "text", "grants": "network" })), &["requires", "network"], json!({ "fromResources": true }))), "ok");
         assert_eq!(reason(field(json!({ "type": "colour" }))), "schema");
+        assert_eq!(reason(field(json!({ "type": "text", "secrets": true }))), "ok");
+        assert_eq!(reason(field(json!({ "type": "number", "secrets": true }))), "badSecretsField");
+        assert_eq!(reason(with(field(json!({ "type": "text", "grants": "network", "secrets": true })), &["requires", "network"], json!({ "fromResources": true }))), "badSecretsField");
         assert_eq!(reason(with(good(), &["contributes", "commands", "0", "palette"], json!(true))), "ok");
         assert_eq!(reason(with(with(good(), &["author"], json!("me")), &["license"], json!("MIT"))), "ok");
     }

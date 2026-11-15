@@ -111,6 +111,8 @@ pub struct CallInfo {
     pub run_id: Option<String>,
     /// D301: a pure computation (`migrate`): writing host calls are refused.
     pub pure: bool,
+    /// The resource the call is about (its saved secret references are usable, D318).
+    pub resource_id: Option<String>,
 }
 
 /// The only capability a plugin has. One instance per plugin version.

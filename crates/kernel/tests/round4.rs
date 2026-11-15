@@ -343,8 +343,14 @@ async fn server() -> u16 {
 }
 
 fn net_plugins(p: &Path, port: u16) {
+    net_plugins_with(p, port, &[])
+}
+
+fn net_plugins_with(p: &Path, port: u16, extra_hosts: &[String]) {
+    let mut hosts = vec![format!("127.0.0.1:{port}"), format!("*.localhost:{port}")];
+    hosts.extend(extra_hosts.iter().cloned());
     let net = json!({
-        "requires": { "network": { "hosts": [format!("127.0.0.1:{port}"), "127.0.0.1", "*.localhost"], "fromResources": true },
+        "requires": { "network": { "hosts": hosts, "fromResources": true },
                       "secrets": { "names": ["api-key"] } },
         "contributes": {
             "kinds": [{ "id": "call", "label": "k", "icon": "globe", "tree": "resources", "page": "p", "newName": "k",
@@ -426,9 +432,21 @@ async fn secrets_are_substituted_scoped_and_never_stored_in_the_database() {
     let r = c.ok("resource.get", json!({ "id": rid })).await;
     assert_eq!(r["body"]["token"], json!({ "secret": format!("{rid}.token") }));
     assert_eq!(saved["page"]["values"].get("body.token").cloned().unwrap_or(json!(null)), json!(null), "the page binds no secret field here");
-    // The plugin may now use the resource's own secret name.
+    // The resource's own secret is usable for that resource (a run on it), not elsewhere (D318).
     let r2 = c.probe("test.net", "network.request", req(format!("http://127.0.0.1:{port}/ok"), &format!("{{{{secret:{rid}.token}}}}"))).await;
-    assert_eq!(r2["ok"]["body"], "hello auth=***");
+    assert_eq!(r2["params"]["reason"], "secretNotAllowed");
+    let run = c
+        .ok("run.start", json!({ "action": "fetch", "resourceId": rid, "target": format!("resource:{rid}"), "tabId": "t",
+                                 "input": { "url": format!("http://127.0.0.1:{port}/ok"), "auth": format!("{{{{secret:{rid}.token}}}}") } }))
+        .await;
+    let done = loop {
+        let r = c.ok("run.get", json!({ "id": run })).await;
+        if r["status"] != "running" {
+            break r;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    };
+    assert_eq!(done["output"]["text"], "hello auth=***", "{done}");
     let ws = w.env.kernel.db_path().parent().unwrap().to_path_buf();
     drop(db(&w.env).query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(())));
     for f in ["workspace.db", "workspace.db-wal"] {
@@ -491,7 +509,7 @@ async fn network_allow_lists_redirects_loopback_limits_and_counting() {
     assert_eq!(reason(&c.probe("test.peek", "network.request", req(format!("{base}/ok"), "x")).await), "notRequested");
     // Hosts granted by a resource field: audited as network.grant when saved.
     c.ok("page.save", json!({ "target": "new:test.net:call", "changes": { "body.url": "http://granted.example.net/x" } })).await;
-    assert_eq!(audit_ops(&w.env, "network.grant"), vec!["granted.example.net"]);
+    assert_eq!(audit_ops(&w.env, "network.grant"), vec!["granted.example.net:80"]);
     // Counting: three calls in one run are one audit row with a count.
     let res = c.ok("page.save", json!({ "target": "new:test.net:call", "changes": { "body.url": format!("{base}/ok") } })).await["page"]["resourceId"]
         .as_str()
@@ -602,7 +620,7 @@ async fn review1_plugins_cannot_grant_themselves_hosts_or_secrets() {
     assert_eq!((r["pluginVersion"].as_str(), r["body"]["url"].as_str()), (Some("0.1.0"), Some("http://good.example/")));
     let e = c.call("plugin.activateVersion", json!({ "plugin": "test.grant", "version": "0.2.0" })).await.unwrap_err();
     assert_eq!((e.code, e.params["reason"].as_str()), (ErrorCode::Denied, "grantField"));
-    assert_eq!(audit_ops(&w.env, "network.grant"), vec!["good.example"], "only the user's save granted a host");
+    assert_eq!(audit_ops(&w.env, "network.grant"), vec!["good.example:80"], "only the user's save granted a host");
     let n: i64 = db(&w.env).query_row("SELECT count(*) FROM resources WHERE body LIKE '%evil.example%'", [], |r| r.get(0)).unwrap();
     assert_eq!(n, 0);
 }
@@ -732,7 +750,7 @@ async fn review6_7_undo_stays_put_and_unconfirmed_code_never_runs() {
 async fn review8_11_redirects_drop_credentials_and_requests_are_limited() {
     let port = server().await;
     let port2 = server().await;
-    let w = world(|p| net_plugins(p, port)).await;
+    let w = world(|p| net_plugins_with(p, port, &[format!("127.0.0.1:{port2}")])).await;
     let c = &w.c;
     c.ok("secrets.set", json!({ "name": "api-key", "value": "RedirectSecret-1" })).await;
     // Same host and port: the header stays (and its value is scrubbed in the answer).
@@ -767,7 +785,7 @@ async fn review10_restore_follows_version_rules_and_audits_grants() {
     c.ok("page.save", json!({ "target": format!("resource:{id}"), "changes": { "body.url": "http://second.example/" } })).await;
     let h = c.ok("resource.history", json!({ "id": id })).await;
     c.ok("resource.restore", json!({ "id": id, "entryId": h[0]["id"] })).await;
-    assert_eq!(audit_ops(&w.env, "network.grant"), vec!["first.example", "second.example", "first.example"]);
+    assert_eq!(audit_ops(&w.env, "network.grant"), vec!["first.example:80", "second.example:80", "first.example:80"]);
     // A snapshot bound to a version that is gone, and the active one cannot take it over: refused.
     let a = doc(c, "a").await;
     c.ok("page.save", json!({ "target": format!("resource:{a}"), "changes": { "body.text": "a2" } })).await;
@@ -804,4 +822,105 @@ async fn review14_a_failed_save_does_not_touch_the_keychain() {
         .unwrap_err();
     assert_eq!(e.code, ErrorCode::Conflict);
     assert_eq!(w.secrets.get(&account).unwrap().as_deref(), Some("first-value"));
+}
+
+/* ------------------------------------------------------------------ acceptance fixes (D317, D318) */
+
+/// Like the HTTP request plugin: the address grants its host and port; headers may hold secret references.
+fn http_like(p: &Path) {
+    let m = json!({
+        "requires": { "network": { "fromResources": true } },
+        "contributes": {
+            "kinds": [{ "id": "req", "label": "k", "icon": "globe", "tree": "resources", "page": "p", "newName": "k",
+                        "fields": { "url": { "type": "text", "grants": "network" }, "headers": { "type": "text", "secrets": true } } }],
+            "pages": [{ "id": "p" }],
+            "actions": [{ "id": "send", "label": "a", "kinds": ["req"], "output": "text" }],
+            "commands": [{ "id": "probe", "label": "c" }]
+        }
+    });
+    let main = format!(
+        r#"{PROBE}
+export default {{ activate(host) {{
+  host.commands.handle("probe", probe);
+  host.pages.handle("p", {{ async render() {{ return {{ view: [] }}; }} }});
+  host.actions.handle("send", async (ctx, input) => {{
+    const headers = {{}};
+    for (const line of String(input["body.headers"] || "").split("\n")) {{
+      const i = line.indexOf(":");
+      if (i > 0) headers[line.slice(0, i).trim()] = line.slice(i + 1).trim();
+    }}
+    const r = await ctx.host.network.request({{ url: input["body.url"], headers }});
+    return {{ output: {{ type: "text", text: r.body }} }};
+  }});
+}} }};"#
+    );
+    package(p, "test.http", "0.1.0", m, &main);
+}
+
+async fn send(c: &Client, id: &str, url: &str, headers: &str) -> Value {
+    let run = c
+        .ok("run.start", json!({ "action": "send", "resourceId": id, "target": format!("resource:{id}"), "tabId": "t",
+                                 "input": { "body.url": url, "body.headers": headers } }))
+        .await;
+    loop {
+        let r = c.ok("run.get", json!({ "id": run })).await;
+        if r["status"] != "running" {
+            return r;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn d317_a_granted_address_grants_its_port_only() {
+    let port = server().await;
+    let port2 = server().await;
+    let w = world(http_like).await;
+    let c = &w.c;
+    let url = format!("http://127.0.0.1:{port}/ok");
+    let id = c.ok("page.save", json!({ "target": "new:test.http:req", "changes": { "body.url": url } })).await["page"]["resourceId"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert_eq!(audit_ops(&w.env, "network.grant"), vec![format!("127.0.0.1:{port}")]);
+    assert_eq!(send(c, &id, &url, "").await["output"]["text"], "hello auth=");
+    // Same address, another port: refused, and the run says why.
+    let r = send(c, &id, &format!("http://127.0.0.1:{port2}/other"), "").await;
+    assert_eq!((r["error"]["code"].as_str(), r["error"]["reason"].as_str()), (Some("denied"), Some("hostNotAllowed")));
+    // A redirect to the other port is checked the same way.
+    let r = send(c, &id, &format!("http://127.0.0.1:{port}/redirect?to=http://127.0.0.1:{port2}/ok"), "").await;
+    assert_eq!(r["error"]["reason"], "hostNotAllowed");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn d318_saved_secret_references_are_usable_draft_ones_and_plugin_writes_are_not() {
+    let port = server().await;
+    let w = world(http_like).await;
+    let c = &w.c;
+    c.ok("secrets.set", json!({ "name": "api_key", "value": "SavedKey-123" })).await;
+    c.ok("secrets.set", json!({ "name": "other_key", "value": "OtherKey-456" })).await;
+    let url = format!("http://127.0.0.1:{port}/ok");
+    let saved = "Authorization: Bearer {{secret:api_key}}";
+    let id = c.ok("page.save", json!({ "target": "new:test.http:req", "changes": { "body.url": url, "body.headers": saved } })).await["page"]["resourceId"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    // Saved: usable, and the value never comes back.
+    let r = send(c, &id, &url, saved).await;
+    assert_eq!((r["status"].as_str(), r["output"]["text"].as_str()), (Some("success"), Some("hello auth=Bearer ***")), "{r}");
+    // A name only in the unsaved draft: not granted.
+    let r = send(c, &id, &url, "Authorization: Bearer {{secret:other_key}}").await;
+    assert_eq!((r["error"]["code"].as_str(), r["error"]["reason"].as_str()), (Some("denied"), Some("secretNotAllowed")));
+    // The plugin cannot put a name there itself.
+    let r = c.probe("test.http", "resources.update", json!([id, { "body.headers": "X: {{secret:other_key}}" }])).await;
+    assert_eq!((r["error"].as_str(), r["params"]["reason"].as_str()), (Some("denied"), Some("grantField")));
+    // Nor use a resource's names without being about that resource.
+    let r = c.probe("test.http", "network.request", json!([{ "url": url, "headers": { "Authorization": "{{secret:api_key}}" } }])).await;
+    assert_eq!(r["params"]["reason"], "secretNotAllowed");
+    let dir = w.env.kernel.db_path().parent().unwrap().to_path_buf();
+    drop(db(&w.env).query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(())));
+    for f in ["workspace.db", "workspace.db-wal"] {
+        let bytes = std::fs::read(dir.join(f)).unwrap_or_default();
+        assert!(!bytes.windows(12).any(|x| x == b"SavedKey-123"), "value in {f}");
+    }
 }

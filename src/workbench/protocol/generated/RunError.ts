@@ -12,4 +12,9 @@ code: string,
 /**
  * Text from the plugin (its thrown error); empty for kernel reasons.
  */
-message: string, detail?: string, hint?: string, };
+message: string, detail?: string, hint?: string, 
+/**
+ * D318: for a host refusal or failure (`code` = `denied`, `invalid`…), its reason code
+ * (`secretNotAllowed`, `hostNotAllowed`, `blockedByPolicy`…).
+ */
+reason?: string, };

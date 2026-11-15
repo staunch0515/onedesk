@@ -58,10 +58,19 @@ fn pattern(p: &str) -> Option<Pattern> {
 }
 
 impl Pattern {
+    /// D317: without a port an entry means the web ports (80, 443) only; with one, exactly it.
     fn matches(&self, host: &str, port: u16) -> bool {
         let host_ok = if self.wildcard { host.ends_with(&format!(".{}", self.host)) } else { host == self.host };
-        host_ok && self.port.is_none_or(|p| p == port)
+        host_ok && self.port.map_or(port == 80 || port == 443, |p| p == port)
     }
+}
+
+/// `host:port` of a URL (port: the given one, or the scheme's default) — what a granting field grants.
+pub fn host_port_of(url: &str) -> Option<String> {
+    let u = reqwest::Url::parse(url.trim()).ok()?;
+    let host = u.host_str()?.trim_matches(['[', ']']).to_ascii_lowercase();
+    let port = u.port_or_known_default()?;
+    Some(format!("{host}:{port}"))
 }
 
 /// Whether some pattern of `list` matches; `explicit` = an exact (non-wildcard) entry names it.
@@ -100,7 +109,7 @@ impl Inner {
                 }
                 for r in self.read(|c| store::of_kind(c, &p.full(&k.id)))? {
                     for f in &fields {
-                        if let Some(h) = r.body.get(f.as_str()).and_then(Value::as_str).and_then(host_of) {
+                        if let Some(h) = r.body.get(f.as_str()).and_then(Value::as_str).and_then(host_port_of) {
                             out.push(h);
                         }
                     }
@@ -116,7 +125,7 @@ impl Inner {
         k.fields
             .iter()
             .filter(|(_, f)| f.grants.as_deref() == Some("network"))
-            .filter_map(|(n, _)| body.get(n).and_then(Value::as_str).and_then(host_of))
+            .filter_map(|(n, _)| body.get(n).and_then(Value::as_str).and_then(host_port_of))
             .collect()
     }
 
@@ -181,7 +190,7 @@ impl Inner {
         }
         let raw_url = o.get("url").and_then(Value::as_str).ok_or_else(|| invalid_params("url"))?;
         let timeout = o.get("timeoutMs").and_then(Value::as_u64).unwrap_or(DEFAULT_TIMEOUT_MS).clamp(1, MAX_TIMEOUT_MS);
-        let allowed_secrets = self.plugin_secret_names(p)?;
+        let allowed_secrets = self.plugin_secret_names(p, info.resource_id.as_deref())?;
         let mut used = Vec::new();
         let url_text = self.substitute(p, raw_url, &allowed_secrets, &mut used)?;
         // (name, value, carries a substituted secret)
@@ -326,6 +335,10 @@ mod tests {
     fn patterns_match_hosts_ports_and_subdomains() {
         let l = vec!["api.example.com".to_string(), "*.example.org".into(), "localhost:8080".into()];
         assert_eq!(match_list(&l, "api.example.com", 443), (true, true));
+        assert!(match_list(&l, "api.example.com", 80).0);
+        assert!(!match_list(&l, "api.example.com", 8443).0, "no port written = 80 and 443 only (D317)");
+        assert_eq!(host_port_of("http://127.0.0.1:18941/x"), Some("127.0.0.1:18941".into()));
+        assert_eq!(host_port_of("https://a.example/x"), Some("a.example:443".into()));
         assert_eq!(match_list(&l, "x.example.org", 443), (true, false));
         assert!(!match_list(&l, "example.org", 443).0, "wildcard is subdomains only");
         assert_eq!(match_list(&l, "localhost", 8080), (true, true));
