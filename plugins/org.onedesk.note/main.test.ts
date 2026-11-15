@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 // @ts-ignore plain JS module, no types
 import plugin from "./main.js";
-import { checkView, registry, t } from "../_testing/view-check";
+import { RENDER_KEYS, checkView, onlyKeys, registry, t } from "../_testing/view-check";
 
 const ctxOf = (host: unknown, extra: Record<string, unknown> = {}) => ({ target: "resource:r1", locale: "en-US", host, t, ...extra });
 
@@ -19,6 +19,7 @@ describe("note plugin", () => {
     expect(checkView(out.view)).toEqual([]);
     const field = out.view[0].fields[0];
     expect(field).toMatchObject({ kind: "longtext", bind: "body.text", fill: true });
+    expect(onlyKeys(out, RENDER_KEYS)).toEqual([]);
   });
 
   it("duplicate: reads the original, creates a copy, opens it", async () => {

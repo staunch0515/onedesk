@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 // @ts-ignore plain JS module, no types
 import plugin, { arrange, chain, languageOf } from "./main.js";
-import { checkView, hostError, registry, t } from "../_testing/view-check";
+import { CRUMB_KEYS, RENDER_KEYS, SAVE_KEYS, TREE_NODE_KEYS, TREE_PAGE_KEYS, checkView, hostError, onlyKeys, registry, t } from "../_testing/view-check";
 
 const ROOT = "/Users/me/docs";
 const roots = [{ path: ROOT, name: "docs" }];
@@ -35,6 +35,8 @@ describe("files plugin: tree", () => {
     expect(out.nodes[0].target).toBeUndefined();
     expect(out.nodes[2].target).toBe(`node:org.onedesk.files:files/${encodeURIComponent(`${ROOT}/a.md`)}`);
     expect(out.next).toBe(200);
+    expect(onlyKeys(out, TREE_PAGE_KEYS)).toEqual([]);
+    for (const n of out.nodes) expect(onlyKeys(n, TREE_NODE_KEYS)).toEqual([]);
     expect(files.list).toHaveBeenCalledWith(ROOT, { offset: 0, limit: 200 });
   });
 
@@ -79,6 +81,8 @@ describe("files plugin: text page", () => {
     expect(out).toMatchObject({ title: "notes.md", values: { content: "# hi" }, basis: "b1" });
     expect(out.breadcrumb.map((c: any) => c.label)).toEqual(["docs", "notes.md"]);
     expect(out.readOnly).toBeUndefined();
+    expect(onlyKeys(out, RENDER_KEYS)).toEqual([]);
+    for (const c of out.breadcrumb) expect(onlyKeys(c, CRUMB_KEYS)).toEqual([]);
   });
 
   it("no language for unknown extensions", async () => {
@@ -102,6 +106,8 @@ describe("files plugin: text page", () => {
     expect(out.view[0]).toMatchObject({ type: "text", id: "reason", tone: "muted" });
     expect(out.view[0].text).toBe(textKey); // fake t() returns the key for en-US
     expect(out.readOnly).toBe(true);
+    expect(onlyKeys(out, RENDER_KEYS)).toEqual([]);
+    for (const c of out.breadcrumb) expect(onlyKeys(c, CRUMB_KEYS)).toEqual([]);
   });
 
   it("save writes with the basis and returns the new one", async () => {
@@ -110,6 +116,7 @@ describe("files plugin: text page", () => {
     const res = await pages.text.save(ctxOf(files, key), { content: "new" }, "b1");
     expect(files.writeText).toHaveBeenCalledWith(key, "new", { basis: "b1" });
     expect(res).toEqual({ basis: "b2" });
+    expect(onlyKeys(res, SAVE_KEYS)).toEqual([]);
   });
 
   it("save without a basis passes no options", async () => {

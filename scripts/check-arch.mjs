@@ -46,12 +46,9 @@ if (existsSync(pluginsDir)) {
 // ---- 1: kernel-side sources know no concrete plugin
 const BANNED_WORDS = ["note", "markdown", "sql", "postgres", "ssh", "docker", "psql", "video", "ffmpeg"];
 const wordRe = new RegExp(`(?<![A-Za-z0-9_])(${BANNED_WORDS.join("|")})(?![A-Za-z0-9_])`, "i");
+const wordReNoSql = new RegExp(`(?<![A-Za-z0-9_])(${BANNED_WORDS.filter((w) => w !== "sql").join("|")})(?![A-Za-z0-9_])`, "i");
 const kernelSide = ["crates/kernel", "crates/worker", "crates/protocol", "crates/host", "src-tauri"].map((d) => join(root, d));
 const isFixture = (f) => f.includes(`${sep}tests${sep}fixtures${sep}`) || f.includes(`${sep}gen${sep}`);
-// First-version Rust still in src-tauri; the shell session replaces it (D257). Reported as warnings until
-// those files are gone, then this set is dead code and should be deleted.
-const LEGACY = new Set(["commands.rs", "db.rs", "plugins.rs", "secrets.rs", "time.rs", "transfer.rs"].map((n) => join(root, "src-tauri/src", n)));
-const warnings = [];
 // Doc comments and `#[cfg(test)]` modules (last in the file by convention) are not scanned for words.
 const stripRust = (f, code) => {
   if (!f.endsWith(".rs")) return code;
@@ -64,15 +61,20 @@ for (const dir of kernelSide) {
     if (isFixture(f) || /(^|\/)(Cargo\.lock|package-lock\.json)$/.test(f)) continue;
     scanned++;
     const code = stripRust(f, readFileSync(f, "utf8"));
-    const errors_ = LEGACY.has(f) ? warnings : errors;
+    const errors_ = errors;
     for (const p of plugins) {
       if (p.id && code.includes(p.id)) errors_.push(`${rel(f)}: 出现内置插件 id "${p.id}"`);
       for (const k of p.kinds) {
         if (new RegExp(`${esc(p.id)}:${esc(k)}\\b`).test(code)) errors_.push(`${rel(f)}: 出现内置类型 "${p.id}:${k}"`);
       }
     }
+    // `sql` is a database word in crates/kernel (SQLite layer), and tests use made-up plugin ids such as
+    // org.test.note; the real-id/kind checks above still apply to both.
+    const isTestFile = f.includes(`${sep}tests${sep}`);
+    const re = f.includes(`${sep}crates${sep}kernel${sep}`) ? wordReNoSql : wordRe;
+    if (isTestFile) continue;
     code.split("\n").forEach((line, i) => {
-      const m = wordRe.exec(line);
+      const m = re.exec(line);
       if (m) errors_.push(`${rel(f)}:${i + 1}: 出现具体插件相关的词 "${m[1]}"`);
     });
   }
@@ -123,7 +125,6 @@ for (const p of plugins) {
   }
 }
 
-if (warnings.length) console.warn(`警告：旧代码（待外壳会话替换）有 ${warnings.length} 处违规，未计入失败：${[...new Set(warnings.map((w) => w.split(":")[0]))].join("、")}`);
 if (errors.length) {
   console.error(`架构检查失败（${errors.length}）：\n- ${errors.join("\n- ")}`);
   process.exit(1);

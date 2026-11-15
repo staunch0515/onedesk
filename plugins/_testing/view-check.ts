@@ -65,3 +65,15 @@ export function registry(plugin: { activate(host: unknown): void }) {
 
 /** `ctx.t`: returns a localized Label like the kernel does. */
 export const t = (key: string) => ({ "en-US": key, "zh-CN": `zh:${key}` });
+
+/** Fails when `obj` has a key outside `allowed` (the kernel validates plugin returns with deny_unknown_fields). */
+export function onlyKeys(obj: Record<string, unknown>, allowed: string[]): string[] {
+  return Object.keys(obj).filter((k) => !allowed.includes(k)).map((k) => `unexpected key ${k}`);
+}
+
+/** Mirrors `RenderOut` / `PluginCrumb` / `SaveOut` / tree page validation in crates/kernel. */
+export const RENDER_KEYS = ["view", "values", "basis", "title", "icon", "breadcrumb", "readOnly"];
+export const CRUMB_KEYS = ["label", "key"];
+export const SAVE_KEYS = ["basis"];
+export const TREE_PAGE_KEYS = ["nodes", "next"];
+export const TREE_NODE_KEYS = ["key", "label", "icon", "expandable", "target", "badge"];
