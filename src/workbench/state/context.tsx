@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState, type DependencyList, type ReactNode } from "react";
 import { useToast } from "../../design";
 import { useI18n } from "../i18n";
+import type { MessageKey } from "../i18n/en-US";
 import { useClient, type CommandContext, type CommandEffect, type ProtocolClient } from "../protocol";
 import { saveTab } from "./save";
 import { useStore, type Store, type TabState, type UiState } from "./store";
@@ -41,6 +42,9 @@ interface Workbench {
 }
 
 const WorkbenchContext = createContext<Workbench | null>(null);
+
+/** Commands that create a named thing: the shell supplies the default name in the interface language (the kernel's is only a fallback). */
+const DEFAULT_NAME_KEY: Record<string, MessageKey> = { "env.newChild": "default.newEnv", "config.newChild": "default.newConfig", "node.newGroup": "default.newGroup" };
 
 let tabSeq = 0;
 const newTabId = () => `t${Date.now().toString(36)}${(tabSeq++).toString(36)}`;
@@ -233,7 +237,9 @@ export function WorkbenchProvider({ store, children }: { store: Store; children:
         try {
           const s = store.get();
           const active = s.tabs.find((t) => t.id === s.activeTabId);
-          const full = { tabId: active?.id, ...context };
+          const defaultName = DEFAULT_NAME_KEY[id];
+          const args = defaultName && !context.args?.name ? { ...context.args, name: live.current.i18n.t(defaultName) } : context.args;
+          const full = { tabId: active?.id, ...context, ...(args ? { args } : {}) };
           await applyEffects(await client.command.execute(id, full), full);
         } catch (error) {
           fail(error);

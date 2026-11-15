@@ -31,7 +31,14 @@ export function EnvPage({ tab, descriptor }: { tab: TabState; descriptor: PageDe
         : void actions.command(a.id, { target: tab.target, tree: "environments", nodeKey: id }),
   }));
 
-  const set = (name: string, value: string) => client.params.set(id, name, value).catch(actions.fail);
+  // The page was drawn from this revision; the kernel refuses a change to a parameter that moved since (conflict).
+  const basis = env.data ? String(env.data.rev) : undefined;
+  const guard = (done: Promise<void>) =>
+    done.catch((error) => {
+      actions.fail(error);
+      env.reload();
+    });
+  const set = (name: string, value: string) => guard(client.params.set(id, name, value, basis));
 
   const columns: Array<DataGridColumn<EnvParam>> = [
     {
@@ -153,7 +160,7 @@ export function EnvPage({ tab, descriptor }: { tab: TabState; descriptor: PageDe
                   </Badge>
                 </span>
               </Tooltip>
-              <Button size="sm" variant="ghost" onClick={() => client.params.acknowledge(id, p.name).catch(actions.fail)}>
+              <Button size="sm" variant="ghost" onClick={() => guard(client.params.acknowledge(id, p.name, basis))}>
                 {t("env.keepMine")}
               </Button>
             </>
@@ -183,7 +190,7 @@ export function EnvPage({ tab, descriptor }: { tab: TabState; descriptor: PageDe
       resizable: false,
       render: (p) =>
         p.own ? (
-          <IconButton icon={p.inherited ? "undo-2" : "x"} size="sm" label={p.inherited ? t("env.useInherited", { value: p.inherited.value }) : t("env.removeValue")} onClick={() => client.params.unset(id, p.name).catch(actions.fail)} />
+          <IconButton icon={p.inherited ? "undo-2" : "x"} size="sm" label={p.inherited ? t("env.useInherited", { value: p.inherited.value }) : t("env.removeValue")} onClick={() => guard(client.params.unset(id, p.name, basis))} />
         ) : null,
     },
   ];

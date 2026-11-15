@@ -94,11 +94,12 @@ export interface ProtocolClient {
     envOptions(): Promise<EnvOption[]>;
     resolve(envId: string | null, name: string): Promise<ResolvedParam>;
     /** Set (or override) a value in this environment. */
-    set(envId: string, name: string, value: string): Promise<void>;
+    /** `basis` = `EnvView.rev` the page was drawn from; a newer change to the same parameter is a `conflict`. */
+    set(envId: string, name: string, value: string, basis?: string): Promise<void>;
     /** Remove this environment's own value so the inherited one applies again. */
-    unset(envId: string, name: string): Promise<void>;
+    unset(envId: string, name: string, basis?: string): Promise<void>;
     /** Accept the parent's new value as the basis of this override (clears "changed upstream"). */
-    acknowledge(envId: string, name: string): Promise<void>;
+    acknowledge(envId: string, name: string, basis?: string): Promise<void>;
   };
 
   plugin: {

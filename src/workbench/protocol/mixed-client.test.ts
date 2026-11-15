@@ -127,4 +127,40 @@ describe("mixed client", () => {
     expect((await client.page.resolve("core:audit")).title).toBe("from kernel");
     expect(client.demo?.target("core:audit")).toBe(false);
   });
+
+  it("does not send a write to the demo when the kernel failed or only said no", async () => {
+    const kernel = fakeKernel();
+    const saved: string[] = [];
+    kernel.page.save = async (target) => {
+      saved.push(target);
+      return { page: { target, title: "saved by kernel" } as never };
+    };
+    let failing = true;
+    kernel.resource.get = async (id) => {
+      if (failing) throw new Error("worker gone");
+      return id === "kernel-1" ? ({ id, tree: "resources" } as never) : null;
+    };
+    const mock = createMockClient({ fresh: true, quiet: true });
+    let mockSaves = 0;
+    const origSave = mock.page.save;
+    mock.page.save = async (...a) => {
+      mockSaves += 1;
+      return origSave(...a);
+    };
+    const client = createMixedClient(kernel, mock);
+    await client.tree.list();
+    // Kernel error: the error surfaces, nothing is written, nothing is remembered.
+    await expect(client.page.save("resource:kernel-1", { name: "x" })).rejects.toThrow("worker gone");
+    expect(mockSaves).toBe(0);
+    expect(client.demo?.target("resource:kernel-1")).toBe(false);
+    // Kernel answers: it owns the resource.
+    failing = false;
+    await client.page.save("resource:kernel-1", { name: "x" });
+    expect(saved).toEqual(["resource:kernel-1"]);
+    // Unknown on both sides: the kernel gets the call (and will say notFound), the demo does not.
+    await client.page.save("resource:nowhere", { name: "x" });
+    expect(saved).toContain("resource:nowhere");
+    expect(mockSaves).toBe(0);
+    expect(client.demo?.target("resource:nowhere")).toBe(false);
+  });
 });

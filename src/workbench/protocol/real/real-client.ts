@@ -67,9 +67,9 @@ export async function createKernelClient(transport: Transport, locale?: () => st
       env: async (envId) => ((await call<EnvView | null>("params.env", { envId })) ?? null),
       envOptions: () => call<EnvOption[]>("params.envOptions"),
       resolve: (envId, name) => call<ResolvedParam>("params.resolve", compact({ envId, name })),
-      set: async (node, name, value) => void (await call("params.set", { node, name, value })),
-      unset: async (node, name) => void (await call("params.unset", { node, name })),
-      acknowledge: async (node, name) => void (await call("params.acknowledge", { node, name })),
+      set: async (node, name, value, basis) => void (await call("params.set", compact({ node, name, value, basis }))),
+      unset: async (node, name, basis) => void (await call("params.unset", compact({ node, name, basis }))),
+      acknowledge: async (node, name, basis) => void (await call("params.acknowledge", compact({ node, name, basis }))),
     },
     search: { query: (text, limit) => call<SearchHit[]>("search.query", compact({ text, limit })) },
     audit: {
