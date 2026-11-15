@@ -345,3 +345,11 @@ pub fn storage_keys(conn: &Connection, plugin: &str, version: &str) -> rusqlite:
     let rows = st.query_map(params![plugin, version], |r| r.get(0))?;
     rows.collect()
 }
+
+/// The rows of the deletion batch `row` belongs to (live rows: none).
+pub(crate) fn delete_batch_rows(k: &crate::kernel::Inner, row: &Row) -> crate::util::KResult<Vec<Row>> {
+    match k.read(|c| delete_batch(c, &row.id))? {
+        Some(b) => k.read(|c| batch_rows(c, &b)),
+        None => Ok(vec![]),
+    }
+}

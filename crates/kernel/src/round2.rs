@@ -176,8 +176,9 @@ impl Inner {
                 own: mine.is_some(),
                 inherited: inherited.as_ref().map(|(p, s)| InheritedValue { value: p.value.clone(), source_name: s.name.clone() }),
                 layers,
+                restricted: (name == crate::network::ALLOW_PARAM && mine.is_some() && self.allow_restricted(&row, &ancestors))
+                    .then(|| Label::Text("restrictedByUpperLayer".into())),
                 changed_upstream,
-                restricted: None,
                 declared_by: vec![],
                 description: None,
                 name,
@@ -375,14 +376,27 @@ impl Inner {
     }
 
     pub async fn undelete(&self, id: &str) -> KResult<()> {
-        self.deleted_row(id)?;
-        self.execute(Actor::User, Command::Undelete { id: id.into() }).await?;
+        let row = self.deleted_row(id)?;
+        // §7.6: rows bound to a version that is gone need a version that can take them over.
+        let batch = store::delete_batch_rows(self, &row)?;
+        for r in &batch {
+            if let (Some(v), Some((pid, _))) = (r.plugin_version.as_deref(), crate::manifest::Registry::split(&r.kind)) {
+                if self.registry.version(pid, v).is_none() && !self.registry.plugin(pid).is_some_and(|p| p.upgrades_from(v)) {
+                    return Err(invalid("needsVersion"));
+                }
+            }
+        }
+        let out = self.execute(Actor::User, Command::Undelete { id: id.into() }).await?;
+        self.rebind_missing(&out.rows).await?;
         Ok(())
     }
 
     pub async fn purge(&self, id: &str) -> KResult<()> {
         self.deleted_row(id)?;
-        self.execute(Actor::User, Command::Purge { id: id.into() }).await?;
+        let out = self.execute(Actor::User, Command::Purge { id: id.into() }).await?;
+        // D306: secrets the resources owned (`<id>.<field>`) go too.
+        let ids: Vec<String> = out.rows.iter().map(|r| r.id.clone()).collect();
+        self.delete_owned_secrets(&ids).await;
         Ok(())
     }
 
@@ -466,7 +480,7 @@ impl Inner {
         let mut out = Vec::new();
         for id in ids {
             let Some(r) = self.read(|c| store::get(c, &id))? else { continue };
-            let meta = self.kind_meta(&r.kind);
+            let meta = self.row_meta(&r);
             let path: Vec<String> = self.read(|c| store::ancestors(c, &r))?.into_iter().map(|a| a.name).collect();
             out.push(SearchHit {
                 target: format!("resource:{}", r.id),

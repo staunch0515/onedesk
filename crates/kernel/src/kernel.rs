@@ -2,7 +2,7 @@
 //! (`docs/handoff/week1-protocol.md` §3). Requests arrive as `(client, method, params)`;
 //! everything that writes goes through the pipeline; events go out on a broadcast channel.
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, Weak};
@@ -96,6 +96,10 @@ pub(crate) struct KindMeta {
     pub accepts: Vec<String>,
     pub commands: Vec<MenuCommand>,
     pub state: NodeState,
+    /// Why the state is not `ok` (e.g. `<plugin>@<version>` of a missing version).
+    pub reason: Option<Label>,
+    /// The plugin version that handles resources of this kind (bound version, §7.6).
+    pub plugin: Option<&'static Plugin>,
 }
 
 impl Kernel {
@@ -203,6 +207,15 @@ impl Inner {
         let plugin_state = matches!(&cmd, Command::Update { .. } | Command::Create(_) | Command::Grant { .. });
         let deletion = matches!(&cmd, Command::Delete { .. } | Command::Undelete { .. } | Command::Purge { .. });
         let audited = !matches!(&cmd, Command::Meta { .. } | Command::UiSet { .. });
+        // D307: hosts a resource grants before the change, to audit newly granted ones after it.
+        let granted_before: Option<BTreeSet<String>> = match &cmd {
+            Command::Update { id, .. } | Command::Params { id, .. } => {
+                self.read(|c| store::get(c, id)).ok().flatten().map(|r| self.grant_hosts_of(&r.kind, r.plugin_version.as_deref(), &r.body))
+            }
+            Command::Create(_) => Some(BTreeSet::new()),
+            _ => None,
+        };
+        let grant_actor = actor.clone();
         let out = self.pipeline.execute(actor, cmd).await?;
         for t in out.topics() {
             if t == format!("{}{TREE_PLUGIN_STATE}", topic::TREE) {
@@ -219,6 +232,18 @@ impl Inner {
         if deletion {
             self.emit(format!("{}{}", topic::TREE, store::TREE_DELETED), None, None);
             self.emit(format!("{}{}", topic::TREE, store::TREE_FAVORITES), None, None);
+        }
+        if let Some(before) = granted_before {
+            for r in out.rows.iter().filter(|r| r.deleted_at.is_none()) {
+                for host in self.grant_hosts_of(&r.kind, r.plugin_version.as_deref(), &r.body).difference(&before) {
+                    // A permission change (I.10h): the host is now reachable for the plugin.
+                    let summary = json!({ "resource": r.id, "kind": r.kind });
+                    let _ = self
+                        .pipeline
+                        .execute(grant_actor.clone(), Command::Audit { op: "network.grant".into(), object: host.clone(), summary })
+                        .await;
+                }
+            }
         }
         if out.changed && audited {
             self.emit(onedesk_protocol::topic2::AUDIT, None, None);
@@ -324,6 +349,15 @@ impl Inner {
     /* ---------------------------------------------------------------- kinds and rows */
 
     pub fn kind_meta(&self, kind: &str) -> KindMeta {
+        self.kind_meta_v(kind, None)
+    }
+
+    /// For a stored resource: its kind as the version it is bound to declares it.
+    pub fn row_meta(&self, r: &Row) -> KindMeta {
+        self.kind_meta_v(&r.kind, r.plugin_version.as_deref())
+    }
+
+    pub fn kind_meta_v(&self, kind: &str, version: Option<&str>) -> KindMeta {
         if crate::params::is_param_kind(kind) {
             return KindMeta {
                 label: Label::Text(kind.into()),
@@ -333,6 +367,8 @@ impl Inner {
                 accepts: vec![kind.into()],
                 commands: vec![],
                 state: NodeState::Ok,
+                reason: None,
+                plugin: None,
             };
         }
         if kind == KIND_GROUP {
@@ -344,9 +380,29 @@ impl Inner {
                 accepts: vec!["*".into()],
                 commands: vec![],
                 state: NodeState::Ok,
+                reason: None,
+                plugin: None,
             };
         }
-        match self.registry.kind(kind) {
+        // A resource bound to a version that is not installed (any more): §7.6 "缺少插件".
+        let bound = match version {
+            Some(v) if Registry::split(kind).is_some_and(|(pid, _)| self.registry.version(pid, v).is_none()) => {
+                let pid = Registry::split(kind).map(|(p, _)| p).unwrap_or_default();
+                return KindMeta {
+                    label: self.registry.kind(kind).map(|(p, k)| p.label(&k.label)).unwrap_or(Label::Text(kind.into())),
+                    icon: self.registry.kind(kind).map(|(_, k)| k.icon.clone()).unwrap_or_else(|| "puzzle".into()),
+                    page: None,
+                    draggable: true,
+                    accepts: vec![],
+                    commands: vec![],
+                    state: NodeState::MissingPlugin,
+                    reason: Some(Label::Text(format!("{pid}@{v}"))),
+                    plugin: None,
+                };
+            }
+            v => self.registry.kind_at(kind, v),
+        };
+        match bound {
             Some((p, k)) => KindMeta {
                 label: p.label(&k.label),
                 icon: k.icon.clone(),
@@ -356,6 +412,8 @@ impl Inner {
                 commands: k.menu.iter().map(|c| self.plugin_menu_cmd(p, c)).collect(),
                 // D290: a disabled plugin's resources stay, greyed out.
                 state: if self.plugin_enabled(&p.id) { NodeState::Ok } else { NodeState::Disabled },
+                reason: None,
+                plugin: Some(p),
             },
             None => KindMeta {
                 label: Label::Text(kind.into()),
@@ -365,6 +423,8 @@ impl Inner {
                 accepts: vec![],
                 commands: vec![],
                 state: NodeState::MissingPlugin,
+                reason: Some(Label::Text(kind.into())),
+                plugin: None,
             },
         }
     }
@@ -402,7 +462,7 @@ impl Inner {
     }
 
     pub fn resource(&self, r: &Row) -> KResult<Resource> {
-        let meta = self.kind_meta(&r.kind);
+        let meta = self.row_meta(r);
         let location = self.read(|c| store::ancestors(c, r))?.into_iter().map(|a| a.name).collect();
         Ok(Resource {
             id: r.id.clone(),
@@ -416,7 +476,7 @@ impl Inner {
             tags: r.tags.clone(),
             body: r.body.clone(),
             state: meta.state,
-            state_reason: None,
+            state_reason: meta.reason.clone(),
             origin: Origin::Original,
             origin_ref: r.origin_ref.clone(),
             location,
@@ -537,7 +597,7 @@ impl Inner {
     }
 
     pub fn node_for(&self, r: &Row) -> KResult<TreeNode> {
-        let meta = self.kind_meta(&r.kind);
+        let meta = self.row_meta(r);
         let group = r.kind == KIND_GROUP;
         let has_children = self.read(|c| store::has_children(c, &r.id))?;
         let mut menu = Vec::new();
@@ -573,7 +633,7 @@ impl Inner {
             kind: r.kind.clone(),
             expandable: group || has_children,
             state: meta.state,
-            state_reason: None,
+            state_reason: meta.reason.clone(),
             badge: None,
             target: (!group).then(|| format!("resource:{}", r.id)),
             menu,
@@ -716,7 +776,7 @@ impl Inner {
             .skip(offset as usize)
             .take(BATCH as usize)
             .map(|r| {
-                let meta = self.kind_meta(&r.kind);
+                let meta = self.row_meta(r);
                 let menu = if favorites {
                     vec![kernel_cmd("node.open", "external-link"), kernel_cmd("node.unfavorite", "star-off")]
                 } else {
@@ -734,7 +794,7 @@ impl Inner {
                     kind: r.kind.clone(),
                     expandable: false,
                     state: meta.state,
-                    state_reason: None,
+                    state_reason: meta.reason.clone(),
                     badge: None,
                     target: (favorites && r.kind != KIND_GROUP).then(|| format!("resource:{}", r.id)),
                     menu,
