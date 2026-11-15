@@ -22,7 +22,7 @@ export interface I18n {
   /** Title and confirm-button words for a kernel `confirm` message key; undefined for other messages. */
   confirmTexts: (label: Label | undefined) => { title: string; ok: string } | undefined;
   /** A run failure as a sentence: by code when the shell knows it, else the message the run came with. */
-  runError: (error: { code: string; message: string }) => string;
+  runError: (error: { code: string; message: string; reason?: string; hint?: string }) => string;
   /** A plugin permission id as words (unknown ids as they are). */
   permission: (id: string) => string;
   /** An audit operation id as words. */
@@ -44,6 +44,11 @@ function warnMissing(label: string): string {
     console.warn(`[i18n] no text for kernel key "${label}" (add it to src/workbench/i18n/kernel-texts.ts)`);
   }
   return label;
+}
+
+/** Exported for tests. */
+export function buildI18n(locale: Locale): I18n {
+  return build(locale);
 }
 
 function build(locale: Locale): I18n {
@@ -68,7 +73,15 @@ function build(locale: Locale): I18n {
       if (known && text) return interpolate(text, known.params);
       return error instanceof Error ? error.message : String(error);
     },
-    runError: (e) => RUN_ERRORS[locale][e.code] ?? RUN_ERRORS["en-US"][e.code] ?? KERNEL_ERRORS[locale][e.code] ?? KERNEL_ERRORS["en-US"][e.code] ?? (e.message.trim() ? e.message : interpolate(RUN_FALLBACK[locale], { code: e.code })),
+    runError: (e) => {
+      // A host refusal the plugin did not catch keeps its own code (denied, invalid…) and carries the reason (D318).
+      const own = RUN_ERRORS[locale][e.code] ?? RUN_ERRORS["en-US"][e.code];
+      if (own) return own;
+      const pickIn = (tbl: Record<string, string>) => (e.reason ? (tbl[`${e.code}.${e.reason}`] ?? tbl[`reason.${e.reason}`]) : undefined);
+      const byReason = pickIn(KERNEL_ERRORS[locale]) ?? pickIn(KERNEL_ERRORS["en-US"]);
+      if (byReason) return byReason;
+      return KERNEL_ERRORS[locale][e.code] ?? KERNEL_ERRORS["en-US"][e.code] ?? (e.message.trim() ? e.message : interpolate(RUN_FALLBACK[locale], { code: e.code }));
+    },
     permission: (id) => PERMISSIONS[locale][id] ?? PERMISSIONS["en-US"][id] ?? id,
     operation: (id) => AUDIT_OPERATIONS[locale][id] ?? AUDIT_OPERATIONS["en-US"][id] ?? id,
     dateTime: (at) => dt.format(at),

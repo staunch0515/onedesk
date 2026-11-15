@@ -35,7 +35,7 @@ describe("every key the kernel emits has words", () => {
   const locales = ["en-US", "zh-CN"] as const;
   // Every `reason` the kernel documents (docs/handoff/round3-kernel-done.md, "错误原因").
   const KERNEL_REASONS = ["emptyName", "unknownKind", "parentNotFound", "otherTree", "notAccepted", "notInTree", "self", "descendant", "targetNotFound", "noGroups", "notParamNode", "reservedField", "secretUnsupported", "duplicateName", "notDeleted", "notRestorable", "nothingBefore", "notAbsolute", "notFolder", "notFile", "tooLarge", "notText", "badTarget", "badKey", "tooManyKeys", "unknownSetting", "badValue", "helloFirst", "foreignKind", "notRequested", "outsideGrant", "undeclaredSetting", "pluginDisabled", "callEnded", "cancelled", "timeout", "changedOnDisk", "providedTree", "threw", "badOutput", "outOfMemory", "engine", "notLoaded", "alreadyInstalled", "notValid", "symlink", "changedSinceInspect", "forbiddenHeader", "grantField", "unconfirmedVersion", "tooBig", "needsVersion", "notConfirmed", "pureCall", "notInMigrate", "secretNotAllowed", "unknownSecret", "plaintextUndeclared", "hostNotAllowed", "blockedByPolicy", "localAddress", "alreadyUndone", "badSecretName", "badScheme", "badUrl", "badMethod", "tooManyRedirects", "changedDuringUpgrade", "migrateFailed"];
-  const MANIFEST_REASONS = ["noManifest", "badJson", "schema", "apiVersion", "badId", "idMismatch", "badVersion", "versionMismatch", "mainMissing", "badName", "duplicate", "unknownPage", "unknownTree", "unknownCommand", "unknownKind", "missingAction", "unknownAction", "badSetting", "localeMissing", "badLocale", "badUpgradesFrom", "badHost", "badSecretName", "grantsUndeclared", "badGrants", "unconfirmedVersion", "restrictedByUpperLayer"];
+  const MANIFEST_REASONS = ["noManifest", "badJson", "schema", "apiVersion", "badId", "idMismatch", "badVersion", "versionMismatch", "mainMissing", "badName", "duplicate", "unknownPage", "unknownTree", "unknownCommand", "unknownKind", "missingAction", "unknownAction", "badSetting", "localeMissing", "badLocale", "badUpgradesFrom", "badHost", "badSecretName", "grantsUndeclared", "badGrants", "badSecretsField", "unconfirmedVersion", "restrictedByUpperLayer"];
 
   // The kernel's own commands, trees, types and confirm messages (D262).
   const LABELS = ["node.open", "node.rename", "node.newGroup", "node.delete", "node.favorite", "node.unfavorite", "env.newChild", "config.newChild", "deleted.restore", "deleted.purge", "open.audit", "open.deleted", "plugin.grantFolder", "deleted.purge.confirm", "resources", "env", "config", "favorites", "deleted", "core:group", "core:env", "core:config", "core:audit", "core:deleted", "core:plugin", "core:run", "plugin.enable", "plugin.disable", "run.cancel", "run.keep", "run.unkeep", "run.openResource", "run.reuse", "plugins", "runs"];
@@ -91,5 +91,28 @@ describe("every key the kernel emits has words", () => {
     expect(RUN_FALLBACK["zh-CN"]).toContain("{code}");
     // Codes the kernel passes through from refused host calls have words through the general error table.
     for (const code of ["denied", "invalid", "conflict", "notFound", "invalidParams", "internal"]) for (const l of locales) expect(KERNEL_ERRORS[l][code], `${l} ${code}`).toBeTruthy();
+  });
+
+  // D318: every (code, reason) pair a refused or failed host call can leave on a run (`RunError.reason`).
+  // From docs/handoff/round4-kernel-done.md; the kernel source is only grepped for the literal ones above.
+  const RUN_REASONS: Record<string, string[]> = {
+    denied: ["secretNotAllowed", "unknownSecret", "plaintextUndeclared", "hostNotAllowed", "blockedByPolicy", "localAddress", "notRequested", "outsideGrant", "foreignKind", "grantField", "pureCall", "notInMigrate", "undeclaredSetting", "callEnded", "cancelled", "timeout", "notConfirmed", "pluginDisabled", "notAbsolute"],
+    invalid: ["badScheme", "badUrl", "badMethod", "forbiddenHeader", "tooManyRedirects", "timeout", "tooLarge", "notText", "notFile", "notFolder", "badKey", "tooManyKeys", "badTarget", "emptyName", "unknownKind", "notAccepted", "badSecretName", "unknownSecret", "needsVersion"],
+    conflict: ["changedOnDisk"],
+    invalidParams: ["tooLarge"],
+  };
+
+  it("words every reason a run failure can carry, in both languages, through the run error path", async () => {
+    const { buildI18n } = await import("./index");
+    const missing: string[] = [];
+    for (const l of locales) {
+      const i18n = buildI18n(l);
+      for (const [code, reasons] of Object.entries(RUN_REASONS))
+        for (const reason of reasons) {
+          const text = i18n.runError({ code, reason, message: "" });
+          missing.push(...(text === KERNEL_ERRORS[l][code] ? [`${l} ${code}/${reason}`] : []));
+        }
+    }
+    expect(missing, "reasons that only get the bare code's words").toEqual([]);
   });
 });
