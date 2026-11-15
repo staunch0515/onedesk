@@ -226,6 +226,7 @@ impl Inner {
                 let p: TreeRenameParams = parse(params)?;
                 self.stored_tree(&p.tree)?;
                 let row = self.row_in_tree(&p.tree, &p.key)?;
+                self.kind_writable(&row.kind)?;
                 if p.name.trim().is_empty() {
                     return Err(invalid("emptyName"));
                 }

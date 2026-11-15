@@ -1034,12 +1034,20 @@ impl Tx<'_> {
     fn startup(&mut self) -> KResult<Outcome> {
         // §8: a run that was going when the worker stopped will never finish.
         let error = json!({ "code": "interrupted", "message": "" }).to_string();
+        let leftovers: Vec<String> = {
+            let mut st = self.tx.prepare("SELECT id FROM runs WHERE status = 'running'").map_err(sql)?;
+            let ids = st.query_map([], |r| r.get(0)).map_err(sql)?.collect::<Result<_, _>>().map_err(sql)?;
+            ids
+        };
         self.tx
             .execute(
                 "UPDATE runs SET status = 'error', error = ?1, ended_at = ?2, progress = NULL WHERE status = 'running'",
                 params![error, self.at],
             )
             .map_err(sql)?;
+        for id in &leftovers {
+            self.audit("run.end", id, &json!({ "status": "error", "code": "interrupted" }))?;
+        }
         let mut rows = Vec::new();
         for (kind, name) in [(KIND_ENV, "Default"), (KIND_CONFIG, "Workspace")] {
             let has_root: bool = self

@@ -17,4 +17,8 @@ input: { [key in string]: JsonValue },
 /**
  * Values of the page's run parameters (`ViewField.param`).
  */
-params: { [key in string]: string }, };
+params: { [key in string]: string }, 
+/**
+ * Current interface language; handed to the action as `ctx.locale` and kept with the run.
+ */
+locale?: string, };

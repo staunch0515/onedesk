@@ -124,12 +124,22 @@ pub struct CancelToken(Arc<CancelInner>);
 struct CancelInner {
     flag: AtomicBool,
     notify: Notify,
+    /// Why: `cancelled` (asked to) or `timeout`; reported to later host calls.
+    reason: Mutex<Option<&'static str>>,
 }
 
 impl CancelToken {
     pub fn cancel(&self) {
+        self.cancel_with("cancelled");
+    }
+    /// Cancels with a reason (the first reason wins).
+    pub fn cancel_with(&self, reason: &'static str) {
+        self.0.reason.lock().unwrap().get_or_insert(reason);
         self.0.flag.store(true, Ordering::SeqCst);
         self.0.notify.notify_waiters();
+    }
+    pub fn reason(&self) -> &'static str {
+        self.0.reason.lock().unwrap().unwrap_or("cancelled")
     }
     pub fn is_cancelled(&self) -> bool {
         self.0.flag.load(Ordering::SeqCst)
@@ -484,14 +494,14 @@ impl Sandbox {
         let watchdog = self.ctl.watchdog.notified();
         let res = tokio::select! {
             r = tokio::time::timeout(timeout, watched(fut)) => match r {
-                Err(_) => { token.cancel(); Err(SandboxError::Timeout) }
+                Err(_) => { token.cancel_with("timeout"); Err(SandboxError::Timeout) }
                 Ok(_) if token.is_cancelled() => Err(SandboxError::Cancelled),
                 Ok(Err(msg)) => Err(classify(&self.ctl, msg)),
                 Ok(Ok(s)) => unwrap_envelope(&s),
             },
             _ = token.cancelled() => Err(SandboxError::Cancelled),
             // We cannot tell which invocation was spinning; every in-flight call fails.
-            _ = watchdog => { token.cancel(); Err(SandboxError::Timeout) }
+            _ = watchdog => { token.cancel_with("timeout"); Err(SandboxError::Timeout) }
         };
         // Forgotten after any outcome: late host calls from an orphaned continuation are refused.
         self.ctl.calls.lock().unwrap().remove(&call_id);
@@ -531,19 +541,20 @@ async fn host_call_inner(
     method: String,
     args: String,
 ) -> Result<Value, ProtocolError> {
-    let cancelled = || ProtocolError {
+    let refused = |reason: &str| ProtocolError {
         code: ErrorCode::Denied,
-        params: BTreeMap::from([("reason".into(), "callEnded".into())]),
+        params: BTreeMap::from([("reason".into(), reason.to_string())]),
         detail: None,
     };
-    // No live invocation (activation-time code, or one that was cancelled / timed out): refused.
-    let Some((token, info)) = entry else { return Err(cancelled()) };
+    // No live invocation (activation-time code, or one already over): `callEnded`;
+    // a cancelled or timed-out one: `cancelled` / `timeout`.
+    let Some((token, info)) = entry else { return Err(refused("callEnded")) };
     if token.is_cancelled() {
-        return Err(cancelled());
+        return Err(refused(token.reason()));
     }
     let args: Value = serde_json::from_str(&args).map_err(|e| crate::util::invalid_params(e.to_string()))?;
     tokio::select! {
         r = host.call(info, method, args) => r,
-        _ = token.cancelled() => Err(cancelled()),
+        _ = token.cancelled() => Err(refused(token.reason())),
     }
 }

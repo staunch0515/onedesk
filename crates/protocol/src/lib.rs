@@ -1246,6 +1246,8 @@ pub struct RunStartParams {
     /// Values of the page's run parameters (`ViewField.param`).
     #[serde(default)]
     pub params: BTreeMap<String, String>,
+    /// Current interface language; handed to the action as `ctx.locale` and kept with the run.
+    pub locale: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -1272,6 +1274,10 @@ pub struct RunRenderParams {
     pub id: String,
     /// A result tab of type `view` declared by the page.
     pub tab_id: String,
+    /// Current interface language.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub locale: Option<String>,
 }
 
 #[skip_serializing_none]
