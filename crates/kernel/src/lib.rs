@@ -7,6 +7,7 @@ mod host;
 pub mod kernel;
 pub mod manifest;
 mod pages;
+pub mod params;
 pub mod pipeline;
 pub mod sandbox;
 pub mod store;

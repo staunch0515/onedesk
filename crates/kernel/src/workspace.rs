@@ -13,7 +13,10 @@ pub const INFO_FILE: &str = "workspace.json";
 pub const LOCK_FILE: &str = ".lock";
 
 /// Ordered migrations. Add new files at the end; never edit a published one (rule 6).
-pub const MIGRATIONS: &[(&str, &str)] = &[("0001_init", include_str!("../migrations/0001_init.sql"))];
+pub const MIGRATIONS: &[(&str, &str)] = &[
+    ("0001_init", include_str!("../migrations/0001_init.sql")),
+    ("0002_search_restore", include_str!("../migrations/0002_search_restore.sql")),
+];
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -89,6 +92,8 @@ impl Workspace {
     /// Returns the workspace and the writable connection (the caller hands it to the writer).
     pub fn open(dir: &Path) -> Result<(Workspace, Connection), String> {
         std::fs::create_dir_all(dir).map_err(|e| format!("create {}: {e}", dir.display()))?;
+        // D280: before migrations touch it.
+        snapshot(dir, crate::util::now_ms()).map_err(|e| format!("snapshot: {e}"))?;
         let mut conn = Connection::open(dir.join(DB_FILE)).map_err(|e| format!("open db: {e}"))?;
         conn.pragma_update(None, "journal_mode", "WAL").map_err(|e| format!("wal: {e}"))?;
         configure(&conn).map_err(|e| e.to_string())?;
@@ -128,6 +133,60 @@ impl Workspace {
         configure(&conn).map_err(|e| e.to_string())?;
         Ok(conn)
     }
+}
+
+pub const BACKUPS_DIR: &str = "backups";
+pub const BACKUPS_KEPT: usize = 7;
+
+/// `YYYY-MM-DD-HHMMSS` (UTC) of a millisecond timestamp.
+pub fn stamp(ms: i64) -> String {
+    let secs = ms.div_euclid(1000);
+    let (days, rem) = (secs.div_euclid(86_400), secs.rem_euclid(86_400));
+    // Civil date from days since 1970-01-01 (H. Hinnant's algorithm).
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = yoe + era * 400 + i64::from(m <= 2);
+    format!("{y:04}-{m:02}-{d:02}-{:02}{:02}{:02}", rem / 3600, rem % 3600 / 60, rem % 60)
+}
+
+/// Startup snapshot (D280): copies an existing `workspace.db` to `backups/<stamp>.db` with
+/// `VACUUM INTO` (a consistent online copy), at most once per day, keeping the newest 7.
+pub fn snapshot(dir: &Path, now: i64) -> Result<Option<PathBuf>, String> {
+    let db = dir.join(DB_FILE);
+    if !db.exists() {
+        return Ok(None);
+    }
+    let backups = dir.join(BACKUPS_DIR);
+    std::fs::create_dir_all(&backups).map_err(|e| e.to_string())?;
+    let name = format!("{}.db", stamp(now));
+    let today = &name[..10];
+    let mut existing: Vec<String> = std::fs::read_dir(&backups)
+        .map_err(|e| e.to_string())?
+        .filter_map(|e| e.ok())
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .filter(|n| n.ends_with(".db"))
+        .collect();
+    let made = if existing.iter().any(|n| n.starts_with(today)) {
+        None
+    } else {
+        let target = backups.join(&name);
+        let conn = Connection::open(&db).map_err(|e| e.to_string())?;
+        conn.execute("VACUUM INTO ?1", [target.display().to_string()]).map_err(|e| e.to_string())?;
+        existing.push(name);
+        Some(target)
+    };
+    existing.sort();
+    let excess = existing.len().saturating_sub(BACKUPS_KEPT);
+    for old in &existing[..excess] {
+        let _ = std::fs::remove_file(backups.join(old));
+    }
+    Ok(made)
 }
 
 #[cfg(test)]
@@ -174,6 +233,67 @@ mod tests {
         std::fs::remove_file(ws_dir.join(INFO_FILE)).unwrap();
         let (third, _c) = Workspace::open(&ws_dir).unwrap();
         assert_eq!(ws.id, third.id);
+    }
+
+    #[test]
+    fn stamp_formats_utc_dates() {
+        assert_eq!(stamp(0), "1970-01-01-000000");
+        assert_eq!(stamp(1_763_200_000_000), "2025-11-15-094640");
+        assert_eq!(stamp(951_782_400_000), "2000-02-29-000000");
+    }
+
+    #[test]
+    fn startup_snapshots_once_a_day_and_keeps_seven() {
+        let dir = tempfile::tempdir().unwrap();
+        let ws = dir.path();
+        let (_w, conn) = Workspace::open(ws).unwrap();
+        conn.execute("INSERT INTO meta (key, value) VALUES ('probe', 'kept')", []).unwrap();
+        drop(conn);
+        let backups = ws.join(BACKUPS_DIR);
+        std::fs::create_dir_all(&backups).unwrap();
+        for i in 1..=8 {
+            std::fs::write(backups.join(format!("2020-01-0{i}-000000.db")), b"old").unwrap();
+        }
+        let day = 1_763_200_000_000;
+        let made = snapshot(ws, day).unwrap().expect("a snapshot today");
+        assert!(snapshot(ws, day + 3_600_000).unwrap().is_none(), "only once a day");
+        let mut names: Vec<String> =
+            std::fs::read_dir(&backups).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
+        names.sort();
+        assert_eq!(names.len(), BACKUPS_KEPT);
+        assert_eq!(names.last().unwrap(), "2025-11-15-094640.db");
+        assert!(!names.contains(&"2020-01-01-000000.db".to_string()));
+        let copy = Connection::open(made).unwrap();
+        let v: String = copy.query_row("SELECT value FROM meta WHERE key = 'probe'", [], |r| r.get(0)).unwrap();
+        assert_eq!(v, "kept");
+    }
+
+    #[test]
+    fn migration_0002_upgrades_a_0001_database_without_losing_data() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        let tx = conn.transaction().unwrap();
+        tx.execute_batch(MIGRATIONS[0].1).unwrap();
+        tx.execute("INSERT INTO meta (key, value) VALUES ('schema_version', '1')", []).unwrap();
+        tx.execute(
+            "INSERT INTO resources (id, kind, name, rev, created_at, created_by, updated_at, updated_by)
+             VALUES ('r1', 'core:group', 'Old', 1, 0, 'user', 0, 'user')",
+            [],
+        )
+        .unwrap();
+        tx.execute(
+            "INSERT INTO revisions (resource_id, rev, at, actor, op, fields, snapshot) VALUES ('r1', 1, 0, 'user', 'create', '[]', '{}')",
+            [],
+        )
+        .unwrap();
+        tx.commit().unwrap();
+        migrate(&mut conn).unwrap();
+        let name: String = conn.query_row("SELECT name FROM resources WHERE id = 'r1'", [], |r| r.get(0)).unwrap();
+        assert_eq!(name, "Old");
+        let rf: Option<String> = conn.query_row("SELECT restored_from FROM revisions WHERE resource_id = 'r1'", [], |r| r.get(0)).unwrap();
+        assert!(rf.is_none());
+        conn.execute("INSERT INTO search (id, name, text) VALUES ('r1', 'Old', '')", []).unwrap();
+        let v: String = conn.query_row("SELECT value FROM meta WHERE key='schema_version'", [], |r| r.get(0)).unwrap();
+        assert_eq!(v, "2");
     }
 
     #[test]

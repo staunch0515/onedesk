@@ -10,6 +10,13 @@ pub const KIND_GROUP: &str = "core:group";
 pub const KIND_PLUGIN_STATE: &str = "core:plugin-state";
 pub const TREE_RESOURCES: &str = "resources";
 pub const TREE_PLUGIN_STATE: &str = "core:plugin-state";
+pub const KIND_ENV: &str = "core:env";
+pub const KIND_CONFIG: &str = "core:config";
+pub const TREE_ENV: &str = "env";
+pub const TREE_CONFIG: &str = "config";
+/// Lists the kernel computes (D279); not stored trees.
+pub const TREE_FAVORITES: &str = "favorites";
+pub const TREE_DELETED: &str = "deleted";
 
 /// One `resources` row; serialized as the revision snapshot.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -173,6 +180,62 @@ pub fn value_at(row: &Row, path: &str) -> Option<Value> {
         "name" => Some(Value::String(row.name.clone())),
         "description" => Some(Value::String(row.description.clone())),
         "tags" => Some(serde_json::to_value(&row.tags).unwrap_or(Value::Null)),
-        _ => path.strip_prefix("body.").map(|k| row.body.get(k).cloned().unwrap_or(Value::Null)),
+        _ => {
+            if let Some(n) = path.strip_prefix("params.") {
+                return Some(crate::params::get(row, n).map(|p| Value::String(p.value)).unwrap_or(Value::Null));
+            }
+            path.strip_prefix("body.").map(|k| row.body.get(k).cloned().unwrap_or(Value::Null))
+        }
     }
+}
+
+/// Whether the user marked it as a favorite (`resource_meta`, local data).
+pub fn is_favorite(conn: &Connection, id: &str) -> rusqlite::Result<bool> {
+    Ok(conn
+        .query_row("SELECT favorite FROM resource_meta WHERE resource_id = ?1", [id], |r| r.get::<_, i64>(0))
+        .optional()?
+        .unwrap_or(0)
+        != 0)
+}
+
+/// Live favorites, most recently used first.
+pub fn favorites(conn: &Connection) -> rusqlite::Result<Vec<Row>> {
+    let cols: String = COLUMNS.split(", ").map(|c| format!("r.{}", c.trim())).collect::<Vec<_>>().join(", ");
+    let mut st = conn.prepare_cached(&format!(
+        "SELECT {cols} FROM resources r JOIN resource_meta m ON m.resource_id = r.id
+         WHERE m.favorite = 1 AND r.deleted_at IS NULL AND r.tree IS NOT ?1
+         ORDER BY r.name COLLATE NOCASE, r.id"
+    ))?;
+    let rows = st.query_map([TREE_PLUGIN_STATE], from_sql)?;
+    rows.collect()
+}
+
+/// The top row of every deletion batch, newest first (D279, §3.4).
+pub fn deleted_tops(conn: &Connection) -> rusqlite::Result<Vec<Row>> {
+    let cols: String = COLUMNS.split(", ").map(|c| format!("r.{}", c.trim())).collect::<Vec<_>>().join(", ");
+    let mut st = conn.prepare_cached(&format!(
+        "SELECT {cols} FROM resources r
+         WHERE r.deleted_at IS NOT NULL AND r.tree IS NOT ?1
+           AND NOT EXISTS (SELECT 1 FROM resources p WHERE p.id = r.parent_id
+                           AND p.delete_batch IS r.delete_batch AND p.deleted_at IS NOT NULL)
+         ORDER BY r.deleted_at DESC, r.id"
+    ))?;
+    let rows = st.query_map([TREE_PLUGIN_STATE], from_sql)?;
+    rows.collect()
+}
+
+pub fn delete_batch(conn: &Connection, id: &str) -> rusqlite::Result<Option<String>> {
+    conn.query_row("SELECT delete_batch FROM resources WHERE id = ?1", [id], |r| r.get(0)).optional().map(Option::flatten)
+}
+
+/// Every row of a deletion batch.
+pub fn batch_rows(conn: &Connection, batch: &str) -> rusqlite::Result<Vec<Row>> {
+    let mut st = conn.prepare_cached(&format!("SELECT {COLUMNS} FROM resources WHERE delete_batch = ?1 ORDER BY id"))?;
+    let rows = st.query_map([batch], from_sql)?;
+    rows.collect()
+}
+
+/// Live rows of a kind.
+pub fn of_kind(conn: &Connection, kind: &str) -> rusqlite::Result<Vec<Row>> {
+    list(conn, &[kind.to_string()], None)
 }

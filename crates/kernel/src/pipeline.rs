@@ -13,7 +13,8 @@ use rusqlite::{params, Connection, Transaction};
 use serde_json::{json, Value};
 use tokio::sync::oneshot;
 
-use crate::store::{self, Row, KIND_GROUP, KIND_PLUGIN_STATE, TREE_PLUGIN_STATE};
+use crate::store::{self, Row, KIND_CONFIG, KIND_ENV, KIND_GROUP, KIND_PLUGIN_STATE, TREE_PLUGIN_STATE};
+use onedesk_protocol::ParamType;
 use crate::util::{denied, err_p, internal, invalid, invalid_params, new_id, not_found, now_ms, KResult};
 
 /// Who is writing (§4.1).
@@ -41,6 +42,20 @@ pub struct Changes {
     pub description: Option<String>,
     pub tags: Option<Vec<String>>,
     pub body: JsonMap,
+    /// `params.<name>` of parameter nodes (D275).
+    pub params: std::collections::BTreeMap<String, ParamChange>,
+}
+
+/// One field-level change of a parameter table.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ParamChange {
+    /// Keeps the existing type unless one is given (`text` for a new parameter).
+    Set { value: String, ty: Option<ParamType> },
+    Unset,
+    /// Records the current inherited value as the basis of this override (§4.2).
+    Acknowledge,
+    /// Exact entry, as a snapshot had it (restore); `None` removes it.
+    Exact(Option<crate::params::Param>),
 }
 
 impl Changes {
@@ -57,9 +72,17 @@ impl Changes {
                 "tags" => {
                     c.tags = Some(serde_json::from_value(v.clone()).map_err(|_| invalid_params("tags must be strings"))?)
                 }
-                p => match p.strip_prefix("body.") {
-                    Some(k) if !k.is_empty() => {
+                p => match (p.strip_prefix("body."), p.strip_prefix("params.")) {
+                    (Some(k), _) if !k.is_empty() => {
                         c.body.insert(k.to_string(), v.clone());
+                    }
+                    (_, Some(n)) if !n.is_empty() => {
+                        let value = match v {
+                            Value::String(s) => s.clone(),
+                            Value::Null => String::new(),
+                            other => other.to_string(),
+                        };
+                        c.params.insert(n.to_string(), ParamChange::Set { value, ty: None });
                     }
                     _ => return Err(invalid_params(format!("unknown bind path {p}"))),
                 },
@@ -69,7 +92,11 @@ impl Changes {
     }
 
     pub fn is_empty(&self) -> bool {
-        self.name.is_none() && self.description.is_none() && self.tags.is_none() && self.body.is_empty()
+        self.name.is_none()
+            && self.description.is_none()
+            && self.tags.is_none()
+            && self.body.is_empty()
+            && self.params.is_empty()
     }
 
     /// Applies to `row`, returning the names of the fields whose value actually changed.
@@ -121,6 +148,7 @@ impl Changes {
             f.push("tags".into());
         }
         f.extend(self.body.keys().map(|k| format!("body.{k}")));
+        f.extend(self.params.keys().map(|k| format!("params.{k}")));
         f
     }
 }
@@ -160,8 +188,18 @@ pub enum Command {
     Refused { op: String, object: String, error: onedesk_protocol::ProtocolError },
     /// Adds or removes one granted folder of a plugin, read-modify-write in one transaction (D261).
     Grant { plugin: String, folder: String, add: bool },
+    /// Writes fields back from history as a `restore` revision (D278); `parent` restores the location.
+    Restore { id: String, changes: Changes, parent: Option<Option<String>>, entry: String },
+    /// Brings a whole deletion batch back (§3.4).
+    Undelete { id: String },
+    /// Erases a deleted resource (and its batch descendants) with all its history (§3.4).
+    Purge { id: String },
+    /// Local data in `resource_meta` (favorite, last use): no history, no audit (D279).
+    Meta { id: String, favorite: Option<bool>, touch: bool },
     /// Interface state (§9.2): not versioned, not audited.
     UiSet { client: String, key: String, value: Value },
+    /// Runs once when the writer starts.
+    Startup,
 }
 
 /// What the kernel needs to know about a kind to validate writes.
@@ -209,6 +247,10 @@ impl Pipeline {
             .name("onedesk-writer".into())
             .spawn(move || {
                 let mut w = Writer { conn, rules };
+                // D273 default nodes and the search index, before any request (actor `core`).
+                if let Err(e) = w.run(&Actor::Core, Command::Startup) {
+                    eprintln!("onedesk: startup command failed: {e:?}");
+                }
                 while let Ok((actor, cmd, reply)) = rx.recv() {
                     let _ = reply.send(w.run(&actor, cmd));
                 }
@@ -259,8 +301,9 @@ impl Writer {
             return self.ui_set(client, key, value);
         }
         let (op, object) = describe(&cmd);
+        let quiet = matches!(cmd, Command::Meta { .. } | Command::Startup);
         let res = self.transact(actor, cmd);
-        if let Err(e) = &res {
+        if let Some(e) = res.as_ref().err().filter(|_| !quiet) {
             // Failed or refused: data unchanged, the audit row is written on its own (§4.3).
             let summary = json!({ "code": e.code, "params": e.params }).to_string();
             let _ = self.conn.execute(
@@ -301,6 +344,11 @@ impl Writer {
                 }
                 Command::Refused { error, .. } => return Err(error),
                 Command::Grant { plugin, folder, add } => cx.grant(&plugin, &folder, add)?,
+                Command::Restore { id, changes, parent, entry } => cx.restore(&id, &changes, parent, &entry)?,
+                Command::Undelete { id } => cx.undelete(&id)?,
+                Command::Purge { id } => cx.purge(&id)?,
+                Command::Meta { id, favorite, touch } => cx.meta(&id, favorite, touch)?,
+                Command::Startup => cx.startup()?,
                 Command::UiSet { .. } => unreachable!("handled above"),
             }
         };
@@ -319,6 +367,11 @@ fn describe(cmd: &Command) -> (String, String) {
         Command::Refused { op, object, .. } => (op.clone(), object.clone()),
         Command::Grant { plugin, .. } => ("plugin.grant".into(), plugin.clone()),
         Command::UiSet { key, .. } => ("ui.set".into(), key.clone()),
+        Command::Restore { id, .. } => ("resource.restore".into(), id.clone()),
+        Command::Undelete { id } => ("resource.undelete".into(), id.clone()),
+        Command::Purge { id } => ("resource.purge".into(), id.clone()),
+        Command::Meta { id, .. } => ("resource.meta".into(), id.clone()),
+        Command::Startup => ("workspace.startup".into(), String::new()),
     }
 }
 
@@ -409,6 +462,17 @@ impl Tx<'_> {
                 ],
             )
             .map_err(sql)?;
+        self.index(r)
+    }
+
+    /// Keeps the search text of `r` in step with the row, in the same transaction (D277).
+    fn index(&self, r: &Row) -> KResult<()> {
+        self.tx.execute("DELETE FROM search WHERE id = ?1", [&r.id]).map_err(sql)?;
+        if r.deleted_at.is_none() && r.tree.as_deref() != Some(TREE_PLUGIN_STATE) {
+            self.tx
+                .execute("INSERT INTO search (id, name, text) VALUES (?1, ?2, ?3)", params![r.id, r.name, search_text(r)])
+                .map_err(sql)?;
+        }
         Ok(())
     }
 
@@ -432,13 +496,18 @@ impl Tx<'_> {
                 ],
             )
             .map_err(sql)?;
-        Ok(())
+        self.index(r)
     }
 
     fn revision(&self, r: &Row, op: &str, fields: &[String]) -> KResult<()> {
+        self.revision_from(r, op, fields, None)
+    }
+
+    fn revision_from(&self, r: &Row, op: &str, fields: &[String], restored_from: Option<&str>) -> KResult<()> {
         self.tx
             .execute(
-                "INSERT INTO revisions (resource_id, rev, at, actor, op, fields, snapshot) VALUES (?1,?2,?3,?4,?5,?6,?7)",
+                "INSERT INTO revisions (resource_id, rev, at, actor, op, fields, snapshot, restored_from)
+                 VALUES (?1,?2,?3,?4,?5,?6,?7,?8)",
                 params![
                     r.id,
                     r.rev,
@@ -446,7 +515,8 @@ impl Tx<'_> {
                     self.actor.as_text(),
                     op,
                     serde_json::to_string(fields).expect("json"),
-                    serde_json::to_string(r).expect("json")
+                    serde_json::to_string(r).expect("json"),
+                    restored_from
                 ],
             )
             .map_err(sql)?;
@@ -496,11 +566,23 @@ impl Tx<'_> {
         self.insert(&row)?;
         let fields: Vec<String> = vec!["*".into()];
         self.revision(&row, "create", &fields)?;
-        self.audit("resource.create", &row.id, &json!({ "kind": row.kind, "name": row.name }))?;
+        // No names or content in audit rows: they outlive a permanent deletion (§3.4).
+        self.audit("resource.create", &row.id, &json!({ "kind": row.kind }))?;
         Ok(Outcome { id: Some(row.id.clone()), changed: true, rows: vec![row] })
     }
 
     fn update(&mut self, id: &str, changes: &Changes, basis: Option<i64>) -> KResult<Outcome> {
+        self.update_as(id, changes, basis, "update", None)
+    }
+
+    fn update_as(
+        &mut self,
+        id: &str,
+        changes: &Changes,
+        basis: Option<i64>,
+        op: &str,
+        restored_from: Option<&str>,
+    ) -> KResult<Outcome> {
         let mut row = self.live(id)?;
         self.permit(&row.kind)?;
         if changes.name.as_deref().is_some_and(|n| n.trim().is_empty()) {
@@ -524,7 +606,8 @@ impl Tx<'_> {
                 }
             }
         }
-        let changed = changes.apply(&mut row);
+        let mut changed = changes.apply(&mut row);
+        changed.extend(self.apply_params(&mut row, &changes.params)?);
         if changed.is_empty() {
             return Ok(Outcome { id: Some(row.id.clone()), changed: false, rows: vec![] });
         }
@@ -532,8 +615,8 @@ impl Tx<'_> {
         row.updated_at = self.at;
         row.updated_by = self.actor.as_text();
         self.save(&row)?;
-        self.revision(&row, "update", &changed)?;
-        self.audit("resource.update", &row.id, &json!({ "fields": changed }))?;
+        self.revision_from(&row, op, &changed, restored_from)?;
+        self.audit(&format!("resource.{op}"), &row.id, &json!({ "fields": changed }))?;
         Ok(Outcome { id: Some(row.id.clone()), changed: true, rows: vec![row] })
     }
 
@@ -656,6 +739,221 @@ impl Tx<'_> {
         }
     }
 
+    fn apply_params(&self, row: &mut Row, changes: &std::collections::BTreeMap<String, ParamChange>) -> KResult<Vec<String>> {
+        if changes.is_empty() {
+            return Ok(vec![]);
+        }
+        if !crate::params::is_param_kind(&row.kind) {
+            return Err(invalid("notParamNode"));
+        }
+        let ancestors = store::ancestors(self.tx, row).map_err(sql)?;
+        let mut changed = Vec::new();
+        for (name, ch) in changes {
+            if name.trim().is_empty() {
+                return Err(invalid("emptyName"));
+            }
+            let old = crate::params::get(row, name);
+            let inherited = crate::params::inherited(&ancestors, name)
+                .map(|(p, src)| crate::params::BasedOn { value: p.value, source: src.id.clone() });
+            let new = match ch {
+                ParamChange::Set { value, ty } => {
+                    if old.is_none() && row.kind == KIND_CONFIG {
+                        self.check_config_name(row, name)?;
+                    }
+                    Some(crate::params::Param {
+                        ty: ty.or(old.as_ref().map(|o| o.ty)).unwrap_or(ParamType::Text),
+                        value: value.clone(),
+                        // Keep the recorded basis; a fresh override records what it overrides.
+                        based_on: old.as_ref().and_then(|o| o.based_on.clone()).or(inherited),
+                    })
+                }
+                ParamChange::Unset => None,
+                ParamChange::Acknowledge => old.clone().map(|o| crate::params::Param { based_on: inherited, ..o }),
+                ParamChange::Exact(p) => p.clone(),
+            };
+            if new != old {
+                crate::params::put(row, name, new.as_ref());
+                changed.push(format!("params.{name}"));
+            }
+        }
+        Ok(changed)
+    }
+
+    /// §6.2: in the configuration tree a name may only repeat along one ancestor line.
+    fn check_config_name(&self, row: &Row, name: &str) -> KResult<()> {
+        let mine: BTreeSet<String> = store::ancestors(self.tx, row).map_err(sql)?.into_iter().map(|a| a.id).collect();
+        for other in store::of_kind(self.tx, KIND_CONFIG).map_err(sql)? {
+            if other.id == row.id || crate::params::get(&other, name).is_none() || mine.contains(&other.id) {
+                continue;
+            }
+            let theirs = store::ancestors(self.tx, &other).map_err(sql)?;
+            if !theirs.iter().any(|a| a.id == row.id) {
+                return Err(err_p(ErrorCode::Invalid, &[("reason", "duplicateName"), ("name", name)]));
+            }
+        }
+        Ok(())
+    }
+
+    fn restore(&mut self, id: &str, changes: &Changes, parent: Option<Option<String>>, entry: &str) -> KResult<Outcome> {
+        if let Some(p) = parent {
+            let mut out = self.move_to(id, MoveDest::Inside(p))?;
+            if out.changed {
+                // Mark the move revision as a restore of `entry`.
+                self.tx
+                    .execute(
+                        "UPDATE revisions SET op = 'restore', restored_from = ?3 WHERE resource_id = ?1 AND rev = ?2",
+                        params![id, out.rows[0].rev, entry],
+                    )
+                    .map_err(sql)?;
+            }
+            out.id = Some(id.to_string());
+            return Ok(out);
+        }
+        self.update_as(id, changes, None, "restore", Some(entry))
+    }
+
+    fn undelete(&mut self, id: &str) -> KResult<Outcome> {
+        let row = store::get_any(self.tx, id).map_err(sql)?.ok_or_else(|| not_found("resource"))?;
+        if row.deleted_at.is_none() {
+            return Err(invalid("notDeleted"));
+        }
+        self.permit(&row.kind)?;
+        let batch_id = store::delete_batch(self.tx, id).map_err(sql)?.ok_or_else(|| invalid("notDeleted"))?;
+        let mut batch = store::batch_rows(self.tx, &batch_id).map_err(sql)?;
+        let ids: BTreeSet<String> = batch.iter().map(|r| r.id.clone()).collect();
+        // Tops first so their new positions are known before the inner rows come back.
+        batch.sort_by_key(|r| r.parent_id.as_ref().is_some_and(|p| ids.contains(p)));
+        for r in &mut batch {
+            let mut fields = vec!["deleted".to_string()];
+            let top = !r.parent_id.as_ref().is_some_and(|p| ids.contains(p));
+            if top {
+                let parent_live = match &r.parent_id {
+                    Some(p) => store::get(self.tx, p).map_err(sql)?.is_some(),
+                    None => true,
+                };
+                if !parent_live {
+                    // The old parent is gone: back to the top level of the tree (§3.4).
+                    r.parent_id = None;
+                    fields.push("parent".into());
+                }
+                r.pos = self.next_pos(r.tree.as_deref(), r.parent_id.as_deref())?;
+            }
+            r.deleted_at = None;
+            r.rev += 1;
+            r.updated_at = self.at;
+            r.updated_by = self.actor.as_text();
+            self.save(r)?;
+            self.tx.execute("UPDATE resources SET delete_batch = NULL WHERE id = ?1", [&r.id]).map_err(sql)?;
+            self.revision(r, "undelete", &fields)?;
+        }
+        self.audit("resource.undelete", id, &json!({ "batch": batch_id, "count": batch.len() }))?;
+        Ok(Outcome { id: Some(id.to_string()), changed: true, rows: batch })
+    }
+
+    fn purge(&mut self, id: &str) -> KResult<Outcome> {
+        let row = store::get_any(self.tx, id).map_err(sql)?.ok_or_else(|| not_found("resource"))?;
+        if row.deleted_at.is_none() {
+            return Err(invalid("notDeleted"));
+        }
+        self.permit(&row.kind)?;
+        // The row and its deleted descendants.
+        let mut doomed = vec![row.clone()];
+        let mut queue = vec![row.id.clone()];
+        let mut st = self
+            .tx
+            .prepare_cached(&format!("SELECT {} FROM resources WHERE parent_id = ?1 AND deleted_at IS NOT NULL", store::COLUMNS))
+            .map_err(sql)?;
+        while let Some(p) = queue.pop() {
+            for r in st.query_map([&p], store::from_sql).map_err(sql)? {
+                let r = r.map_err(sql)?;
+                queue.push(r.id.clone());
+                doomed.push(r);
+            }
+        }
+        drop(st);
+        for r in &doomed {
+            for table in ["DELETE FROM resources WHERE id = ?1", "DELETE FROM revisions WHERE resource_id = ?1",
+                          "DELETE FROM resource_meta WHERE resource_id = ?1", "DELETE FROM search WHERE id = ?1"] {
+                self.tx.execute(table, [&r.id]).map_err(sql)?;
+            }
+        }
+        // Drop deleted entries from the full-text segments too.
+        self.tx.execute("INSERT INTO search (search) VALUES ('optimize')", []).map_err(sql)?;
+        self.audit("resource.purge", id, &json!({ "kind": row.kind, "count": doomed.len() }))?;
+        Ok(Outcome { id: Some(id.to_string()), changed: true, rows: doomed })
+    }
+
+    fn meta(&mut self, id: &str, favorite: Option<bool>, touch: bool) -> KResult<Outcome> {
+        let row = self.live(id)?;
+        if row.tree.as_deref() == Some(TREE_PLUGIN_STATE) {
+            return Err(not_found("resource"));
+        }
+        self.tx
+            .execute("INSERT INTO resource_meta (resource_id) VALUES (?1) ON CONFLICT(resource_id) DO NOTHING", [id])
+            .map_err(sql)?;
+        if let Some(f) = favorite {
+            self.tx
+                .execute("UPDATE resource_meta SET favorite = ?2 WHERE resource_id = ?1", params![id, i64::from(f)])
+                .map_err(sql)?;
+        }
+        if touch {
+            self.tx
+                .execute(
+                    "UPDATE resource_meta SET last_used_at = ?2, use_count = use_count + 1 WHERE resource_id = ?1",
+                    params![id, self.at],
+                )
+                .map_err(sql)?;
+        }
+        Ok(Outcome { id: Some(id.to_string()), changed: true, rows: vec![] })
+    }
+
+    /// D273: a root `Default` environment and a root `Workspace` configuration node;
+    /// D277: (re)builds the search index when it was never built.
+    fn startup(&mut self) -> KResult<Outcome> {
+        let mut rows = Vec::new();
+        for (kind, name) in [(KIND_ENV, "Default"), (KIND_CONFIG, "Workspace")] {
+            let has_root: bool = self
+                .tx
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM resources WHERE kind = ?1 AND parent_id IS NULL AND deleted_at IS NULL)",
+                    [kind],
+                    |r| r.get(0),
+                )
+                .map_err(sql)?;
+            if !has_root {
+                let out = self.create(NewResource {
+                    kind: kind.into(),
+                    tree: None,
+                    parent: None,
+                    name: name.into(),
+                    description: String::new(),
+                    tags: vec![],
+                    body: JsonMap::new(),
+                    plugin_version: None,
+                })?;
+                rows.extend(out.rows);
+            }
+        }
+        let built: bool = self
+            .tx
+            .query_row("SELECT EXISTS(SELECT 1 FROM meta WHERE key = 'search_built')", [], |r| r.get(0))
+            .map_err(sql)?;
+        if !built {
+            self.tx.execute("DELETE FROM search", []).map_err(sql)?;
+            let mut st = self
+                .tx
+                .prepare(&format!("SELECT {} FROM resources WHERE deleted_at IS NULL", store::COLUMNS))
+                .map_err(sql)?;
+            let all: Vec<Row> = st.query_map([], store::from_sql).map_err(sql)?.collect::<Result<_, _>>().map_err(sql)?;
+            drop(st);
+            for r in &all {
+                self.index(r)?;
+            }
+            self.tx.execute("INSERT INTO meta (key, value) VALUES ('search_built', '1')", []).map_err(sql)?;
+        }
+        Ok(Outcome { changed: !rows.is_empty(), rows, ..Default::default() })
+    }
+
     fn siblings(&self, tree: Option<&str>, parent: Option<&str>, except: &str) -> KResult<Vec<Row>> {
         let all = store::children(self.tx, tree.unwrap_or_default(), parent, 0, u32::MAX).map_err(sql)?;
         Ok(all.into_iter().filter(|r| r.id != except).collect())
@@ -704,5 +1002,30 @@ pub fn core_rules() -> HashMap<String, KindRule> {
     let mut m = HashMap::new();
     m.insert(KIND_GROUP.to_string(), KindRule { tree: Some(store::TREE_RESOURCES.into()), accepts: vec!["*".into()] });
     m.insert(KIND_PLUGIN_STATE.to_string(), KindRule { tree: Some(TREE_PLUGIN_STATE.into()), accepts: vec![] });
+    // D274: environments only under environments, configuration only under configuration.
+    m.insert(KIND_ENV.to_string(), KindRule { tree: Some(store::TREE_ENV.into()), accepts: vec![KIND_ENV.into()] });
+    m.insert(KIND_CONFIG.to_string(), KindRule { tree: Some(store::TREE_CONFIG.into()), accepts: vec![KIND_CONFIG.into()] });
     m
+}
+
+/// What search indexes besides the name: description, tags, string values of the body, parameters.
+fn search_text(r: &Row) -> String {
+    fn strings(v: &Value, out: &mut Vec<String>) {
+        match v {
+            Value::String(s) => out.push(s.clone()),
+            Value::Array(a) => a.iter().for_each(|x| strings(x, out)),
+            Value::Object(o) => o.values().for_each(|x| strings(x, out)),
+            _ => {}
+        }
+    }
+    let mut out = vec![r.description.clone()];
+    out.extend(r.tags.iter().cloned());
+    for (k, v) in &r.body {
+        if k != crate::params::PARAMS_KEY {
+            strings(v, &mut out);
+        }
+    }
+    out.push(crate::params::search_text(r));
+    out.retain(|s| !s.is_empty());
+    out.join("\n")
 }
