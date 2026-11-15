@@ -95,3 +95,30 @@ cargo test --release -p onedesk-kernel --test round2 -- search_over --nocapture 
 | `Item 99`（长词 + 短词） | 20 | 19 ms |
 
 都在 200 ms 目标之内。命中很多时耗时主要花在排序（要先找出全部命中再排序取前 20）。
+
+## 审查后的修改（`docs/handoff/round2-review.md` 中标给内核的各条）
+
+先合并了 `claude/week1-slice-3b4ae5`（84b66f5，含 D281：`ParamSetParams`/`ParamNameParams` 的可选 `basis`）。标给内核的 #1–#5、#7–#11、#13 全部修了，#15 也做了；#14 记 todo。测试都在 `tests/round2.rs` 末尾（`review*`）和 `workspace.rs` 的单元测试里。
+
+| # | 修改 | 测试 |
+|---|---|---|
+| 1 | 参数类型 `secret` 一律拒绝（`invalid`，`reason = "secretUnsupported"`），在管线里检查，`params.set` 和 `page.save` 都走得到 | `review1_secret_parameters_are_refused`（库里没有那个值） |
+| 2 | 参数节点拒绝 `body.params` 绑定（`invalid`，`reservedField`）；同名检查改为“新出现一个名字”时都查（含历史恢复的整条写回）；移动 `core:config` 后对它和它的后代逐个参数名检查，整批恢复后对批里的配置节点逐个检查；违反即整个事务回滚 | `review2_config_same_name_rule_cannot_be_bypassed`：整表覆盖、移动、恢复删除、历史恢复四条路径各被拒绝一次，移动后位置不变、恢复后仍在已删除里 |
+| 3 | `params.set/unset/acknowledge` 带 `basis` 时按字段核对：同名参数在那之后被改过 → `conflict`；不同名不冲突 | `review3_params_set_with_basis_conflicts_on_the_same_name_only` |
+| 4 | 永久删除只清除同一批（`delete_batch` 相同）的后代；别的批里的已删除后代保留，之后恢复时放到树的根下 | `review4_purge_leaves_descendants_of_another_batch` |
+| 5 | 审计摘要里参数字段只记个数（`{"fields":[…], "params": n}`）；失败审计的摘要只有 `code` 和 `reason`，不再带错误参数（参数名、字段路径） | `review5_13_audit_has_param_operations_but_no_param_names` |
+| 7 | 新迁移 `0003_search_rowid.sql`：删掉 0002 的搜索表、重建为不带 `id` 列的 FTS5 表，行号 = `resources.rowid`；写入、删除都按 rowid；清掉 `search_built`，下次启动重建索引。0002 未改 | `workspace::tests::migration_0003_rebuilds_search_by_rowid_without_losing_data`；原有搜索与永久删除测试继续通过 |
+| 8 | `workspace.setConfig` 找不到任何配置根时以操作者 `core` 新建 `Workspace` 再写入 | `review8_set_config_recreates_a_deleted_root` |
+| 9 | 启动快照失败只写 stderr，工作区照常打开 | `workspace::tests::snapshot_failure_does_not_block_opening_and_user_files_are_kept` |
+| 10 | 保留 7 份只算 `YYYY-MM-DD-HHMMSS.db` 形式的文件，`backups/` 里别的文件不动 | 同上 |
+| 11 | 审计的文本过滤对 `%`、`_`、`\` 转义 | `review11_audit_text_filter_treats_wildcards_literally` |
+| 13 | 参数命令的审计操作名是 `params.set` / `params.unset` / `params.acknowledge`（失败的也是）；修订的 op 仍是 `update` | `review5_13_…`（同一个测试） |
+| 15 | 有待执行的迁移时，即使当天已有快照也再拍一份（同一秒重名则覆盖） | `workspace::tests::snapshot_is_taken_again_the_same_day_when_a_migration_is_pending` |
+
+结果：`cargo test -p onedesk-kernel -p onedesk-worker` 共 79 个测试全部通过（新增 10 个）；clippy 无警告；`sh scripts/gen-types.sh --check` 协议类型是最新的。
+
+补充说明：
+
+- 搜索表按 `resources.rowid` 对应：`resources` 的主键是文字 id，rowid 是隐式的。内核从不执行 `VACUUM`（快照用的 `VACUUM INTO` 不改原库），所以 rowid 稳定；以后如果要对原库做 `VACUUM`，要先重建搜索索引（删 `meta.search_built` 即可）。
+- 第一轮、第二轮已有的审计行里仍可能有参数名或资源名（审计表不可改）。
+- #14（成环数据会死循环）记到了 `docs/handoff/todo.md`。

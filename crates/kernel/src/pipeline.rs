@@ -178,6 +178,8 @@ pub enum MoveDest {
 pub enum Command {
     Create(NewResource),
     Update { id: String, changes: Changes, basis: Option<i64> },
+    /// A parameter command (`params.set` / `unset` / `acknowledge`): an update audited under its own name.
+    Params { id: String, changes: Changes, basis: Option<i64>, op: String },
     Move { id: String, dest: MoveDest },
     /// Deletion mark; a group goes together with all its descendants as one batch (§3.4).
     Delete { id: String },
@@ -309,7 +311,8 @@ impl Writer {
         let res = self.transact(actor, cmd);
         if let Some(e) = res.as_ref().err().filter(|_| !quiet) {
             // Failed or refused: data unchanged, the audit row is written on its own (§4.3).
-            let summary = json!({ "code": e.code, "params": e.params }).to_string();
+            // Codes only: error params can carry user content (parameter names, fields).
+            let summary = json!({ "code": e.code, "reason": e.params.get("reason") }).to_string();
             let _ = self.conn.execute(
                 "INSERT INTO audit (at, actor, op, object, summary, result) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
                 params![now_ms(), actor.as_text(), op, object, summary, format!("failed:{}", code_text(e.code))],
@@ -340,6 +343,7 @@ impl Writer {
             match cmd {
                 Command::Create(n) => cx.create(n)?,
                 Command::Update { id, changes, basis } => cx.update(&id, &changes, basis)?,
+                Command::Params { id, changes, basis, op } => cx.update_as(&id, &changes, basis, "update", None, &op)?,
                 Command::Move { id, dest } => cx.move_to(&id, dest)?,
                 Command::Delete { id } => cx.delete(&id)?,
                 Command::Audit { op, object, summary } => {
@@ -365,6 +369,7 @@ fn describe(cmd: &Command) -> (String, String) {
     match cmd {
         Command::Create(n) => ("resource.create".into(), n.kind.clone()),
         Command::Update { id, .. } => ("resource.update".into(), id.clone()),
+        Command::Params { id, op, .. } => (op.clone(), id.clone()),
         Command::Move { id, .. } => ("resource.move".into(), id.clone()),
         Command::Delete { id } => ("resource.delete".into(), id.clone()),
         Command::Audit { op, object, .. } => (op.clone(), object.clone()),
@@ -471,10 +476,12 @@ impl Tx<'_> {
 
     /// Keeps the search text of `r` in step with the row, in the same transaction (D277).
     fn index(&self, r: &Row) -> KResult<()> {
-        self.tx.execute("DELETE FROM search WHERE id = ?1", [&r.id]).map_err(sql)?;
+        // The search row shares the resource's rowid (migration 0003): no table scans.
+        let rowid: i64 = self.tx.query_row("SELECT rowid FROM resources WHERE id = ?1", [&r.id], |x| x.get(0)).map_err(sql)?;
+        self.tx.execute("DELETE FROM search WHERE rowid = ?1", [rowid]).map_err(sql)?;
         if r.deleted_at.is_none() && r.tree.as_deref() != Some(TREE_PLUGIN_STATE) {
             self.tx
-                .execute("INSERT INTO search (id, name, text) VALUES (?1, ?2, ?3)", params![r.id, r.name, search_text(r)])
+                .execute("INSERT INTO search (rowid, name, text) VALUES (?1, ?2, ?3)", params![rowid, r.name, search_text(r)])
                 .map_err(sql)?;
         }
         Ok(())
@@ -576,7 +583,7 @@ impl Tx<'_> {
     }
 
     fn update(&mut self, id: &str, changes: &Changes, basis: Option<i64>) -> KResult<Outcome> {
-        self.update_as(id, changes, basis, "update", None)
+        self.update_as(id, changes, basis, "update", None, "resource.update")
     }
 
     fn update_as(
@@ -586,8 +593,13 @@ impl Tx<'_> {
         basis: Option<i64>,
         op: &str,
         restored_from: Option<&str>,
+        audit_op: &str,
     ) -> KResult<Outcome> {
         let mut row = self.live(id)?;
+        // #2: a parameter table is changed parameter by parameter, never replaced whole.
+        if crate::params::is_param_kind(&row.kind) && changes.body.contains_key(crate::params::PARAMS_KEY) {
+            return Err(invalid("reservedField"));
+        }
         self.permit(&row.kind)?;
         if changes.name.as_deref().is_some_and(|n| n.trim().is_empty()) {
             return Err(invalid("emptyName"));
@@ -620,7 +632,7 @@ impl Tx<'_> {
         row.updated_by = self.actor.as_text();
         self.save(&row)?;
         self.revision_from(&row, op, &changed, restored_from)?;
-        self.audit(&format!("resource.{op}"), &row.id, &json!({ "fields": changed }))?;
+        self.audit(audit_op, &row.id, &audit_fields(&changed))?;
         Ok(Outcome { id: Some(row.id.clone()), changed: true, rows: vec![row] })
     }
 
@@ -696,6 +708,9 @@ impl Tx<'_> {
         row.updated_at = self.at;
         row.updated_by = self.actor.as_text();
         self.save(&row)?;
+        if row.kind == KIND_CONFIG && changed.iter().any(|f| f == "parent") {
+            self.check_config_subtree(&row)?;
+        }
         self.revision(&row, "move", &changed)?;
         self.audit("resource.move", &row.id, &json!({ "parent": row.parent_id, "pos": row.pos }))?;
         Ok(Outcome { id: Some(row.id.clone()), changed: true, rows: vec![row] })
@@ -761,9 +776,6 @@ impl Tx<'_> {
                 .map(|(p, src)| crate::params::BasedOn { value: p.value, source: src.id.clone() });
             let new = match ch {
                 ParamChange::Set { value, ty } => {
-                    if old.is_none() && row.kind == KIND_CONFIG {
-                        self.check_config_name(row, name)?;
-                    }
                     Some(crate::params::Param {
                         ty: ty.or(old.as_ref().map(|o| o.ty)).unwrap_or(ParamType::Text),
                         value: value.clone(),
@@ -775,6 +787,15 @@ impl Tx<'_> {
                 ParamChange::Acknowledge => old.clone().map(|o| crate::params::Param { based_on: inherited, ..o }),
                 ParamChange::Exact(p) => p.clone(),
             };
+            if let Some(n) = &new {
+                // #1: secrets belong in the keychain (rule 7); not supported this round.
+                if n.ty == ParamType::Secret && old.as_ref() != Some(n) {
+                    return Err(invalid("secretUnsupported"));
+                }
+                if old.is_none() && row.kind == KIND_CONFIG {
+                    self.check_config_name(row, name)?;
+                }
+            }
             if new != old {
                 crate::params::put(row, name, new.as_ref());
                 changed.push(format!("params.{name}"));
@@ -798,6 +819,25 @@ impl Tx<'_> {
         Ok(())
     }
 
+    /// Every parameter name of `row` against the same-name rule (§6.2).
+    fn check_config_node(&self, row: &Row) -> KResult<()> {
+        for name in crate::params::params_of(row).keys() {
+            self.check_config_name(row, name)?;
+        }
+        Ok(())
+    }
+
+    /// A configuration node that moved: itself and everything below it.
+    fn check_config_subtree(&self, row: &Row) -> KResult<()> {
+        self.check_config_node(row)?;
+        for d in store::descendants(self.tx, &row.id).map_err(sql)? {
+            if d.kind == KIND_CONFIG {
+                self.check_config_node(&d)?;
+            }
+        }
+        Ok(())
+    }
+
     fn restore(&mut self, id: &str, changes: &Changes, parent: Option<Option<String>>, entry: &str) -> KResult<Outcome> {
         if let Some(p) = parent {
             let mut out = self.move_to(id, MoveDest::Inside(p))?;
@@ -813,7 +853,7 @@ impl Tx<'_> {
             out.id = Some(id.to_string());
             return Ok(out);
         }
-        self.update_as(id, changes, None, "restore", Some(entry))
+        self.update_as(id, changes, None, "restore", Some(entry), "resource.restore")
     }
 
     fn undelete(&mut self, id: &str) -> KResult<Outcome> {
@@ -850,6 +890,9 @@ impl Tx<'_> {
             self.tx.execute("UPDATE resources SET delete_batch = NULL WHERE id = ?1", [&r.id]).map_err(sql)?;
             self.revision(r, "undelete", &fields)?;
         }
+        for r in batch.iter().filter(|r| r.kind == KIND_CONFIG) {
+            self.check_config_node(r)?;
+        }
         self.audit("resource.undelete", id, &json!({ "batch": batch_id, "count": batch.len() }))?;
         Ok(Outcome { id: Some(id.to_string()), changed: true, rows: batch })
     }
@@ -860,15 +903,19 @@ impl Tx<'_> {
             return Err(invalid("notDeleted"));
         }
         self.permit(&row.kind)?;
-        // The row and its deleted descendants.
+        // The row and its descendants of the same deletion batch (#4: another batch is left alone).
+        let batch = store::delete_batch(self.tx, id).map_err(sql)?;
         let mut doomed = vec![row.clone()];
         let mut queue = vec![row.id.clone()];
         let mut st = self
             .tx
-            .prepare_cached(&format!("SELECT {} FROM resources WHERE parent_id = ?1 AND deleted_at IS NOT NULL", store::COLUMNS))
+            .prepare_cached(&format!(
+                "SELECT {} FROM resources WHERE parent_id = ?1 AND deleted_at IS NOT NULL AND delete_batch IS ?2",
+                store::COLUMNS
+            ))
             .map_err(sql)?;
         while let Some(p) = queue.pop() {
-            for r in st.query_map([&p], store::from_sql).map_err(sql)? {
+            for r in st.query_map(params![&p, &batch], store::from_sql).map_err(sql)? {
                 let r = r.map_err(sql)?;
                 queue.push(r.id.clone());
                 doomed.push(r);
@@ -876,8 +923,11 @@ impl Tx<'_> {
         }
         drop(st);
         for r in &doomed {
+            self.tx
+                .execute("DELETE FROM search WHERE rowid = (SELECT rowid FROM resources WHERE id = ?1)", [&r.id])
+                .map_err(sql)?;
             for table in ["DELETE FROM resources WHERE id = ?1", "DELETE FROM revisions WHERE resource_id = ?1",
-                          "DELETE FROM resource_meta WHERE resource_id = ?1", "DELETE FROM search WHERE id = ?1"] {
+                          "DELETE FROM resource_meta WHERE resource_id = ?1"] {
                 self.tx.execute(table, [&r.id]).map_err(sql)?;
             }
         }
@@ -1032,4 +1082,15 @@ fn search_text(r: &Row) -> String {
     out.push(crate::params::search_text(r));
     out.retain(|s| !s.is_empty());
     out.join("\n")
+}
+
+/// Audit summary of changed fields: parameter names are user content, so only their count (#5).
+fn audit_fields(changed: &[String]) -> Value {
+    let params = changed.iter().filter(|f| f.starts_with("params.")).count();
+    let fields: Vec<&String> = changed.iter().filter(|f| !f.starts_with("params.")).collect();
+    if params == 0 {
+        json!({ "fields": fields })
+    } else {
+        json!({ "fields": fields, "params": params })
+    }
 }
