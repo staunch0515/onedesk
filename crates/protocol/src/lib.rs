@@ -1432,6 +1432,145 @@ pub struct PaletteCommand {
     pub keywords: Option<Vec<String>>,
 }
 
+/* ================================================================== round 4 (D298–D309)
+   Installing plugins, versions and upgrade (§7.1, §7.6), secrets, network (§7.5). */
+
+/// Method names of round 4; see docs/handoff/round4-plan.md §3.
+pub mod method4 {
+    /// Handled by the main process (§12 `app.*`); it asks the worker where workspace data is needed.
+    pub const APP_INSPECT_PLUGIN: &str = "app.inspectPlugin";
+    pub const APP_INSTALL_PLUGIN: &str = "app.installPlugin";
+    pub const APP_REMOVE_PLUGIN: &str = "app.removePlugin";
+    /// Worker side of the above (called by the main process only).
+    pub const PLUGIN_INSPECT: &str = "plugin.inspect";
+    pub const PLUGIN_RESCAN: &str = "plugin.rescan";
+    pub const PLUGIN_ACTIVATE_VERSION: &str = "plugin.activateVersion";
+    pub const PLUGIN_SET_PINNED: &str = "plugin.setPinned";
+    pub const PLUGIN_UNDO_UPGRADE: &str = "plugin.undoUpgrade";
+    pub const PLUGIN_CONFIRM_PERMISSIONS: &str = "plugin.confirmPermissions";
+    pub const SECRETS_LIST: &str = "secrets.list";
+    pub const SECRETS_SET: &str = "secrets.set";
+    pub const SECRETS_DELETE: &str = "secrets.delete";
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct PluginFolderRef {
+    /// Absolute path of a folder that holds one plugin package (`manifest.json` at its top).
+    pub folder: String,
+}
+
+/// What the user is shown before anything is installed (§7.5 "安装插件").
+#[skip_serializing_none]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, optional_fields)]
+pub struct InstallPreview {
+    /// False when the package cannot be installed; `problem` says why and the rest may be empty.
+    pub valid: bool,
+    /// Reason code (`manifest`, `apiVersion`, `idMismatch`, `alreadyInstalled`…) with detail.
+    pub problem: Option<ProtocolError>,
+    pub id: String,
+    pub version: String,
+    pub name: Label,
+    pub description: Label,
+    pub icon: String,
+    pub author: String,
+    /// Everything the manifest asks for; all of it is shown.
+    pub permissions: Vec<PluginPermission>,
+    /// Versions of this plugin already installed.
+    pub installed: Vec<String>,
+    /// Permission ids this version asks for that the confirmed version did not (§7.1).
+    pub added_permissions: Vec<String>,
+    pub provides: PluginProvides,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct PluginVersionParams {
+    pub plugin: String,
+    pub version: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct PluginPinParams {
+    pub plugin: String,
+    pub version: String,
+    pub pinned: bool,
+}
+
+/// Result of switching the active version (§7.6): what the new version took over.
+#[skip_serializing_none]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, optional_fields)]
+pub struct UpgradeResult {
+    /// Id of the takeover batch; absent when nothing had to be taken over.
+    pub batch: Option<String>,
+    /// Resources now bound to the new version.
+    pub upgraded: u32,
+    /// Resources left on their old version because the new one cannot take them over.
+    pub kept: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct UndoUpgradeParams {
+    pub batch: String,
+    /// Resources changed after the upgrade: ids to roll back anyway. Others of that kind stay.
+    #[serde(default)]
+    pub also: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct UndoUpgradeResult {
+    /// Rolled back to the snapshot before the upgrade and bound to the old version again.
+    pub restored: u32,
+    /// Changed after the upgrade and not listed in `also`: left as they are, for the user to decide.
+    pub modified: Vec<NamedRef>,
+}
+
+#[skip_serializing_none]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, optional_fields)]
+pub struct SecretInfo {
+    pub name: String,
+    /// Milliseconds since the epoch.
+    pub updated_at: i64,
+    /// Plugins whose manifest names this secret, and resources that reference it.
+    pub used_by: Vec<String>,
+}
+
+/// The value can only be written; no method reads it back (§12).
+#[derive(Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct SecretSetParams {
+    pub name: String,
+    pub value: String,
+}
+
+impl std::fmt::Debug for SecretSetParams {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SecretSetParams").field("name", &self.name).field("value", &"***").finish()
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct SecretNameParams {
+    pub name: String,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
