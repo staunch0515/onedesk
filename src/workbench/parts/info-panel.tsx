@@ -1,6 +1,61 @@
-import { Badge, IconButton, InfoField, InfoPanel, Input, LoadingState, Pane, Text, Textarea } from "../../design";
+import { useState } from "react";
+import { Badge, Button, IconButton, InfoField, InfoPanel, Input, LoadingState, Pane, Text, Textarea, useToast } from "../../design";
+import type { HistoryEntry } from "../protocol";
 import { useI18n } from "../i18n";
 import { useQuery, useWorkbench } from "../state/context";
+
+const CLIP = 40;
+const clip = (text: string) => (text.length > CLIP ? `${text.slice(0, CLIP)}…` : text);
+
+/** Collapsible change history of a resource, newest first, with restore per entry (§4.2). Read only while open. */
+function HistorySection({ resourceId, readOnly }: { resourceId: string; readOnly: boolean }) {
+  const { client, actions } = useWorkbench();
+  const { t, dateTime } = useI18n();
+  const { toast } = useToast();
+  const [open, setOpen] = useState(false);
+  const history = useQuery((c) => (open ? c.resource.history(resourceId) : Promise.resolve([] as HistoryEntry[])), [resourceId, open], [`resource:${resourceId}`]);
+  const entries = history.data ?? [];
+  return (
+    <InfoField label={t("history.title")}>
+      <Pane gap="sm">
+        <Button size="sm" variant="ghost" icon={open ? "chevron-down" : "chevron-right"} aria-expanded={open} onClick={() => setOpen(!open)}>
+          {open ? t("info.historyHide") : t("info.historyShow")}
+        </Button>
+        {open &&
+          (history.data === undefined ? (
+            <LoadingState layout="inline" label={t("common.loading")} />
+          ) : entries.length === 0 ? (
+            <Text size="sm" tone="muted">
+              {t("info.historyEmpty")}
+            </Text>
+          ) : (
+            entries.map((h) => (
+              <Pane key={h.id} gap="xs">
+                <Text size="xs" tone="muted" tabular>{`${dateTime(h.at)} · ${h.actor}`}</Text>
+                <Pane direction="row" gap="xs" align="center" wrap>
+                  <Text size="sm" weight="medium">{h.field}</Text>
+                  {h.restoredFrom && <Badge icon="undo-2">{t("history.restored")}</Badge>}
+                </Pane>
+                <Text size="xs" mono truncate>{`${clip(h.before)} → ${clip(h.after)}`}</Text>
+                {!readOnly && (
+                  <Pane direction="row">
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      icon="undo-2"
+                      onClick={() => client.resource.restore(resourceId, h.id).then(() => toast({ tone: "success", title: t("history.restoredToast", { field: h.field, value: clip(h.before) }) }), actions.fail)}
+                    >
+                      {t("history.restore")}
+                    </Button>
+                  </Pane>
+                )}
+              </Pane>
+            ))
+          ))}
+      </Pane>
+    </InfoField>
+  );
+}
 
 /** Frame-owned info about a resource (§9.3): name, location, description, tags, created / modified. */
 export function InfoPanelPart({ resourceId }: { resourceId: string }) {
@@ -93,6 +148,7 @@ export function InfoPanelPart({ resourceId }: { resourceId: string }) {
       <InfoField label={t("info.revision")}>
         <Text size="sm" tabular>{String(res.rev)}</Text>
       </InfoField>
+      <HistorySection resourceId={resourceId} readOnly={res.readOnly} />
     </>
   );
 

@@ -1,7 +1,7 @@
 import { createContext, useContext, useMemo, type ReactNode } from "react";
 import { kernelErrorCode, type Label, type Locale } from "../protocol";
 import { enUS, type MessageKey } from "./en-US";
-import { AUDIT_OPERATIONS, interpolate, KERNEL_ERRORS, KERNEL_LABELS } from "./kernel-texts";
+import { AUDIT_OPERATIONS, interpolate, KERNEL_CONFIRMS, KERNEL_ERRORS, KERNEL_LABELS } from "./kernel-texts";
 import { zhCN } from "./zh-CN";
 
 const TABLES: Record<Locale, Partial<Record<MessageKey, string>>> = { "en-US": enUS, "zh-CN": zhCN };
@@ -19,12 +19,27 @@ export interface I18n {
   tx: (label: Label | undefined) => string;
   /** A failed protocol call as a sentence: by error code for the kernel (D219), else the error's own message. */
   error: (error: unknown) => string;
+  /** Title and confirm-button words for a kernel `confirm` message key; undefined for other messages. */
+  confirmTexts: (label: Label | undefined) => { title: string; ok: string } | undefined;
   /** An audit operation id as words. */
   operation: (id: string) => string;
   dateTime: (at: number) => string;
   time: (at: number) => string;
   number: (n: number) => string;
   duration: (ms: number) => string;
+}
+
+/** What a kernel text key looks like (`node.rename`, `core:group`); plain words and names do not match. */
+const KEY_LIKE = /^[a-z][A-Za-z0-9]*(\.[A-Za-z0-9]+)+$|^core:[a-z-]+$/;
+const warned = new Set<string>();
+
+/** A kernel key without a word is shown as it is, but a developer should hear about it. */
+function warnMissing(label: string): string {
+  if (import.meta.env.DEV && KEY_LIKE.test(label) && !warned.has(label)) {
+    warned.add(label);
+    console.warn(`[i18n] no text for kernel key "${label}" (add it to src/workbench/i18n/kernel-texts.ts)`);
+  }
+  return label;
 }
 
 function build(locale: Locale): I18n {
@@ -39,11 +54,12 @@ function build(locale: Locale): I18n {
       const text: string = table[key] ?? enUS[key];
       return vars ? text.replace(/\{(\w+)\}/g, (whole: string, name: string) => (name in vars ? String(vars[name]) : whole)) : text;
     },
-    tx: (label) => (label === undefined ? "" : typeof label === "string" ? (KERNEL_LABELS[locale][label] ?? KERNEL_LABELS["en-US"][label] ?? label) : (label[locale] ?? label["en-US"] ?? "")),
+    confirmTexts: (label) => (typeof label === "string" ? (KERNEL_CONFIRMS[locale][label] ?? KERNEL_CONFIRMS["en-US"][label]) : undefined),
+    tx: (label) => (label === undefined ? "" : typeof label === "string" ? (KERNEL_LABELS[locale][label] ?? KERNEL_LABELS["en-US"][label] ?? warnMissing(label)) : (label[locale] ?? label["en-US"] ?? "")),
     error: (error) => {
       const known = kernelErrorCode(error);
-      const reasoned = known?.params.reason ? `${known.code}.${known.params.reason}` : undefined;
-      const pick = (table: Record<string, string>) => (reasoned ? table[reasoned] : undefined) ?? (known ? table[known.code] : undefined);
+      const reason = known?.params.reason;
+      const pick = (table: Record<string, string>) => (known && reason ? (table[`${known.code}.${reason}`] ?? table[`reason.${reason}`]) : undefined) ?? (known ? table[known.code] : undefined);
       const text = known && (pick(KERNEL_ERRORS[locale]) ?? pick(KERNEL_ERRORS["en-US"]));
       if (known && text) return interpolate(text, known.params);
       return error instanceof Error ? error.message : String(error);

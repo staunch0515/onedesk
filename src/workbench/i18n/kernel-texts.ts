@@ -25,12 +25,15 @@ export const KERNEL_LABELS: Record<Locale, Table> = {
     favorites: "Favorites",
     deleted: "Deleted",
     "env.newChild": "New environment",
+    "config.newChild": "New configuration",
     "node.favorite": "Add to favorites",
     "node.unfavorite": "Remove from favorites",
     "deleted.restore": "Restore",
     "deleted.purge": "Delete permanently…",
     "open.audit": "Open audit log",
     "open.deleted": "Open deleted items",
+    "deleted.purge.confirm":
+      "Delete this permanently? This cannot be undone. The resource and its whole history are erased. Copies in the startup snapshots (backups/) may remain there until they are rotated out.",
   },
   "zh-CN": {
     "node.open": "打开",
@@ -49,12 +52,15 @@ export const KERNEL_LABELS: Record<Locale, Table> = {
     favorites: "收藏",
     deleted: "已删除",
     "env.newChild": "新建环境",
+    "config.newChild": "新建配置",
     "node.favorite": "加入收藏",
     "node.unfavorite": "取消收藏",
     "deleted.restore": "恢复",
     "deleted.purge": "永久删除…",
     "open.audit": "打开审计",
     "open.deleted": "打开已删除",
+    "deleted.purge.confirm":
+      "永久删除？此操作不可撤销：这条资源及其全部历史都会被清除。启动快照（backups/）里可能仍保留一份，直到被轮换掉。",
   },
 };
 
@@ -74,6 +80,11 @@ export const KERNEL_ERRORS: Record<Locale, Table> = {
     internal: "Something went wrong inside the workspace service.",
     "invalid.duplicateName": "“{name}” is already used by another configuration node in this chain.",
     "invalid.secretUnsupported": "Secret parameters are not supported yet.",
+    "reason.changedOnDisk": "The file changed on disk after you opened it.",
+    "reason.helloFirst": "The connection was not initialised.",
+    "reason.notLoaded": "The plugin is not loaded.",
+    "reason.providedTree": "This tree is provided by a plugin and cannot be changed here.",
+    "reason.unknownKind": "This type is not known.",
     "invalid.tooLarge": "That is too large.",
     "invalid.notText": "That is not text.",
   },
@@ -92,6 +103,11 @@ export const KERNEL_ERRORS: Record<Locale, Table> = {
     internal: "工作区服务内部出错。",
     "invalid.duplicateName": "“{name}”已被这条链上的另一个配置节点使用。",
     "invalid.secretUnsupported": "暂不支持密钥参数。",
+    "reason.changedOnDisk": "你打开之后，文件在硬盘上被改过。",
+    "reason.helloFirst": "连接还没有初始化。",
+    "reason.notLoaded": "插件没有加载。",
+    "reason.providedTree": "这棵树由插件提供，不能在这里修改。",
+    "reason.unknownKind": "不认识这个类型。",
     "invalid.tooLarge": "内容太大。",
     "invalid.notText": "不是文本。",
   },
@@ -118,6 +134,8 @@ export const AUDIT_OPERATIONS: Record<Locale, Table> = {
     "params.unset": "Remove parameter value",
     "params.acknowledge": "Accept inherited value",
     "workspace.setConfig": "Change configuration",
+    "workspace.startup": "Workspace startup",
+    "resource.move": "Move resource",
     "file.write": "Write file",
     "plugin.grantFolder": "Grant folder",
     "plugin.revokeFolder": "Revoke folder",
@@ -143,6 +161,8 @@ export const AUDIT_OPERATIONS: Record<Locale, Table> = {
     "params.unset": "移除参数值",
     "params.acknowledge": "接受继承值",
     "workspace.setConfig": "修改配置",
+    "workspace.startup": "工作区启动",
+    "resource.move": "移动资源",
     "file.write": "写入文件",
     "plugin.grantFolder": "授权文件夹",
     "plugin.revokeFolder": "撤销授权",
@@ -153,4 +173,10 @@ export const AUDIT_OPERATIONS: Record<Locale, Table> = {
     "secrets.read": "读取密钥",
     "data.export": "导出数据",
   },
+};
+
+/** Title and confirm-button words for the kernel's `confirm` effects, by message key. */
+export const KERNEL_CONFIRMS: Record<Locale, Record<string, { title: string; ok: string }>> = {
+  "en-US": { "deleted.purge.confirm": { title: "Delete permanently?", ok: "Delete permanently" } },
+  "zh-CN": { "deleted.purge.confirm": { title: "永久删除？", ok: "永久删除" } },
 };
