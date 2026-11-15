@@ -397,3 +397,5 @@
 - **D267** 清单 v2 的本周子集见 `week1-protocol.md` §6；文字是键，语言文件在包内（`locales/<语言>.json`），`en-US` 必须有。
 - **D268** 插件代码一侧的接口本周子集见 `week1-protocol.md` §7：`pages.handle`（`render`、`save`）、`trees.handle`（`children`、`path`）、`commands.handle`；`ctx.host` 的 `resources`、`files`、`ui`；`ctx.t`。`resources` 本周读写都只限自己的类型（依赖导出留到阶段 3）。`files` 本周只有“用户授权的文件夹”一种范围。
 - **D269** 新依赖（规则 9）：`rquickjs` 0.14（MIT，JS 沙箱）、`tokio`（MIT，异步与套接字）、`ts-rs` 12（MIT，类型生成）、`tokio-tungstenite`（MIT，开发用 WebSocket）、`futures-util`（MIT/Apache-2.0）、`semver`（MIT/Apache-2.0）、`serde_with`（MIT/Apache-2.0，省略空字段，替代方案是每个字段手写属性）、`tempfile`、`libc`（MIT/Apache-2.0，测试）。前四个已在 §14 预先列出，阶段 0 已核对许可证。各任务另加的依赖在合并时补记于此。
+- **D270** 提供树里可展开的节点（容器）没有给打开目标时，内核不替它补页面目标；只有叶子节点才按树声明的页面补。（验收时发现文件夹被当成文件打开。）
+- **D271** 插件命令返回的效果只允许 `open`（目标合法）、`toast`、`reveal`、`rename`、`close-target`、`copy`、`reload`；`pick-folder`、`confirm` 一律拒绝。被拒绝的宿主调用也写一行失败的审计。（审查 #3、#4。）
