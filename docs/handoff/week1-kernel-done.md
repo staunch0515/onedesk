@@ -109,3 +109,17 @@ sh scripts/gen-types.sh --check      # = pnpm check:types
 - 没有在 Apple Silicon 上编译过（这台是 Intel）。
 - 没有经主进程（`onedesk-host`）两跳的端到端测试：那是外壳分支的事；工作进程侧的命令行、退出码、断开即退出都有进程级测试。
 - 套接字路径长度由调用方保证（≤103 字节），工作进程不检查，超长时 `bind` 失败、退出码 1。
+
+## 审查后的修改（`docs/handoff/week1-review.md` 中标给内核会话的各条）
+
+先合并了 `claude/week1-slice-3b4ae5`（无冲突）。五条全部修了，没有只记 todo 的。
+
+| # | 修改 | 测试 |
+|---|---|---|
+| 2 | `files.writeText` 的写盘和审计放进一个单独的 tokio 任务（`tokio::spawn`）。插件调用超时或被取消只是不再等结果，这个任务照样跑完，写了盘就一定有审计行 | `tests/plugins.rs::file_write_finished_after_call_timeout_is_still_audited`：用 FIFO 让写入前的 basis 读取卡住，调用以 `pluginTimeout` 结束，之后放行，文件已改且 audit 有 `files.write` 行 |
+| 3 | 宿主调用被拒（`denied`）时，经写入管线的新命令 `Command::Refused` 单独写一行审计（`result = failed:denied`，操作者是插件，`op` 是宿主方法名，`object` 是第一个参数里的 id、路径或 kind）。插件调用的权限检查都在进入管线之前，所以不会重复记 | `refused_host_calls_are_audited`：越权的 `resources.update`、授权范围外的 `files.readText`、没有声明的 `files.roots` 各多一行失败审计 |
+| 4 | 插件命令返回的效果：`pick-folder`、`confirm` 一律拒绝；`open` 的目标必须是 §9.1 的写法；违反即 `pluginError`（`reason = "badOutput"`），一个都不交给界面 | `plugin_commands_cannot_return_consent_effects_or_bad_targets` |
+| 6 | 授权改为写入线程里一个事务内的“读-改-写”（新命令 `Command::Grant {plugin, folder, add}`）；没变化不记 | `tests/pipeline.rs::concurrent_grants_lose_nothing_and_make_one_state_node`：8 个并发授权，全部保留，只有一个状态节点 |
+| 8 | `page.save` 的 `node:` 目标若不是提供树，返回 `notFound` | `page_save_on_a_node_of_a_stored_tree_is_not_found` |
+
+结果：`cargo test -p onedesk-kernel -p onedesk-worker` 共 51 个测试全部通过（新增 5 个）；`cargo clippy -p onedesk-kernel -p onedesk-worker --all-targets -- -D warnings` 无警告。#7（改名前目录被换成符号链接）按审查意见留在 todo，没有动。

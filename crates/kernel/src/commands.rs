@@ -3,11 +3,19 @@
 use onedesk_protocol::*;
 use serde_json::{json, Value};
 
-use crate::kernel::{node_target, url_encode, Inner, GRANTS_KEY};
+use crate::kernel::{node_target, url_encode, Inner};
 use crate::manifest::Registry;
-use crate::pipeline::{Actor, Changes, Command, NewResource};
-use crate::store::{self, KIND_GROUP, KIND_PLUGIN_STATE};
+use crate::pipeline::{Actor, Command};
+use crate::store::{self, KIND_GROUP};
 use crate::util::*;
+
+fn bad_effects(detail: String) -> onedesk_protocol::ProtocolError {
+    onedesk_protocol::ProtocolError {
+        code: ErrorCode::PluginError,
+        params: [("reason".to_string(), "badOutput".to_string())].into(),
+        detail: Some(detail),
+    }
+}
 
 impl Inner {
     pub async fn command(&self, p: CommandExecuteParams, client: Option<String>) -> KResult<Vec<CommandEffect>> {
@@ -90,7 +98,21 @@ impl Inner {
                 let context = serde_json::to_value(&c).map_err(internal)?;
                 let out = self.call_plugin(pid, "commands", name, "", json!([ctx, context]), client).await?;
                 let out = if out.is_null() { json!([]) } else { out };
-                serde_json::from_value(out).map_err(|e| err_d(ErrorCode::PluginError, format!("bad effects: {e}")))
+                let effects: Vec<CommandEffect> = serde_json::from_value(out).map_err(|e| bad_effects(e.to_string()))?;
+                // A plugin's command may not ask for consent dialogs (folder grants, confirmations)
+                // on anyone's behalf, and may only open real targets.
+                for e in &effects {
+                    match e {
+                        CommandEffect::Open { target } if !crate::pages::is_target(target) => {
+                            return Err(bad_effects(format!("bad open target {target}")))
+                        }
+                        CommandEffect::PickFolder { .. } | CommandEffect::Confirm { .. } => {
+                            return Err(bad_effects("effect not allowed from a plugin command".into()))
+                        }
+                        _ => {}
+                    }
+                }
+                Ok(effects)
             }
         }
     }
@@ -100,32 +122,10 @@ impl Inner {
         Ok(PluginGrants { plugin: plugin.into(), folders: self.folder_grants(plugin)? })
     }
 
-    async fn set_grants(&self, plugin: &str, folders: Vec<String>) -> KResult<()> {
-        let value = json!(folders);
-        match self.read(|c| store::plugin_state(c, plugin))? {
-            Some(r) => {
-                let mut changes = Changes::default();
-                changes.body.insert(GRANTS_KEY.into(), value);
-                self.execute(Actor::User, Command::Update { id: r.id, changes, basis: None }).await?;
-            }
-            None => {
-                let mut body = JsonMap::new();
-                body.insert(GRANTS_KEY.into(), value);
-                self.execute(
-                    Actor::User,
-                    Command::Create(NewResource {
-                        kind: KIND_PLUGIN_STATE.into(),
-                        tree: None,
-                        parent: None,
-                        name: plugin.into(),
-                        description: String::new(),
-                        tags: vec![],
-                        body,
-                        plugin_version: None,
-                    }),
-                )
-                .await?;
-            }
+    async fn set_grant(&self, plugin: &str, folder: String, add: bool) -> KResult<()> {
+        let out = self.execute(Actor::User, Command::Grant { plugin: plugin.into(), folder, add }).await?;
+        if !out.changed {
+            return Ok(());
         }
         // Trees the plugin provides may now show different roots.
         if let Some(p) = self.registry.plugin(plugin) {
@@ -149,22 +149,16 @@ impl Inner {
             return Err(invalid("notFolder"));
         }
         let canon = std::fs::canonicalize(path).map_err(internal)?.display().to_string();
-        let mut folders = self.folder_grants(&p.plugin)?;
-        if !folders.contains(&canon) {
-            folders.push(canon);
-            self.set_grants(&p.plugin, folders).await?;
-        }
+        self.set_grant(&p.plugin, canon, true).await?;
         self.grants_of(&p.plugin)
     }
 
     pub async fn revoke_folder(&self, p: PluginFolderParams) -> KResult<PluginGrants> {
         self.registry.plugin(&p.plugin).ok_or_else(|| not_found("plugin"))?;
         let canon = std::fs::canonicalize(&p.path).map(|c| c.display().to_string()).unwrap_or_else(|_| p.path.clone());
-        let mut folders = self.folder_grants(&p.plugin)?;
-        let before = folders.len();
-        folders.retain(|f| f != &canon && f != &p.path);
-        if folders.len() != before {
-            self.set_grants(&p.plugin, folders).await?;
+        self.set_grant(&p.plugin, canon.clone(), false).await?;
+        if canon != p.path {
+            self.set_grant(&p.plugin, p.path.clone(), false).await?;
         }
         self.grants_of(&p.plugin)
     }

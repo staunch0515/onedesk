@@ -42,12 +42,29 @@ impl Inner {
     pub async fn host_call(&self, plugin_id: &str, info: &CallInfo, method: &str, args: Value) -> KResult<Value> {
         let plugin = self.registry.plugin(plugin_id).ok_or_else(|| internal("plugin gone"))?;
         let (cap, op) = method.split_once('.').ok_or_else(|| err_p(ErrorCode::UnknownMethod, &[("method", method)]))?;
-        match cap {
+        let res = match cap {
             "resources" => self.host_resources(plugin, op, &args).await,
             "files" => self.host_files(plugin, op, &args).await,
             "ui" => self.host_ui(info, op, &args),
             _ => Err(err_p(ErrorCode::UnknownMethod, &[("method", method)])),
+        };
+        // A refused call is audited on its own (§4.3). Refusals inside the pipeline never happen
+        // for plugin calls (the checks above come first), so nothing is recorded twice.
+        if let Err(e) = &res {
+            if e.code == ErrorCode::Denied {
+                let object = args.get(0).and_then(|a| a.as_str().map(String::from).or_else(|| {
+                    a.get("kind").and_then(Value::as_str).map(String::from)
+                }));
+                let _ = self
+                    .pipeline
+                    .execute(
+                        plugin.actor(),
+                        Command::Refused { op: method.into(), object: object.unwrap_or_default(), error: e.clone() },
+                    )
+                    .await;
+            }
         }
+        res
     }
 
     /* ---------------------------------------------------------------- resources */
@@ -196,21 +213,29 @@ impl Inner {
                 let text = arg_str(args, 1, "text")?;
                 let basis = arg(args, 2).get("basis").and_then(Value::as_str).map(String::from);
                 let len = text.len();
-                let res = blocking(Box::new(move || {
-                    let (path, basis) = crate::files::write_text(&grants, &p, &text, basis.as_deref())?;
-                    Ok(json!({ "path": path.display().to_string(), "basis": basis }))
-                }))
-                .await?;
-                let path = res["path"].as_str().unwrap_or_default().to_string();
-                self.execute(
-                    plugin.actor(),
-                    Command::Audit { op: "files.write".into(), object: path, summary: json!({ "bytes": len }) },
-                )
-                .await?;
+                let me = self.me.upgrade().ok_or_else(|| internal("kernel stopped"))?;
+                let actor = plugin.actor();
+                // Writing and auditing run in their own task: if the plugin call times out or is
+                // cancelled meanwhile, a file that was written is still audited (review #2).
+                let task = tokio::spawn(async move {
+                    let (path, basis) = tokio::task::spawn_blocking(move || {
+                        crate::files::write_text(&grants, &p, &text, basis.as_deref())
+                    })
+                    .await
+                    .map_err(internal)??;
+                    let path = path.display().to_string();
+                    me.execute(
+                        actor,
+                        Command::Audit { op: "files.write".into(), object: path.clone(), summary: json!({ "bytes": len }) },
+                    )
+                    .await?;
+                    Ok::<_, ProtocolError>(basis)
+                });
+                let basis = task.await.map_err(internal)??;
                 for t in plugin.manifest.contributes.trees.iter().filter(|t| t.source == TreeSource::Provided) {
                     self.emit(format!("{}{}", topic::TREE, plugin.full(&t.id)), None, None);
                 }
-                Ok(json!({ "basis": res["basis"] }))
+                Ok(json!({ "basis": basis }))
             }
             _ => Err(err_p(ErrorCode::UnknownMethod, &[("method", &format!("files.{op}"))])),
         }

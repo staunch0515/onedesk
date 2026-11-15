@@ -10,6 +10,7 @@ use serde_json::{json, Value};
 
 const GAMMA: &str = r#"
 export default { activate(host) {
+  host.commands.handle("fx", async (ctx, context) => context.args.effects);
   host.pages.handle("p", { async render(ctx) {
     const k = ctx.node.key;
     const text = (id, v) => ({ view: [{ type: "text", id, text: typeof v === "string" ? v : JSON.stringify(v) }] });
@@ -50,10 +51,16 @@ fn tree(id: &str, page: &str) -> Value {
 }
 
 async fn setup() -> (Env, Client) {
+    setup_with(test_config()).await
+}
+
+async fn setup_with(cfg: onedesk_kernel::KernelConfig) -> (Env, Client) {
     let tmp = tempfile::tempdir().unwrap();
-    let plugins = plugins_with(tmp.path(), &[("test.gamma", tree("t", "p"), GAMMA), ("test.delta", tree("t2", "p2"), DELTA)]);
+    let mut gamma = tree("t", "p");
+    gamma["commands"] = json!([{ "id": "fx", "label": "fx" }]);
+    let plugins = plugins_with(tmp.path(), &[("test.gamma", gamma, GAMMA), ("test.delta", tree("t2", "p2"), DELTA)]);
     std::fs::write(plugins.join("test.gamma/0.1.0/helper.js"), "export const x = 1;").unwrap();
-    let env = open_in(tmp, &plugins);
+    let env = open_with(tmp, &plugins, cfg);
     let c = Client::in_proc(env.kernel.clone());
     c.hello().await;
     (env, c)
@@ -257,4 +264,81 @@ async fn unknown_or_undeclared_commands_are_not_found() {
         let e = c.call("command.execute", json!({ "id": id })).await.unwrap_err();
         assert_eq!(e.code, ErrorCode::NotFound, "{id}");
     }
+}
+
+fn audit_rows(env: &Env, sql: &str) -> Vec<(String, String, String)> {
+    let conn = rusqlite::Connection::open(env.kernel.db_path()).unwrap();
+    let mut st = conn.prepare(sql).unwrap();
+    st.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))).unwrap().map(|r| r.unwrap()).collect()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn refused_host_calls_are_audited() {
+    let (env, c, _grant, outside) = files_setup().await;
+    let thing = c.ok("page.save", json!({ "target": "new:test.beta:thing", "changes": { "name": "T" } })).await;
+    let tid = thing["page"]["resourceId"].as_str().unwrap().to_string();
+    assert_eq!(c.probe("test.alpha", "resources.update", json!([tid, { "name": "x" }])).await["error"], "denied");
+    let secret = outside.join("secret.txt").display().to_string();
+    assert_eq!(c.probe("test.alpha", "files.readText", json!([secret])).await["error"], "denied");
+    assert_eq!(c.probe("test.beta", "files.roots", json!([])).await["error"], "denied");
+    let rows = audit_rows(&env, "SELECT actor, op, object FROM audit WHERE result = 'failed:denied' ORDER BY seq");
+    assert_eq!(
+        rows,
+        vec![
+            ("plugin:test.alpha@0.1.0".into(), "resources.update".into(), tid),
+            ("plugin:test.alpha@0.1.0".into(), "files.readText".into(), secret),
+            ("plugin:test.beta@0.1.0".into(), "files.roots".into(), String::new()),
+        ]
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn plugin_commands_cannot_return_consent_effects_or_bad_targets() {
+    let (_env, c) = setup().await;
+    let run = |effects: Value| {
+        let c = &c;
+        async move { c.call("command.execute", json!({ "id": "test.gamma:fx", "context": { "args": { "effects": effects } } })).await }
+    };
+    for bad in [
+        json!([{ "type": "pick-folder", "plugin": "test.alpha" }]),
+        json!([{ "type": "confirm", "message": "m", "command": "node.delete" }]),
+        json!([{ "type": "open", "target": "https://example.com" }]),
+        json!([{ "type": "toast", "message": "ok" }, { "type": "pick-folder", "plugin": "test.gamma" }]),
+    ] {
+        let e = run(bad.clone()).await.unwrap_err();
+        assert_eq!((e.code, e.params["reason"].as_str()), (ErrorCode::PluginError, "badOutput"), "{bad}");
+    }
+    let ok = json!([{ "type": "open", "target": "resource:x" }, { "type": "toast", "message": "hi" }, { "type": "copy", "text": "t" }, { "type": "reload" }]);
+    assert_eq!(run(ok.clone()).await.unwrap(), ok);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn file_write_finished_after_call_timeout_is_still_audited() {
+    let mut cfg = test_config();
+    cfg.sandbox.call_timeout = Duration::from_millis(500);
+    let (env, c) = setup_with(cfg).await;
+    let grant = env.path().join("g");
+    std::fs::create_dir_all(&grant).unwrap();
+    c.ok("plugin.grantFolder", json!({ "plugin": "test.alpha", "path": grant.display().to_string() })).await;
+    // The basis check reads the file first; a FIFO makes that read wait until we feed it,
+    // so the plugin call times out while the write is still in progress.
+    let fifo = grant.join("slow.txt");
+    assert!(std::process::Command::new("mkfifo").arg(&fifo).status().unwrap().success());
+    let basis = onedesk_kernel::util::fingerprint(b"old");
+    let args = json!({ "method": "files.writeText", "args": [fifo.display().to_string(), "new", { "basis": basis }] });
+    let e = c.call("command.execute", json!({ "id": "test.alpha:probe", "context": { "args": args } })).await.unwrap_err();
+    assert_eq!(e.code, ErrorCode::PluginTimeout);
+    let f2 = fifo.clone();
+    tokio::task::spawn_blocking(move || std::fs::write(f2, "old")).await.unwrap().unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let rows = audit_rows(&env, "SELECT actor, op, object FROM audit WHERE op = 'files.write'");
+        if !rows.is_empty() {
+            assert_eq!(rows[0].2, fifo.display().to_string());
+            break;
+        }
+        assert!(Instant::now() < deadline, "the finished write was never audited");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert_eq!(std::fs::read_to_string(&fifo).unwrap(), "new");
 }
