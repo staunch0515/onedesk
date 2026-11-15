@@ -1,7 +1,7 @@
 import { createContext, useContext, useMemo, type ReactNode } from "react";
 import { kernelErrorCode, type Label, type Locale } from "../protocol";
 import { enUS, type MessageKey } from "./en-US";
-import { interpolate, KERNEL_ERRORS, KERNEL_LABELS } from "./kernel-texts";
+import { AUDIT_OPERATIONS, interpolate, KERNEL_ERRORS, KERNEL_LABELS } from "./kernel-texts";
 import { zhCN } from "./zh-CN";
 
 const TABLES: Record<Locale, Partial<Record<MessageKey, string>>> = { "en-US": enUS, "zh-CN": zhCN };
@@ -19,6 +19,8 @@ export interface I18n {
   tx: (label: Label | undefined) => string;
   /** A failed protocol call as a sentence: by error code for the kernel (D219), else the error's own message. */
   error: (error: unknown) => string;
+  /** An audit operation id as words. */
+  operation: (id: string) => string;
   dateTime: (at: number) => string;
   time: (at: number) => string;
   number: (n: number) => string;
@@ -40,10 +42,13 @@ function build(locale: Locale): I18n {
     tx: (label) => (label === undefined ? "" : typeof label === "string" ? (KERNEL_LABELS[locale][label] ?? KERNEL_LABELS["en-US"][label] ?? label) : (label[locale] ?? label["en-US"] ?? "")),
     error: (error) => {
       const known = kernelErrorCode(error);
-      const text = known && (KERNEL_ERRORS[locale][known.code] ?? KERNEL_ERRORS["en-US"][known.code]);
+      const reasoned = known?.params.reason ? `${known.code}.${known.params.reason}` : undefined;
+      const pick = (table: Record<string, string>) => (reasoned ? table[reasoned] : undefined) ?? (known ? table[known.code] : undefined);
+      const text = known && (pick(KERNEL_ERRORS[locale]) ?? pick(KERNEL_ERRORS["en-US"]));
       if (known && text) return interpolate(text, known.params);
       return error instanceof Error ? error.message : String(error);
     },
+    operation: (id) => AUDIT_OPERATIONS[locale][id] ?? AUDIT_OPERATIONS["en-US"][id] ?? id,
     dateTime: (at) => dt.format(at),
     time: (at) => tm.format(at),
     number: (n) => nf.format(n),

@@ -76,6 +76,8 @@ export interface ProtocolClient {
 
   resource: {
     get(id: string): Promise<Resource | null>;
+    /** Favorite flag (local data, no history). */
+    setFavorite(id: string, favorite: boolean): Promise<void>;
     /** Marks the resource (a group with its descendants) deleted (§3.4). */
     delete(id: string): Promise<void>;
     history(id: string): Promise<HistoryEntry[]>;

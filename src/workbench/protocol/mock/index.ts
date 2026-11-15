@@ -35,7 +35,7 @@ import type {
   ViewField,
   ViewNode,
 } from "../types";
-import { DAY, FILE_ROOTS, HOUR, KINDS, ME, MINUTE, OPERATIONS, SEED_FAVORITES, fmtDate, fmtDateTime, generateTable, prng, seedAudit, seedPlugins, seedRows, type FakeFile, type ParamValue, type PluginRow, type Row, type Sim } from "./data";
+import { type MockAuditRow, DAY, FILE_ROOTS, HOUR, KINDS, ME, MINUTE, OPERATIONS, SEED_FAVORITES, fmtDate, fmtDateTime, generateTable, prng, seedAudit, seedPlugins, seedRows, type FakeFile, type ParamValue, type PluginRow, type Row, type Sim } from "./data";
 
 const DB_KEY = "onedesk.workbench.mock.v3";
 const UI_PREFIX = "onedesk.workbench.ui.";
@@ -44,7 +44,7 @@ type OutSpec = { kind: "table"; dataset: string; rows: number; seed: number } | 
 interface StoredRun extends Omit<Run, "output"> {
   out?: OutSpec;
 }
-interface HistoryRec extends HistoryEntry {
+interface HistoryRec extends Omit<HistoryEntry, "op"> {
   beforeRaw: unknown;
   afterRaw: unknown;
 }
@@ -52,7 +52,7 @@ interface Db {
   rows: Record<string, Row>;
   plugins: PluginRow[];
   runs: StoredRun[];
-  audit: AuditRow[];
+  audit: MockAuditRow[];
   history: Record<string, HistoryRec[]>;
   favorites: string[];
   seq: number;
@@ -622,7 +622,7 @@ export function createMockClient(options: MockOptions = {}): ProtocolClient {
         const nearest = [...above].reverse().find((a) => paramsOf(a)[name]);
         param.layers = above.map((a) => {
           const v = paramsOf(a)[name];
-          return { envId: a.id, name: a.name, value: v ? (v.type === "ref" ? (db.rows[v.value]?.name ?? v.value) : v.value) : null, effective: a.id === nearest?.id };
+          return { envId: a.id, name: a.name, value: v ? (v.type === "ref" ? (db.rows[v.value]?.name ?? v.value) : v.value) : undefined, effective: a.id === nearest?.id };
         });
       }
       if (own && own.based_on !== undefined && parent.found && parent.value !== own.based_on) param.changedUpstream = { was: own.based_on, now: parent.value };
@@ -635,6 +635,7 @@ export function createMockClient(options: MockOptions = {}): ProtocolClient {
       id: env.id,
       name: env.name,
       description: env.description,
+      rev: 1,
       chain: chain.map((c) => ({ id: c.id, name: c.name })),
       params,
       children: childrenOf("environments", env.id).map((c) => ({ id: c.id, name: c.name })),
@@ -1576,9 +1577,16 @@ export function createMockClient(options: MockOptions = {}): ProtocolClient {
         const row = db.rows[id];
         if (row) softDelete(row);
       },
+      async setFavorite(id, favorite) {
+        const row = db.rows[id];
+        if (!row) return;
+        db.favorites = favorite ? [...new Set([...db.favorites, id])] : db.favorites.filter((f) => f !== id);
+        persist();
+        emit("tree:favorites", `tree:${row.tree}`, `resource:${id}`);
+      },
       async history(id) {
         await wait();
-        return (db.history[id] ?? []).map(({ beforeRaw: _b, afterRaw: _a, ...entry }) => ({ ...entry }));
+        return (db.history[id] ?? []).map(({ beforeRaw: _b, afterRaw: _a, ...entry }) => ({ ...entry, op: entry.restoredFrom ? "restore" : "update" }));
       },
       async restore(id, entryId) {
         await wait(30);
@@ -1869,7 +1877,7 @@ export function createMockClient(options: MockOptions = {}): ProtocolClient {
       },
       async facets() {
         await wait(4);
-        return { actors: [...new Set(db.audit.map((a) => a.actor))].sort(), operations: Object.entries(OPERATIONS).map(([value, label]) => ({ value, label })) };
+        return { actors: [...new Set(db.audit.map((a) => a.actor))].sort(), operations: Object.keys(OPERATIONS) };
       },
     },
 

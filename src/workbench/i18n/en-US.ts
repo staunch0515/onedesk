@@ -11,6 +11,8 @@ export const enUS = {
   "common.notifications": "Notifications ({hotkey})",
   "common.notInPrototype": "Not part of this prototype",
   "error.title": "That did not work",
+  "page.envDeletedTitle": "The environment of this tab was deleted",
+  "page.envDeletedBody": "Pick another environment above to run or preview with.",
   "folder.granted": "Folder granted: {path}",
   "folder.title": "Grant a folder",
   "folder.body": "Enter the absolute path of an existing folder. The plugin may then read and write inside it.",

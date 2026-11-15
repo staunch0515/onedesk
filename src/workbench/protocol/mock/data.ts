@@ -870,11 +870,16 @@ export const OPERATIONS: Record<string, Label> = {
   "data.export": { "en-US": "Export data", "zh-CN": "导出数据" },
 };
 
-export function seedAudit(now: number): AuditRow[] {
+/** Demo audit rows carry their own label; the interface words operations by id (`i18n/kernel-texts.ts`). */
+export interface MockAuditRow extends AuditRow {
+  operationLabel: Label;
+}
+
+export function seedAudit(now: number): MockAuditRow[] {
   const rnd = prng(20261115);
   const ops = Object.keys(OPERATIONS);
   const targets = ["今日订单汇总", "慢查询 Top 20", "月度 GMV by channel", "Inactive users (90d)", "正式 Production", "测试 Staging", "shop-prod (MySQL 8.0)", "值班手册 On-call runbook", "Daily revenue", "SQL", "MongoDB"];
-  const rows: AuditRow[] = [];
+  const rows: MockAuditRow[] = [];
   let t = now - 20 * MINUTE;
   for (let i = 0; i < 160; i++) {
     t -= Math.floor(rnd() * 5 * HOUR) + 3 * MINUTE;

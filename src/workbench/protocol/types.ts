@@ -10,7 +10,6 @@ import type {
   CommandEffect as KernelEffect,
   FieldOption,
   Label,
-  NodeState,
   OutputColumn,
   PageContext as KernelPageContext,
   PageDescriptor as KernelPageDescriptor,
@@ -21,6 +20,23 @@ import type {
 export type {
   ActionDecl,
   ActionRole,
+  AuditFacets,
+  AuditFilter,
+  AuditResult,
+  AuditRow,
+  ConfigGetParams,
+  ConfigSetParams,
+  EnvLayer,
+  EnvOption,
+  EnvParam,
+  EnvView,
+  HistoryEntry,
+  InheritedValue,
+  NamedRef,
+  ParamType,
+  ResolvedParam,
+  SearchHit,
+  UpstreamChange,
   CommandExecuteParams,
   ConnectionState,
   Crumb,
@@ -93,18 +109,6 @@ export type Locale = "en-US" | "zh-CN";
 /** Field paths → new values, e.g. `{ "name": "…", "body.sql": "…" }`. One write = one history entry + one audit row (§4). */
 export type ResourcePatch = Record<string, unknown>;
 
-export interface HistoryEntry {
-  id: string;
-  at: number;
-  actor: string;
-  /** Field path that changed. */
-  field: string;
-  before: string;
-  after: string;
-  /** Set when this entry is itself a restore. */
-  restoredFrom?: string;
-}
-
 /* ------------------------------------------------------------------ pages (§9) */
 
 export interface PageEventResult {
@@ -114,61 +118,6 @@ export interface PageEventResult {
 }
 
 /* ------------------------------------------------------------------ params & environments (§6) */
-
-export type ParamType = "text" | "number" | "boolean" | "list" | "secret" | "ref";
-
-export interface EnvParam {
-  name: string;
-  type: ParamType;
-  /** Effective value as text. Secrets give only the keychain entry name. */
-  value: string;
-  /** Display text for refs (resource name). */
-  display?: string;
-  /** Environment that supplies the effective value. */
-  sourceId: string;
-  sourceName: string;
-  /** Defined in this environment (not only inherited). */
-  own: boolean;
-  /** What the parent chain would give without this environment's value. */
-  inherited?: { value: string; sourceName: string };
-  /**
-   * Present when an ancestor defines this parameter (the page shows the icon only when the value is inherited,
-   * not when this environment sets it itself): every ancestor from the root down to the parent with the
-   * value it sets itself (null = not set there). `effective` marks the layer the inherited value comes from.
-   */
-  layers?: Array<{ envId: string; name: string; value: string | null; effective: boolean }>;
-  /** The parent's value changed after this environment overrode it (I.4). */
-  changedUpstream?: { was: string; now: string };
-  /** A wider value here is not in effect because an upper layer is stricter (§6.3). */
-  restricted?: Label;
-  /** Resources that declared this parameter (§6.2). */
-  declaredBy: string[];
-  description?: Label;
-}
-
-export interface EnvView {
-  id: string;
-  name: string;
-  description: string;
-  chain: Array<{ id: string; name: string }>;
-  params: EnvParam[];
-  /** Open tabs are the UI's business; the kernel only reports children. */
-  children: Array<{ id: string; name: string }>;
-}
-
-export interface EnvOption {
-  id: string;
-  name: string;
-  depth: number;
-}
-
-export interface ResolvedParam {
-  name: string;
-  found: boolean;
-  value: string;
-  display: string;
-  sourceName: string;
-}
 
 /* ------------------------------------------------------------------ plugins (§7) */
 
@@ -268,40 +217,6 @@ export interface RunRequest {
 }
 
 /* ------------------------------------------------------------------ search, audit, commands */
-
-export interface SearchHit {
-  target: string;
-  title: string;
-  icon: string;
-  /** Path or kind. */
-  subtitle: string;
-  state: NodeState;
-}
-
-export interface AuditRow {
-  id: string;
-  at: number;
-  actor: string;
-  source: "user" | "plugin" | "scheduled" | "ai" | "system";
-  operation: string;
-  operationLabel: Label;
-  target: string;
-  result: "ok" | "denied" | "error";
-  detail: string;
-}
-
-export interface AuditFilter {
-  sinceMs?: number;
-  actor?: string;
-  operation?: string;
-  result?: string;
-  text?: string;
-}
-
-export interface AuditFacets {
-  actors: string[];
-  operations: Array<{ value: string; label: Label }>;
-}
 
 export interface PaletteCommand {
   id: string;

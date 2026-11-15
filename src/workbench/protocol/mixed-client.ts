@@ -4,8 +4,14 @@ import type { KernelClient } from "./real/real-client";
 
 /** The mock's general resource tree is renamed so it cannot clash with the kernel's `resources` (D265). */
 const DEMO_RESOURCES = "demo:resources";
-/** The mock's file tree is dropped: the real one comes from a plugin. */
-const DROPPED_MOCK_TREES = new Set(["files"]);
+/**
+ * Trees the kernel provides (or a plugin does) are dropped from the demo: files (a plugin's tree),
+ * environments (kernel tree `env`). Config, favorites and deleted have the same ids on both sides,
+ * so the kernel's wins automatically.
+ */
+const DROPPED_MOCK_TREES = new Set(["files", "environments"]);
+/** Demo topics that the kernel words differently. */
+const TOPIC_ALIASES: Record<string, string> = { env: "tree:env", "tree:environments": "tree:env" };
 
 function mapTrees<T>(value: T, fn: (tree: string) => string): T {
   if (Array.isArray(value)) return value.map((v) => mapTrees(v, fn)) as T;
@@ -58,6 +64,8 @@ export function createMixedClient(kernel: KernelClient, mock: ProtocolClient): P
       const tree = decodeURIComponent(target.slice(5).split("/")[0] ?? "");
       return isDemoTree(tree) ? "demo" : "kernel";
     }
+    // `core:audit`, `core:deleted`: kernel pages.
+    if (target.startsWith("core:")) return "kernel";
     return "demo";
   };
 
@@ -73,10 +81,14 @@ export function createMixedClient(kernel: KernelClient, mock: ProtocolClient): P
         if (target.startsWith("resource:")) return demoIds.has(target.slice(9));
         if (target.startsWith("new:")) return isDemoNew(target);
         if (target.startsWith("node:")) return isDemoTree(decodeURIComponent(target.slice(5).split("/")[0] ?? ""));
+        if (target.startsWith("core:")) return false;
         return true;
       },
     },
-    workspace: { ...mock.workspace, info: () => kernel.workspace.info() },
+    workspace: { ...mock.workspace, info: () => kernel.workspace.info(), getConfig: (name) => kernel.workspace.getConfig(name), setConfig: (name, value) => kernel.workspace.setConfig(name, value) },
+    params: kernel.params,
+    search: kernel.search,
+    audit: kernel.audit,
     tree: {
       list: listTrees,
       children: (tree, parent, offset) => (isDemoTree(tree) ? mock.tree.children(toMock({ tree }).tree, parent, offset).then(fromMock) : kernel.tree.children(tree, parent, offset)),
@@ -86,7 +98,17 @@ export function createMixedClient(kernel: KernelClient, mock: ProtocolClient): P
       rename: (tree, key, name) => (isDemoTree(tree) ? mock.tree.rename(toMock({ tree }).tree, key, name) : kernel.tree.rename(tree, key, name)),
     },
     resource: {
-      ...mock.resource,
+      async history(id) {
+        return (await ownerOf(id)) === "kernel" ? kernel.resource.history(id) : mock.resource.history(id);
+      },
+      async restore(id, entryId) {
+        return (await ownerOf(id)) === "kernel" ? kernel.resource.restore(id, entryId) : mock.resource.restore(id, entryId);
+      },
+      async setFavorite(id, favorite) {
+        return (await ownerOf(id)) === "kernel" ? kernel.resource.setFavorite(id, favorite) : mock.resource.setFavorite(id, favorite);
+      },
+      undelete: (id) => kernel.resource.undelete(id),
+      purge: (id) => kernel.resource.purge(id),
       async get(id): Promise<Resource | null> {
         if ((await ownerOf(id)) === "kernel") return kernel.resource.get(id);
         return fromMock(await mock.resource.get(id));
@@ -94,15 +116,14 @@ export function createMixedClient(kernel: KernelClient, mock: ProtocolClient): P
       async delete(id) {
         return (await ownerOf(id)) === "kernel" ? kernel.resource.delete(id) : mock.resource.delete(id);
       },
-      async listDeleted() {
-        return fromMock(await mock.resource.listDeleted());
-      },
+      listDeleted: () => kernel.resource.listDeleted(),
     },
     page: {
       ...mock.page,
       async resolve(target, context) {
         if ((await targetOwner(target)) === "kernel") return kernel.page.resolve(target, context);
-        return fromMock(await mock.page.resolve(target.replace(/[?&]demo=1/, ""), context));
+        // Demo pages know the demo's own environments, not the kernel's: they get none.
+        return fromMock(await mock.page.resolve(target.replace(/[?&]demo=1/, ""), { ...context, envId: null }));
       },
       async save(target, changes, basis, context) {
         if ((await targetOwner(target)) === "kernel") {
@@ -135,7 +156,7 @@ export function createMixedClient(kernel: KernelClient, mock: ProtocolClient): P
     ui: kernel.ui,
     events: {
       subscribe(topic, handler) {
-        const offs = [kernel.events.subscribe(topic, handler), mock.events.subscribe(topic.replace(DEMO_RESOURCES, "resources"), (t, p) => handler(t === "tree:resources" ? `tree:${DEMO_RESOURCES}` : t, p))];
+        const offs = [kernel.events.subscribe(TOPIC_ALIASES[topic] ?? topic, handler), mock.events.subscribe(topic.replace(DEMO_RESOURCES, "resources"), (t, p) => handler(t === "tree:resources" ? `tree:${DEMO_RESOURCES}` : t, p))];
         return () => offs.forEach((off) => off());
       },
     },
