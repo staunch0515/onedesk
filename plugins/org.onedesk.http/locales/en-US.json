@@ -22,5 +22,7 @@
   "error.noUrl": "The address is empty.",
   "error.network": "The request failed",
   "summary.sent": "{status} · {ms} ms · {bytes} bytes",
-  "summary.truncated": " · truncated"
+  "summary.truncated": " · truncated",
+  "field.token": "Token (secret)",
+  "field.token.hint": "Written to the keychain; use {{token}} in the headers."
 }

@@ -61,13 +61,14 @@ describe("http: page", () => {
     const out = await pages.editor.render(ctxOf(fakeHost(), resourceOf({ method: "POST", url: "https://example.com/x", headers: "", body: "" })));
     expect(checkView(out.view)).toEqual([]);
     expect(onlyKeys(out, RENDER_KEYS)).toEqual([]);
-    expect(out.view.map((n: any) => n.id)).toEqual(["line", "headers", "payload"]);
+    expect(out.view.map((n: any) => n.id)).toEqual(["line", "auth", "headers", "payload"]);
+    expect(out.view[1].fields[0]).toMatchObject({ kind: "secret", bind: "body.token" });
     const [method, url] = out.view[0].fields;
     expect(method).toMatchObject({ kind: "enum", bind: "body.method" });
     expect(method.options.map((o: any) => o.value)).toEqual(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]);
     expect(url).toMatchObject({ kind: "text", bind: "body.url" });
-    expect(out.view[1].fields[0]).toMatchObject({ kind: "longtext", bind: "body.headers" });
-    expect(out.view[2].fields[0]).toMatchObject({ kind: "longtext", bind: "body.body", fill: true });
+    expect(out.view[2].fields[0]).toMatchObject({ kind: "longtext", bind: "body.headers" });
+    expect(out.view[3].fields[0]).toMatchObject({ kind: "longtext", bind: "body.body", fill: true });
   });
 
   it("render: parameter strip from all three fields (and the unsaved draft), with environment values", async () => {
@@ -184,6 +185,17 @@ describe("http: send action", () => {
   });
 });
 
+describe("http: the token field", () => {
+  it("{{token}} becomes {{secret:<saved name>}} when the resource has a token reference; otherwise it is left alone", async () => {
+    const host = fakeHost();
+    await registry(plugin).actions.send(ctxOf(host, { resource: { id: "r1", body: { token: { secret: "r1.token" } } } }), { "body.method": "GET", "body.url": "https://e.com", "body.headers": "Authorization: Bearer {{token}}", "body.body": "" });
+    expect(host.network.request.mock.calls[0]![0].headers).toEqual({ Authorization: "Bearer {{secret:r1.token}}" });
+    const h2 = fakeHost();
+    await registry(plugin).actions.send(ctxOf(h2, resourceOf({})), { "body.method": "GET", "body.url": "https://e.com", "body.headers": "A: {{token}}", "body.body": "" });
+    expect(h2.network.request.mock.calls[0]![0].headers).toEqual({ A: "{{token}}" });
+  });
+});
+
 describe("http: package", () => {
   it("every text key the code and manifest use exists in both locale files with the same key set", () => {
     const code = readFileSync(new URL("./main.js", import.meta.url), "utf8");
@@ -201,5 +213,7 @@ describe("http: package", () => {
     const m = JSON.parse(readFileSync(new URL("./manifest.json", import.meta.url), "utf8"));
     expect(m.requires.network).toEqual({ fromResources: true });
     expect(m.contributes.kinds[0].fields.url).toEqual({ type: "text", grants: "network" });
+    expect(m.contributes.kinds[0].fields.token).toEqual({ type: "secret" });
+    expect(m.requires.secrets).toEqual({ names: ["api-token"], plaintext: false });
   });
 });

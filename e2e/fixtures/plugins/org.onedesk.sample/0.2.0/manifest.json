@@ -167,5 +167,5 @@
       "zh-CN": "locales/zh-CN.json"
     }
   },
-  "upgradesFrom": ">=0.1.0 <0.2.0"
+  "upgradesFrom": ">=0.1.0, <0.2.0"
 }

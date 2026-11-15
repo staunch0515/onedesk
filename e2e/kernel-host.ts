@@ -27,7 +27,7 @@ export async function startHost(dataDir: string): Promise<Host> {
   const token = randomBytes(16).toString("hex");
   const proc = spawn(DEVHOST, ["--data-dir", dataDir, "--port", String(port), "--token", token, "--plugins", path.join(ROOT, "plugins")], {
     cwd: ROOT,
-    env: { ...process.env, ONEDESK_DATA_DIR: dataDir },
+    env: { ...process.env, ONEDESK_DATA_DIR: dataDir, ONEDESK_SECRET_STORE: "memory" }, // never the real keychain
     stdio: ["ignore", "pipe", "pipe"],
   });
   let err = "";

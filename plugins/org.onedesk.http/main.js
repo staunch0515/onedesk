@@ -131,6 +131,12 @@ export default {
 
         view.push({
           type: "form",
+          id: "auth",
+          layout: "strip",
+          fields: [withRO({ name: "token", label: ctx.t("field.token"), kind: "secret", bind: "body.token", hint: ctx.t("field.token.hint") })],
+        });
+        view.push({
+          type: "form",
           id: "headers",
           layout: "stack",
           fields: [withRO({ name: "headers", label: ctx.t("field.headers"), kind: "longtext", bind: "body.headers", placeholder: ctx.t("field.headers.placeholder") })],
@@ -178,6 +184,13 @@ export default {
         body: String((input && input["body.body"]) || ""),
       };
       if (!raw.url.trim()) throw new Error(tr(ctx, "error.noUrl"));
+
+      // {{token}} stands for the secret saved in this request's token field (its name is in the resource body).
+      const ref = ctx.resource && ctx.resource.body && ctx.resource.body.token;
+      const alias = (text) => (ref && typeof ref.secret === "string" ? text.split("{{token}}").join(`{{secret:${ref.secret}}}`) : text);
+      raw.url = alias(raw.url);
+      raw.headers = alias(raw.headers);
+      raw.body = alias(raw.body);
 
       const values = {};
       for (const name of paramNames(raw.url, raw.headers, raw.body)) values[name] = await valueOf(ctx, name);
