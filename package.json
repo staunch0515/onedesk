@@ -14,6 +14,8 @@
     "dev": "vite",
     "build": "tsc -p . && vite build",
     "preview:web": "vite --port 1421 --strictPort",
+    "prototype": "vite --port 1431 --strictPort --open /workbench.html",
+    "prototype:build": "node scripts/build-prototype.mjs",
     "tauri": "tauri",
     "typecheck": "tsc -p .",
     "lint": "node scripts/check-arch.mjs && node scripts/check-ui.mjs",

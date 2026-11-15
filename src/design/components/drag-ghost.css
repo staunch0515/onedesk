@@ -1,0 +1,38 @@
+.od-drag-ghost {
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: var(--z-tooltip);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1-5);
+  max-width: var(--tooltip-max-width);
+  height: var(--control-height-sm);
+  padding: 0 var(--space-2);
+  border: var(--border-width) solid var(--accent-border);
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated);
+  color: var(--fg-default);
+  font-size: var(--text-sm);
+  box-shadow: var(--shadow-md);
+  pointer-events: none;
+  transform: translate(calc(var(--od-ghost-x) + var(--drag-ghost-offset)), calc(var(--od-ghost-y) + var(--drag-ghost-offset)));
+}
+
+.od-drag-ghost__label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.od-drag-ghost--denied {
+  border-color: var(--danger-border);
+  background: var(--danger-subtle);
+  color: var(--danger-text);
+}
+
+.od-drag-ghost__denied {
+  flex: none;
+  font-weight: var(--weight-medium);
+}

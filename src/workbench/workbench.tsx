@@ -1,0 +1,229 @@
+import { useEffect, useMemo } from "react";
+import { ActivityBar, Button, CommandPalette, Dialog, Sized, Splitter, WorkbenchFrame, WorkbenchMain, useTheme, type CommandGroup } from "../design";
+import { LOCALES, useI18n } from "./i18n";
+import { NoTabs, PageHost } from "./parts/page-host";
+import { TreePanel } from "./parts/side-panel";
+import { StatusBarPart, type Settings } from "./parts/status-bar";
+import { TabsPart } from "./parts/tabs";
+import { TaskPanel } from "./parts/task-panel";
+import { TopBarPart } from "./parts/top-bar";
+import { useResize } from "./parts/hooks";
+import { useQuery, useUi, useWorkbench } from "./state/context";
+
+export interface WorkbenchProps {
+  settings: Settings;
+  onSetting: (name: "ui.language" | "ui.theme" | "ui.density", value: string) => void;
+}
+
+/** The whole window: top bar, activity bar, side panel, tabs + page, status bar (I.8). */
+export function Workbench({ settings, onSetting }: WorkbenchProps) {
+  const { client, store, actions } = useWorkbench();
+  const { t, tx } = useI18n();
+  const { resolvedTheme } = useTheme();
+  const trees = useQuery((c) => c.tree.list(), []);
+  const palette = useQuery((c) => c.command.palette(), []);
+  const newItems = useQuery((c) => c.command.newItems(), []);
+  const activity = useUi((s) => s.activity);
+  const sideOpen = useUi((s) => s.sideOpen);
+  const sideWidth = useUi((s) => s.sideWidth);
+  const tasksOpen = useUi((s) => s.tasksOpen);
+  const paletteOpen = useUi((s) => s.paletteOpen);
+  const confirmClose = useUi((s) => s.confirmClose);
+  const tabs = useUi((s) => s.tabs);
+  const activeTab = useUi((s) => s.tabs.find((x) => x.id === s.activeTabId) ?? null);
+  const running = useQuery((c) => c.run.tasks(), [], ["runs"]);
+  const sideResize = useResize("sideWidth", 1);
+
+  const tree = trees.data?.find((x) => x.id === activity) ?? trees.data?.[0];
+  const firstNew = newItems.data?.find((i) => !i.disabled)?.id;
+  const newDefault = () => {
+    if (firstNew) void actions.command(firstNew, { tree: activity, nodeKey: store.get().selected[activity] ?? null });
+  };
+
+  const openSettings = async () => {
+    store.set({ activity: "config", sideOpen: true });
+    try {
+      const nodes = await client.tree.children("config", null);
+      const preferred = nodes.find((n) => n.key.includes("appearance")) ?? nodes.find((n) => n.target);
+      if (preferred?.target) actions.open(preferred.target);
+    } catch (error) {
+      actions.fail(error);
+    }
+  };
+
+  // Restored tabs get their name and icon without having to be activated first.
+  useEffect(() => {
+    for (const tab of store.get().tabs) {
+      if (tab.title) continue;
+      client.page.resolve(tab.target, { envId: tab.envId }).then((d) => actions.updateTab(tab.id, { title: d.title, icon: d.icon, usesEnv: d.usesEnv, missing: !d.found }), () => undefined);
+    }
+  }, [client, store, actions, tabs.length]);
+
+  // Tabs in the background follow renames and deletions of their resource.
+  const resourceTargets = tabs.filter((x) => x.target.startsWith("resource:")).map((x) => x.target).join("|");
+  useEffect(() => {
+    if (!resourceTargets) return;
+    const offs = resourceTargets.split("|").map((target) =>
+      client.events.subscribe(target, () => {
+        const tab = store.get().tabs.find((x) => x.target === target);
+        if (!tab || tab.id === store.get().activeTabId) return;
+        client.page.resolve(target, { envId: tab.envId }).then((d) => actions.updateTab(tab.id, { title: d.title, icon: d.icon, missing: !d.found }), () => undefined);
+      }),
+    );
+    return () => offs.forEach((off) => off());
+  }, [client, store, actions, resourceTargets]);
+
+  // Global shortcuts (ui-spec §6).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const mod = e.metaKey || e.ctrlKey;
+      const s = store.get();
+      if (e.ctrlKey && e.key === "Tab") {
+        const index = s.tabs.findIndex((x) => x.id === s.activeTabId);
+        const next = s.tabs[(index + (e.shiftKey ? -1 : 1) + s.tabs.length) % Math.max(1, s.tabs.length)];
+        if (next) actions.activate(next.id);
+        e.preventDefault();
+        return;
+      }
+      if (!mod || e.altKey) return;
+      const key = e.key.toLowerCase();
+      if (e.shiftKey && key === "p") store.set({ paletteOpen: true });
+      else if (e.shiftKey && key === "w") actions.close(s.tabs.filter((x) => !x.pinned).map((x) => x.id));
+      else if (e.shiftKey) return;
+      else if (key === "s") {
+        // Pages handle saving themselves; this only keeps the browser's own "save page" away.
+      } else if (key === "k") store.set({ searchFocus: s.searchFocus + 1 });
+      else if (key === "w") {
+        const tab = s.tabs.find((x) => x.id === s.activeTabId);
+        if (tab && !tab.pinned) actions.close([tab.id]);
+      } else if (key === "n") newDefault();
+      else if (key === "b") store.set({ sideOpen: !s.sideOpen });
+      else if (key === "j") store.set({ panelOpen: !s.panelOpen });
+      else if (key === ",") void openSettings();
+      else if (/^[1-9]$/.test(key) && trees.data?.[Number(key) - 1]) store.set({ activity: trees.data[Number(key) - 1]!.id, sideOpen: true });
+      else return;
+      e.preventDefault();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [store, actions, trees.data, firstNew]);
+
+  const groups = useMemo<CommandGroup[]>(() => {
+    const byGroup = new Map<string, CommandGroup>();
+    for (const c of palette.data ?? []) {
+      const heading = tx(c.group);
+      const group = byGroup.get(heading) ?? { id: heading, heading, items: [] };
+      byGroup.set(heading, group);
+      group.items.push({ id: c.id, label: tx(c.label), icon: c.icon, shortcut: c.shortcut, keywords: c.keywords, onSelect: () => void actions.command(c.id, { tree: store.get().activity, nodeKey: store.get().selected[store.get().activity] ?? null }) });
+    }
+    const s = store.get();
+    return [
+      ...byGroup.values(),
+      {
+        id: "view",
+        heading: t("palette.view"),
+        items: [
+          { id: "view.side", label: t("palette.toggleSide"), icon: "panel-left", shortcut: ["⌘", "B"], onSelect: () => store.set((x) => ({ sideOpen: !x.sideOpen })) },
+          { id: "view.panel", label: t("palette.togglePanel"), icon: "panel-bottom", shortcut: ["⌘", "J"], onSelect: () => store.set((x) => ({ panelOpen: !x.panelOpen })) },
+          { id: "view.info", label: t("palette.toggleInfo"), icon: "panel-right", onSelect: () => store.set((x) => ({ infoOpen: !x.infoOpen })) },
+          { id: "view.tasks", label: t("palette.toggleTasks"), icon: "list-checks", onSelect: () => store.set((x) => ({ tasksOpen: !x.tasksOpen })) },
+          { id: "view.tabs", label: t("palette.toggleTabs"), icon: "chevrons-up", onSelect: () => store.set((x) => ({ tabStripCollapsed: !x.tabStripCollapsed })) },
+          { id: "view.closeAll", label: t("tabs.closeAll"), icon: "copy-x", shortcut: ["⌘", "⇧", "W"], onSelect: () => actions.close(s.tabs.filter((x) => !x.pinned).map((x) => x.id)) },
+        ],
+      },
+      {
+        id: "trees",
+        heading: t("palette.show"),
+        items: (trees.data ?? []).map((x, i) => ({ id: `tree.${x.id}`, label: tx(x.title), icon: x.icon, shortcut: i < 9 ? ["⌘", String(i + 1)] : undefined, onSelect: () => store.set({ activity: x.id, sideOpen: true }) })),
+      },
+      {
+        id: "appearance",
+        heading: t("palette.appearance"),
+        items: [
+          { id: "theme.light", label: t("palette.themeLight"), icon: "sun", onSelect: () => onSetting("ui.theme", "light") },
+          { id: "theme.dark", label: t("palette.themeDark"), icon: "moon", onSelect: () => onSetting("ui.theme", "dark") },
+          { id: "theme.system", label: t("palette.themeSystem"), icon: "monitor", onSelect: () => onSetting("ui.theme", "system") },
+          { id: "density.comfortable", label: t("palette.densityComfortable"), icon: "rows-3", onSelect: () => onSetting("ui.density", "comfortable") },
+          { id: "density.compact", label: t("palette.densityCompact"), icon: "rows-4", onSelect: () => onSetting("ui.density", "compact") },
+          ...LOCALES.map((l) => ({ id: `lang.${l.value}`, label: `${t("status.language")}: ${l.label}`, icon: "languages", keywords: ["language", "语言"], onSelect: () => onSetting("ui.language", l.value) })),
+        ],
+      },
+      {
+        id: "tabs",
+        heading: t("palette.openTabs"),
+        items: s.tabs.map((x) => ({ id: `tab.${x.id}`, label: x.title || "…", icon: x.icon, onSelect: () => actions.activate(x.id) })),
+      },
+    ].filter((g) => g.items.length > 0);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [palette.data, trees.data, tabs, t, tx, actions, store, onSetting]);
+
+  const dirtyTabs = (confirmClose ?? []).map((id) => tabs.find((x) => x.id === id)).filter((x) => x && Object.keys(store.get().drafts[x.id] ?? {}).length > 0);
+  const runningCount = (running.data ?? []).filter((r) => r.status === "running").length;
+
+  return (
+    <WorkbenchFrame
+      topbar={<TopBarPart onSettings={() => void openSettings()} />}
+      statusBar={<StatusBarPart settings={settings} onSetting={onSetting} resolvedTheme={resolvedTheme} />}
+      floating={tasksOpen ? <TaskPanel /> : undefined}
+    >
+      <ActivityBar
+        label={t("activity.label")}
+        activeKey={sideOpen ? (tree?.id ?? null) : null}
+        items={(trees.data ?? []).map((x, i) => ({ key: x.id, icon: x.icon, label: tx(x.title), shortcut: i < 9 ? ["⌘", String(i + 1)] : undefined, badge: x.id === "runs" ? runningCount : undefined }))}
+        footer={[{ key: "__settings", icon: "settings", label: t("topbar.settings"), shortcut: ["⌘", ","] }]}
+        onSelect={(key) => {
+          if (key === "__settings") void openSettings();
+          else if (key === activity && sideOpen) store.set({ sideOpen: false });
+          else store.set({ activity: key, sideOpen: true });
+        }}
+      />
+      {sideOpen && tree && (
+        <>
+          <Sized axis="x" size={sideWidth}>
+            <TreePanel key={tree.id} tree={tree} />
+          </Sized>
+          <Splitter axis="x" label={t("side.resize")} {...sideResize} />
+        </>
+      )}
+      <WorkbenchMain label={t("main.label")} tabs={<TabsPart />}>
+        {activeTab ? <PageHost key={activeTab.id} tab={activeTab} /> : <NoTabs onNew={newDefault} />}
+      </WorkbenchMain>
+
+      <CommandPalette
+        open={paletteOpen}
+        onOpenChange={(open) => store.set({ paletteOpen: open })}
+        groups={groups}
+        label={t("topbar.commandPalette")}
+        placeholder={t("palette.placeholder")}
+        emptyText={t("palette.empty")}
+      />
+
+      <Dialog
+        open={confirmClose !== null}
+        onOpenChange={(open) => !open && store.set({ confirmClose: null })}
+        size="sm"
+        title={t("close.title", { count: dirtyTabs.length })}
+        description={t("close.body", { names: dirtyTabs.map((x) => `“${x!.title}”`).join(", ") })}
+        footer={
+          <>
+            <Button onClick={() => store.set({ confirmClose: null })}>{t("common.cancel")}</Button>
+            <Button variant="danger" onClick={() => actions.forceClose(confirmClose ?? [])}>
+              {t("close.discard")}
+            </Button>
+            <Button
+              variant="primary"
+              onClick={async () => {
+                const ids = confirmClose ?? [];
+                for (const id of ids) if (!(await actions.save(id))) return;
+                actions.forceClose(ids);
+              }}
+            >
+              {t("close.save")}
+            </Button>
+          </>
+        }
+      />
+    </WorkbenchFrame>
+  );
+}

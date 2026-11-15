@@ -141,6 +141,31 @@
   --table-col-md: 168px;
   --table-col-lg: 240px;
 
+  /* Workbench (activity bar, side panel, tab strip, status bar, splitters, grid, code editor) */
+  --activity-bar-width: 48px;
+  --activity-item-size: 36px;
+  --statusbar-height: 24px;
+  --tabstrip-height: 36px;
+  --tab-min-width: 104px;
+  --tab-max-width: 220px;
+  --splitter-hit: 7px;
+  --tree-indent: 16px;
+  --breadcrumb-height: 28px;
+  --panel-bar-height: 34px;
+  --strip-field-width: 144px;
+  --strip-field-width-wide: 192px;
+  --task-panel-width: 400px;
+  --task-panel-max-height: 440px;
+  --list-popover-width: 320px;
+  --list-max-height: 320px;
+  --search-box-width: 420px;
+  --grid-rownum-width: 48px;
+  --code-gutter-width: 48px;
+  --code-tab-size: 2;
+  --drag-ghost-offset: 14px;
+  --form-max-width: 720px;
+  --env-select-width: 168px;
+
   /* Focus ring */
   --focus-ring-width: 2px;
   --focus-ring-offset: 2px;
@@ -163,6 +188,8 @@
   --stack-gap: 16px;
   --field-gap: 6px;
   --menu-item-height: 30px;
+  --tree-row-height: 26px;
+  --grid-row-height: 28px;
 }
 
 [data-density="compact"] {
@@ -179,6 +206,8 @@
   --stack-gap: 12px;
   --field-gap: 4px;
   --menu-item-height: 26px;
+  --tree-row-height: 22px;
+  --grid-row-height: 24px;
 }
 
 /* ------------------------------------------------------------------ light theme */

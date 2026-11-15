@@ -39,3 +39,62 @@ export { Markdown, type MarkdownProps } from "./components/markdown";
 export { TextLink, type TextLinkProps } from "./components/text-link";
 export { TextBlock, type TextBlockProps } from "./components/text-block";
 export { KeyValueList, type KeyValueListProps, type KeyValueItem } from "./components/key-value-list";
+
+// ---- Workbench (stage 0): layout and generic parts for the VS Code-style shell
+export { beginPointerDrag, setDragCursor, type DragCursor, type PointerDragHandlers } from "./components/pointer-drag";
+export { Splitter, Sized, type SplitterProps, type SizedProps } from "./components/splitter";
+export { DragGhost, type DragGhostProps } from "./components/drag-ghost";
+export { Tree, type TreeProps, type TreeRow, type TreeNodeState, type TreeDropPosition } from "./components/tree";
+export { TabStrip, type TabStripProps, type TabStripItem } from "./components/tab-strip";
+export { DataGrid, type DataGridProps, type DataGridColumn, type DataGridSort, type DataGridValue } from "./components/data-grid";
+export { CodeEditor, type CodeEditorProps, type CodeToken, type CodeTokenKind } from "./components/code-editor";
+export { ContextMenu, type ContextMenuProps } from "./components/context-menu";
+export { OptionList, SearchBox, type OptionListProps, type OptionListItem, type SearchBoxProps } from "./components/option-list";
+export {
+  WorkbenchFrame,
+  WorkbenchMain,
+  ActivityBar,
+  SidePanel,
+  StatusBar,
+  StatusItem,
+  Pane,
+  FloatingPanel,
+  TaskItem,
+  type WorkbenchFrameProps,
+  type WorkbenchMainProps,
+  type ActivityBarProps,
+  type ActivityItem,
+  type SidePanelProps,
+  type StatusBarProps,
+  type StatusItemProps,
+  type PaneProps,
+  type FloatingPanelProps,
+  type TaskItemProps,
+  type TaskStatus,
+} from "./components/workbench";
+export {
+  PageFrame,
+  Breadcrumb,
+  PageTitleBar,
+  TitleBarSlot,
+  ActionBar,
+  InfoPanel,
+  InfoField,
+  BottomPanel,
+  FieldStrip,
+  StripField,
+  FactRow,
+  type PageFrameProps,
+  type BreadcrumbProps,
+  type BreadcrumbItem,
+  type PageTitleBarProps,
+  type ActionBarProps,
+  type ActionBarItem,
+  type InfoPanelProps,
+  type InfoFieldProps,
+  type BottomPanelProps,
+  type PanelTab,
+  type FieldStripProps,
+  type StripFieldProps,
+  type FactItem,
+} from "./components/page-frame";

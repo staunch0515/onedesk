@@ -1,0 +1,218 @@
+.od-tabstrip {
+  display: flex;
+  flex: none;
+  align-items: stretch;
+  height: var(--tabstrip-height);
+  min-width: 0;
+  background: var(--bg-app);
+  user-select: none;
+}
+
+.od-tabstrip--collapsed {
+  height: auto;
+  justify-content: flex-end;
+  background: var(--bg-surface);
+}
+
+.od-tabstrip__scroll {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+  box-shadow: inset 0 calc(var(--border-width) * -1) 0 var(--border-default);
+}
+
+.od-tabstrip__scroll::-webkit-scrollbar {
+  display: none;
+}
+
+.od-tabstrip__trailing {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-0-5);
+  padding: 0 var(--space-1-5);
+  border-left: var(--border-width) solid var(--border-default);
+  border-bottom: var(--border-width) solid var(--border-default);
+}
+
+.od-tabstrip--collapsed {
+  border-bottom: var(--border-width) solid var(--border-default);
+}
+
+.od-tabstrip--collapsed .od-tabstrip__trailing {
+  border: 0;
+}
+
+.od-tab {
+  position: relative;
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-1-5);
+  min-width: var(--tab-min-width);
+  max-width: var(--tab-max-width);
+  padding: 0 var(--space-1-5) 0 var(--space-3);
+  border-right: var(--border-width) solid var(--border-default);
+  border-bottom: var(--border-width) solid var(--border-default);
+  color: var(--fg-muted);
+  font-size: var(--text-sm);
+  cursor: default;
+  outline: none;
+}
+
+.od-tab:hover {
+  background: var(--bg-hover);
+  color: var(--fg-default);
+}
+
+.od-tab--active,
+.od-tab--active:hover {
+  border-bottom-color: var(--bg-surface);
+  background: var(--bg-surface);
+  color: var(--fg-default);
+}
+
+/* Active marker is an overlay: no size change. */
+.od-tab--active::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: var(--border-width-thick);
+  background: var(--accent);
+}
+
+.od-tab:focus-visible {
+  box-shadow: inset 0 0 0 var(--focus-ring-width) var(--focus-ring);
+}
+
+.od-tab--pinned {
+  min-width: 0;
+  padding: 0 var(--space-3);
+}
+
+.od-tab--muted .od-tab__label {
+  color: var(--fg-disabled);
+  text-decoration: line-through;
+}
+
+.od-tab--dragging {
+  opacity: 0.5;
+}
+
+.od-tab__icon {
+  flex: none;
+  color: var(--fg-muted);
+}
+
+.od-tab--active .od-tab__icon {
+  color: var(--accent-text);
+}
+
+.od-tab__icon--busy {
+  animation: od-spin var(--duration-spin) linear infinite;
+}
+
+.od-tab__label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Close slot: fixed size. Shows the x on hover / active, the dot when dirty and not hovered. */
+.od-tab__close {
+  position: relative;
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: var(--icon-lg);
+  height: var(--icon-lg);
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--fg-muted);
+  cursor: default;
+}
+
+.od-tab__close:hover {
+  background: var(--bg-active);
+  color: var(--fg-default);
+}
+
+.od-tab__close-x {
+  visibility: hidden;
+}
+
+.od-tab:hover .od-tab__close-x,
+.od-tab--active .od-tab__close-x {
+  visibility: visible;
+}
+
+.od-tab__dirty-dot {
+  position: absolute;
+  display: none;
+  width: var(--space-2);
+  height: var(--space-2);
+  border-radius: var(--radius-full);
+  background: var(--fg-muted);
+}
+
+.od-tab--dirty .od-tab__dirty-dot {
+  display: block;
+}
+
+.od-tab--dirty .od-tab__close-x,
+.od-tab--dirty.od-tab--active .od-tab__close-x {
+  visibility: hidden;
+}
+
+.od-tab--dirty .od-tab__close:hover .od-tab__close-x {
+  visibility: visible;
+}
+
+.od-tab--dirty .od-tab__close:hover .od-tab__dirty-dot {
+  display: none;
+}
+
+.od-tab__pin-dot {
+  position: absolute;
+  top: var(--space-1-5);
+  right: var(--space-1-5);
+  width: var(--badge-dot);
+  height: var(--badge-dot);
+  border-radius: var(--radius-full);
+  background: var(--fg-muted);
+}
+
+/* Insertion marker while reordering. */
+.od-tab--insert-before::after,
+.od-tab--insert-after::after {
+  content: "";
+  position: absolute;
+  top: var(--space-1);
+  bottom: var(--space-1);
+  left: auto;
+  right: auto;
+  width: var(--border-width-thick);
+  height: auto;
+  border-radius: var(--radius-full);
+  background: var(--accent);
+  z-index: var(--z-raised);
+}
+
+.od-tab--insert-before::after {
+  left: calc(var(--border-width) * -1);
+}
+
+.od-tab--insert-after::after {
+  right: calc(var(--border-width) * -1);
+}

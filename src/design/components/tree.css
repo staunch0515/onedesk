@@ -1,0 +1,202 @@
+.od-tree {
+  position: relative;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  padding: var(--space-1) 0 var(--space-6);
+  overflow-x: hidden;
+  overflow-y: auto;
+  color: var(--fg-default);
+  font-size: var(--text-md);
+  outline: none;
+  user-select: none;
+}
+
+.od-tree:focus-visible {
+  box-shadow: inset 0 0 0 var(--border-width) var(--focus-ring);
+}
+
+.od-tree--drop-root {
+  box-shadow: inset 0 0 0 var(--border-width) var(--accent);
+}
+
+.od-tree--drop-denied {
+  box-shadow: inset 0 0 0 var(--border-width) var(--danger-border);
+}
+
+/* Fixed height; hover and selection change only the background, never the box (I.3). */
+.od-tree__row {
+  position: relative;
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-1-5);
+  height: var(--tree-row-height);
+  padding: 0 var(--space-2) 0 calc(var(--space-2) + var(--od-depth) * var(--tree-indent));
+  cursor: default;
+}
+
+.od-tree__row:hover {
+  background: var(--bg-hover);
+}
+
+.od-tree__row--selected,
+.od-tree__row--selected:hover {
+  background: var(--bg-selected);
+  color: var(--fg-selected);
+}
+
+.od-tree:focus-visible .od-tree__row--focused {
+  box-shadow: inset 0 0 0 var(--border-width) var(--focus-ring);
+}
+
+.od-tree__twist {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: var(--icon-md);
+  height: var(--icon-md);
+  border-radius: var(--radius-xs);
+  color: var(--fg-subtle);
+}
+
+.od-tree__twist .od-icon {
+  transition: transform var(--duration-fast) var(--ease-standard);
+}
+
+.od-tree__twist--open .od-icon {
+  transform: rotate(90deg);
+}
+
+.od-tree__twist--on:hover {
+  background: var(--bg-active);
+  color: var(--fg-default);
+}
+
+.od-tree__icon {
+  flex: none;
+  color: var(--fg-muted);
+}
+
+.od-tree__row--selected .od-tree__icon {
+  color: var(--accent-text);
+}
+
+.od-tree__label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.od-tree__mark {
+  border-radius: var(--radius-xs);
+  background: var(--warning-subtle);
+  color: var(--warning-text);
+}
+
+.od-tree__badge {
+  flex: none;
+  color: var(--fg-subtle);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.od-tree__dot {
+  flex: none;
+  width: var(--badge-dot);
+  height: var(--badge-dot);
+  border-radius: var(--radius-full);
+  background: var(--success);
+}
+
+.od-tree__state {
+  flex: none;
+}
+
+/* ---- node states: greyed, never hidden (ui-spec §7) */
+.od-tree__row--disabled,
+.od-tree__row--disabled .od-tree__icon {
+  color: var(--fg-disabled);
+}
+
+.od-tree__row--missing-plugin,
+.od-tree__row--missing-plugin .od-tree__icon {
+  color: var(--fg-inactive);
+}
+
+.od-tree__row--missing-plugin .od-tree__label {
+  font-style: italic;
+}
+
+.od-tree__row--missing-plugin .od-tree__state,
+.od-tree__row--conflict .od-tree__state {
+  color: var(--warning-text);
+}
+
+.od-tree__row--broken .od-tree__label {
+  text-decoration: line-through;
+  color: var(--fg-inactive);
+}
+
+.od-tree__row--broken .od-tree__state,
+.od-tree__row--broken .od-tree__icon {
+  color: var(--danger-text);
+}
+
+.od-tree__row--conflict .od-tree__label {
+  color: var(--warning-text);
+}
+
+/* ---- drag and drop: overlays only, the row box never changes */
+.od-tree__row--dragging {
+  opacity: 0.5;
+}
+
+.od-tree__row--drop-inside {
+  background: var(--accent-subtle);
+  box-shadow: inset 0 0 0 var(--border-width) var(--accent);
+}
+
+.od-tree__row--drop-before::after,
+.od-tree__row--drop-after::after {
+  content: "";
+  position: absolute;
+  left: calc(var(--space-2) + var(--od-depth) * var(--tree-indent));
+  right: var(--space-2);
+  height: var(--border-width-thick);
+  border-radius: var(--radius-full);
+  background: var(--accent);
+  pointer-events: none;
+}
+
+.od-tree__row--drop-before::after {
+  top: calc(var(--border-width) * -1);
+}
+
+.od-tree__row--drop-after::after {
+  bottom: calc(var(--border-width) * -1);
+}
+
+.od-tree__row--drop-denied,
+.od-tree__row--drop-denied:hover {
+  background: var(--danger-subtle);
+  box-shadow: inset 0 0 0 var(--border-width) var(--danger-border);
+}
+
+.od-tree__rename {
+  flex: 1;
+  min-width: 0;
+  height: calc(var(--tree-row-height) - var(--space-1));
+  margin: 0;
+  padding: 0 var(--space-1);
+  border: var(--border-width) solid var(--focus-ring);
+  border-radius: var(--radius-xs);
+  outline: none;
+  background: var(--bg-inset);
+  color: var(--fg-default);
+  font-size: var(--text-md);
+}

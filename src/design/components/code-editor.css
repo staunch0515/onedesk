@@ -1,0 +1,135 @@
+.od-code {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  background: var(--bg-inset);
+  color: var(--fg-default);
+  font-size: var(--text-sm);
+  line-height: var(--leading-sm);
+}
+
+.od-code--fill {
+  flex: 1;
+  height: 100%;
+}
+
+.od-code--framed {
+  border: var(--border-width) solid var(--border-default);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.od-code--readonly {
+  background: var(--bg-subtle);
+}
+
+.od-code:focus-within {
+  box-shadow: inset 0 0 0 var(--border-width) var(--focus-ring);
+}
+
+.od-code__gutter {
+  flex: none;
+  width: var(--code-gutter-width);
+  overflow: hidden;
+  border-right: var(--border-width) solid var(--border-subtle);
+  background: var(--bg-subtle);
+  color: var(--fg-subtle);
+  user-select: none;
+}
+
+.od-code__numbers {
+  margin: 0;
+  padding: var(--space-2) var(--space-2) var(--space-6) 0;
+  font-size: inherit;
+  line-height: inherit;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.od-code__body {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+
+/* The highlighted copy and the textarea share every text metric so the caret lines up. */
+.od-code__highlight,
+.od-code__input {
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  border: 0;
+  font-size: inherit;
+  line-height: inherit;
+  letter-spacing: 0;
+  white-space: pre;
+  tab-size: var(--code-tab-size);
+}
+
+.od-code__highlight {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.od-code__input {
+  position: relative;
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: auto;
+  resize: none;
+  outline: none;
+  background: transparent;
+  color: transparent;
+  caret-color: var(--fg-default);
+}
+
+.od-code--auto .od-code__input {
+  height: auto;
+  overflow-y: hidden;
+}
+
+.od-code__input:focus-visible {
+  outline: none;
+}
+
+.od-code__input::placeholder {
+  color: var(--fg-subtle);
+}
+
+.od-code__input::selection {
+  background: var(--focus-ring-soft);
+  color: transparent;
+}
+
+.od-code__tok--keyword {
+  color: var(--accent-text);
+}
+
+.od-code__tok--string {
+  color: var(--success-text);
+}
+
+.od-code__tok--number {
+  color: var(--warning-text);
+}
+
+.od-code__tok--comment {
+  color: var(--fg-subtle);
+}
+
+.od-code__tok--param {
+  border-radius: var(--radius-xs);
+  background: var(--info-subtle);
+  color: var(--info-text);
+}
+
+.od-code__tok--function {
+  color: var(--info-text);
+}
+
+.od-code__tok--operator {
+  color: var(--fg-muted);
+}

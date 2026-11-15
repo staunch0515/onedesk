@@ -1,0 +1,8 @@
+.od-context-anchor {
+  position: fixed;
+  left: var(--od-anchor-x);
+  top: var(--od-anchor-y);
+  width: 0;
+  height: 0;
+  pointer-events: none;
+}

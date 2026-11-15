@@ -1,0 +1,530 @@
+/* ------------------------------------------------------------------ frame */
+.od-wb {
+  display: grid;
+  grid-template-rows: var(--topbar-height) minmax(0, 1fr) var(--statusbar-height);
+  height: var(--viewport-height);
+  min-width: var(--app-min-width);
+  overflow: hidden;
+  background: var(--bg-app);
+  color: var(--fg-default);
+}
+
+.od-wb__topbar {
+  min-width: 0;
+  border-bottom: var(--border-width) solid var(--border-default);
+  background: var(--bg-surface);
+}
+
+.od-wb__body {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+}
+
+.od-wb__status {
+  min-width: 0;
+  border-top: var(--border-width) solid var(--border-default);
+  background: var(--bg-app);
+}
+
+.od-wb__floating {
+  position: absolute;
+  right: var(--space-3);
+  bottom: var(--space-3);
+  z-index: var(--z-sticky);
+}
+
+.od-wb__main {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background: var(--bg-surface);
+}
+
+.od-wb__page {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+/* ------------------------------------------------------------------ activity bar */
+.od-activity {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  justify-content: space-between;
+  width: var(--activity-bar-width);
+  padding: var(--space-1-5) 0;
+  border-right: var(--border-width) solid var(--border-default);
+  background: var(--bg-app);
+}
+
+.od-activity__group {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-0-5);
+}
+
+.od-activity__item {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--activity-item-size);
+  height: var(--activity-item-size);
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--fg-subtle);
+  cursor: default;
+  transition:
+    background-color var(--duration-fast) var(--ease-standard),
+    color var(--duration-fast) var(--ease-standard);
+}
+
+.od-activity__item:hover {
+  background: var(--bg-hover);
+  color: var(--fg-default);
+}
+
+.od-activity__item--active,
+.od-activity__item--active:hover {
+  background: var(--bg-active);
+  color: var(--accent-text);
+}
+
+/* Active marker at the window edge: an overlay, no size change. */
+.od-activity__item--active::before {
+  content: "";
+  position: absolute;
+  top: var(--space-2);
+  bottom: var(--space-2);
+  left: calc((var(--activity-bar-width) - var(--activity-item-size)) / -2);
+  width: var(--border-width-thick);
+  border-radius: 0 var(--radius-full) var(--radius-full) 0;
+  background: var(--accent);
+}
+
+.od-activity__item:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring);
+  outline-offset: var(--focus-ring-inset);
+}
+
+.od-activity__badge {
+  position: absolute;
+  top: var(--space-0-5);
+  right: var(--space-0-5);
+  min-width: var(--icon-md);
+  height: var(--icon-md);
+  padding: 0 var(--space-1);
+  border-radius: var(--radius-full);
+  background: var(--accent);
+  color: var(--fg-on-accent);
+  font-size: var(--text-xs);
+  line-height: var(--icon-md);
+  font-weight: var(--weight-medium);
+  text-align: center;
+}
+
+/* ------------------------------------------------------------------ side panel */
+.od-side {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background: var(--bg-app);
+}
+
+.od-side__header {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  height: var(--tabstrip-height);
+  padding: 0 var(--space-1-5) 0 var(--space-3);
+}
+
+.od-side__title {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--fg-muted);
+  font-size: var(--text-xs);
+  line-height: var(--leading-xs);
+  font-weight: var(--weight-semibold);
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.od-side__actions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-0-5);
+}
+
+.od-side__filter {
+  flex: none;
+  padding: 0 var(--space-2) var(--space-1-5);
+}
+
+.od-side__body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+
+/* ------------------------------------------------------------------ status bar */
+.od-statusbar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, auto) minmax(0, 1fr);
+  align-items: stretch;
+  gap: var(--space-4);
+  height: 100%;
+  padding: 0 var(--space-2);
+  color: var(--fg-muted);
+  font-size: var(--text-xs);
+  line-height: var(--leading-xs);
+  user-select: none;
+}
+
+.od-statusbar__start,
+.od-statusbar__center,
+.od-statusbar__end {
+  display: flex;
+  align-items: stretch;
+  gap: var(--space-0-5);
+  min-width: 0;
+}
+
+.od-statusbar__center {
+  justify-content: center;
+}
+
+.od-statusbar__end {
+  justify-content: flex-end;
+}
+
+.od-status-item {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+  margin: 0;
+  padding: 0 var(--space-1-5);
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font-size: inherit;
+  line-height: inherit;
+  white-space: nowrap;
+}
+
+.od-status-item__text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.od-status-item--button {
+  cursor: default;
+}
+
+.od-status-item--button:hover,
+.od-status-item--button[aria-pressed="true"],
+.od-status-item--button[data-state="open"] {
+  background: var(--bg-active);
+  color: var(--fg-default);
+}
+
+.od-status-item--button:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring);
+  outline-offset: var(--focus-ring-inset);
+}
+
+.od-status-item--accent {
+  color: var(--accent-text);
+}
+
+.od-status-item--success {
+  color: var(--success-text);
+}
+
+.od-status-item--warning {
+  color: var(--warning-text);
+}
+
+.od-status-item--danger {
+  color: var(--danger-text);
+}
+
+.od-status-item__icon--busy {
+  animation: od-spin var(--duration-spin) linear infinite;
+}
+
+/* ------------------------------------------------------------------ pane */
+.od-pane {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+}
+
+.od-pane--column {
+  flex-direction: column;
+}
+
+.od-pane--row {
+  flex-direction: row;
+}
+
+.od-pane--grow {
+  flex: 1;
+}
+
+.od-pane--scroll {
+  overflow: auto;
+}
+
+.od-pane--wrap {
+  flex-wrap: wrap;
+}
+
+.od-pane--pad-sm {
+  padding: var(--space-2) var(--space-3);
+}
+
+.od-pane--pad-md {
+  padding: var(--space-4);
+}
+
+.od-pane--pad-lg {
+  padding: var(--page-pad-y) var(--page-pad-x);
+}
+
+.od-pane--gap-xs {
+  gap: var(--space-1);
+}
+
+.od-pane--gap-sm {
+  gap: var(--space-2);
+}
+
+.od-pane--gap-md {
+  gap: var(--stack-gap);
+}
+
+.od-pane--gap-lg {
+  gap: var(--page-gap);
+}
+
+.od-pane--surface {
+  background: var(--bg-surface);
+}
+
+.od-pane--app {
+  background: var(--bg-app);
+}
+
+.od-pane--subtle {
+  background: var(--bg-subtle);
+}
+
+.od-pane--border-top {
+  border-top: var(--border-width) solid var(--border-default);
+}
+
+.od-pane--border-bottom {
+  border-bottom: var(--border-width) solid var(--border-default);
+}
+
+.od-pane--border-left {
+  border-left: var(--border-width) solid var(--border-default);
+}
+
+.od-pane--border-right {
+  border-right: var(--border-width) solid var(--border-default);
+}
+
+.od-pane--align-start {
+  align-items: flex-start;
+}
+
+.od-pane--align-center {
+  align-items: center;
+}
+
+.od-pane--align-end {
+  align-items: flex-end;
+}
+
+.od-pane--align-stretch {
+  align-items: stretch;
+}
+
+.od-pane--justify-start {
+  justify-content: flex-start;
+}
+
+.od-pane--justify-center {
+  justify-content: center;
+}
+
+.od-pane--justify-end {
+  justify-content: flex-end;
+}
+
+.od-pane--justify-between {
+  justify-content: space-between;
+}
+
+.od-pane--form > * {
+  width: 100%;
+  max-width: var(--form-max-width);
+}
+
+/* Children of a scrolling column keep their height (a flex column would squash them). */
+.od-pane--column.od-pane--scroll > * {
+  flex-shrink: 0;
+}
+
+/* ------------------------------------------------------------------ floating panel */
+.od-float-panel {
+  display: flex;
+  flex-direction: column;
+  width: var(--task-panel-width);
+  max-height: var(--task-panel-max-height);
+  border: var(--border-width) solid var(--border-default);
+  border-radius: var(--radius-lg);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-lg);
+  animation: od-rise-in var(--duration-base) var(--ease-out);
+}
+
+.od-float-panel__header {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  height: var(--control-height-md);
+  padding: 0 var(--space-1-5) 0 var(--space-3);
+  border-bottom: var(--border-width) solid var(--border-default);
+}
+
+.od-float-panel__title {
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+}
+
+.od-float-panel__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-0-5);
+}
+
+.od-float-panel__body {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.od-task {
+  display: flex;
+  flex: none;
+  align-items: flex-start;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-2) var(--space-2) var(--space-3);
+  border-bottom: var(--border-width) solid var(--border-subtle);
+}
+
+.od-task:last-child {
+  border-bottom: 0;
+}
+
+.od-task__icon {
+  flex: none;
+  margin-top: var(--space-0-5);
+  color: var(--fg-muted);
+}
+
+.od-task__icon--busy {
+  color: var(--accent-text);
+  animation: od-spin var(--duration-spin) linear infinite;
+}
+
+.od-task--success .od-task__icon {
+  color: var(--success-text);
+}
+
+.od-task--error .od-task__icon {
+  color: var(--danger-text);
+}
+
+.od-task__main {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--space-0-5);
+  min-width: 0;
+}
+
+.od-task__title {
+  overflow: hidden;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--fg-default);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.od-task__title--link {
+  cursor: default;
+}
+
+.od-task__title--link:hover {
+  color: var(--accent-text);
+  text-decoration: underline;
+}
+
+.od-task__subtitle,
+.od-task__detail {
+  overflow: hidden;
+  color: var(--fg-muted);
+  font-size: var(--text-xs);
+  line-height: var(--leading-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.od-task--error .od-task__detail {
+  color: var(--danger-text);
+  white-space: normal;
+}
+
+.od-task__progress {
+  width: 100%;
+  margin: var(--space-1) 0 var(--space-0-5);
+}
+
+.od-task__actions {
+  display: flex;
+  flex: none;
+  align-items: center;
+}

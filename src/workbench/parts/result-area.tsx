@@ -1,0 +1,191 @@
+import { Badge, Banner, BottomPanel, Button, DataGrid, EmptyState, IconButton, LoadingState, Pane, Progress, Text, TextBlock, useToast, type DataGridColumn, type Tone } from "../../design";
+import { useI18n } from "../i18n";
+import type { OutputCell, PageDescriptor, Run, RunStatus } from "../protocol";
+import { useQuery, useUi, useWorkbench } from "../state/context";
+import type { TabState } from "../state/store";
+import { ViewNodes } from "./view-nodes";
+
+export const STATUS_TONE: Record<RunStatus, Tone> = { running: "accent", success: "success", error: "danger", cancelled: "neutral" };
+
+function useGridWidths(key: string) {
+  const { store } = useWorkbench();
+  const widths = useUi((s) => s.gridWidths[key]);
+  return { widths, onWidthsChange: (next: Record<string, number>) => store.set((s) => ({ gridWidths: { ...s.gridWidths, [key]: next } })) };
+}
+
+function OutputTable({ run, widthKey }: { run: Run; widthKey: string }) {
+  const { t } = useI18n();
+  const grid = useGridWidths(widthKey);
+  if (run.output?.type !== "table") return null;
+  const out = run.output;
+  const columns: Array<DataGridColumn<OutputCell[]>> = out.columns.map((c, i) => ({
+    key: c.key,
+    header: c.label,
+    numeric: c.numeric,
+    value: (row) => row[i],
+    width: c.numeric ? 120 : 176,
+  }));
+  return (
+    <DataGrid
+      label={t("result.result")}
+      columns={columns}
+      rows={out.rows}
+      getRowKey={(_row, i) => String(i)}
+      rowNumbers
+      {...grid}
+      empty={<EmptyState layout="inline" message={t("result.noRows")} />}
+    />
+  );
+}
+
+function OutputTab({ tab, run, widthKey }: { tab: TabState; run: Run | null | undefined; widthKey: string }) {
+  const { client, actions } = useWorkbench();
+  const { t } = useI18n();
+  if (run === undefined) return <LoadingState layout="inline" label={t("common.loading")} />;
+  if (run === null) return <EmptyState layout="inline" icon="play" message={tab.target.startsWith("run:") ? t("result.gone") : t("result.empty")} />;
+  if (run.status === "running") {
+    return (
+      <Pane grow align="center" justify="center" gap="sm" pad="lg">
+        <Progress value={run.progress?.fraction !== undefined ? run.progress.fraction * 100 : undefined} label={t("result.running")} />
+        <Text size="sm" tone="muted" tabular>
+          {run.progress?.message ?? t("result.running")}
+        </Text>
+        {run.cancellable && (
+          <Button size="sm" icon="square" onClick={() => client.run.cancel(run.id).catch(actions.fail)}>
+            {t("result.cancel")}
+          </Button>
+        )}
+      </Pane>
+    );
+  }
+  if (run.status === "error" && run.error) {
+    // Errors stay here until the next run or "clear" (I.7): never a toast that disappears.
+    return (
+      <Pane grow scroll pad="md" gap="sm">
+        <Banner tone="danger" title={`${run.error.code} — ${run.error.message}`}>
+          {run.error.hint}
+        </Banner>
+        {run.error.detail && (
+          <TextBlock variant="code" tone="danger" label={t("result.errorDetail")}>
+            {run.error.detail}
+          </TextBlock>
+        )}
+      </Pane>
+    );
+  }
+  if (run.status === "cancelled") return <EmptyState layout="inline" icon="circle-slash" message={t("result.cancelled")} />;
+  if (run.output?.type === "table") return <OutputTable run={run} widthKey={widthKey} />;
+  if (run.output?.type === "text") {
+    return (
+      <Pane grow scroll pad="md">
+        <TextBlock variant="code" label={t("result.result")}>
+          {run.output.text}
+        </TextBlock>
+      </Pane>
+    );
+  }
+  return <EmptyState layout="inline" icon="circle-check" message={run.summary?.message ?? t("result.noOutput")} />;
+}
+
+function HistoryTab({ resourceId }: { resourceId: string }) {
+  const { actions } = useWorkbench();
+  const { t, dateTime, number, duration } = useI18n();
+  const runs = useQuery((c) => c.run.listFor(resourceId), [resourceId], ["runs"]);
+  const grid = useGridWidths("history");
+  const statusName: Record<RunStatus, string> = { running: t("run.running"), success: t("run.success"), error: t("run.error"), cancelled: t("run.cancelled") };
+  if (!runs.data) return <LoadingState layout="inline" label={t("common.loading")} />;
+  const columns: Array<DataGridColumn<Run>> = [
+    { key: "seq", header: "#", numeric: true, width: 72, value: (r) => r.seq },
+    { key: "started", header: t("run.started"), width: 152, value: (r) => r.startedAt, render: (r) => dateTime(r.startedAt) },
+    { key: "status", header: t("run.status"), width: 104, value: (r) => r.status, render: (r) => <Badge tone={STATUS_TONE[r.status]} dot>{statusName[r.status]}</Badge> },
+    { key: "env", header: t("run.environment"), width: 176, value: (r) => r.envName ?? "" },
+    { key: "rows", header: t("run.rows"), numeric: true, width: 88, value: (r) => r.summary?.rows, render: (r) => (r.summary?.rows === undefined ? "" : number(r.summary.rows)) },
+    { key: "duration", header: t("run.duration"), numeric: true, width: 96, value: (r) => r.summary?.durationMs, render: (r) => (r.summary?.durationMs === undefined ? "" : duration(r.summary.durationMs)) },
+    { key: "actor", header: t("run.actor"), width: 104, value: (r) => r.actor },
+    { key: "params", header: t("run.params"), width: 360, mono: true, value: (r) => Object.entries(r.params).map(([k, v]) => `${k}=${v}`).join("  ") },
+    { key: "note", header: t("run.note"), width: 280, value: (r) => r.error?.message ?? (r.kept ? t("run.kept") : (r.summary?.message ?? "")) },
+  ];
+  return (
+    <DataGrid
+      label={t("result.history")}
+      columns={columns}
+      rows={runs.data}
+      getRowKey={(r) => r.id}
+      nullText=""
+      activateOnClick
+      onRowActivate={(r) => actions.open(`run:${r.id}`)}
+      {...grid}
+      empty={<EmptyState layout="inline" message={t("result.historyEmpty")} />}
+    />
+  );
+}
+
+function ViewTab({ runId, tabId }: { runId: string | null; tabId: string }) {
+  const { t } = useI18n();
+  const nodes = useQuery((c) => (runId ? c.run.render(runId, tabId) : Promise.resolve(null)), [runId, tabId], runId ? [`run:${runId}`] : []);
+  if (!runId) return <EmptyState layout="inline" icon="play" message={t("result.empty")} />;
+  if (!nodes.data) return <LoadingState layout="inline" label={t("common.loading")} />;
+  return <ViewNodes nodes={nodes.data} />;
+}
+
+/** Result area of a page (§9.5): the page chooses the sub-tabs, the frame owns the toolbar. */
+export function ResultArea({ tab, descriptor }: { tab: TabState; descriptor: PageDescriptor }) {
+  const { client, store, actions } = useWorkbench();
+  const { t, tx, number, duration, time } = useI18n();
+  const { toast } = useToast();
+  const panelOpen = useUi((s) => s.panelOpen);
+  const runId = descriptor.runId ?? tab.runId ?? null;
+  const run = useQuery((c) => (runId ? c.run.get(runId) : Promise.resolve(null)), [runId], runId ? [`run:${runId}`] : []);
+  const tabs = descriptor.resultTabs;
+  const active = tabs.find((x) => x.id === tab.resultTab) ?? tabs[0];
+  if (!active) return null;
+  const r = run.data;
+
+  const summary = r ? (
+    <>
+      <Badge tone={STATUS_TONE[r.status]} dot>
+        {`#${r.seq}`}
+      </Badge>
+      {r.status === "running" && <span>{r.progress?.message ?? t("result.running")}</span>}
+      {r.status === "error" && <span>{r.error?.message}</span>}
+      {r.summary?.rows !== undefined && <span>{t("result.rows", { count: number(r.summary.rows) })}</span>}
+      {r.summary?.durationMs !== undefined && <span>{duration(r.summary.durationMs)}</span>}
+      {r.envName && <span>{r.envName}</span>}
+      <span>{time(r.startedAt)}</span>
+    </>
+  ) : undefined;
+
+  const hasTable = r?.status === "success" && r.output?.type === "table";
+  const canCopy = r?.status === "success" && (r.output?.type === "table" || r.output?.type === "text");
+  return (
+    <BottomPanel
+      label={t("result.label")}
+      tabs={tabs.map((x) => ({ value: x.id, label: tx(x.label), icon: x.icon }))}
+      value={active.id}
+      onValueChange={(value) => {
+        actions.updateTab(tab.id, { resultTab: value });
+        if (!panelOpen) store.set({ panelOpen: true });
+      }}
+      collapsed={!panelOpen}
+      summary={summary}
+      trailing={
+        <>
+          <IconButton
+            icon="download"
+            size="sm"
+            label={t("result.exportCsv")}
+            disabled={!hasTable}
+            onClick={() => client.page.event(tab.target, "export-csv", {}).then((res) => toast({ tone: "success", title: tx(res.message) }), actions.fail)}
+          />
+          <IconButton icon="copy" size="sm" label={t("result.copy")} disabled={!canCopy} onClick={() => toast({ tone: "success", title: t("result.copied") })} />
+          <IconButton icon="eraser" size="sm" label={t("result.clear")} disabled={!tab.runId || Boolean(descriptor.runId)} onClick={() => actions.updateTab(tab.id, { runId: null })} />
+          <IconButton icon={panelOpen ? "panel-bottom-close" : "panel-bottom-open"} size="sm" label={panelOpen ? t("result.collapse") : t("result.expand")} shortcut={["⌘", "J"]} onClick={() => store.set({ panelOpen: !panelOpen })} />
+        </>
+      }
+    >
+      {active.type === "output" && <OutputTab tab={tab} run={run.loading && r === undefined ? undefined : (r ?? null)} widthKey={`result:${descriptor.resourceId ?? tab.target}`} />}
+      {active.type === "history" && (descriptor.resourceId ? <HistoryTab resourceId={descriptor.resourceId} /> : <EmptyState layout="inline" message={t("result.historyUnsaved")} />)}
+      {active.type === "view" && <ViewTab runId={runId} tabId={active.id} />}
+    </BottomPanel>
+  );
+}

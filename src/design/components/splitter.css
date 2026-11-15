@@ -1,0 +1,113 @@
+.od-splitter {
+  position: relative;
+  flex: none;
+  z-index: var(--z-raised);
+  background: var(--border-default);
+  touch-action: none;
+}
+
+.od-splitter--x {
+  width: var(--border-width);
+  cursor: col-resize;
+}
+
+.od-splitter--y {
+  height: var(--border-width);
+  cursor: row-resize;
+}
+
+/* Invisible hit area, wider than the line. */
+.od-splitter::before {
+  content: "";
+  position: absolute;
+}
+
+.od-splitter--x::before {
+  top: 0;
+  bottom: 0;
+  left: calc(var(--splitter-hit) / -2);
+  width: var(--splitter-hit);
+}
+
+.od-splitter--y::before {
+  left: 0;
+  right: 0;
+  top: calc(var(--splitter-hit) / -2);
+  height: var(--splitter-hit);
+}
+
+/* Highlight line shown on hover (after a short delay) and while dragging. */
+.od-splitter::after {
+  content: "";
+  position: absolute;
+  background: var(--accent);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--duration-fast) var(--ease-standard);
+}
+
+.od-splitter--x::after {
+  top: 0;
+  bottom: 0;
+  left: calc(var(--border-width) * -1);
+  width: calc(var(--border-width) * 3);
+}
+
+.od-splitter--y::after {
+  left: 0;
+  right: 0;
+  top: calc(var(--border-width) * -1);
+  height: calc(var(--border-width) * 3);
+}
+
+.od-splitter:hover::after {
+  opacity: 1;
+  transition-delay: var(--duration-slow);
+}
+
+.od-splitter--dragging::after {
+  opacity: 1;
+}
+
+.od-sized {
+  display: flex;
+  flex: none;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.od-sized--x {
+  flex-direction: column;
+  width: var(--od-size);
+}
+
+.od-sized--y {
+  flex-direction: column;
+  height: var(--od-size);
+}
+
+/* Drag cursors: one cursor everywhere and no text selection for the whole drag. */
+body.od-dragging-resize-x,
+body.od-dragging-resize-x * {
+  cursor: col-resize !important;
+  user-select: none !important;
+}
+
+body.od-dragging-resize-y,
+body.od-dragging-resize-y * {
+  cursor: row-resize !important;
+  user-select: none !important;
+}
+
+body.od-dragging-move,
+body.od-dragging-move * {
+  cursor: grabbing !important;
+  user-select: none !important;
+}
+
+body.od-dragging-denied,
+body.od-dragging-denied * {
+  cursor: not-allowed !important;
+  user-select: none !important;
+}
