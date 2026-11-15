@@ -37,3 +37,6 @@
 - 插件没有在真沙箱（rquickjs）里跑过，只在 vitest（Node）里用假 host 测；`main.js` 里用了 `async/await`、展开运算符、可选链都属于 ES2020+，QuickJS 支持，但未实测。
 - `playwright.config.ts` 没改（现有配置已能同时跑两个 spec；webServer 仍是 vite）。
 - `pnpm check` 里的 Rust 部分不在我范围，没跑。
+
+## e2e 运行情况
+`E2E_PORT=1432 pnpm exec playwright test`：`workbench.spec.ts` 23 通过、1 个本来就跳过；`week1.spec.ts` 5 个因无 devhost 二进制被跳过（未执行）。耗时约 8 分钟。
