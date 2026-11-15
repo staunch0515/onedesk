@@ -37,3 +37,10 @@
 - A1：`StatusItem`（`src/design/components/workbench.tsx`）在没有文字、只有 `title` 时把 `title` 作为 `aria-label`（调用方传的 `aria-label` 优先）；状态栏里只有主题按钮是这种情况，其余都有文字或已有 `aria-label`。
 - 测试：`parts/info-panel.test.tsx`（默认折叠且不读历史、新的在前+截断+恢复、空记录），`design/components/status-item.test.tsx`。`pnpm typecheck`、`pnpm lint`、`pnpm test`（104）通过；纯假数据 `e2e/workbench.spec.ts` 23 过 1 跳过（这次连“tree: drag”那个偶发项也过了）。
 - 基准截图：信息面板底部多了一行“修改记录 / 查看修改记录 ›”（在“版本”之后），所以带信息面板的页面会有这点变化：`workbench-{light,dark}-sql.png`、`-tasks.png`（SQL 资源页）、`-env.png`（环境页）。`-plugin.png`、`-tree-menu.png` 不应有变化；e2e 重新生成它们时有些字节差异，我没有提交任何截图（已还原），请协调会话决定是否更新基准。
+
+## 确认框与文字键（验收后）
+- `deleted.purge.confirm`：`kernel-texts.ts` 里有英中全文（不可撤销；清除这条资源及其全部历史；启动快照 `backups/` 里可能仍保留到被轮换掉）；`KERNEL_CONFIRMS` 给这个键配标题“永久删除？”和确认按钮“永久删除”（危险样式，来自效果的 `danger`）。别的 `confirm` 消息仍用通用标题“确定吗？”和“确定”。另补了 `config.newChild`、审计操作 `workspace.startup`、`resource.move`，以及错误原因 `changedOnDisk/helloFirst/notLoaded/providedTree/unknownKind`（`reason.<名>` 键；`error()` 先找 `code.reason` 再找 `reason.<名>`）。
+- 键名不再悄悄显示：`tx` 遇到像键的字符串（`a.b`、`core:x`）又没有文字时，开发构建在控制台警告一次（仍原样显示）。
+- 测试：`i18n/kernel-texts.test.ts` 列出内核会发出的全部命令/树/类型/确认键、审计操作名、错误原因，要求英中都有；还会扫描 `crates/kernel/src` 里出现的新命令键、审计操作名，没配文字就失败（逼着改这个测试的清单）。`parts/command-dialogs.test.tsx` 检查确认框不显示键名、写明不可撤销与 backups、按钮叫“永久删除”。
+- 检查：`pnpm typecheck`、`pnpm lint`、`pnpm test`（111）通过；纯假数据 e2e 见提交时的结果（下一行）。
+- 纯假数据 e2e：23 过 1 跳过。

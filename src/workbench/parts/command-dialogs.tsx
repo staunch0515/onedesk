@@ -6,7 +6,7 @@ import { useUi, useWorkbench } from "../state/context";
 /** Dialogs a command can ask for: pick a folder (browser mode) and confirm. */
 export function CommandDialogs() {
   const { store, actions } = useWorkbench();
-  const { t, tx } = useI18n();
+  const { t, tx, confirmTexts } = useI18n();
   const folderPrompt = useUi((s) => s.folderPrompt);
   const confirm = useUi((s) => s.confirmCommand);
   const [path, setPath] = useState("");
@@ -53,7 +53,7 @@ export function CommandDialogs() {
         open={confirm !== null}
         onOpenChange={(open) => !open && store.set({ confirmCommand: null })}
         size="sm"
-        title={t("confirm.title")}
+        title={confirm ? (confirmTexts(confirm.message)?.title ?? t("confirm.title")) : t("confirm.title")}
         description={confirm ? tx(confirm.message) : undefined}
         footer={
           <>
@@ -66,7 +66,7 @@ export function CommandDialogs() {
                 if (pending) void actions.command(pending.command, { ...pending.context, args: { ...pending.context.args, confirmed: true } });
               }}
             >
-              {t("confirm.ok")}
+              {confirm ? (confirmTexts(confirm.message)?.ok ?? t("confirm.ok")) : t("confirm.ok")}
             </Button>
           </>
         }
