@@ -765,6 +765,317 @@ pub struct UiSetParams {
     pub value: Value,
 }
 
+/* ================================================================== stage 1–2, round 1 (D273–D280)
+   Parameters and environments (§6), configuration, history, deleted, search, audit, favorites. */
+
+/// More method names; see docs/handoff/round2-plan.md §3.
+pub mod method2 {
+    pub const WORKSPACE_GET_CONFIG: &str = "workspace.getConfig";
+    pub const WORKSPACE_SET_CONFIG: &str = "workspace.setConfig";
+    pub const PARAMS_ENV: &str = "params.env";
+    pub const PARAMS_ENV_OPTIONS: &str = "params.envOptions";
+    pub const PARAMS_RESOLVE: &str = "params.resolve";
+    pub const PARAMS_SET: &str = "params.set";
+    pub const PARAMS_UNSET: &str = "params.unset";
+    pub const PARAMS_ACKNOWLEDGE: &str = "params.acknowledge";
+    pub const RESOURCE_HISTORY: &str = "resource.history";
+    pub const RESOURCE_RESTORE: &str = "resource.restore";
+    pub const RESOURCE_LIST_DELETED: &str = "resource.listDeleted";
+    pub const RESOURCE_UNDELETE: &str = "resource.undelete";
+    pub const RESOURCE_PURGE: &str = "resource.purge";
+    pub const RESOURCE_SET_FAVORITE: &str = "resource.setFavorite";
+    pub const SEARCH_QUERY: &str = "search.query";
+    pub const AUDIT_LIST: &str = "audit.list";
+    pub const AUDIT_FACETS: &str = "audit.facets";
+}
+
+/// More topics: `config` (workspace configuration changed), `audit` (a row was added),
+/// `favorites`, `deleted` are ordinary `tree:<id>` topics of the kernel's own trees.
+pub mod topic2 {
+    pub const CONFIG: &str = "config";
+    pub const AUDIT: &str = "audit";
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum ParamType {
+    Text,
+    Number,
+    Boolean,
+    List,
+    Secret,
+    Ref,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct NamedRef {
+    pub id: String,
+    pub name: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct InheritedValue {
+    pub value: String,
+    pub source_name: String,
+}
+
+#[skip_serializing_none]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, optional_fields)]
+pub struct EnvLayer {
+    pub env_id: String,
+    pub name: String,
+    /// What this ancestor sets itself; absent = not set there.
+    pub value: Option<String>,
+    /// The layer the inherited value comes from.
+    pub effective: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct UpstreamChange {
+    pub was: String,
+    pub now: String,
+}
+
+/// One parameter as the environment page shows it (I.4, §6.2).
+#[skip_serializing_none]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, optional_fields)]
+pub struct EnvParam {
+    pub name: String,
+    #[serde(rename = "type")]
+    pub param_type: ParamType,
+    /// Effective value as text. Secrets give only the keychain entry name.
+    pub value: String,
+    /// Display text for refs (the resource's current name).
+    pub display: Option<String>,
+    /// Environment that supplies the effective value.
+    pub source_id: String,
+    pub source_name: String,
+    /// Defined in this environment (not only inherited).
+    pub own: bool,
+    /// What the parent chain would give without this environment's value.
+    pub inherited: Option<InheritedValue>,
+    /// Present when an ancestor defines this parameter: every ancestor from the root down.
+    pub layers: Option<Vec<EnvLayer>>,
+    /// The inherited value changed after this environment overrode it (§4.2).
+    pub changed_upstream: Option<UpstreamChange>,
+    /// A wider value here is not in effect because an upper layer is stricter (§6.3). Not produced yet.
+    pub restricted: Option<Label>,
+    /// Resources that declared this parameter (§6.2). Empty until `param_decls` exists.
+    pub declared_by: Vec<String>,
+    pub description: Option<Label>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct EnvView {
+    pub id: String,
+    pub name: String,
+    pub description: String,
+    /// Ancestors, root first, ending with this environment.
+    pub chain: Vec<NamedRef>,
+    pub params: Vec<EnvParam>,
+    pub children: Vec<NamedRef>,
+    pub rev: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct EnvOption {
+    pub id: String,
+    pub name: String,
+    pub depth: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ResolvedParam {
+    pub name: String,
+    pub found: bool,
+    pub value: String,
+    pub display: String,
+    pub source_name: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct EnvIdParams {
+    pub env_id: String,
+}
+
+#[skip_serializing_none]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, optional_fields)]
+pub struct ParamsResolveParams {
+    /// Absent = no environment: only "not found" can be answered (§6.3 refuse first).
+    pub env_id: Option<String>,
+    pub name: String,
+}
+
+/// `params.set`: one field-level command on a parameter node (`core:env`, `core:config`).
+#[skip_serializing_none]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, optional_fields)]
+pub struct ParamSetParams {
+    /// The parameter node (resource id).
+    pub node: String,
+    pub name: String,
+    pub value: String,
+    /// Absent = keep the existing type, or `text` for a new parameter.
+    #[serde(rename = "type")]
+    pub param_type: Option<ParamType>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ParamNameParams {
+    pub node: String,
+    pub name: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ConfigGetParams {
+    pub name: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ConfigSetParams {
+    pub name: String,
+    pub value: String,
+}
+
+/// One changed field of one revision (§4.2: stored as snapshots, shown by field).
+#[skip_serializing_none]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, optional_fields)]
+pub struct HistoryEntry {
+    /// `<revision seq>:<field>`.
+    pub id: String,
+    pub at: i64,
+    pub actor: String,
+    /// Operation of the revision: `create`, `update`, `move`, `delete`, `undelete`, `restore`.
+    pub op: String,
+    /// Field path that changed (`name`, `body.text`, `params.host`, `parent`…).
+    pub field: String,
+    pub before: String,
+    pub after: String,
+    /// Set when this entry is itself a restore: the entry it restored.
+    pub restored_from: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ResourceRestoreParams {
+    pub id: String,
+    /// The field goes back to the value it had before this entry; recorded as a new revision.
+    pub entry_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct SetFavoriteParams {
+    pub id: String,
+    pub favorite: bool,
+}
+
+#[skip_serializing_none]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, optional_fields)]
+pub struct SearchQueryParams {
+    pub text: String,
+    /// Default 20, at most 200.
+    pub limit: Option<u32>,
+    /// Only this kind (full kind name).
+    pub kind: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct SearchHit {
+    pub target: String,
+    pub title: String,
+    pub icon: String,
+    /// Path in the tree (names joined by " / ").
+    pub subtitle: String,
+    pub state: NodeState,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum AuditResult {
+    Ok,
+    Denied,
+    Error,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct AuditRow {
+    pub id: String,
+    pub at: i64,
+    /// Actor as text (`user`, `core`, `plugin:<id>@<version>`).
+    pub actor: String,
+    /// Actor type: `user`, `core`, `plugin`, `ai`, `git`, `sync` (§4.1).
+    pub source: String,
+    /// Operation id (`resource.update`, `files.write`…); the shell supplies the text.
+    pub operation: String,
+    /// Name or id of the object.
+    pub target: String,
+    pub result: AuditResult,
+    pub detail: String,
+}
+
+#[skip_serializing_none]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, optional_fields)]
+pub struct AuditFilter {
+    /// Only rows newer than now − sinceMs.
+    pub since_ms: Option<i64>,
+    pub actor: Option<String>,
+    pub operation: Option<String>,
+    pub result: Option<AuditResult>,
+    pub text: Option<String>,
+    /// Default 200, at most 1000; newest first.
+    pub limit: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct AuditFacets {
+    pub actors: Vec<String>,
+    pub operations: Vec<String>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
