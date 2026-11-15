@@ -46,7 +46,7 @@ impl Inner {
                     (None, Some(tree), Some(key)) => node_target(tree, key),
                     _ => return Err(invalid_params("node.open needs a target or a node")),
                 };
-                Ok(vec![CommandEffect::Open { target }])
+                Ok(vec![CommandEffect::Open { target, params: None, env_id: None }])
             }
             "node.rename" => {
                 let (tree, key) = c.tree.clone().zip(c.node_key.clone()).ok_or_else(|| invalid_params("node"))?;
@@ -143,8 +143,8 @@ impl Inner {
                 self.purge(&id).await?;
                 Ok(vec![CommandEffect::CloseTarget { target: format!("resource:{id}") }])
             }
-            "open.audit" => Ok(vec![CommandEffect::Open { target: "core:audit".into() }]),
-            "open.deleted" => Ok(vec![CommandEffect::Open { target: "core:deleted".into() }]),
+            "open.audit" => Ok(vec![CommandEffect::Open { target: "core:audit".into(), params: None, env_id: None }]),
+            "open.deleted" => Ok(vec![CommandEffect::Open { target: "core:deleted".into(), params: None, env_id: None }]),
             "plugin.grantFolder" => {
                 let plugin = arg("plugin")
                     .or_else(|| c.tree.as_deref().and_then(Registry::split).map(|(p, _)| p.to_string()))
@@ -163,7 +163,7 @@ impl Inner {
                     Some(p) => format!("new:{kind}?parent={}", url_encode(&p)),
                     None => format!("new:{kind}"),
                 };
-                Ok(vec![CommandEffect::Open { target }])
+                Ok(vec![CommandEffect::Open { target, params: None, env_id: None }])
             }
             id => {
                 let (pid, name) = Registry::split(id).ok_or_else(|| not_found("command"))?;
@@ -178,7 +178,7 @@ impl Inner {
                 // on anyone's behalf, and may only open real targets.
                 for e in &effects {
                     match e {
-                        CommandEffect::Open { target } if !crate::pages::is_target(target) => {
+                        CommandEffect::Open { target, .. } if !crate::pages::is_target(target) => {
                             return Err(bad_effects(format!("bad open target {target}")))
                         }
                         CommandEffect::PickFolder { .. } | CommandEffect::Confirm { .. } => {

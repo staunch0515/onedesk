@@ -2,4 +2,12 @@
 import type { ActionRole } from "./ActionRole";
 import type { Label } from "./Label";
 
-export type ActionDecl = { id: string, label: Label, icon?: string, primary?: boolean, danger?: boolean, shortcut?: Array<string>, role: ActionRole, disabled?: boolean, };
+export type ActionDecl = { id: string, label: Label, icon?: string, primary?: boolean, danger?: boolean, shortcut?: Array<string>, role: ActionRole, disabled?: boolean, 
+/**
+ * `run` / `save-run`: the full action id `<pluginId>:<name>` this item runs (D284).
+ */
+action?: string, 
+/**
+ * Ask before running (D289): the shell confirms, the kernel only executes.
+ */
+confirm?: Label, };

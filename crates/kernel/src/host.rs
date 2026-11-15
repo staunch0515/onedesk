@@ -250,7 +250,7 @@ impl Inner {
                 if !crate::pages::is_target(&target) {
                     return Err(invalid("badTarget"));
                 }
-                CommandEffect::Open { target }
+                CommandEffect::Open { target, params: None, env_id: None }
             }
             "notify" => {
                 let message: Label = serde_json::from_value(arg(args, 0)).map_err(|_| invalid_params("message"))?;

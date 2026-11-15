@@ -192,6 +192,8 @@ fn actions(p: &Plugin, page: &str) -> Vec<ActionDecl> {
                     shortcut: a.shortcut.clone(),
                     role: a.role,
                     disabled: None,
+                    action: None,
+                    confirm: None,
                 })
                 .collect()
         })
