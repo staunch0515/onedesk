@@ -507,7 +507,10 @@ impl Inner {
             let like = format!("%{}%", t.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_"));
             // Every `?` of the clause becomes the same numbered argument.
             push(
-                "(op LIKE ? ESCAPE '\\' OR object LIKE ? ESCAPE '\\' OR summary LIKE ? ESCAPE '\\' OR actor LIKE ? ESCAPE '\\')",
+                // The object's *current* name comes from `resources` at query time: names are never
+                // written into audit rows, so a permanently deleted resource is not found by name.
+                "(op LIKE ? ESCAPE '\\' OR object LIKE ? ESCAPE '\\' OR summary LIKE ? ESCAPE '\\' OR actor LIKE ? ESCAPE '\\' \
+                 OR object IN (SELECT id FROM resources WHERE name LIKE ? ESCAPE '\\'))",
                 json!(like),
                 &mut wheres,
             );

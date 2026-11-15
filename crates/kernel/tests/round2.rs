@@ -548,3 +548,39 @@ async fn review11_audit_text_filter_treats_wildcards_literally() {
     assert_eq!(c.ok("audit.list", json!({ "text": "_" })).await.as_array().unwrap().len(),
                c.ok("audit.list", json!({ "text": "_" })).await.as_array().unwrap().iter().filter(|r| r.to_string().contains('_')).count());
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn audit_text_filter_matches_the_current_name_but_not_after_purge() {
+    let (env, c) = setup().await;
+    let id = item(&c, "Quarterly 50% plan", "x").await;
+    c.ok("page.save", json!({ "target": format!("resource:{id}"), "changes": { "name": "Renamed 50% plan" } })).await;
+    let hits = c.ok("audit.list", json!({ "text": "Renamed 50%" })).await;
+    assert!(hits.as_array().unwrap().len() >= 2, "create and update rows of that resource: {hits}");
+    assert!(hits.as_array().unwrap().iter().all(|r| r["target"] == "Renamed 50% plan"));
+    assert_eq!(c.ok("audit.list", json!({ "text": "Quarterly" })).await, json!([]), "only the current name");
+    c.ok("resource.delete", json!({ "id": id })).await;
+    assert!(!c.ok("audit.list", json!({ "text": "Renamed 50%" })).await.as_array().unwrap().is_empty(), "deleted still has its name");
+    c.ok("resource.purge", json!({ "id": id })).await;
+    assert_eq!(c.ok("audit.list", json!({ "text": "Renamed 50%" })).await, json!([]));
+    let n: i64 = db(&env).query_row("SELECT count(*) FROM audit WHERE summary LIKE '%Renamed%' OR object LIKE '%Renamed%'", [], |r| r.get(0)).unwrap();
+    assert_eq!(n, 0, "no names in audit rows");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn purge_leaves_no_trace_in_the_database_or_wal_files() {
+    let (env, c) = setup().await;
+    let marker = "Xq7ZmarkerUnlikely";
+    let id = item(&c, &format!("{marker} name"), &format!("text with {marker} inside")).await;
+    for i in 0..5 {
+        c.ok("page.save", json!({ "target": format!("resource:{id}"), "changes": { "body.text": format!("{marker} edit {i} {}", "pad ".repeat(200)) } })).await;
+    }
+    c.ok("page.resolve", json!({ "target": format!("resource:{id}") })).await;
+    c.ok("resource.delete", json!({ "id": id })).await;
+    c.ok("resource.purge", json!({ "id": id })).await;
+    let dir = env.kernel.db_path().parent().unwrap().to_path_buf();
+    for f in ["workspace.db", "workspace.db-wal"] {
+        let bytes = std::fs::read(dir.join(f)).unwrap_or_default();
+        let found = bytes.windows(marker.len()).any(|w| w == marker.as_bytes());
+        assert!(!found, "{marker} still in {f} ({} bytes)", bytes.len());
+    }
+}

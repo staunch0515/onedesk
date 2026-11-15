@@ -122,3 +122,16 @@ cargo test --release -p onedesk-kernel --test round2 -- search_over --nocapture 
 - 搜索表按 `resources.rowid` 对应：`resources` 的主键是文字 id，rowid 是隐式的。内核从不执行 `VACUUM`（快照用的 `VACUUM INTO` 不改原库），所以 rowid 稳定；以后如果要对原库做 `VACUUM`，要先重建搜索索引（删 `meta.search_built` 即可）。
 - 第一轮、第二轮已有的审计行里仍可能有参数名或资源名（审计表不可改）。
 - #14（成环数据会死循环）记到了 `docs/handoff/todo.md`。
+
+## 界面检查后的修改（K-A1）
+
+`audit.list` 的 `text` 过滤以前只匹配审计行自己的列（操作、对象 id、摘要、操作者），而审计页显示的 `target` 是资源的当前名称，按名称过滤什么都找不到。现在另外匹配“对象 id 对应的资源的当前名称”：查询时用子查询从 `resources` 取，审计行里仍然不写名称；永久删除后资源行不在了，按原名称就找不到。LIKE 照常转义。测试 `tests/round2.rs::audit_text_filter_matches_the_current_name_but_not_after_purge`（按当前名称找得到、旧名称找不到、删除后仍找得到、永久删除后找不到、审计行里没有名称；名称里带 `%` 顺带验证转义）。80 个测试全部通过，clippy 无警告。
+
+## 验收后的修改（D283：永久删除要从文件里抹掉）
+
+- 写连接和读连接都开 `PRAGMA secure_delete = ON`（`workspace.rs::configure`）：释放的页和删除的单元被清零。
+- 新迁移 `0004_search_secure_delete.sql`：打开 FTS5 的 `secure-delete` 配置，删除搜索行时连同索引段里的内容一起抹掉。升级测试 `workspace::tests::migration_0004_turns_on_secure_delete_for_search_and_keeps_data`。
+- 永久删除提交后在写连接上做 `PRAGMA wal_checkpoint(TRUNCATE)`，WAL 里的旧页并回主文件并把 `-wal` 截成 0。
+- 测试 `tests/round2.rs::purge_leaves_no_trace_in_the_database_or_wal_files`：正文含独特字符串的资源，改 5 次、打开一次、删除、永久删除，之后按字节读 `workspace.db` 和 `workspace.db-wal`，找不到那个字符串。`backups/` 按 D283 不检查。
+- 82 个测试全部通过，clippy 无警告。
+- 没验证：检查点时若有读事务未结束，`TRUNCATE` 会做不完（内核的读连接都是短查询，测试里没有这种情况）；结果被忽略，不报错。
