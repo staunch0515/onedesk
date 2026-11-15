@@ -189,6 +189,12 @@ async fn leftover_running_runs_become_interrupted_after_restart() {
     c.hello().await;
     let r = c.ok("run.get", json!({ "id": id })).await;
     assert_eq!((r["status"].as_str(), r["error"]["code"].as_str()), (Some("error"), Some("interrupted")));
+    // Review #13: the end of an interrupted run is audited too.
+    let n: i64 = Connection::open(ws.join("workspace.db"))
+        .unwrap()
+        .query_row("SELECT count(*) FROM audit WHERE op = 'run.end' AND object = ?1 AND summary LIKE '%interrupted%'", [&id], |r| r.get(0))
+        .unwrap();
+    assert_eq!(n, 1);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -398,4 +404,117 @@ async fn palette_plugins_tree_and_broken_packages() {
     assert_eq!(runs["nodes"][1]["target"], format!("run:{}", a["id"].as_str().unwrap()));
     c.ok("plugin.reload", json!({ "plugin": "test.runner" })).await;
     assert_eq!(run_text(&c, &j, "rows 1").await["status"], "success");
+}
+
+/* ------------------------------------------------------------------ after the round-3 review */
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn review1_runs_on_an_unsaved_new_page() {
+    let (_env, c) = setup().await;
+    let id = c
+        .ok("run.start", json!({ "action": "run", "target": "new:test.runner:job", "tabId": "t", "input": { "body.text": "rows 2" } }))
+        .await;
+    let r = finished(&c, id.as_str().unwrap()).await;
+    assert_eq!((r["status"].as_str(), r["output"]["total"].as_u64()), (Some("success"), Some(2)));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn review2_actions_never_get_resources_of_other_plugins() {
+    let (_env, c) = setup().await;
+    let alpha = c.ok("page.save", json!({ "target": "new:test.alpha:item", "changes": { "body.text": "private" } })).await["page"]["resourceId"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let env_id = c.ok("tree.children", json!({ "tree": "env" })).await["nodes"][0]["key"].as_str().unwrap().to_string();
+    for res in [alpha.as_str(), env_id.as_str()] {
+        let id = start(&c, Some(res), "test.runner:say", json!({}), None, json!({})).await;
+        let r = finished(&c, &id).await;
+        assert_eq!((r["status"].as_str(), r["error"]["code"].as_str()), (Some("error"), Some("invalidInput")), "{res}");
+        assert!(r.get("output").is_none());
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn review3_disabled_plugin_resources_cannot_be_saved_created_or_renamed() {
+    let (_env, c) = setup().await;
+    let j = job(&c, "keep").await;
+    c.ok("plugin.setEnabled", json!({ "plugin": "test.runner", "enabled": false })).await;
+    let denied = |e: onedesk_protocol::ProtocolError| assert_eq!((e.code, e.params["reason"].as_str()), (ErrorCode::Denied, "pluginDisabled"));
+    denied(c.call("page.save", json!({ "target": format!("resource:{j}"), "changes": { "body.text": "x" } })).await.unwrap_err());
+    denied(c.call("page.save", json!({ "target": "new:test.runner:job", "changes": { "name": "N" } })).await.unwrap_err());
+    denied(c.call("tree.rename", json!({ "tree": "resources", "key": j, "name": "R" })).await.unwrap_err());
+    let r = c.ok("resource.get", json!({ "id": j })).await;
+    assert_eq!((r["name"].as_str(), r["body"]["text"].as_str()), (Some("J"), Some("keep")));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn review4_event_changes_are_limited_to_bound_fields() {
+    let (_env, c) = setup().await;
+    let j = job(&c, "x").await;
+    let ev = c.ok("page.event", json!({ "target": format!("resource:{j}"), "event": "sneaky", "context": { "draft": { "body.text": "x" } } })).await;
+    assert_eq!(ev["changes"], json!({ "body.text": "kept" }));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn review5_oversized_input_draft_and_lines_are_refused() {
+    let (env, c) = setup().await;
+    let j = job(&c, "").await;
+    let big = "x".repeat(8 * 1024 * 1024 + 1);
+    let id = start(&c, Some(&j), "run", json!({ "body.text": big }), None, json!({})).await;
+    let r = finished(&c, &id).await;
+    assert_eq!(r["error"]["code"], "invalidInput");
+    let e = c.call("page.resolve", json!({ "target": format!("resource:{j}"), "context": { "draft": { "body.text": big } } })).await.unwrap_err();
+    assert_eq!((e.code, e.params["reason"].as_str()), (ErrorCode::InvalidParams, "tooLarge"));
+    let e = c.call("page.event", json!({ "target": format!("resource:{j}"), "event": "tidy", "context": { "draft": { "body.text": big } } })).await.unwrap_err();
+    assert_eq!(e.code, ErrorCode::InvalidParams);
+    // Over the socket, a line longer than 32 MB is answered and skipped; the connection goes on.
+    let s = Client::socket(env.kernel.clone(), env.tmp.path()).await;
+    s.hello().await;
+    let huge = format!("{{\"id\":77,\"method\":\"tree.list\",\"params\":{{\"x\":\"{}\"}}}}", "y".repeat(33 * 1024 * 1024));
+    let resp = s.raw(huge, 0).await;
+    let err = resp.error.unwrap();
+    assert_eq!((err.code, err.params["reason"].as_str()), (ErrorCode::InvalidParams, "tooLarge"));
+    s.ok("tree.list", Value::Null).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn review6_locale_reaches_actions_and_result_tabs() {
+    let (_env, c) = setup().await;
+    let j = job(&c, "").await;
+    let id = c
+        .ok("run.start", json!({ "action": "run", "resourceId": j, "target": format!("resource:{j}"), "tabId": "t",
+                                 "input": { "body.text": "locale" }, "locale": "zh-CN" }))
+        .await;
+    let r = finished(&c, id.as_str().unwrap()).await;
+    assert_eq!(r["output"]["rows"][0][1], "zh-CN");
+    let v = c.ok("run.render", json!({ "id": r["id"], "tabId": "final", "locale": "zh-CN" })).await;
+    assert_eq!(v[0]["text"], "final:locale@zh-CN");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn review11_storage_and_setting_size_limits() {
+    let (_env, c) = setup().await;
+    let chunk = "z".repeat(250 * 1024);
+    let mut refused_at = None;
+    for i in 0..70 {
+        let r = c.probe("test.runner", "storage.set", json!([format!("k{i}"), chunk])).await;
+        if r.get("error").is_some() {
+            assert_eq!(r["params"]["reason"], "tooLarge");
+            refused_at = Some(i);
+            break;
+        }
+    }
+    let at = refused_at.expect("the 16 MB total was enforced");
+    assert!((60..=67).contains(&at), "refused at {at}");
+    for i in 0..at {
+        c.probe("test.runner", "storage.remove", json!([format!("k{i}")])).await;
+    }
+    for i in 0..1000 {
+        assert!(c.probe("test.runner", "storage.set", json!([format!("n{i}"), 1])).await.get("error").is_none(), "{i}");
+    }
+    let r = c.probe("test.runner", "storage.set", json!(["one-too-many", 1])).await;
+    assert_eq!(r["params"]["reason"], "tooManyKeys");
+    assert!(c.probe("test.runner", "storage.set", json!(["n5", 2])).await.get("error").is_none(), "overwriting is fine");
+    let e = c.call("plugin.setSetting", json!({ "plugin": "test.runner", "name": "style", "value": "u".repeat(4097) })).await.unwrap_err();
+    assert_eq!(e.params["reason"], "tooLarge");
 }

@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use onedesk_protocol::*;
 use serde_json::Value;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
 use tokio::sync::{broadcast, mpsc};
 
@@ -69,6 +69,13 @@ impl Session {
     }
 }
 
+/// D295: the longest request line accepted.
+pub const MAX_LINE: usize = 32 * 1024 * 1024;
+
+fn too_long() -> String {
+    response(0, Err(crate::util::err_p(ErrorCode::InvalidParams, &[("reason", "tooLarge")])))
+}
+
 fn event_line(e: &EventMessage) -> String {
     serde_json::to_string(e).expect("event serializes")
 }
@@ -102,9 +109,34 @@ pub async fn serve_connection(kernel: Arc<Kernel>, stream: UnixStream) {
         }
     });
     let session = Arc::new(Session::new(kernel));
-    let mut lines = BufReader::new(read).lines();
+    let mut reader = BufReader::new(read);
     let mut tasks = tokio::task::JoinSet::new();
-    while let Ok(Some(line)) = lines.next_line().await {
+    let mut buf = Vec::new();
+    loop {
+        // D295: one line is at most 32 MB; a longer one is answered and skipped, not buffered.
+        buf.clear();
+        match (&mut reader).take(MAX_LINE as u64 + 1).read_until(b'\n', &mut buf).await {
+            Ok(0) | Err(_) => break,
+            Ok(_) => {}
+        }
+        if buf.len() > MAX_LINE && buf.last() != Some(&b'\n') {
+            let _ = tx.send(too_long());
+            let mut rest = Vec::new();
+            loop {
+                rest.clear();
+                match (&mut reader).take(1 << 20).read_until(b'\n', &mut rest).await {
+                    Ok(0) | Err(_) => break,
+                    Ok(_) if rest.last() == Some(&b'\n') => break,
+                    Ok(_) => {}
+                }
+            }
+            continue;
+        }
+        let Ok(line) = std::str::from_utf8(&buf) else {
+            let _ = tx.send(response(0, Err(invalid_params("not UTF-8"))));
+            continue;
+        };
+        let line = line.trim_end_matches(['\n', '\r']).to_string();
         if line.trim().is_empty() {
             continue;
         }
@@ -143,6 +175,9 @@ impl InProc {
     }
 
     pub async fn line(&self, line: &str) -> String {
+        if line.len() > MAX_LINE {
+            return too_long();
+        }
         self.session.handle_line(line).await
     }
 

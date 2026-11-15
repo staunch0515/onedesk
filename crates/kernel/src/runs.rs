@@ -24,7 +24,16 @@ pub const METHODS: &[&str] = &[
 ];
 
 pub const MAX_ROWS: usize = 1000;
+/// D295: the run's input snapshot and a page's draft, serialized.
+pub const MAX_INPUT_BYTES: usize = 8 * 1024 * 1024;
+
+/// Serialized size of a value (for the D295 limits).
+pub fn json_size<T: serde::Serialize>(v: &T) -> usize {
+    serde_json::to_string(v).map(|s| s.len()).unwrap_or(usize::MAX)
+}
 pub const MAX_OUTPUT_BYTES: usize = 8 * 1024 * 1024;
+/// D295: a setting value.
+pub const MAX_SETTING_BYTES: usize = 4 * 1024;
 pub const PROGRESS_EVERY: Duration = Duration::from_millis(100);
 
 /// A run whose action is executing in this process.
@@ -141,7 +150,7 @@ impl Inner {
                 Err(e) => Err(e),
             },
             M::RUN_RENDER => match parse::<RunRenderParams>(params) {
-                Ok(p) => self.run_render(&p.id, &p.tab_id, client).await.and_then(to_value),
+                Ok(p) => self.run_render(&p.id, &p.tab_id, p.locale, client).await.and_then(to_value),
                 Err(e) => Err(e),
             },
             M::PAGE_EVENT => match parse::<PageEventParams>(params) {
@@ -248,33 +257,66 @@ impl Inner {
         self.pipeline.execute(Actor::User, Command::RunInsert(Box::new(row))).await?;
         self.run_events(&id);
 
-        // Every failure from here on is an `error` run, not a protocol error (D288).
+        // Every failure from here on is an `error` run, not a protocol error (D288); a kernel
+        // fault after the row exists also ends the run instead of leaving it `running` (#8).
+        if let Err(e) = self.run_launch(&id, &p, res.as_ref(), resolved, client).await {
+            self.run_end(&id, None, "error", None, Some(run_error("pluginError", "", e.detail.or(Some(format!("{:?}", e.code))))), None).await;
+        }
+        Ok(id)
+    }
+
+    async fn run_launch(
+        &self,
+        id: &str,
+        p: &RunStartParams,
+        res: Option<&Row>,
+        resolved: Option<(&Plugin, &ActionDef)>,
+        client: Option<String>,
+    ) -> KResult<()> {
+        let id = id.to_string();
         let Some((plugin, action)) = resolved else {
             self.run_end(&id, None, "error", None, Some(run_error("unknownAction", "", None)), None).await;
-            return Ok(id);
+            return Ok(());
         };
+        let refuse = |detail: &str| Some(run_error("invalidInput", "", Some(detail.to_string())));
+        // The kind the run is about: the resource's, or the one an unsaved `new:` page will create (#1).
+        let kind = res.map(|r| r.kind.clone()).or_else(|| match crate::pages::parse_target(&p.target) {
+            crate::pages::Target::New { kind, .. } => Some(kind),
+            _ => None,
+        });
         if let Some(kinds) = &action.kinds {
-            let fits = res.as_ref().is_some_and(|r| kinds.iter().any(|k| plugin.full(k) == r.kind));
-            if !fits {
-                let detail = Some("action does not apply to this resource".to_string());
-                self.run_end(&id, Some(plugin), "error", None, Some(run_error("invalidInput", "", detail)), None).await;
-                return Ok(id);
+            if !kind.as_ref().is_some_and(|k| kinds.iter().any(|x| &plugin.full(x) == k)) {
+                self.run_end(&id, Some(plugin), "error", None, refuse("action does not apply to this resource"), None).await;
+                return Ok(());
             }
+        }
+        // #2: a resource of another plugin (or of the kernel) is never handed to this action.
+        if let Some(r) = res {
+            if self.registry.kind(&r.kind).is_none_or(|(owner, _)| owner.id != plugin.id) {
+                self.run_end(&id, Some(plugin), "error", None, refuse("resource of another plugin"), None).await;
+                return Ok(());
+            }
+        }
+        // D295: input snapshot and parameters at most 8 MB.
+        if json_size(&p.input) > MAX_INPUT_BYTES || json_size(&p.params) > MAX_INPUT_BYTES {
+            self.run_end(&id, Some(plugin), "error", None, refuse("input too large"), None).await;
+            return Ok(());
         }
         if !self.plugin_enabled(&plugin.id) {
             self.run_end(&id, Some(plugin), "error", None, Some(run_error("pluginDisabled", "", None)), None).await;
-            return Ok(id);
+            return Ok(());
         }
         let token = CancelToken::default();
         self.runs_active.lock().unwrap().insert(
             id.clone(),
             ActiveRun { plugin: plugin.id.clone(), token: token.clone(), last_progress: None, stopped: None },
         );
-        let resource = match &res {
+        let resource = match res {
             Some(r) => Some(self.resource(r)?),
             None => None,
         };
-        let ctx = json!({ "target": p.target, "resource": resource, "envId": p.env_id, "params": p.params, "runId": id });
+        let ctx = json!({ "target": p.target, "resource": resource, "envId": p.env_id, "params": p.params, "runId": id,
+                          "locale": p.locale });
         let args = json!([ctx, p.input]);
         let me = self.me.upgrade().ok_or_else(|| internal("kernel stopped"))?;
         let (run_id, pid, aid, declared) = (id.clone(), plugin.id.clone(), action.id.clone(), action.output);
@@ -328,7 +370,7 @@ impl Inner {
             let summary = summary.or_else(|| Some(json!(RunSummary { rows: None, message: None, duration_ms: Some(ms) })));
             me.run_end(&run_id, plugin, status, summary, error, output).await;
         });
-        Ok(id)
+        Ok(())
     }
 
     async fn run_end(
@@ -340,6 +382,7 @@ impl Inner {
         error: Option<Value>,
         output: Option<Value>,
     ) {
+        self.runs_active.lock().unwrap().remove(id);
         // The action's part is the plugin's doing; kernel refusals are the kernel's.
         let actor = plugin.map(|p| p.actor()).unwrap_or(Actor::Core);
         let cmd = Command::RunFinish { id: id.into(), status: status.into(), summary, error, output };
@@ -451,7 +494,7 @@ impl Inner {
         Some((p, k.page.clone()?))
     }
 
-    async fn run_render(&self, id: &str, tab: &str, client: Option<String>) -> KResult<Vec<ViewNode>> {
+    async fn run_render(&self, id: &str, tab: &str, locale: Option<String>, client: Option<String>) -> KResult<Vec<ViewNode>> {
         let r = self.read(|c| store::run_get(c, id))?.ok_or_else(|| not_found("run"))?;
         let (plugin, page) = self.run_page(&r).ok_or_else(|| not_found("page"))?;
         let declared = plugin
@@ -466,7 +509,7 @@ impl Inner {
             None => None,
         };
         let run = self.run_to_protocol(r, true);
-        let ctx = json!({ "target": format!("run:{id}"), "run": run, "resource": resource, "envId": run.env_id });
+        let ctx = json!({ "target": format!("run:{id}"), "run": run, "resource": resource, "envId": run.env_id, "locale": locale });
         let out = self.call_plugin(&plugin.id, "pages", &page, "renderResultTab", json!([ctx, tab]), client).await?;
         serde_json::from_value(out).map_err(|e| err_p_detail(ErrorCode::PluginError, "badOutput", e.to_string()))
     }
@@ -483,6 +526,9 @@ impl Inner {
             message: Option<Label>,
         }
         let cx = p.context.unwrap_or_default();
+        if json_size(&cx.draft) > MAX_INPUT_BYTES {
+            return Err(err_p(ErrorCode::InvalidParams, &[("reason", "tooLarge")]));
+        }
         let (plugin, page, mut ctx) = self.page_owner(&p.target)?;
         if !self.plugin_enabled(&plugin.id) {
             return Err(err_p(ErrorCode::PluginError, &[("reason", "pluginDisabled")]));
@@ -497,7 +543,16 @@ impl Inner {
             .map_err(|e| e.to_protocol())?;
         let out = if out.is_null() { json!({}) } else { out };
         let e: EventOut = serde_json::from_value(out).map_err(|e| err_p_detail(ErrorCode::PluginError, "badOutput", e.to_string()))?;
-        Ok(PageEventResult { changes: e.changes, message: e.message })
+        // D294: only fields the page shows (bind paths of this render) may change.
+        let changes = match e.changes {
+            Some(ch) if !ch.is_empty() => {
+                let shown = self.resolve(&p.target, PageContext { draft: cx.draft.clone(), ..cx.clone() }, None).await?;
+                let binds = crate::pages::bind_paths(&shown.view);
+                Some(ch.into_iter().filter(|(k, _)| binds.contains(k)).collect())
+            }
+            other => other,
+        };
+        Ok(PageEventResult { changes, message: e.message })
     }
 
     /// The plugin page behind a target, with the base `ctx` for it.
@@ -560,6 +615,9 @@ impl Inner {
         let plugin = self.registry.plugin(&p.plugin).ok_or_else(|| not_found("plugin"))?;
         let decl = plugin.setting(&p.name).ok_or_else(|| err_p(ErrorCode::Invalid, &[("reason", "unknownSetting")]))?;
         let value = if decl.ty == SettingType::Number { p.value.trim().to_string() } else { p.value.clone() };
+        if value.len() > MAX_SETTING_BYTES {
+            return Err(err_p(ErrorCode::Invalid, &[("reason", "tooLarge")]));
+        }
         if !decl.accepts(&value) {
             return Err(err_p(ErrorCode::Invalid, &[("reason", "badValue")]));
         }
