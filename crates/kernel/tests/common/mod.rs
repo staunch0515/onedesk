@@ -31,6 +31,8 @@ pub fn test_config() -> KernelConfig {
             ..SandboxConfig::default()
         },
         action_timeout: Duration::from_secs(5),
+        // Never the real keychain in tests.
+        secrets: onedesk_kernel::secrets::SecretStoreHandle::memory().0,
     }
 }
 

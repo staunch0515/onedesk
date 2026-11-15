@@ -1066,6 +1066,13 @@ pub struct AuditRow {
     pub target: String,
     pub result: AuditResult,
     pub detail: String,
+    /// Repeated calls merged into this row (D309), when more than one. Round 4.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub count: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub last_at: Option<i64>,
 }
 
 #[skip_serializing_none]
@@ -1312,6 +1319,14 @@ pub struct PluginVersion {
     pub active: bool,
     pub pinned: bool,
     pub notes: String,
+    /// Installed, but its permissions are not confirmed yet (D299). Round 4.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub confirmed: Option<bool>,
+    /// Resources of this workspace bound to this version (§7.6). Round 4.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub resource_count: Option<u64>,
 }
 
 #[skip_serializing_none]
@@ -1398,6 +1413,13 @@ pub struct PluginDetail {
     pub resource_count: u64,
     /// Folders granted to its `files` capability (D261).
     pub folders: Vec<String>,
+    /// The latest takeover batch of this plugin (for “undo upgrade”). Round 4.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub last_upgrade: Option<UpgradeBatchInfo>,
+    /// Installed versions whose permissions are not confirmed yet. Round 4.
+    #[serde(default)]
+    pub unconfirmed: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -1515,6 +1537,20 @@ pub struct UpgradeResult {
     pub upgraded: u32,
     /// Resources left on their old version because the new one cannot take them over.
     pub kept: u32,
+}
+
+/// A takeover batch as the plugin page shows it (round 4, kernel addition).
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct UpgradeBatchInfo {
+    pub batch: String,
+    /// Comma-separated versions the resources came from.
+    pub from: String,
+    pub to: String,
+    pub count: u64,
+    pub at: i64,
+    pub undone: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]

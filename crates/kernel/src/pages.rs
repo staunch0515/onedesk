@@ -109,6 +109,16 @@ fn bad_output(plugin: &str, e: impl std::fmt::Display) -> ProtocolError {
     }
 }
 
+/// A draft without the given bind paths (secret fields never reach a plugin, D306).
+pub fn strip(draft: Option<JsonMap>, fields: &[String]) -> Option<JsonMap> {
+    draft.map(|mut d| {
+        for f in fields {
+            d.remove(f);
+        }
+        d
+    })
+}
+
 pub fn bind_paths(view: &[ViewNode]) -> Vec<String> {
     binds(view)
 }
@@ -264,7 +274,7 @@ impl Inner {
         Ok(chain
             .into_iter()
             .map(|a| Crumb {
-                icon: Some(self.kind_meta(&a.kind).icon),
+                icon: Some(self.row_meta(&a).icon),
                 tree: a.tree.clone(),
                 target: (a.kind != KIND_GROUP).then(|| format!("resource:{}", a.id)),
                 key: Some(a.id),
@@ -282,9 +292,11 @@ impl Inner {
     ) -> KResult<RenderOut> {
         let env = ctx.get("envId").and_then(Value::as_str).map(String::from);
         ctx["envId"] = json!(env);
-        let info = crate::sandbox::CallInfo { client, env_id: env, run_id: None };
+        let info = crate::sandbox::CallInfo { client, env_id: env, ..Default::default() };
+        // The version given: for a resource, the one it is bound to (§7.6).
+        let plugin = self.registry.version(&plugin.id, &plugin.version).unwrap_or(self.registry.plugin(&plugin.id).ok_or_else(|| not_found("plugin"))?);
         let out = self
-            .call_plugin_with(&plugin.id, "pages", page, "render", json!([ctx]), info, None, None)
+            .call_version(plugin, "pages", page, "render", json!([ctx]), info, None, None)
             .await
             .map_err(|e| e.to_protocol())?;
         serde_json::from_value::<RenderOut>(out).map_err(|e| bad_output(&plugin.id, e))
@@ -297,7 +309,7 @@ impl Inner {
         cx: &PageContext,
         client: Option<String>,
     ) -> KResult<PageDescriptor> {
-        let meta = self.kind_meta(&r.kind);
+        let meta = self.row_meta(r);
         let mut d = PageDescriptor {
             title: r.name.clone(),
             icon: meta.icon.clone(),
@@ -325,21 +337,29 @@ impl Inner {
             d.autosave = true;
             return Ok(d);
         }
-        let Some((pid, page)) = meta.page else {
-            if meta.state == NodeState::MissingPlugin {
-                return Err(err_p(ErrorCode::PluginError, &[("reason", "notLoaded"), ("kind", &r.kind)]));
-            }
+        // §7.6: bound to a version that is not installed — read-only and empty until it is back.
+        if meta.state == NodeState::MissingPlugin {
+            d.state_reason = meta.reason.clone();
+            d.read_only = true;
             return Ok(d);
-        };
-        let plugin = self.registry.plugin(&pid).ok_or_else(|| err_p(ErrorCode::PluginError, &[("reason", "notLoaded")]))?;
+        }
+        let (Some((_, page)), Some(plugin)) = (meta.page.clone(), meta.plugin) else { return Ok(d) };
         if meta.state == NodeState::Disabled {
             // D290: the data stays; the page says the plugin is off and shows nothing editable.
             d.read_only = true;
             return Ok(d);
         }
-        let ctx = json!({ "target": target, "resource": self.resource(r)?, "draft": cx.draft, "locale": cx.locale, "envId": cx.env_id });
+        let secret_fields = self.secret_fields(&r.kind, r.plugin_version.as_deref());
+        let draft = strip(cx.draft.clone(), &secret_fields);
+        let ctx = json!({ "target": target, "resource": self.resource(r)?, "draft": draft, "locale": cx.locale, "envId": cx.env_id });
         let out = self.render(plugin, &page, ctx, client).await?;
         d.values = binds(&out.view).into_iter().filter_map(|b| store::value_at(r, &b).map(|v| (b, v))).collect();
+        // D306: for a secret field the page learns only whether a value is saved.
+        for f in &secret_fields {
+            if let Some(v) = d.values.get_mut(f) {
+                *v = Value::Bool(v.get("secret").and_then(Value::as_str).is_some());
+            }
+        }
         page_frame(&mut d, plugin, &page);
         d.view = out.view;
         Ok(d)
@@ -544,7 +564,11 @@ impl Inner {
                     return Err(not_found("resource"));
                 }
                 self.kind_writable(&row.kind)?;
-                let changes = Changes::from_bind_map(&p.changes)?;
+                // D306: secret field values go to the keychain; the resource keeps the name.
+                let mut raw = p.changes.clone();
+                let secret_fields = self.secret_fields(&row.kind, row.plugin_version.as_deref());
+                self.take_secret_fields(&row.id, &secret_fields, &mut raw, Some(&row.body)).await?;
+                let changes = Changes::from_bind_map(&raw)?;
                 let basis = match &p.basis {
                     Some(b) => Some(b.parse::<i64>().map_err(|_| invalid_params("basis is not a rev"))?),
                     None => None,
@@ -558,7 +582,11 @@ impl Inner {
             Target::New { kind, parent } => {
                 let (plugin, decl) = self.registry.kind(&kind).ok_or_else(|| not_found("kind"))?;
                 self.kind_writable(&kind)?;
-                let changes = Changes::from_bind_map(&p.changes)?;
+                // Secret field values are written once the resource has an id (below).
+                let secret_fields = self.secret_fields(&kind, Some(&plugin.version));
+                let mut raw = p.changes.clone();
+                let secrets: JsonMap = secret_fields.iter().filter_map(|f| raw.remove(f).map(|v| (f.clone(), v))).collect();
+                let changes = Changes::from_bind_map(&raw)?;
                 let default_name =
                     decl.new_name.as_deref().map(|k| plugin.text(k, cx.locale.as_deref())).unwrap_or_else(|| kind.clone());
                 let name = changes.name.clone().filter(|n| !n.trim().is_empty()).unwrap_or(default_name);
@@ -586,6 +614,14 @@ impl Inner {
                     )
                     .await?;
                 let id = out.id.ok_or_else(|| internal("no id"))?;
+                if !secrets.is_empty() {
+                    let mut raw = secrets;
+                    self.take_secret_fields(&id, &secret_fields, &mut raw, None).await?;
+                    let changes = Changes::from_bind_map(&raw)?;
+                    if !changes.is_empty() {
+                        self.execute(Actor::User, Command::Update { id: id.clone(), changes, basis: None }).await?;
+                    }
+                }
                 let cx = PageContext { draft: None, ..cx };
                 Ok(PageSaveResult { page: self.resolve(&format!("resource:{id}"), cx, client).await? })
             }

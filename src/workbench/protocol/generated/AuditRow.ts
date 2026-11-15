@@ -17,4 +17,8 @@ operation: string,
 /**
  * Name or id of the object.
  */
-target: string, result: AuditResult, detail: string, };
+target: string, result: AuditResult, detail: string, 
+/**
+ * Repeated calls merged into this row (D309), when more than one. Round 4.
+ */
+count?: number, lastAt?: number, };

@@ -213,6 +213,14 @@ pub enum Command {
     RunClearFinished,
     /// Parameters of a plugin's state node (`enabled`, `settings.<name>`); `None` removes (D290).
     PluginState { plugin: String, set: Vec<(String, Option<String>)> },
+    /// §7.6 takeover: every item (expected rev, new body) is written and rebound, or none is.
+    Upgrade { plugin: String, to: String, items: Vec<UpgradeItem>, set_active: bool },
+    /// Rolls a batch back: items whose rev is still the upgraded one, plus `also` (D304).
+    UndoUpgrade { batch: String, also: Vec<String> },
+    /// A secret name exists (`true`) or not; the value is the keychain's (rule 7).
+    SecretName { name: String, present: bool, audit: bool },
+    /// One network call: one audit row per run and host, the rest counted (D309).
+    CountedAudit { run: Option<String>, op: String, object: String, summary: Value },
     /// A plugin's key-value storage, per plugin and version (D286); not audited.
     Storage { plugin: String, version: String, key: String, value: Option<String> },
 }
@@ -248,7 +256,12 @@ impl Outcome {
     }
 }
 
-type Job = (Actor, Command, oneshot::Sender<KResult<Outcome>>);
+enum Reply {
+    Async(oneshot::Sender<KResult<Outcome>>),
+    Blocking(mpsc::Sender<KResult<Outcome>>),
+}
+
+type Job = (Actor, Command, Reply);
 
 pub struct Pipeline {
     tx: std::sync::Mutex<Option<mpsc::Sender<Job>>>,
@@ -256,7 +269,7 @@ pub struct Pipeline {
 }
 
 impl Pipeline {
-    pub fn start(conn: Connection, rules: Arc<HashMap<String, KindRule>>) -> Pipeline {
+    pub fn start(conn: Connection, rules: SharedRules) -> Pipeline {
         let (tx, rx) = mpsc::channel::<Job>();
         let (ready_tx, ready_rx) = mpsc::channel::<()>();
         let thread = std::thread::Builder::new()
@@ -269,7 +282,15 @@ impl Pipeline {
                 }
                 let _ = ready_tx.send(());
                 while let Ok((actor, cmd, reply)) = rx.recv() {
-                    let _ = reply.send(w.run(&actor, cmd));
+                    let out = w.run(&actor, cmd);
+                    match reply {
+                        Reply::Async(r) => {
+                            let _ = r.send(out);
+                        }
+                        Reply::Blocking(r) => {
+                            let _ = r.send(out);
+                        }
+                    }
                 }
             })
             .expect("spawn writer thread");
@@ -281,8 +302,16 @@ impl Pipeline {
     pub async fn execute(&self, actor: Actor, cmd: Command) -> KResult<Outcome> {
         let (reply, rx) = oneshot::channel();
         let tx = self.tx.lock().unwrap().clone().ok_or_else(|| internal("pipeline stopped"))?;
-        tx.send((actor, cmd, reply)).map_err(|_| internal("writer thread gone"))?;
+        tx.send((actor, cmd, Reply::Async(reply))).map_err(|_| internal("writer thread gone"))?;
         rx.await.map_err(|_| internal("writer thread gone"))?
+    }
+
+    /// The same, waiting on the calling thread (start-up code that is not async).
+    pub fn execute_blocking(&self, actor: Actor, cmd: Command) -> KResult<Outcome> {
+        let (reply, rx) = mpsc::channel();
+        let tx = self.tx.lock().unwrap().clone().ok_or_else(|| internal("pipeline stopped"))?;
+        tx.send((actor, cmd, Reply::Blocking(reply))).map_err(|_| internal("writer thread gone"))?;
+        rx.recv().map_err(|_| internal("writer thread gone"))?
     }
 
     /// Finishes the queued commands and stops the writer thread.
@@ -303,8 +332,11 @@ impl Drop for Pipeline {
 
 struct Writer {
     conn: Connection,
-    rules: Arc<HashMap<String, KindRule>>,
+    rules: SharedRules,
 }
+
+/// Kind rules of every installed plugin version; replaced when the plugins folder is read again.
+pub type SharedRules = Arc<std::sync::RwLock<HashMap<String, KindRule>>>;
 
 fn sql(e: rusqlite::Error) -> onedesk_protocol::ProtocolError {
     internal(e)
@@ -357,7 +389,7 @@ impl Writer {
     }
 
     fn transact(&mut self, actor: &Actor, cmd: Command) -> KResult<Outcome> {
-        let rules = self.rules.clone();
+        let rules = self.rules.read().unwrap().clone();
         let tx = self.conn.transaction().map_err(sql)?;
         let out = {
             let mut cx = Tx { tx: &tx, actor, rules: &rules, at: now_ms() };
@@ -403,6 +435,26 @@ impl Writer {
                     Outcome { changed: n > 0, ..Default::default() }
                 }
                 Command::PluginState { plugin, set } => cx.plugin_state(&plugin, &set)?,
+                Command::Upgrade { plugin, to, items, set_active } => cx.upgrade(&plugin, &to, items, set_active)?,
+                Command::UndoUpgrade { batch, also } => cx.undo_upgrade(&batch, &also)?,
+                Command::SecretName { name, present, audit } => {
+                    if present {
+                        cx.tx
+                            .execute(
+                                "INSERT INTO secret_names (name, updated_at) VALUES (?1, ?2)
+                                 ON CONFLICT(name) DO UPDATE SET updated_at = excluded.updated_at",
+                                params![name, cx.at],
+                            )
+                            .map_err(sql)?;
+                    } else {
+                        cx.tx.execute("DELETE FROM secret_names WHERE name = ?1", [&name]).map_err(sql)?;
+                    }
+                    if audit {
+                        cx.audit(if present { "secrets.set" } else { "secrets.delete" }, &name, &json!({}))?;
+                    }
+                    Outcome { changed: true, ..Default::default() }
+                }
+                Command::CountedAudit { run, op, object, summary } => cx.counted_audit(run.as_deref(), &op, &object, &summary)?,
                 Command::Storage { plugin, version, key, value } => {
                     match value {
                         Some(v) => cx.tx.execute(
@@ -449,6 +501,10 @@ fn describe(cmd: &Command) -> (String, String) {
         Command::RunClearFinished => ("run.clearFinished".into(), String::new()),
         Command::PluginState { plugin, .. } => ("plugin.state".into(), plugin.clone()),
         Command::Storage { plugin, .. } => ("plugin.storage".into(), plugin.clone()),
+        Command::Upgrade { plugin, .. } => ("plugin.upgrade".into(), plugin.clone()),
+        Command::UndoUpgrade { batch, .. } => ("plugin.undoUpgrade".into(), batch.clone()),
+        Command::SecretName { name, present, .. } => ((if *present { "secrets.set" } else { "secrets.delete" }).into(), name.clone()),
+        Command::CountedAudit { op, object, .. } => (op.clone(), object.clone()),
     }
 }
 
@@ -559,7 +615,7 @@ impl Tx<'_> {
         self.tx
             .execute(
                 "UPDATE resources SET parent_id=?2, pos=?3, name=?4, description=?5, tags=?6, body=?7, rev=?8,
-                 updated_at=?9, updated_by=?10, deleted_at=?11 WHERE id=?1",
+                 updated_at=?9, updated_by=?10, deleted_at=?11, plugin_version=?12 WHERE id=?1",
                 params![
                     r.id,
                     r.parent_id,
@@ -571,7 +627,8 @@ impl Tx<'_> {
                     r.rev,
                     r.updated_at,
                     r.updated_by,
-                    r.deleted_at
+                    r.deleted_at,
+                    r.plugin_version
                 ],
             )
             .map_err(sql)?;
@@ -856,9 +913,15 @@ impl Tx<'_> {
                 ParamChange::Exact(p) => p.clone(),
             };
             if let Some(n) = &new {
-                // #1: secrets belong in the keychain (rule 7); not supported this round.
+                // D306: a secret parameter holds the *name* of an existing secret, never a value.
                 if n.ty == ParamType::Secret && old.as_ref() != Some(n) {
-                    return Err(invalid("secretUnsupported"));
+                    let known: bool = self
+                        .tx
+                        .query_row("SELECT EXISTS(SELECT 1 FROM secret_names WHERE name = ?1)", [&n.value], |r| r.get(0))
+                        .map_err(sql)?;
+                    if !known {
+                        return Err(invalid("unknownSecret"));
+                    }
                 }
                 if old.is_none() && row.kind == KIND_CONFIG {
                     self.check_config_name(row, name)?;
@@ -1197,6 +1260,132 @@ impl Tx<'_> {
         Ok(Outcome { id: Some(row.id.clone()), changed: true, rows: vec![row] })
     }
 
+    fn upgrade(&mut self, plugin: &str, to: &str, items: Vec<UpgradeItem>, set_active: bool) -> KResult<Outcome> {
+        let batch = new_id();
+        let mut rows = Vec::new();
+        let mut from: BTreeSet<String> = BTreeSet::new();
+        for it in items {
+            let mut row = self.live(&it.id)?;
+            if row.rev != it.rev {
+                // Changed while the new bodies were computed: nothing is written (D301).
+                return Err(err_p(ErrorCode::Conflict, &[("reason", "changedDuringUpgrade")]));
+            }
+            let old_version = row.plugin_version.clone().unwrap_or_default();
+            from.insert(old_version.clone());
+            let mut changed: Vec<String> = Vec::new();
+            let keys: BTreeSet<&String> = row.body.keys().chain(it.body.keys()).collect();
+            for k in keys {
+                if row.body.get(k) != it.body.get(k) {
+                    changed.push(format!("body.{k}"));
+                }
+            }
+            changed.push("pluginVersion".into());
+            row.body = it.body;
+            row.plugin_version = Some(to.to_string());
+            row.rev += 1;
+            row.updated_at = self.at;
+            row.updated_by = self.actor.as_text();
+            self.save(&row)?;
+            self.revision(&row, "upgrade", &changed)?;
+            self.tx
+                .execute(
+                    "INSERT INTO upgrade_items (batch, resource_id, old_version, old_rev, new_rev) VALUES (?1, ?2, ?3, ?4, ?5)",
+                    params![batch, row.id, old_version, it.rev, row.rev],
+                )
+                .map_err(sql)?;
+            rows.push(row);
+        }
+        if !rows.is_empty() {
+            let from_text = from.into_iter().collect::<Vec<_>>().join(",");
+            self.tx
+                .execute(
+                    "INSERT INTO upgrade_batches (id, plugin, from_version, to_version, at) VALUES (?1, ?2, ?3, ?4, ?5)",
+                    params![batch, plugin, from_text, to, self.at],
+                )
+                .map_err(sql)?;
+        }
+        if set_active {
+            self.plugin_state(plugin, &[("active".into(), Some(to.to_string()))])?;
+        }
+        self.audit("plugin.upgrade", plugin, &json!({ "to": to, "count": rows.len(), "batch": (!rows.is_empty()).then_some(&batch) }))?;
+        Ok(Outcome { id: (!rows.is_empty()).then_some(batch), changed: true, rows })
+    }
+
+    fn undo_upgrade(&mut self, batch: &str, also: &[String]) -> KResult<Outcome> {
+        let (plugin, from, undone): (String, String, Option<i64>) = self
+            .tx
+            .query_row("SELECT plugin, from_version, undone_at FROM upgrade_batches WHERE id = ?1", [batch], |r| {
+                Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+            })
+            .map_err(|_| not_found("batch"))?;
+        if undone.is_some() {
+            return Err(invalid("alreadyUndone"));
+        }
+        let items: Vec<(String, String, i64, i64)> = {
+            let mut st = self
+                .tx
+                .prepare("SELECT resource_id, old_version, old_rev, new_rev FROM upgrade_items WHERE batch = ?1")
+                .map_err(sql)?;
+            let v = st.query_map([batch], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))).map_err(sql)?;
+            v.collect::<Result<_, _>>().map_err(sql)?
+        };
+        let mut rows = Vec::new();
+        let mut modified = Vec::new();
+        for (id, old_version, old_rev, new_rev) in items {
+            let Some(mut row) = store::get(self.tx, &id).map_err(sql)? else { continue };
+            if row.rev != new_rev && !also.contains(&id) {
+                modified.push(json!({ "id": row.id, "name": row.name }));
+                continue;
+            }
+            let snap: String = self
+                .tx
+                .query_row("SELECT snapshot FROM revisions WHERE resource_id = ?1 AND rev = ?2", params![id, old_rev], |r| r.get(0))
+                .map_err(sql)?;
+            let before: Row = serde_json::from_str(&snap).map_err(internal)?;
+            row.body = before.body;
+            row.plugin_version = Some(old_version);
+            row.rev += 1;
+            row.updated_at = self.at;
+            row.updated_by = self.actor.as_text();
+            self.save(&row)?;
+            self.revision(&row, "undoUpgrade", &["body".to_string(), "pluginVersion".to_string()])?;
+            rows.push(row);
+        }
+        self.tx.execute("UPDATE upgrade_batches SET undone_at = ?2 WHERE id = ?1", params![batch, self.at]).map_err(sql)?;
+        // D304: the active version goes back as well (the lowest version the batch came from).
+        if let Some(v) = from.split(',').next().filter(|v| !v.is_empty()) {
+            self.plugin_state(&plugin, &[("active".into(), Some(v.to_string()))])?;
+        }
+        self.audit("plugin.undoUpgrade", &plugin, &json!({ "batch": batch, "restored": rows.len(), "modified": modified.len() }))?;
+        Ok(Outcome { id: Some(json!(modified).to_string()), changed: true, rows })
+    }
+
+    fn counted_audit(&mut self, run: Option<&str>, op: &str, object: &str, summary: &Value) -> KResult<Outcome> {
+        if let Some(run) = run {
+            let n = self
+                .tx
+                .execute(
+                    "UPDATE audit_counts SET count = count + 1, last_at = ?4 WHERE run_id = ?1 AND op = ?2 AND object = ?3",
+                    params![run, op, object, self.at],
+                )
+                .map_err(sql)?;
+            if n > 0 {
+                return Ok(Outcome { changed: false, ..Default::default() });
+            }
+        }
+        self.audit(op, object, summary)?;
+        if let Some(run) = run {
+            let seq = self.tx.last_insert_rowid();
+            self.tx
+                .execute(
+                    "INSERT INTO audit_counts (run_id, op, object, audit_seq, count, first_at, last_at) VALUES (?1, ?2, ?3, ?4, 1, ?5, ?5)",
+                    params![run, op, object, seq, self.at],
+                )
+                .map_err(sql)?;
+        }
+        Ok(Outcome { changed: true, ..Default::default() })
+    }
+
     fn siblings(&self, tree: Option<&str>, parent: Option<&str>, except: &str) -> KResult<Vec<Row>> {
         let all = store::children(self.tx, tree.unwrap_or_default(), parent, 0, u32::MAX).map_err(sql)?;
         Ok(all.into_iter().filter(|r| r.id != except).collect())
@@ -1235,6 +1424,14 @@ fn dest_tree(cx: &Tx<'_>, dest: &MoveDest) -> KResult<Option<String>> {
         MoveDest::Inside(Some(i)) | MoveDest::Before(i) | MoveDest::After(i) => i,
     };
     Ok(store::get(cx.tx, id).map_err(sql)?.and_then(|r| r.tree))
+}
+
+/// One resource of a takeover: the rev its new body was computed from.
+#[derive(Debug, Clone)]
+pub struct UpgradeItem {
+    pub id: String,
+    pub rev: i64,
+    pub body: JsonMap,
 }
 
 /// Runs kept per resource (or per action without a resource), besides the kept ones (D288).

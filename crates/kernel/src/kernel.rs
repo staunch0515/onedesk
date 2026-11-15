@@ -2,7 +2,7 @@
 //! (`docs/handoff/week1-protocol.md` §3). Requests arrive as `(client, method, params)`;
 //! everything that writes goes through the pipeline; events go out on a broadcast channel.
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, Weak};
@@ -30,11 +30,17 @@ pub struct KernelConfig {
     pub sandbox: SandboxConfig,
     /// Total time of one action invocation (D288: 60 s).
     pub action_timeout: std::time::Duration,
+    /// Where secret values live (D305): the keychain, or memory in tests.
+    pub secrets: crate::secrets::SecretStoreHandle,
 }
 
 impl Default for KernelConfig {
     fn default() -> Self {
-        KernelConfig { sandbox: SandboxConfig::default(), action_timeout: std::time::Duration::from_secs(60) }
+        KernelConfig {
+            sandbox: SandboxConfig::default(),
+            action_timeout: std::time::Duration::from_secs(60),
+            secrets: crate::secrets::SecretStoreHandle::from_env(),
+        }
     }
 }
 
@@ -55,6 +61,8 @@ pub(crate) struct Inner {
     pub activations: AtomicU64,
     pub me: Weak<Inner>,
     pub runs_active: crate::runs::ActiveRuns,
+    pub secret_cache: Mutex<HashMap<String, String>>,
+    pub rules: crate::pipeline::SharedRules,
 }
 
 pub(crate) fn parse<T: DeserializeOwned>(v: Value) -> KResult<T> {
@@ -88,6 +96,10 @@ pub(crate) struct KindMeta {
     pub accepts: Vec<String>,
     pub commands: Vec<MenuCommand>,
     pub state: NodeState,
+    /// Why the state is not `ok` (e.g. `<plugin>@<version>` of a missing version).
+    pub reason: Option<Label>,
+    /// The plugin version that handles resources of this kind (bound version, §7.6).
+    pub plugin: Option<&'static Plugin>,
 }
 
 impl Kernel {
@@ -97,10 +109,11 @@ impl Kernel {
         let (ws, conn) = Workspace::open(workspace_dir)?;
         let reader = ws.open_reader()?;
         let registry = Registry::scan(plugins_dir);
-        for r in &registry.rejected {
+        for r in &registry.rejected() {
             eprintln!("onedesk: plugin package {} not loaded: {} ({})", r.path.display(), r.reason, r.detail);
         }
-        let pipeline = Pipeline::start(conn, Arc::new(registry.rules()));
+        let rules: crate::pipeline::SharedRules = Arc::new(std::sync::RwLock::new(registry.rules()));
+        let pipeline = Pipeline::start(conn, rules.clone());
         let (events, _) = broadcast::channel(1024);
         let inner = Arc::new_cyclic(|me| Inner {
             ws,
@@ -113,7 +126,23 @@ impl Kernel {
             activations: AtomicU64::new(0),
             me: me.clone(),
             runs_active: Default::default(),
+            secret_cache: Default::default(),
+            rules,
         });
+        // D299 first sight, then each plugin's active version.
+        inner.first_sight_blocking();
+        inner.refresh_active();
+        // A newer confirmed version that arrived while the worker was off takes over now (D303).
+        if let Ok(rt) = tokio::runtime::Handle::try_current() {
+            let me = inner.clone();
+            rt.spawn(async move {
+                for id in me.registry.ids() {
+                    if let Err(e) = me.auto_switch(&id).await {
+                        eprintln!("onedesk: automatic switch of {id} failed: {e:?}");
+                    }
+                }
+            });
+        }
         Ok(Kernel { inner })
     }
 
@@ -140,9 +169,12 @@ impl Kernel {
     pub fn active_plugins(&self) -> Vec<String> {
         let slots: Vec<(String, Slot)> =
             self.inner.slots.lock().unwrap().iter().map(|(k, v)| (k.clone(), v.clone())).collect();
-        let mut out: Vec<String> =
+        let out: Vec<String> =
             slots.into_iter().filter(|(_, s)| s.try_lock().map(|g| g.is_some()).unwrap_or(true)).map(|(k, _)| k).collect();
+        // Slots are per version (`id@version`); callers ask about plugins.
+        let mut out: Vec<String> = out.into_iter().map(|k| k.split('@').next().unwrap_or_default().to_string()).collect();
         out.sort();
+        out.dedup();
         out
     }
 
@@ -152,7 +184,7 @@ impl Kernel {
     }
 
     pub fn rejected_plugins(&self) -> Vec<crate::manifest::Rejection> {
-        self.inner.registry.rejected.clone()
+        self.inner.registry.rejected().clone()
     }
 
     pub fn db_path(&self) -> PathBuf {
@@ -175,6 +207,15 @@ impl Inner {
         let plugin_state = matches!(&cmd, Command::Update { .. } | Command::Create(_) | Command::Grant { .. });
         let deletion = matches!(&cmd, Command::Delete { .. } | Command::Undelete { .. } | Command::Purge { .. });
         let audited = !matches!(&cmd, Command::Meta { .. } | Command::UiSet { .. });
+        // D307: hosts a resource grants before the change, to audit newly granted ones after it.
+        let granted_before: Option<BTreeSet<String>> = match &cmd {
+            Command::Update { id, .. } | Command::Params { id, .. } => {
+                self.read(|c| store::get(c, id)).ok().flatten().map(|r| self.grant_hosts_of(&r.kind, r.plugin_version.as_deref(), &r.body))
+            }
+            Command::Create(_) => Some(BTreeSet::new()),
+            _ => None,
+        };
+        let grant_actor = actor.clone();
         let out = self.pipeline.execute(actor, cmd).await?;
         for t in out.topics() {
             if t == format!("{}{TREE_PLUGIN_STATE}", topic::TREE) {
@@ -191,6 +232,18 @@ impl Inner {
         if deletion {
             self.emit(format!("{}{}", topic::TREE, store::TREE_DELETED), None, None);
             self.emit(format!("{}{}", topic::TREE, store::TREE_FAVORITES), None, None);
+        }
+        if let Some(before) = granted_before {
+            for r in out.rows.iter().filter(|r| r.deleted_at.is_none()) {
+                for host in self.grant_hosts_of(&r.kind, r.plugin_version.as_deref(), &r.body).difference(&before) {
+                    // A permission change (I.10h): the host is now reachable for the plugin.
+                    let summary = json!({ "resource": r.id, "kind": r.kind });
+                    let _ = self
+                        .pipeline
+                        .execute(grant_actor.clone(), Command::Audit { op: "network.grant".into(), object: host.clone(), summary })
+                        .await;
+                }
+            }
         }
         if out.changed && audited {
             self.emit(onedesk_protocol::topic2::AUDIT, None, None);
@@ -275,6 +328,9 @@ impl Inner {
                 Ok(Value::Null)
             }
             _ => {
+                if crate::versions::METHODS.contains(&m) {
+                    return self.handle4(m, params).await.unwrap_or_else(|| Err(err_p(ErrorCode::UnknownMethod, &[("method", m)])));
+                }
                 if crate::runs::METHODS.contains(&m) {
                     return self.handle3(client, m, params).await.unwrap_or_else(|| Err(err_p(ErrorCode::UnknownMethod, &[("method", m)])));
                 }
@@ -293,6 +349,15 @@ impl Inner {
     /* ---------------------------------------------------------------- kinds and rows */
 
     pub fn kind_meta(&self, kind: &str) -> KindMeta {
+        self.kind_meta_v(kind, None)
+    }
+
+    /// For a stored resource: its kind as the version it is bound to declares it.
+    pub fn row_meta(&self, r: &Row) -> KindMeta {
+        self.kind_meta_v(&r.kind, r.plugin_version.as_deref())
+    }
+
+    pub fn kind_meta_v(&self, kind: &str, version: Option<&str>) -> KindMeta {
         if crate::params::is_param_kind(kind) {
             return KindMeta {
                 label: Label::Text(kind.into()),
@@ -302,6 +367,8 @@ impl Inner {
                 accepts: vec![kind.into()],
                 commands: vec![],
                 state: NodeState::Ok,
+                reason: None,
+                plugin: None,
             };
         }
         if kind == KIND_GROUP {
@@ -313,9 +380,29 @@ impl Inner {
                 accepts: vec!["*".into()],
                 commands: vec![],
                 state: NodeState::Ok,
+                reason: None,
+                plugin: None,
             };
         }
-        match self.registry.kind(kind) {
+        // A resource bound to a version that is not installed (any more): §7.6 "缺少插件".
+        let bound = match version {
+            Some(v) if Registry::split(kind).is_some_and(|(pid, _)| self.registry.version(pid, v).is_none()) => {
+                let pid = Registry::split(kind).map(|(p, _)| p).unwrap_or_default();
+                return KindMeta {
+                    label: self.registry.kind(kind).map(|(p, k)| p.label(&k.label)).unwrap_or(Label::Text(kind.into())),
+                    icon: self.registry.kind(kind).map(|(_, k)| k.icon.clone()).unwrap_or_else(|| "puzzle".into()),
+                    page: None,
+                    draggable: true,
+                    accepts: vec![],
+                    commands: vec![],
+                    state: NodeState::MissingPlugin,
+                    reason: Some(Label::Text(format!("{pid}@{v}"))),
+                    plugin: None,
+                };
+            }
+            v => self.registry.kind_at(kind, v),
+        };
+        match bound {
             Some((p, k)) => KindMeta {
                 label: p.label(&k.label),
                 icon: k.icon.clone(),
@@ -325,6 +412,8 @@ impl Inner {
                 commands: k.menu.iter().map(|c| self.plugin_menu_cmd(p, c)).collect(),
                 // D290: a disabled plugin's resources stay, greyed out.
                 state: if self.plugin_enabled(&p.id) { NodeState::Ok } else { NodeState::Disabled },
+                reason: None,
+                plugin: Some(p),
             },
             None => KindMeta {
                 label: Label::Text(kind.into()),
@@ -334,6 +423,8 @@ impl Inner {
                 accepts: vec![],
                 commands: vec![],
                 state: NodeState::MissingPlugin,
+                reason: Some(Label::Text(kind.into())),
+                plugin: None,
             },
         }
     }
@@ -371,7 +462,7 @@ impl Inner {
     }
 
     pub fn resource(&self, r: &Row) -> KResult<Resource> {
-        let meta = self.kind_meta(&r.kind);
+        let meta = self.row_meta(r);
         let location = self.read(|c| store::ancestors(c, r))?.into_iter().map(|a| a.name).collect();
         Ok(Resource {
             id: r.id.clone(),
@@ -385,7 +476,7 @@ impl Inner {
             tags: r.tags.clone(),
             body: r.body.clone(),
             state: meta.state,
-            state_reason: None,
+            state_reason: meta.reason.clone(),
             origin: Origin::Original,
             origin_ref: r.origin_ref.clone(),
             location,
@@ -473,7 +564,7 @@ impl Inner {
             toolbar: new_menu(TREE_RESOURCES),
             menu: new_menu(TREE_RESOURCES),
         }];
-        for p in &self.registry.plugins {
+        for p in &self.registry.plugins() {
             let enabled = self.plugin_enabled(&p.id);
             for t in &p.manifest.contributes.trees {
                 // D290: a disabled plugin's provided trees are not shown.
@@ -506,7 +597,7 @@ impl Inner {
     }
 
     pub fn node_for(&self, r: &Row) -> KResult<TreeNode> {
-        let meta = self.kind_meta(&r.kind);
+        let meta = self.row_meta(r);
         let group = r.kind == KIND_GROUP;
         let has_children = self.read(|c| store::has_children(c, &r.id))?;
         let mut menu = Vec::new();
@@ -542,7 +633,7 @@ impl Inner {
             kind: r.kind.clone(),
             expandable: group || has_children,
             state: meta.state,
-            state_reason: None,
+            state_reason: meta.reason.clone(),
             badge: None,
             target: (!group).then(|| format!("resource:{}", r.id)),
             menu,
@@ -685,7 +776,7 @@ impl Inner {
             .skip(offset as usize)
             .take(BATCH as usize)
             .map(|r| {
-                let meta = self.kind_meta(&r.kind);
+                let meta = self.row_meta(r);
                 let menu = if favorites {
                     vec![kernel_cmd("node.open", "external-link"), kernel_cmd("node.unfavorite", "star-off")]
                 } else {
@@ -703,7 +794,7 @@ impl Inner {
                     kind: r.kind.clone(),
                     expandable: false,
                     state: meta.state,
-                    state_reason: None,
+                    state_reason: meta.reason.clone(),
                     badge: None,
                     target: (favorites && r.kind != KIND_GROUP).then(|| format!("resource:{}", r.id)),
                     menu,
@@ -763,7 +854,7 @@ impl Inner {
             disabled: None,
         }];
         let mut first = true;
-        for p in self.registry.plugins.iter().filter(|p| self.plugin_enabled(&p.id)) {
+        for p in self.registry.plugins().iter().filter(|p| self.plugin_enabled(&p.id)) {
             for k in &p.manifest.contributes.menus.new {
                 let Some(decl) = p.kind(k) else { continue };
                 let kt = decl.tree.as_deref().map(|t| p.tree_ref(t));
@@ -785,12 +876,13 @@ impl Inner {
 
     /* ---------------------------------------------------------------- plugins: runtimes */
 
-    fn slot(&self, plugin: &str) -> Slot {
-        self.slots.lock().unwrap().entry(plugin.to_string()).or_default().clone()
+    /// One runtime per plugin *version* (§7.6): `id@version`.
+    fn slot(&self, p: &Plugin) -> Slot {
+        self.slots.lock().unwrap().entry(format!("{}@{}", p.id, p.version)).or_default().clone()
     }
 
-    async fn sandbox(&self, plugin: &Plugin) -> KResult<Arc<Sandbox>> {
-        let slot = self.slot(&plugin.id);
+    async fn sandbox(&self, plugin: &'static Plugin) -> KResult<Arc<Sandbox>> {
+        let slot = self.slot(plugin);
         let mut guard = slot.lock().await;
         if let Some(sb) = guard.as_ref() {
             return Ok(sb.clone());
@@ -804,17 +896,18 @@ impl Inner {
                 trees: plugin.manifest.contributes.trees.iter().map(|t| t.id.clone()).collect(),
                 commands: plugin.manifest.contributes.commands.iter().map(|c| c.id.clone()).collect(),
                 actions: plugin.manifest.contributes.actions.iter().map(|a| a.id.clone()).collect(),
+                kinds: plugin.manifest.contributes.kinds.iter().map(|k| k.id.clone()).collect(),
             },
             labels: plugin.all_labels(),
         };
-        let host = Arc::new(crate::host::PluginHost { kernel: self.me.clone(), plugin: plugin.id.clone() });
+        let host = Arc::new(crate::host::PluginHost { kernel: self.me.clone(), plugin });
         self.activations.fetch_add(1, Ordering::SeqCst);
         let sb = Arc::new(Sandbox::activate(pkg, host, self.cfg.sandbox.clone()).await.map_err(|e| e.to_protocol())?);
         *guard = Some(sb.clone());
         Ok(sb)
     }
 
-    /// Calls a plugin handler; activates the plugin first if needed; discards a poisoned runtime.
+    /// Calls a handler of the plugin's active version; activates it first if needed.
     pub async fn call_plugin(
         &self,
         plugin: &str,
@@ -828,7 +921,7 @@ impl Inner {
         self.call_plugin_with(plugin, kind, name, func, args, info, None, None).await.map_err(|e| e.to_protocol())
     }
 
-    /// The general form: the call's context, cancel token and time budget (actions get longer).
+    /// The general form on the active version: the call's context, cancel token and time budget.
     #[allow(clippy::too_many_arguments)]
     pub async fn call_plugin_with(
         &self,
@@ -843,7 +936,24 @@ impl Inner {
     ) -> Result<Value, SandboxError> {
         let host = |e: ProtocolError| SandboxError::Host(e);
         let p = self.registry.plugin(plugin).ok_or_else(|| host(err_p(ErrorCode::PluginError, &[("reason", "notLoaded")])))?;
-        if !self.plugin_enabled(plugin) {
+        self.call_version(p, kind, name, func, args, info, cancel, timeout).await
+    }
+
+    /// Calls a handler of one given version (a resource is handled by the version it is bound to).
+    #[allow(clippy::too_many_arguments)]
+    pub async fn call_version(
+        &self,
+        p: &'static Plugin,
+        kind: &str,
+        name: &str,
+        func: &str,
+        args: Value,
+        info: CallInfo,
+        cancel: Option<crate::sandbox::CancelToken>,
+        timeout: Option<std::time::Duration>,
+    ) -> Result<Value, SandboxError> {
+        let host = |e: ProtocolError| SandboxError::Host(e);
+        if !self.plugin_enabled(&p.id) {
             return Err(host(err_p(ErrorCode::PluginError, &[("reason", "pluginDisabled")])));
         }
         let sb = self.sandbox(p).await.map_err(host)?;
@@ -857,7 +967,7 @@ impl Inner {
         let res = call.await.unwrap_or_else(|e| Err(SandboxError::Engine(e.to_string())));
         if let Err(e) = &res {
             if e.poisons() {
-                let slot = self.slot(plugin);
+                let slot = self.slot(p);
                 let mut g = slot.lock().await;
                 if g.as_ref().is_some_and(|cur| Arc::ptr_eq(cur, &sb)) {
                     *g = None;
@@ -867,15 +977,20 @@ impl Inner {
         res
     }
 
-    /// Drops a plugin's runtime (disabled, reloaded); the next use activates it again.
+    /// Drops every runtime of a plugin (disabled, reloaded, version removed).
     pub async fn drop_runtime(&self, plugin: &str) {
-        let slot = self.slot(plugin);
-        *slot.lock().await = None;
+        let prefix = format!("{plugin}@");
+        let slots: Vec<Slot> =
+            self.slots.lock().unwrap().iter().filter(|(k, _)| k.starts_with(&prefix)).map(|(_, v)| v.clone()).collect();
+        for s in slots {
+            *s.lock().await = None;
+        }
     }
 
-    /// D290: a plugin is enabled unless its state node says `enabled = false`.
+    /// D290 / D299: enabled unless its state says `enabled = false`, and it has a usable
+    /// (installed, confirmed) active version.
     pub fn plugin_enabled(&self, plugin: &str) -> bool {
-        self.plugin_param(plugin, "enabled").is_none_or(|v| v != "false")
+        self.plugin_param(plugin, "enabled").is_none_or(|v| v != "false") && self.registry.active_version(plugin).is_some()
     }
 
     /// A parameter of the plugin's state node (`enabled`, `settings.<name>`).

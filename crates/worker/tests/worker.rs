@@ -22,6 +22,8 @@ fn spawn(ws: &Path, sock: &Path) -> Child {
         .arg(sock)
         .stdin(Stdio::null())
         .stderr(Stdio::piped())
+        // Never the real keychain in tests.
+        .env("ONEDESK_SECRET_STORE", "memory")
         .spawn()
         .unwrap()
 }

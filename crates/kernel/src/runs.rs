@@ -43,6 +43,8 @@ pub struct ActiveRun {
     pub last_progress: Option<Instant>,
     /// Why it was stopped from outside: `cancelled` or `pluginDisabled`.
     pub stopped: Option<&'static str>,
+    /// Plain secret values the action read (§7.5): scrubbed from output, summary, progress.
+    pub secrets: Vec<String>,
 }
 
 pub type ActiveRuns = std::sync::Mutex<HashMap<String, ActiveRun>>;
@@ -193,16 +195,24 @@ impl Inner {
 
     /// Finds the action a `run.start` names: a page item id (via the resource's page), a short
     /// action id of the resource's plugin, or a full `<plugin>:<action>`.
-    fn resolve_action<'a>(&'a self, p: &RunStartParams, res: Option<&Row>) -> Option<(&'a Plugin, &'a ActionDef)> {
+    fn resolve_action(&self, p: &RunStartParams, res: Option<&Row>) -> Option<(&'static Plugin, &'static ActionDef)> {
+        // A resource is handled by the version it is bound to (§7.6).
+        let bound = |pid: &str| -> Option<&'static Plugin> {
+            res.and_then(|r| {
+                let v = r.plugin_version.as_deref()?;
+                (Registry::split(&r.kind)?.0 == pid).then(|| self.registry.version(pid, v)).flatten()
+            })
+        };
         if let Some((pid, a)) = Registry::split(&p.action) {
-            let plugin = self.registry.plugin(pid)?;
+            let plugin = bound(pid).or_else(|| self.registry.plugin(pid))?;
             return Some((plugin, plugin.action(a)?));
         }
         let kind = res.map(|r| r.kind.clone()).or_else(|| match crate::pages::parse_target(&p.target) {
             crate::pages::Target::New { kind, .. } => Some(kind),
             _ => None,
         });
-        let (plugin, page) = match kind.as_deref().and_then(|k| self.registry.kind(k)) {
+        let version = res.and_then(|r| r.plugin_version.clone());
+        let (plugin, page) = match kind.as_deref().and_then(|k| self.registry.kind_at(k, version.as_deref())) {
             Some((pl, k)) => (pl, k.page.clone()),
             None => match crate::pages::parse_target(&p.target) {
                 crate::pages::Target::Node { tree, .. } => {
@@ -238,7 +248,7 @@ impl Inner {
         let row = RunRow {
             id: id.clone(),
             title: res.as_ref().map(|r| r.name.clone()).unwrap_or_else(|| action_full.clone()),
-            icon: res.as_ref().map(|r| self.kind_meta(&r.kind).icon).or(icon).unwrap_or_else(|| "play".into()),
+            icon: res.as_ref().map(|r| self.row_meta(r).icon).or(icon).unwrap_or_else(|| "play".into()),
             resource_id: res.as_ref().map(|r| r.id.clone()).or(p.resource_id.clone()),
             resource_kind: res.as_ref().map(|r| r.kind.clone()),
             plugin: plugin_id.clone(),
@@ -250,7 +260,10 @@ impl Inner {
             source: "manual".into(),
             status: "running".into(),
             params: serde_json::to_value(&p.params).map_err(internal)?,
-            input: Value::Object(p.input.clone().into_iter().collect()),
+            input: {
+                let fields = res.as_ref().map(|r| self.secret_fields(&r.kind, r.plugin_version.as_deref())).unwrap_or_default();
+                Value::Object(p.input.clone().into_iter().filter(|(k, _)| !fields.contains(k)).collect())
+            },
             in_task_panel: true,
             ..Default::default()
         };
@@ -270,7 +283,7 @@ impl Inner {
         id: &str,
         p: &RunStartParams,
         res: Option<&Row>,
-        resolved: Option<(&Plugin, &ActionDef)>,
+        resolved: Option<(&'static Plugin, &'static ActionDef)>,
         client: Option<String>,
     ) -> KResult<()> {
         let id = id.to_string();
@@ -309,7 +322,7 @@ impl Inner {
         let token = CancelToken::default();
         self.runs_active.lock().unwrap().insert(
             id.clone(),
-            ActiveRun { plugin: plugin.id.clone(), token: token.clone(), last_progress: None, stopped: None },
+            ActiveRun { plugin: plugin.id.clone(), token: token.clone(), last_progress: None, stopped: None, secrets: vec![] },
         );
         let resource = match res {
             Some(r) => Some(self.resource(r)?),
@@ -317,16 +330,27 @@ impl Inner {
         };
         let ctx = json!({ "target": p.target, "resource": resource, "envId": p.env_id, "params": p.params, "runId": id,
                           "locale": p.locale });
-        let args = json!([ctx, p.input]);
+        // D306: secret field values never reach the plugin, nor the run's input snapshot.
+        let mut input = p.input.clone();
+        if let Some(k) = kind.as_deref() {
+            for f in self.secret_fields(k, res.and_then(|r| r.plugin_version.as_deref())) {
+                input.remove(&f);
+            }
+        }
+        let args = json!([ctx, input]);
         let me = self.me.upgrade().ok_or_else(|| internal("kernel stopped"))?;
         let (run_id, pid, aid, declared) = (id.clone(), plugin.id.clone(), action.id.clone(), action.output);
-        let info = CallInfo { client, env_id: p.env_id.clone(), run_id: Some(id.clone()) };
+        let runner: &'static Plugin = plugin;
+        let info = CallInfo { client, env_id: p.env_id.clone(), run_id: Some(id.clone()), pure: false };
         let started = Instant::now();
         // Executes in the background; `run.start` answers now.
         tokio::spawn(async move {
             let timeout = me.cfg.action_timeout;
-            let res = me.call_plugin_with(&pid, "actions", &aid, "", args, info, Some(token), Some(timeout)).await;
-            let stopped = me.runs_active.lock().unwrap().remove(&run_id).and_then(|a| a.stopped);
+            let res = me.call_version(runner, "actions", &aid, "", args, info, Some(token), Some(timeout)).await;
+            let (stopped, secrets) = match me.runs_active.lock().unwrap().remove(&run_id) {
+                Some(a) => (a.stopped, a.secrets),
+                None => (None, vec![]),
+            };
             let plugin = me.registry.plugin(&pid);
             let ms = started.elapsed().as_millis() as i64;
             let (status, summary, error, output) = match (stopped, res) {
@@ -367,7 +391,11 @@ impl Inner {
                     ("error", None, Some(err), None)
                 }
             };
-            let summary = summary.or_else(|| Some(json!(RunSummary { rows: None, message: None, duration_ms: Some(ms) })));
+            let mut summary = summary.or_else(|| Some(json!(RunSummary { rows: None, message: None, duration_ms: Some(ms) })));
+            let (mut output, mut error) = (output, error);
+            for v in [&mut summary, &mut output, &mut error].into_iter().flatten() {
+                crate::secrets::scrub(v, &secrets);
+            }
             me.run_end(&run_id, plugin, status, summary, error, output).await;
         });
         Ok(())
@@ -402,7 +430,9 @@ impl Inner {
             }
             a.last_progress = Some(Instant::now());
         }
-        let progress = json!(RunProgress { fraction: fraction.map(|f| f.clamp(0.0, 1.0)), message });
+        let secrets = self.runs_active.lock().unwrap().get(id).map(|a| a.secrets.clone()).unwrap_or_default();
+        let mut progress = json!(RunProgress { fraction: fraction.map(|f| f.clamp(0.0, 1.0)), message });
+        crate::secrets::scrub(&mut progress, &secrets);
         if self.pipeline.execute(Actor::Core, Command::RunProgress { id: id.into(), progress }).await.is_ok() {
             self.run_events(id);
         }
@@ -533,12 +563,19 @@ impl Inner {
         if !self.plugin_enabled(&plugin.id) {
             return Err(err_p(ErrorCode::PluginError, &[("reason", "pluginDisabled")]));
         }
-        ctx["draft"] = json!(cx.draft);
+        let fields = match &ctx["resource"] {
+            Value::Object(r) => self.secret_fields(
+                r.get("kind").and_then(Value::as_str).unwrap_or_default(),
+                r.get("pluginVersion").and_then(Value::as_str),
+            ),
+            _ => vec![],
+        };
+        ctx["draft"] = json!(crate::pages::strip(cx.draft.clone(), &fields));
         ctx["locale"] = json!(cx.locale);
         ctx["envId"] = json!(cx.env_id);
-        let info = CallInfo { client, env_id: cx.env_id.clone(), run_id: None };
+        let info = CallInfo { client, env_id: cx.env_id.clone(), ..Default::default() };
         let out = self
-            .call_plugin_with(&plugin.id, "pages", &page, "onEvent", json!([ctx, p.event]), info, None, None)
+            .call_version(plugin, "pages", &page, "onEvent", json!([ctx, p.event]), info, None, None)
             .await
             .map_err(|e| e.to_protocol())?;
         let out = if out.is_null() { json!({}) } else { out };
@@ -556,12 +593,12 @@ impl Inner {
     }
 
     /// The plugin page behind a target, with the base `ctx` for it.
-    fn page_owner(&self, target: &str) -> KResult<(&Plugin, String, Value)> {
+    fn page_owner(&self, target: &str) -> KResult<(&'static Plugin, String, Value)> {
         use crate::pages::Target;
         match crate::pages::parse_target(target) {
             Target::Resource(id) => {
                 let r = self.live_row(&id)?;
-                let (p, k) = self.registry.kind(&r.kind).ok_or_else(|| not_found("page"))?;
+                let (p, k) = self.registry.kind_at(&r.kind, r.plugin_version.as_deref()).ok_or_else(|| not_found("page"))?;
                 let page = k.page.clone().ok_or_else(|| not_found("page"))?;
                 Ok((p, page, json!({ "target": target, "resource": self.resource(&r)? })))
             }
@@ -648,6 +685,8 @@ impl Inner {
                 load: PluginLoad { state: PluginLoadState::Error, message: Some(rej.reason.clone()), at: None, ms: None },
                 resource_count: 0,
                 folders: vec![],
+                last_upgrade: None,
+                unconfirmed: vec![],
             }));
         };
         let m = &p.manifest;
@@ -671,11 +710,8 @@ impl Inner {
             })
             .collect();
         let folders = self.folder_grants(id)?;
-        let permissions = if m.requires.files {
-            vec![PluginPermission { id: "files".into(), detail: String::new(), granted: !folders.is_empty(), required: true }]
-        } else {
-            vec![]
-        };
+        let confirmed = self.version_confirmed(p);
+        let permissions = p.permission_list(|pid| if pid == "files" { !folders.is_empty() } else { confirmed });
         let kinds: Vec<String> = m.contributes.kinds.iter().map(|k| p.full(&k.id)).collect();
         let resource_count: u64 = self.read(|c| {
             kinds.iter().try_fold(0u64, |n, k| {
@@ -693,7 +729,7 @@ impl Inner {
             homepage: m.homepage.clone(),
             enabled,
             builtin: false,
-            versions: vec![PluginVersion { version: p.version.clone(), installed_at: 0, active: true, pinned: false, notes: String::new() }],
+            versions: self.version_rows(id)?,
             settings,
             permissions,
             provides: PluginProvides {
@@ -711,13 +747,15 @@ impl Inner {
             },
             resource_count,
             folders,
+            last_upgrade: self.last_upgrade(id)?,
+            unconfirmed: self.registry.versions(id).into_iter().filter(|v| !self.version_confirmed(v)).map(|v| v.version.clone()).collect(),
         }))
     }
 
-    pub fn rejected_for(&self, id: &str) -> Option<&crate::manifest::Rejection> {
+    pub fn rejected_for(&self, id: &str) -> Option<crate::manifest::Rejection> {
         self.registry
-            .rejected
-            .iter()
+            .rejected()
+            .into_iter()
             .find(|r| r.path.parent().and_then(|p| p.file_name()).is_some_and(|n| n.to_string_lossy() == id))
     }
 
@@ -739,7 +777,7 @@ impl Inner {
             k("open.audit", "scroll-text"),
             k("open.deleted", "trash-2"),
         ];
-        for p in self.registry.plugins.iter().filter(|p| self.plugin_enabled(&p.id)) {
+        for p in self.registry.plugins().iter().filter(|p| self.plugin_enabled(&p.id)) {
             let group = p.label(&p.manifest.name);
             // D296: only commands that ask for it; node commands stay in their context menus.
             for c in p.manifest.contributes.commands.iter().filter(|c| c.palette) {
@@ -773,7 +811,7 @@ impl Inner {
     /// `plugins`: one node per package (refused ones as `broken`); `runs`: the latest 200 runs.
     pub fn plugins_tree(&self) -> KResult<Vec<TreeNode>> {
         let mut out = Vec::new();
-        for p in &self.registry.plugins {
+        for p in &self.registry.plugins() {
             let enabled = self.plugin_enabled(&p.id);
             let toggle = if enabled { kernel_cmd("plugin.disable", "power-off") } else { kernel_cmd("plugin.enable", "power") };
             out.push(TreeNode {
@@ -785,7 +823,13 @@ impl Inner {
                 kind: store::KIND_PLUGIN.into(),
                 expandable: false,
                 state: if enabled { NodeState::Ok } else { NodeState::Disabled },
-                state_reason: None,
+                // A newer version waits for the user to confirm its permissions (D299).
+                state_reason: self
+                    .registry
+                    .versions(&p.id)
+                    .iter()
+                    .any(|v| !self.version_confirmed(v))
+                    .then(|| Label::Text("unconfirmedVersion".into())),
                 badge: Some(p.version.clone()),
                 target: Some(format!("plugin:{}", p.id)),
                 menu: vec![kernel_cmd("node.open", "external-link"), toggle],
@@ -794,7 +838,7 @@ impl Inner {
             });
         }
         let mut seen: Vec<String> = out.iter().map(|n| n.key.clone()).collect();
-        for r in &self.registry.rejected {
+        for r in &self.registry.rejected() {
             let Some(id) = r.path.parent().and_then(|p| p.file_name()).map(|n| n.to_string_lossy().into_owned()) else { continue };
             if seen.contains(&id) {
                 continue;

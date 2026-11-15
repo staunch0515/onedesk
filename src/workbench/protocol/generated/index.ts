@@ -102,6 +102,7 @@ export type * from "./UiGetParams";
 export type * from "./UiSetParams";
 export type * from "./UndoUpgradeParams";
 export type * from "./UndoUpgradeResult";
+export type * from "./UpgradeBatchInfo";
 export type * from "./UpgradeResult";
 export type * from "./UpstreamChange";
 export type * from "./ViewField";

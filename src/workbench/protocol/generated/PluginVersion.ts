@@ -4,4 +4,12 @@ export type PluginVersion = { version: string, installedAt: number,
 /**
  * The version used for new resources in this workspace.
  */
-active: boolean, pinned: boolean, notes: string, };
+active: boolean, pinned: boolean, notes: string, 
+/**
+ * Installed, but its permissions are not confirmed yet (D299). Round 4.
+ */
+confirmed?: boolean, 
+/**
+ * Resources of this workspace bound to this version (§7.6). Round 4.
+ */
+resourceCount?: number, };
