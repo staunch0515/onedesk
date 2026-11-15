@@ -203,7 +203,7 @@ export function createMixedClient(kernel: KernelClient, mock: ProtocolClient): P
       activateVersion: (id, version) => kernel.plugin.activateVersion(id, version),
       setPinned: (id, version, pinned) => kernel.plugin.setPinned(id, version, pinned),
       undoUpgrade: (batch, also) => kernel.plugin.undoUpgrade(batch, also),
-      confirmPermissions: (id, version) => kernel.plugin.confirmPermissions(id, version),
+      confirmPermissions: (id, version, fingerprint) => kernel.plugin.confirmPermissions(id, version, fingerprint),
       grants: (plugin) => kernel.plugin.grants(plugin),
       grantFolder: (plugin, path) => kernel.plugin.grantFolder(plugin, path),
       revokeFolder: (plugin, path) => kernel.plugin.revokeFolder(plugin, path),

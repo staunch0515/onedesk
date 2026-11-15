@@ -17,9 +17,16 @@ fn arg(name: &str) -> String {
     args.iter().position(|a| a == name).and_then(|i| args.get(i + 1)).cloned().unwrap_or_default()
 }
 
+/// Every value of a repeatable option such as `--builtin`.
+fn args_of(name: &str) -> Vec<String> {
+    let args: Vec<String> = std::env::args().collect();
+    args.iter().enumerate().filter(|(_, a)| *a == name).filter_map(|(i, _)| args.get(i + 1).cloned()).collect()
+}
+
 #[tokio::main]
 async fn main() {
     let (workspace, plugins, socket) = (arg("--workspace"), arg("--plugins"), arg("--socket"));
+    let builtin = args_of("--builtin");
     let _ = std::fs::remove_file(&socket);
     let listener = UnixListener::bind(&socket).expect("bind");
     let (stream, _) = listener.accept().await.expect("accept");
@@ -39,7 +46,7 @@ async fn main() {
         let id = req["id"].clone();
         let params = req["params"].clone();
         let tx = tx.clone();
-        let (workspace, plugins) = (workspace.clone(), plugins.clone());
+        let (workspace, plugins, builtin) = (workspace.clone(), plugins.clone(), builtin.clone());
         tokio::spawn(async move {
             let ok = |result: Value| tx.send(json!({ "id": id, "result": result }).to_string()).ok();
             match req["method"].as_str().unwrap_or("") {
@@ -53,7 +60,7 @@ async fn main() {
                     ok(json!(std::process::id()));
                 }
                 "args" => {
-                    ok(json!({ "workspace": workspace, "plugins": plugins }));
+                    ok(json!({ "workspace": workspace, "plugins": plugins, "builtin": builtin }));
                 }
                 "client" => {
                     ok(req["client"].clone());
@@ -63,22 +70,34 @@ async fn main() {
                     ok(json!("slow done"));
                 }
                 "plugin.inspect" => {
-                    // Reads the package's manifest like the real worker would; "bad" in the manifest id means refused.
+                    // Reads the package like the real worker would; "bad" in the id means refused. The fingerprint
+                    // follows main.js, so changing the package changes it. A marker file makes COPIES in plugins/.tmp
+                    // look different (a package that changed on its way).
                     let folder = params["folder"].as_str().unwrap_or("");
-                    let manifest = std::fs::read_to_string(std::path::Path::new(folder).join("manifest.json")).ok().and_then(|t| serde_json::from_str::<Value>(&t).ok());
+                    let dir = std::path::Path::new(folder);
+                    let manifest = std::fs::read_to_string(dir.join("manifest.json")).ok().and_then(|t| serde_json::from_str::<Value>(&t).ok());
+                    let mut fingerprint = format!("fp:{}", std::fs::read_to_string(dir.join("main.js")).unwrap_or_default());
+                    if folder.contains("/.tmp/") && std::path::Path::new(&workspace).join("copy-differs").exists() {
+                        fingerprint = "tampered".into();
+                    }
                     let preview = match manifest {
-                        Some(m) if !m["id"].as_str().unwrap_or("").contains("bad") => json!({ "valid": true, "id": m["id"], "version": m["version"], "name": "N", "description": "D", "icon": "i", "author": "a", "permissions": [], "installed": [], "addedPermissions": [], "provides": { "kinds": [], "actions": [], "trees": [], "resultTabs": [], "other": [] } }),
-                        _ => json!({ "valid": false, "problem": { "code": "invalid", "params": { "reason": "schema" } }, "id": "", "version": "", "name": "", "description": "", "icon": "", "author": "", "permissions": [], "installed": [], "addedPermissions": [], "provides": { "kinds": [], "actions": [], "trees": [], "resultTabs": [], "other": [] } }),
+                        Some(m) if !m["id"].as_str().unwrap_or("").contains("bad") => json!({ "valid": true, "id": m["id"], "version": m["version"], "fingerprint": fingerprint, "name": "N", "description": "D", "icon": "i", "author": "a", "permissions": [], "installed": [], "addedPermissions": [], "provides": { "kinds": [], "actions": [], "trees": [], "resultTabs": [], "other": [] } }),
+                        _ => json!({ "valid": false, "problem": { "code": "invalid", "params": { "reason": "schema" } }, "id": "", "version": "", "fingerprint": "", "name": "", "description": "", "icon": "", "author": "", "permissions": [], "installed": [], "addedPermissions": [], "provides": { "kinds": [], "actions": [], "trees": [], "resultTabs": [], "other": [] } }),
                     };
                     ok(preview);
                 }
-                "plugin.rescan" => {
-                    // Leaves a note in the workspace folder so tests can count rescans and see what was on disk then.
+                "plugin.rescan" | "plugin.confirmPermissions" => {
+                    // One ordered log of what the main process asked, and what was on disk at that moment.
                     let listing = std::fs::read_dir(std::path::Path::new(&plugins)).map(|rd| rd.filter_map(|e| e.ok()).map(|e| e.file_name().to_string_lossy().into_owned()).collect::<Vec<_>>().join(",")).unwrap_or_default();
-                    let note = std::path::Path::new(&workspace).join("rescans.log");
+                    let method = req["method"].as_str().unwrap_or("");
+                    let note = std::path::Path::new(&workspace).join("calls.log");
                     let mut text = std::fs::read_to_string(&note).unwrap_or_default();
-                    text.push_str(&format!("{listing}\n"));
+                    text.push_str(&format!("{method} {params} | {listing}\n"));
                     let _ = std::fs::write(&note, text);
+                    if method == "plugin.rescan" && std::path::Path::new(&workspace).join("rescan-fails").exists() {
+                        tx.send(json!({ "id": id, "error": { "code": "pluginError", "params": { "reason": "migrateFailed" } } }).to_string()).ok();
+                        return;
+                    }
                     ok(Value::Null);
                 }
                 "crash" => std::process::exit(1),

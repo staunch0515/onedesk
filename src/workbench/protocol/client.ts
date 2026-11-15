@@ -1,4 +1,5 @@
 import type {
+  ProtocolError,
   InstallPreview,
   PluginVersionParams,
   SecretInfo,
@@ -56,7 +57,9 @@ export interface ProtocolClient {
   /** Installing and removing plugin packages (main process). Absent in pure demo mode. */
   readonly app?: {
     inspectPlugin(folder: string): Promise<InstallPreview>;
-    installPlugin(folder: string): Promise<PluginVersionParams>;
+    /** `id`, `version` and `fingerprint` are what the user saw in the confirmation; the main process refuses if the package is no longer that (D312), and records the confirmation itself.
+     * The files are installed when this resolves; `warning` says the automatic switch to the new version failed. */
+    installPlugin(folder: string, id: string, version: string, fingerprint: string): Promise<PluginVersionParams & { warning?: ProtocolError }>;
     removePlugin(plugin: string, version: string): Promise<void>;
   };
 
@@ -135,7 +138,7 @@ export interface ProtocolClient {
     /** Reverts an upgrade batch; resources changed since are listed in `modified` and reverted only when named in `also`. */
     undoUpgrade(batch: string, also?: string[]): Promise<UndoUpgradeResult>;
     /** The user confirmed this version's permissions. */
-    confirmPermissions(id: string, version: string): Promise<void>;
+    confirmPermissions(id: string, version: string, fingerprint: string): Promise<void>;
     reload(id: string): Promise<void>;
   };
 

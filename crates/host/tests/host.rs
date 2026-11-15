@@ -185,12 +185,23 @@ fn package(dir: &Path, id: &str, version: &str) {
     std::fs::write(dir.join("locales/en-US.json"), "{}").unwrap();
 }
 
+/// What the fake worker was asked, in order: `plugin.rescan {...} | <plugins folder listing>`, `plugin.confirmPermissions {...} | …`.
+fn calls(tmp: &Path) -> Vec<String> {
+    std::fs::read_to_string(tmp.join("data/workspaces/default/calls.log")).map(|t| t.lines().map(str::to_string).collect()).unwrap_or_default()
+}
+
 fn rescans(tmp: &Path) -> usize {
-    std::fs::read_to_string(tmp.join("data/workspaces/default/rescans.log")).map(|t| t.lines().count()).unwrap_or(0)
+    calls(tmp).iter().filter(|l| l.starts_with("plugin.rescan")).count()
 }
 
 fn reason(e: &onedesk_protocol::ProtocolError) -> String {
     e.params.get("reason").cloned().unwrap_or_default()
+}
+
+/// What the interface sends after the user confirmed an inspected package.
+async fn confirmed(host: &Host, pkg: &Path) -> Value {
+    let preview = host.request(None, "app.inspectPlugin", json!({ "folder": pkg })).await.unwrap();
+    json!({ "folder": pkg, "id": preview["id"], "version": preview["version"], "fingerprint": preview["fingerprint"] })
 }
 
 #[tokio::test]
@@ -208,55 +219,109 @@ async fn inspect_is_passed_to_the_worker_and_copies_nothing() {
 }
 
 #[tokio::test]
-async fn install_copies_into_plugins_then_asks_the_worker_to_rescan() {
+async fn install_checks_the_copy_then_rescans_with_the_builtin_list_then_confirms_that_fingerprint() {
     let tmp = tempfile::tempdir().unwrap();
     let host = start(tmp.path()).await;
     let pkg = tmp.path().join("pkg");
     package(&pkg, "org.test.beta", "1.0.0");
-    let done = host.request(None, "app.installPlugin", json!({ "folder": pkg })).await.unwrap();
+    let wanted = confirmed(&host, &pkg).await;
+    let done = host.request(None, "app.installPlugin", wanted.clone()).await.unwrap();
     assert_eq!(done, json!({ "plugin": "org.test.beta", "version": "1.0.0" }));
     let dest = tmp.path().join("data/plugins/org.test.beta/1.0.0");
     assert_eq!(std::fs::read_to_string(dest.join("main.js")).unwrap(), "export default {};");
     assert!(dest.join("locales/en-US.json").is_file());
-    // No temporary folder is left, and the rescan came after the files were in place.
-    let leftovers: Vec<_> = std::fs::read_dir(tmp.path().join("data/plugins/org.test.beta")).unwrap().filter_map(|e| e.ok()).map(|e| e.file_name().to_string_lossy().into_owned()).collect();
-    assert_eq!(leftovers, vec!["1.0.0"]);
-    assert_eq!(rescans(tmp.path()), 1);
-    assert!(std::fs::read_to_string(tmp.path().join("data/workspaces/default/rescans.log")).unwrap().contains("org.test.beta"));
+    // Temporary copies live in plugins/.tmp and are gone; no stray folder next to the version.
+    let beside: Vec<_> = std::fs::read_dir(tmp.path().join("data/plugins/org.test.beta")).unwrap().filter_map(|e| e.ok()).map(|e| e.file_name().to_string_lossy().into_owned()).collect();
+    assert_eq!(beside, vec!["1.0.0"]);
+    assert_eq!(std::fs::read_dir(tmp.path().join("data/plugins/.tmp")).map(|rd| rd.count()).unwrap_or(0), 0);
+    // Order and content: rescan (with the built-in list, files already in place), then confirm with the fingerprint.
+    let log = calls(tmp.path());
+    assert_eq!(log.len(), 2, "{log:?}");
+    assert!(log[0].starts_with("plugin.rescan") && log[0].contains("org.test.alpha@0.1.0") && log[0].contains("org.test.beta"));
+    assert!(log[1].starts_with("plugin.confirmPermissions") && log[1].contains(wanted["fingerprint"].as_str().unwrap()) && log[1].contains("\"version\":\"1.0.0\""));
     host.shutdown().await;
 }
 
 #[tokio::test]
-async fn install_refuses_an_existing_version_and_invalid_or_unsafe_packages() {
+async fn install_refuses_when_what_was_confirmed_is_not_what_is_there() {
     let tmp = tempfile::tempdir().unwrap();
     let host = start(tmp.path()).await;
     let pkg = tmp.path().join("pkg");
     package(&pkg, "org.test.beta", "1.0.0");
-    host.request(None, "app.installPlugin", json!({ "folder": pkg })).await.unwrap();
-    // Same id and version again.
-    let again = host.request(None, "app.installPlugin", json!({ "folder": pkg })).await.unwrap_err();
+    // The package changed after the user looked at it.
+    let mut wanted = confirmed(&host, &pkg).await;
+    std::fs::write(pkg.join("main.js"), "export default { evil: true };").unwrap();
+    let stale = host.request(None, "app.installPlugin", wanted.clone()).await.unwrap_err();
+    assert_eq!(reason(&stale), "changedSinceInspect");
+    // A different id or version than the one confirmed.
+    wanted = confirmed(&host, &pkg).await;
+    let mut other = wanted.clone();
+    other["version"] = json!("9.9.9");
+    assert_eq!(reason(&host.request(None, "app.installPlugin", other).await.unwrap_err()), "changedSinceInspect");
+    assert!(!tmp.path().join("data/plugins/org.test.beta").exists());
+    assert_eq!(rescans(tmp.path()), 0);
+    host.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_copy_that_differs_from_what_was_inspected_is_deleted_and_refused() {
+    let tmp = tempfile::tempdir().unwrap();
+    let host = start(tmp.path()).await;
+    let pkg = tmp.path().join("pkg");
+    package(&pkg, "org.test.beta", "1.0.0");
+    let wanted = confirmed(&host, &pkg).await;
+    std::fs::write(tmp.path().join("data/workspaces/default/copy-differs"), "").unwrap();
+    let refused = host.request(None, "app.installPlugin", wanted).await.unwrap_err();
+    assert_eq!(reason(&refused), "changedSinceInspect");
+    assert!(!tmp.path().join("data/plugins/org.test.beta").exists());
+    assert_eq!(std::fs::read_dir(tmp.path().join("data/plugins/.tmp")).map(|rd| rd.count()).unwrap_or(0), 0, "the refused copy is deleted");
+    assert_eq!(rescans(tmp.path()), 0, "nothing is rescanned or confirmed");
+    host.shutdown().await;
+}
+
+#[tokio::test]
+async fn install_refuses_an_existing_version_invalid_packages_and_any_link() {
+    let tmp = tempfile::tempdir().unwrap();
+    let host = start(tmp.path()).await;
+    let pkg = tmp.path().join("pkg");
+    package(&pkg, "org.test.beta", "1.0.0");
+    let wanted = confirmed(&host, &pkg).await;
+    host.request(None, "app.installPlugin", wanted.clone()).await.unwrap();
+    let again = host.request(None, "app.installPlugin", wanted).await.unwrap_err();
     assert_eq!((again.code, reason(&again).as_str()), (ErrorCode::Invalid, "alreadyInstalled"));
     // The worker's checks decide validity: nothing is copied for a refused manifest.
     let bad = tmp.path().join("bad");
     package(&bad, "org.test.bad", "1.0.0");
-    let refused = host.request(None, "app.installPlugin", json!({ "folder": bad })).await.unwrap_err();
+    let refused = host.request(None, "app.installPlugin", json!({ "folder": bad, "id": "org.test.bad", "version": "1.0.0", "fingerprint": "x" })).await.unwrap_err();
     assert_eq!(reason(&refused), "notValid");
     assert!(!tmp.path().join("data/plugins/org.test.bad").exists());
-    // Not a folder / relative / missing manifest / link out of the package.
+    let ask = |folder: &Path| json!({ "folder": folder, "id": "org.test.gamma", "version": "1.0.0", "fingerprint": "x" });
     let file = tmp.path().join("file.txt");
     std::fs::write(&file, "x").unwrap();
-    assert_eq!(reason(&host.request(None, "app.installPlugin", json!({ "folder": file })).await.unwrap_err()), "notFolder");
-    assert_eq!(reason(&host.request(None, "app.installPlugin", json!({ "folder": "relative" })).await.unwrap_err()), "notAbsolute");
+    assert_eq!(reason(&host.request(None, "app.installPlugin", ask(&file)).await.unwrap_err()), "notFolder");
+    assert_eq!(reason(&host.request(None, "app.installPlugin", json!({ "folder": "relative", "id": "a", "version": "1", "fingerprint": "x" })).await.unwrap_err()), "notAbsolute");
     let empty = tmp.path().join("empty");
     std::fs::create_dir_all(&empty).unwrap();
-    assert_eq!(reason(&host.request(None, "app.installPlugin", json!({ "folder": empty })).await.unwrap_err()), "noManifest");
+    assert_eq!(reason(&host.request(None, "app.installPlugin", ask(&empty)).await.unwrap_err()), "noManifest");
+    // Any link at all, even one that stays inside the package.
     let linked = tmp.path().join("linked");
     package(&linked, "org.test.gamma", "1.0.0");
-    let secret = tmp.path().join("secret.txt");
-    std::fs::write(&secret, "s").unwrap();
-    std::os::unix::fs::symlink(&secret, linked.join("leak.txt")).unwrap();
-    assert_eq!(reason(&host.request(None, "app.installPlugin", json!({ "folder": linked })).await.unwrap_err()), "symlinkOutside");
+    std::os::unix::fs::symlink(linked.join("main.js"), linked.join("alias.js")).unwrap();
+    assert_eq!(reason(&host.request(None, "app.installPlugin", ask(&linked)).await.unwrap_err()), "symlink");
     assert!(!tmp.path().join("data/plugins/org.test.gamma").exists());
+    host.shutdown().await;
+}
+
+#[tokio::test]
+async fn the_worker_is_started_with_the_builtin_plugins_the_host_copied() {
+    let tmp = tempfile::tempdir().unwrap();
+    let host = start(tmp.path()).await;
+    let args = host.request(None, "args", Value::Null).await.unwrap();
+    assert_eq!(args["builtin"], json!(["org.test.alpha@0.1.0"]));
+    // After the worker restarts it still gets the list.
+    let _ = host.request(None, "crash", Value::Null).await;
+    let again = host.request(None, "args", Value::Null).await.unwrap();
+    assert_eq!(again["builtin"], json!(["org.test.alpha@0.1.0"]));
     host.shutdown().await;
 }
 
@@ -268,17 +333,39 @@ async fn remove_moves_the_version_aside_rescans_and_is_not_put_back_at_the_next_
     assert!(builtin.is_dir());
     host.request(None, "app.removePlugin", json!({ "plugin": "org.test.alpha", "version": "0.1.0" })).await.unwrap();
     assert!(!builtin.exists());
-    let moved: Vec<_> = std::fs::read_dir(tmp.path().join("data/plugins/.removed")).unwrap().filter_map(|e| e.ok()).map(|e| e.file_name().to_string_lossy().into_owned()).collect();
+    let moved: Vec<_> = std::fs::read_dir(tmp.path().join("data/plugins/.removed/org.test.alpha")).unwrap().filter_map(|e| e.ok()).map(|e| e.file_name().to_string_lossy().into_owned()).collect();
     assert_eq!(moved.len(), 1);
-    assert!(moved[0].starts_with("org.test.alpha-0.1.0-"));
-    assert_eq!(rescans(tmp.path()), 1);
+    assert!(moved[0].starts_with("0.1.0-"));
+    // The rescan no longer lists the removed version as the host's own.
+    let log = calls(tmp.path());
+    assert_eq!(log.len(), 1);
+    assert!(log[0].starts_with("plugin.rescan") && !log[0].contains("org.test.alpha@0.1.0"));
     let missing = host.request(None, "app.removePlugin", json!({ "plugin": "org.test.alpha", "version": "0.1.0" })).await.unwrap_err();
     assert_eq!(missing.code, ErrorCode::NotFound);
     let unsafe_name = host.request(None, "app.removePlugin", json!({ "plugin": "..", "version": "0.1.0" })).await.unwrap_err();
     assert_eq!(unsafe_name.code, ErrorCode::Invalid);
     host.shutdown().await;
-    // Next start: the built-in copy of that version stays removed.
+    // Next start: the built-in copy of that version stays removed and is not in the built-in list.
     let host = start(tmp.path()).await;
     assert!(!builtin.exists());
+    assert_eq!(host.request(None, "args", Value::Null).await.unwrap()["builtin"], json!([]));
+    host.shutdown().await;
+}
+
+#[tokio::test]
+async fn install_succeeds_with_a_warning_when_the_rescan_reports_a_failed_switch() {
+    let tmp = tempfile::tempdir().unwrap();
+    let host = start(tmp.path()).await;
+    std::fs::write(tmp.path().join("data/workspaces/default/rescan-fails"), "").unwrap();
+    let pkg = tmp.path().join("pkg");
+    package(&pkg, "org.test.beta", "1.0.0");
+    let wanted = confirmed(&host, &pkg).await;
+    let done = host.request(None, "app.installPlugin", wanted).await.unwrap();
+    assert_eq!(done["plugin"], "org.test.beta");
+    assert_eq!(done["warning"]["code"], "pluginError");
+    assert_eq!(done["warning"]["params"]["reason"], "migrateFailed");
+    assert!(tmp.path().join("data/plugins/org.test.beta/1.0.0/main.js").is_file());
+    // The user's confirmation is still recorded.
+    assert!(calls(tmp.path()).iter().any(|l| l.starts_with("plugin.confirmPermissions")));
     host.shutdown().await;
 }

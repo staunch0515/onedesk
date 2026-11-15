@@ -44,4 +44,10 @@ describe("run failures and refusals in words", () => {
     view("zh-CN", { error: new KernelError("denied", { reason: "timeout" }) });
     expect(screen.getByText("调用时间太长。")).toBeTruthy();
   });
+
+  it("words a ProtocolError that arrived as plain data (an install preview's problem)", () => {
+    view("en-US", { error: { code: "invalid", params: { reason: "schema" } } });
+    expect(screen.queryByText("[object Object]")).toBeNull();
+    expect(screen.getByText("The manifest does not match the format")).toBeTruthy();
+  });
 });

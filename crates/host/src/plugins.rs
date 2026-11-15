@@ -28,11 +28,19 @@ fn tree_of(dir: &Path) -> io::Result<BTreeMap<PathBuf, Vec<u8>>> {
     Ok(out)
 }
 
-/// Returns `<id>@<version>` of every package copied (unchanged ones are not listed).
-pub fn install_builtin(src_root: &Path, plugin_root: &Path) -> io::Result<Vec<String>> {
-    let mut copied = Vec::new();
+/// What copying the built-in packages did.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct Builtin {
+    /// `<id>@<version>` of every built-in package now in place (copied now or already there, not removed by the user).
+    pub present: Vec<String>,
+    /// The ones written this time.
+    pub copied: Vec<String>,
+}
+
+pub fn install_builtin(src_root: &Path, plugin_root: &Path) -> io::Result<Builtin> {
+    let mut out = Builtin::default();
     if !src_root.is_dir() {
-        return Ok(copied);
+        return Ok(out);
     }
     let mut dirs: Vec<PathBuf> = std::fs::read_dir(src_root)?.filter_map(|e| e.ok()).map(|e| e.path()).filter(|p| p.is_dir()).collect();
     dirs.sort();
@@ -50,9 +58,10 @@ pub fn install_builtin(src_root: &Path, plugin_root: &Path) -> io::Result<Vec<St
         }
         let wanted = tree_of(&dir)?;
         if dest.is_dir() && tree_of(&dest)? == wanted {
+            out.present.push(format!("{id}@{version}"));
             continue;
         }
-        let tmp = plugin_root.join(id).join(format!(".{version}.tmp-{}", std::process::id()));
+        let tmp = crate::install::tmp_dir(plugin_root).join(format!("{id}-{version}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp);
         for (rel, bytes) in &wanted {
             let to = tmp.join(rel);
@@ -62,10 +71,12 @@ pub fn install_builtin(src_root: &Path, plugin_root: &Path) -> io::Result<Vec<St
         if dest.exists() {
             std::fs::remove_dir_all(&dest)?;
         }
+        std::fs::create_dir_all(dest.parent().expect("has parent"))?;
         std::fs::rename(&tmp, &dest)?;
-        copied.push(format!("{id}@{version}"));
+        out.present.push(format!("{id}@{version}"));
+        out.copied.push(format!("{id}@{version}"));
     }
-    Ok(copied)
+    Ok(out)
 }
 
 #[cfg(test)]
@@ -86,12 +97,15 @@ mod tests {
         let (src, dst) = (tmp.path().join("src"), tmp.path().join("dst"));
         package(&src, "org.x.alpha", "0.1.0", "a");
         let first = install_builtin(&src, &dst).unwrap();
-        assert_eq!(first, vec!["org.x.alpha@0.1.0"]);
+        assert_eq!(first.copied, vec!["org.x.alpha@0.1.0"]);
+        assert_eq!(first.present, vec!["org.x.alpha@0.1.0"]);
         assert_eq!(std::fs::read_to_string(dst.join("org.x.alpha/0.1.0/main.js")).unwrap(), "a");
         assert!(dst.join("org.x.alpha/0.1.0/locales/en-US.json").is_file());
-        assert!(install_builtin(&src, &dst).unwrap().is_empty());
+        let again = install_builtin(&src, &dst).unwrap();
+        assert!(again.copied.is_empty());
+        assert_eq!(again.present, vec!["org.x.alpha@0.1.0"]);
         package(&src, "org.x.alpha", "0.1.0", "b");
-        assert_eq!(install_builtin(&src, &dst).unwrap().len(), 1);
+        assert_eq!(install_builtin(&src, &dst).unwrap().copied.len(), 1);
         assert_eq!(std::fs::read_to_string(dst.join("org.x.alpha/0.1.0/main.js")).unwrap(), "b");
     }
 
@@ -100,7 +114,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let (src, dst) = (tmp.path().join("src"), tmp.path().join("dst"));
         package(&src, "evil", "../../x", "a");
-        assert!(install_builtin(&src, &dst).unwrap().is_empty());
-        assert!(install_builtin(&tmp.path().join("none"), &dst).unwrap().is_empty());
+        assert!(install_builtin(&src, &dst).unwrap().present.is_empty());
+        assert!(install_builtin(&tmp.path().join("none"), &dst).unwrap().present.is_empty());
     }
 }

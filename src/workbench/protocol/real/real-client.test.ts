@@ -114,4 +114,13 @@ describe("kernel client", () => {
     expect(calls[1]?.params).toMatchObject({ locale: "zh-CN" });
     expect(calls[2]?.params).toEqual({ id: "r1", tabId: "final", locale: "zh-CN" });
   });
+
+  it("sends what the user saw when installing, and the fingerprint when confirming a version", async () => {
+    const { transport, calls } = fakeTransport({ hello, "app.installPlugin": () => ({ plugin: "p", version: "1" }), "plugin.confirmPermissions": () => null });
+    const client = await createKernelClient(transport);
+    await client.app.installPlugin("/pkg", "p", "1", "fp-1");
+    await client.plugin.confirmPermissions("p", "1", "fp-1");
+    expect(calls[1]).toEqual({ method: "app.installPlugin", params: { folder: "/pkg", id: "p", version: "1", fingerprint: "fp-1" } });
+    expect(calls[2]).toEqual({ method: "plugin.confirmPermissions", params: { plugin: "p", version: "1", fingerprint: "fp-1" } });
+  });
 });

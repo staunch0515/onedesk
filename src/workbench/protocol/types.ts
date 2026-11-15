@@ -9,7 +9,6 @@ import type {
   CommandContext as KernelCommandContext,
   CommandEffect as KernelEffect,
   PluginDetail as KernelPluginDetail,
-  PluginVersion as KernelPluginVersion,
   PluginPermission as KernelPluginPermission,
   Run as KernelRun,
   RunOutput as KernelRunOutput,
@@ -42,6 +41,8 @@ export type {
   PluginProvides,
   PluginSetting,
   InstallPreview,
+  PluginVersion,
+  UpgradeBatchInfo,
   PluginFolderRef,
   PluginVersionParams,
   SecretInfo,
@@ -144,19 +145,8 @@ export type RunOutput = KernelRunOutput;
 export type OutputCell = string | number | null;
 /** The kernel's permission entry plus the demo's own label (the kernel gives an id; the shell words it). */
 export type PluginPermission = KernelPluginPermission & { label?: Label };
-/**
- * What the version table needs beyond the generated `PluginVersion`: how many resources are bound to a
- * version, and whether its permissions were confirmed. The kernel adds these as optional fields (round 4
- * §3); until the generated type has them the shell reads them as optional.
- */
-export type PluginVersion = KernelPluginVersion & { resources?: number; confirmed?: boolean };
-/** UI-side `PluginDetail`: the permission superset above, the version superset, and the last upgrade (for "undo"). */
-export type PluginDetail = Omit<KernelPluginDetail, "permissions" | "versions"> & {
-  permissions: PluginPermission[];
-  versions: PluginVersion[];
-  /** The batch of the most recent upgrade and how many resources it took over. */
-  lastUpgrade?: { batch: string; count: number };
-};
+/** UI-side `PluginDetail`: the generated one with the permission superset above (the demo gives a label). */
+export type PluginDetail = Omit<KernelPluginDetail, "permissions"> & { permissions: PluginPermission[] };
 /** UI-side superset of the generated `Run`: `input` keeps loose JSON values. */
 export type Run = Omit<KernelRun, "input"> & { input: Record<string, unknown> };
 

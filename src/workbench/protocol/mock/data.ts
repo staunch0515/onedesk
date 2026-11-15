@@ -449,7 +449,7 @@ export interface PluginRow {
 }
 
 export function seedPlugins(now: number): PluginRow[] {
-  const v = (version: string, daysAgo: number, active: boolean, notes: string, pinned = false): PluginVersion => ({ version, installedAt: now - daysAgo * DAY, active, pinned, notes });
+  const v = (version: string, daysAgo: number, active: boolean, notes: string, pinned = false): PluginVersion => ({ version, installedAt: now - daysAgo * DAY, active, pinned, notes, permissions: [], fingerprint: "" });
   const none = { kinds: [], actions: [], trees: [], resultTabs: [], other: [] };
   return [
     {

@@ -37,7 +37,7 @@ export function AuditPage({ tab, descriptor }: { tab: TabState; descriptor: Page
     { key: "operation", header: t("audit.operation"), width: 184, value: (a) => opName(a.operation) },
     { key: "target", header: t("audit.target"), width: 240, value: (a) => a.target },
     { key: "result", header: t("audit.result"), width: 104, value: (a) => a.result, render: (a) => <Badge tone={RESULT_TONE[a.result]} dot>{resultName[a.result]}</Badge> },
-    { key: "detail", header: t("audit.detail"), width: 480, mono: true, value: (a) => a.detail },
+    { key: "detail", header: t("audit.detail"), width: 480, mono: true, value: (a) => (a.count && a.count > 1 ? `${a.detail} ×${a.count}` : a.detail) },
   ];
 
   const items: ActionBarItem[] = [{ key: "export", label: t("audit.export"), icon: "download", onSelect: () => toast({ tone: "success", title: t("audit.exported", { count: rows.data?.length ?? 0 }) }) }];
