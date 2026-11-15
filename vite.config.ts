@@ -14,6 +14,8 @@ export default defineConfig({
   },
   envPrefix: ["VITE_", "TAURI_ENV_*"],
   build: {
+    // The workbench is the app; `index.html` only forwards to it so the bundle has a default page.
+    rollupOptions: { input: { index: "index.html", workbench: "workbench.html" } },
     target: "safari14",
     minify: !process.env.TAURI_ENV_DEBUG,
     sourcemap: !!process.env.TAURI_ENV_DEBUG,

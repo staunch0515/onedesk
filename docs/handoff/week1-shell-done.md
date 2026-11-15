@@ -56,3 +56,11 @@
 - 提供树（`groups` 为 false）不显示“新建分组”按钮。
 - locale（#5）：`page.resolve`/`page.save` 的 context 已带当前语言；`command.execute` 没有——`CommandContext` 协议类型里没有 locale 字段，内核 `commands.rs` 给命令处理函数的 ctx 里 `locale` 写死为 `null`。笔记“创建副本”的中文界面显示英文后缀就是这个原因，需要内核/协议加字段（外壳再带上），我没改。
 - 测试：`state/save.test.ts`（4 项）、混合客户端 `node:` 保存走内核（1 项）。`pnpm typecheck`、`pnpm lint`、`pnpm test`（92）通过；纯假数据 `e2e/workbench.spec.ts` 23 过 1 跳过（原来就跳过），截图已还原。未用真内核（devhost）实跑这几处。
+
+## 收尾
+- 已合并 `claude/week1-slice-3b4ae5`（d7169ae）。`command.execute` 现在带当前界面语言（`createKernelClient` 的 locale 回调，调用方给的 `locale` 优先）；测试在 `real-client.test.ts`。
+- 发布构建：`scripts/prepare-bundle.sh [release|debug]` 构建 `onedesk-worker` 并复制为 `src-tauri/binaries/onedesk-worker-<三元组>`（`externalBin` sidecar），把 `plugins/<id>/`（不含 `_*` 目录、`*.test.*`）放到 `target/bundle-inputs/plugins`（`resources` → `Resources/plugins`）。`beforeBuildCommand`/`beforeDevCommand` 都先跑它。`src-tauri/build.rs` 在缺文件时放空占位，所以不跑脚本也能 `cargo clippy/test --workspace`（占位已 git 忽略）。入口：新增根目录 `index.html`（立刻跳到 `workbench.html`），vite 构建入口含两者；`workbench.html` 地址不变，`pnpm start` 与 e2e 照旧。只打 `app` 目标。CSP 未放宽。
+- `pnpm tauri build` 成功（release 约 8 分钟），产出 18.3 MiB 的 `OneDesk.app`：`Contents/MacOS/{onedesk,onedesk-worker}`，`Contents/Resources/plugins/{org.onedesk.files,org.onedesk.note}`（无测试文件）。
+- **没能按要求从 `.app` 启动验证**：在我的会话环境里，从命令行（直接执行、`open -n`、复制到别处再执行）启动 `.app` 内的可执行文件，进程会卡在 AppKit 的 `-[NSApplication finishLaunching]`（`_NSPersistentUIEstablishTalagentCommunication`，`sample` 看到的），等了几分钟也没进入 `setup`，数据目录始终是空的。这像是该环境无法给 `.app` 做正常的图形启动，不是应用逻辑问题，但我没能证明。请在你们的桌面会话里再按“`ONEDESK_DATA_DIR=<临时目录> OneDesk.app/Contents/MacOS/OneDesk`”验证一次。
+- 替代验证（做了的）：把 `.app` 里的 `MacOS/` 和 `Resources/` 原样复制成没有 `Info.plist` 的 `Contents/` 目录结构（不是 .app 包，AppKit 不会走包启动路径），用 `ONEDESK_DATA_DIR=<临时目录>` 运行其中的 `onedesk`：主进程在、`onedesk-worker`（sidecar，由 `resolve_worker_bin` 在同目录找到）在，临时目录出现 `plugins/org.onedesk.files`、`plugins/org.onedesk.note`（由 `Resources/plugins` 复制，说明内置插件目录按包内位置找到了）、`workspaces/default/workspace.db`，`ui_state` 里有 `main|layout`（窗口里的界面经 Tauri 连上了内核）。随后结束了进程。这证明路径解析、sidecar、插件复制和界面连内核都对，但不证明 `.app` 本身在图形环境里能正常打开；窗口内容我没有再看。
+- `pnpm typecheck`、`pnpm lint`、`pnpm test`（93）、`cargo clippy -p onedesk-host -p onedesk --all-targets -- -D warnings` 通过。纯假数据 e2e 这次没重跑（只改了入口与构建配置，改动不涉及界面代码）。

@@ -4,9 +4,9 @@
   "version": "0.2.0",
   "identifier": "org.onedesk.app",
   "build": {
-    "beforeDevCommand": "cargo build -p onedesk-worker && pnpm dev",
+    "beforeDevCommand": "sh scripts/prepare-bundle.sh debug && pnpm dev",
     "devUrl": "http://localhost:1420/workbench.html",
-    "beforeBuildCommand": "pnpm build",
+    "beforeBuildCommand": "sh scripts/prepare-bundle.sh release && pnpm build",
     "frontendDist": "../dist"
   },
   "app": {
@@ -27,8 +27,7 @@
   "bundle": {
     "active": true,
     "targets": [
-      "app",
-      "dmg"
+      "app"
     ],
     "macOS": {
       "minimumSystemVersion": "11.3"
@@ -39,6 +38,12 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.png"
-    ]
+    ],
+    "externalBin": [
+      "binaries/onedesk-worker"
+    ],
+    "resources": {
+      "../target/bundle-inputs/plugins": "plugins"
+    }
   }
 }
