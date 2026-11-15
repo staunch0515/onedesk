@@ -12,4 +12,9 @@ node: string, name: string, value: string,
 /**
  * Absent = keep the existing type, or `text` for a new parameter.
  */
-type?: ParamType, };
+type?: ParamType, 
+/**
+ * The node's `rev` the caller saw (`EnvView.rev`). With it, a change to the same
+ * parameter made by someone else after that rev is a `conflict` (§4).
+ */
+basis?: number, };

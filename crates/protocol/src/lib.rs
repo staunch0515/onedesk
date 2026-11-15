@@ -940,14 +940,20 @@ pub struct ParamSetParams {
     /// Absent = keep the existing type, or `text` for a new parameter.
     #[serde(rename = "type")]
     pub param_type: Option<ParamType>,
+    /// The node's `rev` the caller saw (`EnvView.rev`). With it, a change to the same
+    /// parameter made by someone else after that rev is a `conflict` (§4).
+    pub basis: Option<i64>,
 }
 
+#[skip_serializing_none]
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
-#[ts(export)]
+#[ts(export, optional_fields)]
 pub struct ParamNameParams {
     pub node: String,
     pub name: String,
+    /// See `ParamSetParams.basis`.
+    pub basis: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
