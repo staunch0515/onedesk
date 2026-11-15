@@ -24,3 +24,11 @@
 **G1（外壳，信息面板）**：笔记等资源页没有历史入口——历史只出现在环境页和带结果区的页面（`result-area.tsx` 的 History 标签，只有 SQL 演示页有）。任务要求里“信息面板或页面里的历史”对笔记在界面上无法检查；笔记的历史与恢复我只测到协议层（`resource.history`/`resource.restore`）。若期望笔记也有历史界面，需要外壳在信息面板或笔记页加历史。
 
 **观察（非缺陷）**：审计页没有树/工具栏入口（内核命令 `open.audit` 只能经命令面板 ⌘⇧P 到达）；左侧活动栏按钮是开关（再点会收起侧栏），检查里用 `aria-pressed` 判断后再点。
+
+## 第二轮补充（合并 K-A1/A1/G1 修复之后）
+- 去掉 K-A1 的 `fixme`（审计“Contains”按名称过滤，界面与协议都查）；主题按钮改用 `getByRole("button", {name:"Switch light / dark"})`；新增“笔记页信息面板展开修改记录→看到改名条目→点恢复→名称变回”；永久删除后“已删除”树里节点也消失、确认框含 “cannot be undone”。
+- 结果：`E2E_PORT=1432 pnpm e2e`：**41 通过、0 失败、3 跳过**（2 个 `test.fixme`：S-B1 的两项；1 个 workbench.spec 原本就跳过的 review shots）。一次全量跑里 `workbench.spec.ts` 的“tree: drag onto a group”失败（同一节点出现两次，外壳交接文件已记过的竞态），单独跑 2 次都通过，再全量跑也通过。
+
+### 新发现
+**S-B1（外壳，`src/workbench/pages/env-page.tsx` 第 35、41、163、193 行）**：`const basis = String(env.data.rev)` 把 `basis` 当字符串发给 `params.set / unset / acknowledge`，而协议里 `ParamSetParams.basis`、`ParamNameParams.basis` 是数字（`Option<i64>`），内核按参数校验失败，界面提示“That did not work — The request was malformed.”。后果：环境页上覆盖参数、“Keep mine”、“使用继承值”、改值全部失败。复现：新建子环境，在继承来的参数输入框里改值并回车。期望：发送数字 `env.data.rev`（`ProtocolClient.params.*` 的 `basis` 类型也应是 `number`）。
+对应检查：`test.fixme("environments (UI): override, changed upstream, keep mine, use the inherited value")` 和 `test.fixme("history (UI): environment page lists rename and value changes and restores one")`。覆盖/“已变化”/确认/撤销的内核行为另有协议层测试 `environments (protocol)`（通过）。
