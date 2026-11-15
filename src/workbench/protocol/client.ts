@@ -16,6 +16,12 @@ import type {
   EnvOption,
   EnvView,
   EventHandler,
+  ExportResult,
+  ImportPreview,
+  ImportResult,
+  KnownParam,
+  RefInfo,
+  RunExportResult,
   HistoryEntry,
   NewItem,
   PageContext,
@@ -70,7 +76,7 @@ export interface ProtocolClient {
     delete(name: string): Promise<void>;
   };
 
-  readonly platform?: { pickFolder?: () => Promise<string | null> };
+  readonly platform?: { pickFolder?: () => Promise<string | null>; pickSaveFile?: (name?: string) => Promise<string | null> };
 
   readonly demo?: { tree(id: string): boolean; target(target: string): boolean };
 
@@ -83,6 +89,19 @@ export interface ProtocolClient {
     /** Workspace-level configuration parameter by name (§6.2), e.g. `ui.language`. */
     getConfig(name: string): Promise<string | null>;
     setConfig(name: string, value: string): Promise<void>;
+    /** Writes the workspace as readable JSON into an empty folder (§3.5). `denied/noExport` when protection forbids it. */
+    export(folder: string): Promise<ExportResult>;
+    /** Reads an export folder and says what an import would do; changes nothing. */
+    importPreview(folder: string): Promise<ImportPreview>;
+    /** `fingerprint` is the one the preview gave; the kernel refuses if the export changed since. */
+    import(folder: string, fingerprint: string, parent?: string): Promise<ImportResult>;
+  };
+
+  refs: {
+    /** What this resource refers to, in field order (§10). */
+    outgoing(id: string): Promise<RefInfo[]>;
+    /** Who refers to this resource (deleted sources are not listed). */
+    incoming(id: string): Promise<RefInfo[]>;
   };
 
   tree: {
@@ -122,6 +141,8 @@ export interface ProtocolClient {
     unset(envId: string, name: string, basis?: string): Promise<void>;
     /** Accept the parent's new value as the basis of this override (clears "changed upstream"). */
     acknowledge(envId: string, name: string, basis?: string): Promise<void>;
+    /** Parameters the kernel itself interprets: the pages offer these by name (§6.3). */
+    known(): Promise<KnownParam[]>;
   };
 
   plugin: {
@@ -167,6 +188,8 @@ export interface ProtocolClient {
     /** A plugin-declared result tab drawn for a run (§9.5). */
     render(id: string, tabId: string): Promise<ViewNode[]>;
     setKept(id: string, kept: boolean): Promise<void>;
+    /** Writes a finished run's table to a new file as CSV (§9.5). */
+    export(id: string, path: string): Promise<RunExportResult>;
   };
 
   search: {

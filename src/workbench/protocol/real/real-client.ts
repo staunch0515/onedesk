@@ -1,6 +1,6 @@
 import type { ConnectionState, EventMessage, HelloResult, TreePage } from "../generated";
 import type { ProtocolClient } from "../client";
-import type { InstallPreview, PluginVersionParams, SecretInfo, UndoUpgradeResult, UpgradeResult, PageEventResult, PaletteCommand, PluginDetail, Run, ViewNode, AuditFacets, AuditFilter, AuditRow, EnvOption, EnvView, HistoryEntry, ResolvedParam, SearchHit, CommandContext, CommandEffect, NewItem, PageContext, PageDescriptor, PageSaveResult, PluginGrants, Resource, TreeInfo, TreeNode, WorkspaceInfo } from "../types";
+import type { ExportResult, ImportPreview, ImportResult, KnownParam, RefInfo, RunExportResult, InstallPreview, PluginVersionParams, SecretInfo, UndoUpgradeResult, UpgradeResult, PageEventResult, PaletteCommand, PluginDetail, Run, ViewNode, AuditFacets, AuditFilter, AuditRow, EnvOption, EnvView, HistoryEntry, ResolvedParam, SearchHit, CommandContext, CommandEffect, NewItem, PageContext, PageDescriptor, PageSaveResult, PluginGrants, Resource, TreeInfo, TreeNode, WorkspaceInfo } from "../types";
 import { EventBus } from "./event-bus";
 import { KernelError } from "../errors";
 import type { Transport } from "./transport";
@@ -12,8 +12,9 @@ export const PROTOCOL_VERSION = "1";
 export interface KernelClient {
   readonly hello: HelloResult;
   readonly transport: Transport;
-  workspace: Pick<ProtocolClient["workspace"], "info" | "getConfig" | "setConfig">;
+  workspace: Pick<ProtocolClient["workspace"], "info" | "getConfig" | "setConfig" | "export" | "importPreview" | "import">;
   params: ProtocolClient["params"];
+  refs: ProtocolClient["refs"];
   search: ProtocolClient["search"];
   audit: ProtocolClient["audit"];
   tree: Pick<ProtocolClient["tree"], "list" | "children" | "path" | "move" | "createGroup" | "rename">;
@@ -68,6 +69,13 @@ export async function createKernelClient(transport: Transport, locale?: () => st
       info: () => call<WorkspaceInfo>("workspace.info"),
       getConfig: async (name) => ((await call<string | null>("workspace.getConfig", { name })) ?? null),
       setConfig: async (name, value) => void (await call("workspace.setConfig", { name, value })),
+      export: (folder) => call<ExportResult>("workspace.export", { folder }),
+      importPreview: (folder) => call<ImportPreview>("workspace.importPreview", { folder }),
+      import: (folder, fingerprint, parent) => call<ImportResult>("workspace.import", compact({ folder, fingerprint, parent })),
+    },
+    refs: {
+      outgoing: (id) => call<RefInfo[]>("refs.outgoing", { id }),
+      incoming: (id) => call<RefInfo[]>("refs.incoming", { id }),
     },
     params: {
       env: async (envId) => ((await call<EnvView | null>("params.env", { envId })) ?? null),
@@ -76,6 +84,7 @@ export async function createKernelClient(transport: Transport, locale?: () => st
       set: async (node, name, value, basis) => void (await call("params.set", compact({ node, name, value, basis: rev(basis) }))),
       unset: async (node, name, basis) => void (await call("params.unset", compact({ node, name, basis: rev(basis) }))),
       acknowledge: async (node, name, basis) => void (await call("params.acknowledge", compact({ node, name, basis: rev(basis) }))),
+      known: () => call<KnownParam[]>("params.known"),
     },
     app: {
       inspectPlugin: (folder) => call<InstallPreview>("app.inspectPlugin", { folder }),
@@ -124,6 +133,7 @@ export async function createKernelClient(transport: Transport, locale?: () => st
       clearFinished: async () => void (await call("run.clearFinished")),
       render: (id, tabId) => call<ViewNode[]>("run.render", compact({ id, tabId, locale: locale?.() })),
       setKept: async (id, kept) => void (await call("run.setKept", { id, kept })),
+      export: (id, path) => call<RunExportResult>("run.export", { run: id, path, format: "csv" }),
     },
     command: {
       palette: () => call<PaletteCommand[]>("command.palette"),

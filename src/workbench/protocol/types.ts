@@ -53,6 +53,14 @@ export type {
   RunStatus,
   RunSummary,
   ParamType,
+  ExportResult,
+  ImportPreview,
+  ImportResult,
+  ImportSkip,
+  KnownParam,
+  RefInfo,
+  RefState,
+  RunExportResult,
   ResolvedParam,
   SearchHit,
   UpstreamChange,
@@ -90,7 +98,11 @@ export type {
 export type CommandContext = Omit<KernelCommandContext, "nodeKey" | "args"> & { nodeKey?: string | null; args?: Record<string, unknown> };
 export type PageContext = Omit<KernelPageContext, "envId" | "draft"> & { envId?: string | null; draft?: Record<string, unknown> };
 export type Resource = Omit<KernelResource, "body"> & { body: Record<string, unknown> };
-export type PageDescriptor = Omit<KernelPageDescriptor, "view" | "values"> & { view: ViewNode[]; values: Record<string, unknown> };
+/**
+ * `restrictions` is added by the kernel on top of the generated type (round5-plan §6, field name fixed):
+ * `readonly` and `noExport` when a protection policy is in effect for this page.
+ */
+export type PageDescriptor = Omit<KernelPageDescriptor, "view" | "values"> & { view: ViewNode[]; values: Record<string, unknown>; restrictions?: string[] };
 
 export type PageSaveResult = { page: PageDescriptor };
 

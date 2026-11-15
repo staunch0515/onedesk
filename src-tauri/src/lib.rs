@@ -59,6 +59,21 @@ async fn pick_folder(app: tauri::AppHandle) -> Option<String> {
     rx.await.ok().flatten().and_then(|p| p.into_path().ok()).map(|p| p.to_string_lossy().into_owned())
 }
 
+/// The system "save as" dialog (exporting a result). The user chooses where the new file goes; the
+/// file itself is written by the kernel. `name` is the suggested file name.
+#[tauri::command]
+async fn pick_save_file(app: tauri::AppHandle, name: Option<String>) -> Option<String> {
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    let mut dialog = app.dialog().file();
+    if let Some(name) = name {
+        dialog = dialog.set_file_name(name);
+    }
+    dialog.save_file(move |p| {
+        let _ = tx.send(p);
+    });
+    rx.await.ok().flatten().and_then(|p| p.into_path().ok()).map(|p| p.to_string_lossy().into_owned())
+}
+
 pub fn run() {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
@@ -68,7 +83,7 @@ pub fn run() {
             }
         }))
         .plugin(tauri_plugin_dialog::init())
-        .invoke_handler(tauri::generate_handler![protocol_request, pick_folder])
+        .invoke_handler(tauri::generate_handler![protocol_request, pick_folder, pick_save_file])
         .setup(|app| {
             let cfg = HostConfig { data_dir: default_data_dir(), worker_bin: resolve_worker_bin(), builtin_plugins: builtin_plugins_dir() };
             let state = match tauri::async_runtime::block_on(Host::start(cfg)) {

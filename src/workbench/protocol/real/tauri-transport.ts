@@ -27,6 +27,9 @@ export async function createTauriTransport(): Promise<Transport> {
     async pickFolder() {
       return (await invoke<string | null>("pick_folder")) ?? null;
     },
+    async pickSaveFile(name) {
+      return (await invoke<string | null>("pick_save_file", { name: name ?? null })) ?? null;
+    },
     close() {
       unlisten();
       handlers.clear();

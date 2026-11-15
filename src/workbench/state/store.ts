@@ -4,7 +4,7 @@
  * memory only.
  */
 import { useSyncExternalStore } from "react";
-import type { CommandContext, InstallPreview, Label } from "../protocol/types";
+import type { CommandContext, ImportPreview, InstallPreview, Label } from "../protocol/types";
 
 export interface TabState {
   id: string;
@@ -52,6 +52,9 @@ export interface LayoutState {
 /** The "install a plugin" flow: asking for a folder (browser mode), then the confirmation of what was found. */
 export type InstallState = { stage: "path" } | { stage: "preview"; folder: string; preview: InstallPreview };
 
+/** Exporting and importing a workspace: asking for a folder (browser mode), then what an import would do. */
+export type TransferState = { stage: "export-path" } | { stage: "import-path" } | { stage: "import-preview"; folder: string; preview: ImportPreview };
+
 export interface UiState extends LayoutState {
   tasksOpen: boolean;
   paletteOpen: boolean;
@@ -65,6 +68,10 @@ export interface UiState extends LayoutState {
   folderPrompt: { plugin: string } | null;
   /** Installing a plugin package (round 4). */
   install: InstallState | null;
+  /** Exporting / importing the workspace (round 5). */
+  transfer: TransferState | null;
+  /** Exporting a run's table as CSV: the run, while the file path is being asked for (browser mode). */
+  exportCsv: { run: string } | null;
   /** A command that asked to be confirmed before it runs again with `confirmed: true`. */
   confirmCommand: { message: Label; command: string; danger: boolean; context: CommandContext } | null;
   /** Most recently active tab that uses an environment. */
@@ -121,6 +128,8 @@ export function createStore(saved: Partial<LayoutState> | null, save: (layout: L
     confirmClose: null,
     folderPrompt: null,
     install: null,
+    transfer: null,
+    exportCsv: null,
     confirmCommand: null,
     envTabId: null,
     searchFocus: 0,
