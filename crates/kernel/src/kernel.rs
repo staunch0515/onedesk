@@ -503,7 +503,9 @@ impl Inner {
             .nodes
             .into_iter()
             .map(|n| {
-                let target = n.target.or_else(|| has_page.then(|| node_target(tree, &n.key)));
+                // A container without an explicit target has no page (§5: "absent for pure containers").
+                let leaf = !n.expandable;
+                let target = n.target.or_else(|| (has_page && leaf).then(|| node_target(tree, &n.key)));
                 let mut menu = Vec::new();
                 if target.is_some() {
                     menu.push(kernel_cmd("node.open", "external-link"));
