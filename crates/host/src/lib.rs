@@ -326,8 +326,13 @@ impl Host {
             let _ = std::fs::remove_dir_all(&tmp);
             return Err(err(ErrorCode::Internal, format!("copy plugin: {e}")));
         }
-        self.forward(client, "plugin.rescan", Value::Null).await?;
-        Ok(json!({ "plugin": id, "version": version }))
+        // The files are installed whatever the rescan says. A rescan that fails (for example the automatic
+        // switch to this version could not take over a resource) is reported next to the result, not as a
+        // failure of the install: the version is there and can be switched by hand.
+        match self.forward(client, "plugin.rescan", Value::Null).await {
+            Ok(_) => Ok(json!({ "plugin": id, "version": version })),
+            Err(warning) => Ok(json!({ "plugin": id, "version": version, "warning": warning })),
+        }
     }
 
     /// `app.removePlugin`: move the version to `plugins/.removed/`, rescan.

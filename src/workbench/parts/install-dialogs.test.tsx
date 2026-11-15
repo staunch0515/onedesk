@@ -50,6 +50,15 @@ describe("install flow", () => {
     await waitFor(() => expect(store.get().install).toBeNull());
   });
 
+  it("closes with a warning, not an error, when the kernel's automatic switch to the new version fails", async () => {
+    const { app, confirmPermissions, store, client } = setup(preview());
+    confirmPermissions.mockRejectedValueOnce(Object.assign(new Error("x"), { code: "pluginError", params: { reason: "migrateFailed" } }));
+    await act(async () => inspectFolder(client, store, "/pkg"));
+    fireEvent.click(await screen.findByRole("button", { name: "Install" }));
+    await waitFor(() => expect(store.get().install).toBeNull());
+    expect(app.installPlugin).toHaveBeenCalledTimes(1);
+  });
+
   it("explains a refused package and cannot be confirmed", async () => {
     const bad = preview({ valid: false, problem: { code: "invalid", params: { reason: "schema" } }, permissions: [] });
     const { app, store, client } = setup(bad);

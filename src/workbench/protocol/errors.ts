@@ -27,5 +27,10 @@ export function toKernelError(error: unknown): KernelError {
 /** The error code when `error` came from the kernel (or the main process), else undefined. */
 export function kernelErrorCode(error: unknown): { code: ErrorCode; params: Record<string, string> } | undefined {
   if (error instanceof KernelError) return { code: error.code, params: error.params };
+  // A `ProtocolError` that arrived as data (for example `InstallPreview.problem`).
+  if (error && typeof error === "object" && typeof (error as { code?: unknown }).code === "string") {
+    const e = error as { code: ErrorCode; params?: Record<string, string> };
+    return { code: e.code, params: e.params ?? {} };
+  }
   return undefined;
 }

@@ -115,7 +115,7 @@ export function Frame({ tab, descriptor, meta, actions, children, panel }: Frame
           )}
           {descriptor.state !== "ok" && (
             <Banner tone={descriptor.state === "broken" ? "danger" : descriptor.state === "disabled" ? "info" : "warning"} title={stateName[descriptor.state]}>
-              {descriptor.stateReason ? tx(descriptor.stateReason) : stateHint[descriptor.state]}
+              {descriptor.stateReason ? (descriptor.state === "missing-plugin" ? t("state.missingPluginNamed", { plugin: tx(descriptor.stateReason) }) : tx(descriptor.stateReason)) : stateHint[descriptor.state]}
             </Banner>
           )}
         </>

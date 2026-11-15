@@ -75,6 +75,10 @@ async fn main() {
                 "plugin.rescan" => {
                     // Leaves a note in the workspace folder so tests can count rescans and see what was on disk then.
                     let listing = std::fs::read_dir(std::path::Path::new(&plugins)).map(|rd| rd.filter_map(|e| e.ok()).map(|e| e.file_name().to_string_lossy().into_owned()).collect::<Vec<_>>().join(",")).unwrap_or_default();
+                    if std::path::Path::new(&workspace).join("rescan-fails").exists() {
+                        tx.send(json!({ "id": id, "error": { "code": "pluginError", "params": { "reason": "migrateFailed" } } }).to_string()).ok();
+                        return;
+                    }
                     let note = std::path::Path::new(&workspace).join("rescans.log");
                     let mut text = std::fs::read_to_string(&note).unwrap_or_default();
                     text.push_str(&format!("{listing}\n"));

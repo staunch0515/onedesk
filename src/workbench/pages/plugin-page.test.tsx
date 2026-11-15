@@ -22,8 +22,8 @@ const detail = (over: Partial<PluginDetail> = {}): PluginDetail => ({
   enabled: true,
   builtin: false,
   versions: [
-    { version: "0.1.0", installedAt: 1, active: true, pinned: false, notes: "", resources: 3, confirmed: true },
-    { version: "0.2.0", installedAt: 2, active: false, pinned: false, notes: "", resources: 0, confirmed: false },
+    { version: "0.1.0", installedAt: 1, active: true, pinned: false, notes: "", resourceCount: 3, confirmed: true },
+    { version: "0.2.0", installedAt: 2, active: false, pinned: false, notes: "", resourceCount: 0, confirmed: false },
   ],
   settings: [],
   permissions: [{ id: "network", detail: "api.example.com", granted: false, required: true }],
@@ -31,7 +31,8 @@ const detail = (over: Partial<PluginDetail> = {}): PluginDetail => ({
   load: { state: "loaded" },
   resourceCount: 3,
   folders: [],
-  lastUpgrade: { batch: "b1", count: 2 },
+  lastUpgrade: { batch: "b1", from: "0.1.0", to: "0.2.0", count: 2, at: 1, undone: false },
+  unconfirmed: ["0.2.0"],
   ...over,
 });
 
@@ -55,7 +56,7 @@ describe("plugin page versions (kernel plugin)", () => {
     setup();
     expect(await screen.findByText("0.2.0")).toBeTruthy();
     expect(screen.getByText("Not confirmed")).toBeTruthy();
-    expect(screen.getByText("The last upgrade took over 2 resource(s).")).toBeTruthy();
+    expect(screen.getByText("The last upgrade (0.1.0 → 0.2.0) took over 2 resource(s).")).toBeTruthy();
   });
 
   it("asks to confirm the permissions before switching to an unconfirmed version, then switches", async () => {

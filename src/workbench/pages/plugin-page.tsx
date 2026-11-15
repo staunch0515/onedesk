@@ -34,11 +34,11 @@ export function PluginPage({ tab, descriptor }: { tab: TabState; descriptor: Pag
   const hasFiles = p.permissions.some((x) => x.id === "files");
   const done = (text: string) => toast({ tone: "success", title: text });
   const activate = async (v: PluginVersion, confirmed = false) => {
-    if (real && v.confirmed === false && !confirmed) return setAsk({ kind: "permissions", version: v.version });
+    if (real && (v.confirmed === false || p.unconfirmed.includes(v.version)) && !confirmed) return setAsk({ kind: "permissions", version: v.version });
     try {
-      if (real && v.confirmed === false) await client.plugin.confirmPermissions(id, v.version);
+      if (real && (v.confirmed === false || p.unconfirmed.includes(v.version))) await client.plugin.confirmPermissions(id, v.version);
       const result = await client.plugin.activateVersion(id, v.version);
-      done(result.upgraded > 0 || result.kept > 0 ? t("plugin.upgraded", { version: v.version, upgraded: result.upgraded, kept: result.kept }) : t("plugin.activated", { version: v.version }));
+      done(result.upgraded > 0 ? t("plugin.upgraded", { version: v.version, upgraded: result.upgraded, kept: result.kept }) : result.kept > 0 ? t("plugin.switchedKept", { version: v.version, kept: result.kept }) : t("plugin.activated", { version: v.version }));
     } catch (error) {
       actions.fail(error);
     }
@@ -60,7 +60,7 @@ export function PluginPage({ tab, descriptor }: { tab: TabState; descriptor: Pag
       actions.fail(error);
     }
   };
-  const boundTotal = p.versions.reduce((n, v) => n + (v.resources ?? 0), 0);
+  const boundTotal = p.versions.reduce((n, v) => n + (v.resourceCount ?? 0), 0);
   const items: ActionBarItem[] = [
     { key: "toggle", label: p.enabled ? t("plugin.disable") : t("plugin.enable"), icon: p.enabled ? "circle-slash" : "circle-check", primary: !p.enabled && installed, disabled: !installed, onSelect: () => client.plugin.setEnabled(id, !p.enabled).catch(actions.fail) },
     { key: "reload", label: t("plugin.reload"), icon: "rotate-cw", disabled: !installed || !p.enabled, onSelect: () => client.plugin.reload(id).then(() => toast({ tone: "success", title: t("plugin.reloaded") }), actions.fail) },
@@ -99,17 +99,17 @@ export function PluginPage({ tab, descriptor }: { tab: TabState; descriptor: Pag
               {t("plugin.pinned")}
             </Badge>
           )}
-          {v.confirmed === false && <Badge tone="warning">{t("plugin.unconfirmed")}</Badge>}
+          {(v.confirmed === false || p.unconfirmed.includes(v.version)) && <Badge tone="warning">{t("plugin.unconfirmed")}</Badge>}
         </Pane>
       ),
     },
     { key: "installed", header: t("plugin.installedAt"), width: 160, value: (v) => v.installedAt, render: (v) => (v.installedAt ? dateTime(v.installedAt) : "—") },
-    ...(real ? [{ key: "resources", header: t("plugin.boundResources"), width: 120, numeric: true, value: (v: PluginVersion) => v.resources ?? 0 }] : []),
-    { key: "notes", header: t("plugin.notes"), width: 380, value: (v) => v.notes },
+    ...(real ? [{ key: "resources", header: t("plugin.boundResources"), width: 120, numeric: true, value: (v: PluginVersion) => v.resourceCount ?? 0 }] : []),
+    ...(real ? [] : [{ key: "notes", header: t("plugin.notes"), width: 380, value: (v: PluginVersion) => v.notes }]),
     {
       key: "actions",
       header: "",
-      width: real ? 330 : 232,
+      width: real ? 300 : 232,
       sortable: false,
       resizable: false,
       render: (v: PluginVersion) => (
@@ -123,7 +123,7 @@ export function PluginPage({ tab, descriptor }: { tab: TabState; descriptor: Pag
             {v.pinned ? t("plugin.unpin") : t("plugin.pin")}
           </Button>
           {real && client.app && (
-            <Button size="sm" variant="ghost" icon="trash-2" onClick={() => setAsk({ kind: "remove", version: v.version, resources: v.resources ?? 0 })}>
+            <Button size="sm" variant="ghost" icon="trash-2" onClick={() => setAsk({ kind: "remove", version: v.version, resources: v.resourceCount ?? 0 })}>
               {t("plugin.removeVersion")}
             </Button>
           )}
@@ -259,8 +259,8 @@ export function PluginPage({ tab, descriptor }: { tab: TabState; descriptor: Pag
 
         {p.versions.length > 0 && (
           <Section title={t("plugin.versions")} description={t("plugin.versionsHint")}>
-            {real && p.lastUpgrade && (
-              <Banner tone="info" title={t("plugin.lastUpgrade", { count: p.lastUpgrade.count })} actions={<Button size="sm" onClick={() => setAsk({ kind: "undo", count: p.lastUpgrade!.count })}>{t("plugin.undoUpgrade")}</Button>} />
+            {real && p.lastUpgrade && !p.lastUpgrade.undone && (
+              <Banner tone="info" title={t("plugin.lastUpgrade", { count: p.lastUpgrade.count, from: p.lastUpgrade.from, to: p.lastUpgrade.to })} actions={<Button size="sm" onClick={() => setAsk({ kind: "undo", count: p.lastUpgrade!.count })}>{t("plugin.undoUpgrade")}</Button>} />
             )}
             <DataGrid label={t("plugin.versions")} size="regular" framed autoHeight columns={versionColumns} rows={p.versions} getRowKey={(v) => v.version} nullText="" />
           </Section>

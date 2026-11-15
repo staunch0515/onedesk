@@ -282,3 +282,18 @@ async fn remove_moves_the_version_aside_rescans_and_is_not_put_back_at_the_next_
     assert!(!builtin.exists());
     host.shutdown().await;
 }
+
+#[tokio::test]
+async fn install_succeeds_with_a_warning_when_the_rescan_reports_a_failed_switch() {
+    let tmp = tempfile::tempdir().unwrap();
+    let host = start(tmp.path()).await;
+    std::fs::write(tmp.path().join("data/workspaces/default/rescan-fails"), "").unwrap();
+    let pkg = tmp.path().join("pkg");
+    package(&pkg, "org.test.beta", "1.0.0");
+    let done = host.request(None, "app.installPlugin", json!({ "folder": pkg })).await.unwrap();
+    assert_eq!(done["plugin"], "org.test.beta");
+    assert_eq!(done["warning"]["code"], "pluginError");
+    assert_eq!(done["warning"]["params"]["reason"], "migrateFailed");
+    assert!(tmp.path().join("data/plugins/org.test.beta/1.0.0/main.js").is_file());
+    host.shutdown().await;
+}

@@ -1,4 +1,5 @@
 import type {
+  ProtocolError,
   InstallPreview,
   PluginVersionParams,
   SecretInfo,
@@ -56,7 +57,8 @@ export interface ProtocolClient {
   /** Installing and removing plugin packages (main process). Absent in pure demo mode. */
   readonly app?: {
     inspectPlugin(folder: string): Promise<InstallPreview>;
-    installPlugin(folder: string): Promise<PluginVersionParams>;
+    /** The files are installed when this resolves; `warning` says the automatic switch to the new version failed. */
+    installPlugin(folder: string): Promise<PluginVersionParams & { warning?: ProtocolError }>;
     removePlugin(plugin: string, version: string): Promise<void>;
   };
 

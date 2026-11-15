@@ -61,8 +61,16 @@ export function InstallDialogs() {
     try {
       const done = await client.app.installPlugin(folder);
       // Choosing "Install" in this box is the user's confirmation of the permissions listed in it.
-      await client.plugin.confirmPermissions(done.plugin, done.version);
-      toast({ tone: "success", title: t("install.done", { name: tx(preview.name), version: done.version }) });
+      // The kernel may switch to the new version as soon as it is confirmed; if that switch fails the
+      // version is still installed and confirmed, so it is reported as a warning, not as a failed install.
+      let warning: unknown = done.warning;
+      try {
+        await client.plugin.confirmPermissions(done.plugin, done.version);
+      } catch (e) {
+        warning = e;
+      }
+      if (warning) toast({ tone: "warning", title: t("install.doneWithWarning", { name: tx(preview.name), version: done.version, reason: error(warning) }) });
+      else toast({ tone: "success", title: t("install.done", { name: tx(preview.name), version: done.version }) });
       close();
     } catch (e) {
       actions.fail(e);

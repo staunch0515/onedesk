@@ -28,3 +28,24 @@
 - 权限确认框列的是 `plugin.get` 的 `permissions`（假定是待确认版本的清单）；如果内核按版本分开给，要改。
 - 对着真内核没有实跑：内核的第四轮还在并行开发，工作进程还没有 `plugin.inspect`/`rescan`，主进程部分只用假工作进程测过；界面只用假客户端测过。
 - 在已打开的“密钥”页里，`secrets.list` 在 `secrets`、`plugins` 事件上刷新——内核实际发的主题名未知，写入后页面也会主动重新读一次。
+
+## 合并后的对齐（对着真内核跑过）
+- 已合并 `claude/week1-slice-3b4ae5`（74d1445）。
+- 类型：`PluginVersion` 直接用生成类型（`resourceCount?`、`confirmed`），`PluginDetail` 用生成类型加 `permissions` 的演示超集；`lastUpgrade` 是 `UpgradeBatchInfo`（`batch/from/to/count/at/undone`），已撤销的不再显示“撤销升级”；`PluginDetail.unconfirmed` 用来标“未确认”；假实现补 `unconfirmed: []`。审计行的 `count` 显示成“×N”。
+- 文字：补齐内核第四轮的全部审计操作名（`plugin.upgrade/undoUpgrade`、`secrets.get`、`storage.*`、`ui.*` 被拒等）、全部错误原因、清单拒绝原因（`badUpgradesFrom` 等）、`unconfirmedVersion`、`restrictedByUpperLayer`；错误文字对清单拒绝原因也能查到（`InstallPreview.problem` 是原样的数据对象，也认了——之前显示成 `[object Object]`）；缺少插件时说明“需要 <id>@<版本>，没有安装”。
+- 读了“我做的决定”：确认的新版本由内核在确认权限时自动切换——这一步失败（`migrateFailed`）不应让“安装”失败，所以主进程在文件装好后 `plugin.rescan` 出错也照样成功返回，并带 `warning`；界面里确认权限的调用出错同样降为警告，提示“已安装，但没有切换过去：原因”。（主进程测试 16 项，含这一条。）切回旧版本时内核的 `upgraded=0, kept=N` 提示改成“新建的内容改用 X，已有的 N 个资源仍用现在的版本”；版本表对真插件去掉“备注”列（内核不给），列宽改小，原来被截断。
+- **钥匙串**：devhost 的工作进程继承环境变量，我在启动 devhost 前设了 `ONEDESK_SECRET_STORE=memory`（内核文档里的内存实现，`secrets.rs` 里写明“不碰钥匙串”），所以没有碰真钥匙串。注意 `e2e/kernel-host.ts` 的 `startHost` 不设这个变量，只是继承调用者的环境——`e2e/round4.spec.ts` 跑的时候如果环境里没有它，调试构建会用真钥匙串（服务名 `onedesk-dev`）。建议测试会话在 `startHost` 里固定设 `ONEDESK_SECRET_STORE=memory`。
+- 对着真内核走的流程（devhost + 临时目录 + 临时 Playwright 脚本，已删除，没有提交）：
+  - 安装 `org.onedesk.sample/0.2.0`：确认框列出“网络访问 · 新增 · example.com”，已装版本“0.1.0”；安装后示例查询被接管，页面显示“Note: migrated from 0.1.0”；版本表两行（0.2.0 活动 / 0.1.0，各自的绑定资源数）；切回 0.1.0（提示 0 个升级、1 个仍用旧版本，版本表活动版本变了）；“撤销升级”后资源退回 0.1.0、按钮消失。
+  - 安装 `broken`：确认框写“插件包被拒绝：清单不符合格式”，“安装”不可点。
+  - 安装 `0.3.0`（`migrate` 抛错）：安装成功但警告切换没有发生；手动“激活”0.3.0 得到错误“新版本没能接管某个资源。没有任何改动。”，活动版本仍是 0.1.0、绑定数不变。
+  - 移除仍有 1 个资源绑定的 0.1.0：确认框写“1 个资源仍在用它…”；确认后资源节点灰显（`missing-plugin`），打开页面显示“需要 org.onedesk.sample@0.1.0，没有安装”；从内置包再装 0.1.0 后资源恢复、“运行”可用。
+  - 密钥页（命令面板“密钥”）：新增 `api-token`，列表只有名字和时间，页面 DOM 里没有值。
+  - HTTP 请求：新建、填本机测试服务器地址、请求头 `X-Plain: yes`、“保存并发送”：状态栏 `#1 · 200 · 7 ms · 22 bytes`，结果区显示正文，服务器收到了请求头；地址不保存就换成另一个主机（`localhost`）：被拒（`denied`），服务器没收到；在工作区配置里设 `network.allow=example.com`：保存过的主机也被拒；环境页 `params.env` 给出 `restricted: "restrictedByUpperLayer"`（环境页的“不生效”徽标在“状态”列，窄窗口下被挤到表格右边需要横向滚动，在 DOM 里有）。
+- **发现的内核/插件问题（没改它们的文件）**：
+  1. 夹具 `e2e/fixtures/plugins/org.onedesk.sample/0.2.0/manifest.json` 的 `upgradesFrom: ">=0.1.0 <0.2.0"`（空格分隔）被内核拒绝（`badUpgradesFrom`，semver 要求逗号：`>=0.1.0, <0.2.0`）。我把它复制到临时目录改成逗号后才装得上。要么夹具改写法，要么内核接受 npm 式的空格范围。
+  2. `{{secret:名字}}` 代入走不通：我建的密钥 `api-token` 在 HTTP 插件里用于请求头时被拒（`network.request` 审计 `denied/secretNotAllowed`）——插件清单没有声明 `requires.secrets.names`，HTTP 请求类型也没有“密钥引用”字段，用户在页面上无法授权某个密钥给这个插件。所以“请求头里写 `{{secret:名字}}` 被代入”没能验证。需要插件会话（声明名字或加字段）或协调会话定方案。
+  3. 运行因宿主调用被拒而失败时，`Run.error` 只有 `{code:"denied", message:""}`，没有原因（`hostNotAllowed`/`blockedByPolicy`/`secretNotAllowed`…），界面只能写“denied — 不允许”，用户不知道为什么。建议内核把 `reason` 放进 `RunError.detail` 或 `hint`（审计里有，页面上没有）。
+  4. 控制台有一条 `Select is changing from uncontrolled to controlled` 警告，出现在打开示例查询页（带环境选择）时；仍没有追查来源，不影响功能。
+  5. 插件页顶部标题写成“Sample 0.2.0”（取自该版本清单里的名字），切回 0.1.0 后写“Sample”——名字随版本变是夹具的写法，没问题，只是看起来像版本号。
+- 检查：`pnpm typecheck`、`pnpm lint`、`pnpm test`（194）、`cargo test -p onedesk-host`（8+16）、clippy 通过；纯假数据 e2e 23 过 1 跳过；截图已还原。
