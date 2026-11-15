@@ -30,6 +30,12 @@ pub struct Manifest {
     pub requires: Requires,
     #[serde(default)]
     pub contributes: Contributes,
+    #[serde(default)]
+    pub author: String,
+    #[serde(default)]
+    pub license: String,
+    #[serde(default)]
+    pub homepage: String,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -54,6 +60,93 @@ pub struct Contributes {
     pub menus: Menus,
     #[serde(default)]
     pub locales: BTreeMap<String, String>,
+    /// D284: things a page or the palette can run.
+    #[serde(default)]
+    pub actions: Vec<ActionDef>,
+    #[serde(default)]
+    pub settings: Vec<SettingDecl>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum OutputType {
+    Table,
+    Text,
+    Link,
+    None,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ActionDef {
+    pub id: String,
+    pub label: String,
+    #[serde(default)]
+    pub icon: Option<String>,
+    /// Kinds (short names) this action applies to; absent = not bound to a resource.
+    #[serde(default)]
+    pub kinds: Option<Vec<String>>,
+    pub output: OutputType,
+    #[serde(default)]
+    pub shortcut: Option<Vec<String>>,
+    #[serde(default)]
+    pub save_first: bool,
+    /// A text key the shell shows before running (D289).
+    #[serde(default)]
+    pub confirm: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum SettingType {
+    Text,
+    Number,
+    Boolean,
+    Enum,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SettingOption {
+    pub value: String,
+    pub label: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SettingDecl {
+    pub name: String,
+    pub label: String,
+    #[serde(rename = "type")]
+    pub ty: SettingType,
+    pub default: String,
+    #[serde(default)]
+    pub options: Option<Vec<SettingOption>>,
+    #[serde(default)]
+    pub hint: Option<String>,
+}
+
+impl SettingDecl {
+    /// Whether `v` is a valid value of this setting (text form).
+    pub fn accepts(&self, v: &str) -> bool {
+        match self.ty {
+            SettingType::Text => true,
+            SettingType::Number => v.trim().parse::<f64>().is_ok_and(f64::is_finite),
+            SettingType::Boolean => v == "true" || v == "false",
+            SettingType::Enum => self.options.as_ref().is_some_and(|o| o.iter().any(|x| x.value == v)),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ResultTabM {
+    pub id: String,
+    #[serde(rename = "type")]
+    pub tab_type: onedesk_protocol::ResultTabType,
+    pub label: String,
+    #[serde(default)]
+    pub icon: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -84,6 +177,13 @@ pub struct PageDecl {
     pub id: String,
     #[serde(default)]
     pub actions: Vec<ActionDeclM>,
+    #[serde(default)]
+    pub result_tabs: Vec<ResultTabM>,
+    /// Re-render with the draft ~300 ms after bound content stops changing (§9.3).
+    #[serde(default)]
+    pub recompute: bool,
+    #[serde(default)]
+    pub uses_env: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -100,6 +200,9 @@ pub struct ActionDeclM {
     pub danger: Option<bool>,
     #[serde(default)]
     pub shortcut: Option<Vec<String>>,
+    /// `run` / `save-run`: the action (short id in `contributes.actions`) this item runs.
+    #[serde(default)]
+    pub action: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -189,6 +292,12 @@ impl Plugin {
     }
     pub fn command(&self, short: &str) -> Option<&CommandDecl> {
         self.manifest.contributes.commands.iter().find(|c| c.id == short)
+    }
+    pub fn action(&self, short: &str) -> Option<&ActionDef> {
+        self.manifest.contributes.actions.iter().find(|a| a.id == short)
+    }
+    pub fn setting(&self, name: &str) -> Option<&SettingDecl> {
+        self.manifest.contributes.settings.iter().find(|x| x.name == name)
     }
 
     /// A tree reference from the manifest: kernel trees by full name, own trees by short name.
@@ -289,6 +398,8 @@ pub fn load_package(dir: &Path) -> Result<Plugin, Rejection> {
         ("page", c.pages.iter().map(|p| p.id.as_str()).collect()),
         ("tree", c.trees.iter().map(|t| t.id.as_str()).collect()),
         ("command", c.commands.iter().map(|x| x.id.as_str()).collect()),
+        ("action", c.actions.iter().map(|x| x.id.as_str()).collect()),
+        ("setting", c.settings.iter().map(|x| x.name.as_str()).collect()),
     ] {
         for id in ids {
             if !valid_short(id) {
@@ -322,6 +433,45 @@ pub fn load_package(dir: &Path) -> Result<Plugin, Rejection> {
             if a != "*" && !a.contains(':') && !c.kinds.iter().any(|y| &y.id == a) {
                 return Err(reject(dir, "unknownKind", format!("kind {} accepts {a}", k.id)));
             }
+        }
+    }
+    let has_kind = |k: &str| c.kinds.iter().any(|y| y.id == k);
+    for a in &c.actions {
+        for k in a.kinds.iter().flatten() {
+            if !has_kind(k) {
+                return Err(reject(dir, "unknownKind", format!("action {} kind {k}", a.id)));
+            }
+        }
+    }
+    for pg in &c.pages {
+        let mut ids = HashSet::new();
+        for item in &pg.actions {
+            if !ids.insert(item.id.as_str()) {
+                return Err(reject(dir, "duplicate", format!("page {} action {}", pg.id, item.id)));
+            }
+            let runs = matches!(item.role, ActionRole::Run | ActionRole::SaveRun);
+            match (&item.action, runs) {
+                (None, true) => return Err(reject(dir, "missingAction", format!("page {} item {}", pg.id, item.id))),
+                (Some(a), _) if !c.actions.iter().any(|x| &x.id == a) => {
+                    return Err(reject(dir, "unknownAction", format!("page {} item {} action {a}", pg.id, item.id)))
+                }
+                _ => {}
+            }
+        }
+        let mut tabs = HashSet::new();
+        for t in &pg.result_tabs {
+            if !valid_short(&t.id) || !tabs.insert(t.id.as_str()) {
+                return Err(reject(dir, "duplicate", format!("page {} tab {}", pg.id, t.id)));
+            }
+        }
+    }
+    for st in &c.settings {
+        let options_ok = match st.ty {
+            SettingType::Enum => st.options.as_ref().is_some_and(|o| !o.is_empty()),
+            _ => st.options.is_none(),
+        };
+        if !options_ok || !st.accepts(&st.default) {
+            return Err(reject(dir, "badSetting", st.name.clone()));
         }
     }
     for t in &c.trees {
@@ -537,6 +687,29 @@ mod tests {
         assert_eq!(reason(with(good(), &["contributes", "locales"], json!({ "zh-CN": "locales/en-US.json" }))), "localeMissing");
         assert_eq!(reason(with(good(), &["contributes", "locales"], json!({ "en-US": "locales/nope.json" }))), "badLocale");
         assert_eq!(reason(with(good(), &["contributes", "pages", "0", "actions", "0", "role"], json!("explode"))), "schema");
+        // Round 3 (D284): actions, page run items, result tabs, settings.
+        let run_item = json!([{ "id": "go", "role": "run", "label": "a" }]);
+        assert_eq!(reason(with(good(), &["contributes", "pages", "0", "actions"], run_item)), "missingAction");
+        let run_item = json!([{ "id": "go", "role": "run", "label": "a", "action": "nope" }]);
+        assert_eq!(reason(with(good(), &["contributes", "pages", "0", "actions"], run_item)), "unknownAction");
+        let act = |o: Value| with(good(), &["contributes", "actions"], json!([o]));
+        assert_eq!(reason(act(json!({ "id": "run", "label": "a", "output": "table", "kinds": ["nope"] }))), "unknownKind");
+        assert_eq!(reason(act(json!({ "id": "run", "label": "a", "output": "chart" }))), "schema");
+        assert_eq!(reason(act(json!({ "id": "run", "label": "a", "output": "table", "extra": 1 }))), "schema");
+        assert_eq!(reason(act(json!({ "id": "run", "label": "a", "output": "table", "kinds": ["item"], "confirm": "k" }))), "ok");
+        let tabs = json!([{ "id": "r", "type": "output", "label": "t" }, { "id": "r", "type": "view", "label": "t" }]);
+        assert_eq!(reason(with(good(), &["contributes", "pages", "0", "resultTabs"], tabs)), "duplicate");
+        assert_eq!(reason(with(good(), &["contributes", "pages", "0", "resultTabs"], json!([{ "id": "r", "type": "chart", "label": "t" }]))), "schema");
+        let set = |o: Value| with(good(), &["contributes", "settings"], json!([o]));
+        assert_eq!(reason(set(json!({ "name": "n", "label": "l", "type": "number", "default": "x" }))), "badSetting");
+        assert_eq!(reason(set(json!({ "name": "n", "label": "l", "type": "boolean", "default": "yes" }))), "badSetting");
+        assert_eq!(reason(set(json!({ "name": "n", "label": "l", "type": "enum", "default": "a" }))), "badSetting");
+        assert_eq!(reason(set(json!({ "name": "n", "label": "l", "type": "enum", "default": "b", "options": [{ "value": "a", "label": "x" }] }))), "badSetting");
+        assert_eq!(reason(set(json!({ "name": "n", "label": "l", "type": "text", "default": "", "options": [] }))), "badSetting");
+        assert_eq!(reason(set(json!({ "name": "n", "label": "l", "type": "color", "default": "" }))), "schema");
+        assert_eq!(reason(with(good(), &["contributes", "settings"], json!([{ "name": "n", "label": "l", "type": "text", "default": "" }, { "name": "n", "label": "l", "type": "text", "default": "" }]))), "duplicate");
+        assert_eq!(reason(with(good(), &["author"], json!(5))), "schema");
+        assert_eq!(reason(with(with(good(), &["author"], json!("me")), &["license"], json!("MIT"))), "ok");
     }
 
     #[test]
