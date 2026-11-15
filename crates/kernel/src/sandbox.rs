@@ -105,6 +105,10 @@ pub type HostFuture = Pin<Box<dyn Future<Output = Result<Value, ProtocolError>> 
 #[derive(Debug, Clone, Default)]
 pub struct CallInfo {
     pub client: Option<String>,
+    /// The tab's environment (for `host.params`).
+    pub env_id: Option<String>,
+    /// Set for action invocations: progress goes to this run.
+    pub run_id: Option<String>,
 }
 
 /// The only capability a plugin has. One instance per plugin version.
@@ -216,11 +220,11 @@ impl Loader for PackageFiles {
 /// Builds the registration-only `host` for `activate`, the per-invocation `ctx.host`, and
 /// `dispatch` (what the kernel calls). Plain script; nothing is left on the global object.
 const BOOTSTRAP: &str = r#"
-(function (hostCall, declaredJson, labelsJson) {
+(function (hostCall, isCancelled, declaredJson, labelsJson) {
   "use strict";
   const declared = JSON.parse(declaredJson);
   const labels = JSON.parse(labelsJson);
-  const reg = { pages: {}, trees: {}, commands: {} };
+  const reg = { pages: {}, trees: {}, commands: {}, actions: {} };
   const reg_host = {};
   for (const kind of Object.keys(reg)) {
     reg_host[kind] = Object.freeze({
@@ -257,6 +261,10 @@ const BOOTSTRAP: &str = r#"
         readText: c("files.readText"), writeText: c("files.writeText"),
       }),
       ui: Object.freeze({ open: c("ui.open"), notify: c("ui.notify"), copy: c("ui.copy") }),
+      params: Object.freeze({ get: c("params.get") }),
+      storage: Object.freeze({ get: c("storage.get"), set: c("storage.set"), remove: c("storage.remove"), keys: c("storage.keys") }),
+      settings: Object.freeze({ get: c("settings.get") }),
+      util: Object.freeze({ sleep: c("util.sleep") }),
     });
   };
   const hostCodes = ["conflict", "denied", "invalid", "notFound", "invalidParams"];
@@ -266,7 +274,15 @@ const BOOTSTRAP: &str = r#"
     const f = fn === "" ? h : h && h[fn];
     if (typeof f !== "function") throw new Error("no handler: " + kind + "/" + name + (fn ? "." + fn : ""));
     const args = JSON.parse(argsJson);
-    const ctx = Object.assign({}, args[0], { host: makeHost(callId), t });
+    const ctx = Object.assign({}, args[0], {
+      host: makeHost(callId),
+      t,
+      // Not host calls: progress after cancellation is dropped silently; cancelled() is synchronous.
+      progress: (fraction, message) => {
+        call(callId, "runs.progress", [fraction === undefined ? null : fraction, message === undefined ? null : String(message)]).catch(() => {});
+      },
+      cancelled: () => isCancelled(callId),
+    });
     try {
       const out = await f.call(h, ctx, ...args.slice(1));
       return JSON.stringify({ ok: out === undefined ? null : out });
@@ -286,6 +302,7 @@ pub struct Declarations {
     pub pages: Vec<String>,
     pub trees: Vec<String>,
     pub commands: Vec<String>,
+    pub actions: Vec<String>,
 }
 
 pub struct Package {
@@ -375,6 +392,7 @@ impl Sandbox {
         let declared = serde_json::to_string(&pkg.declared).expect("json");
         let labels = serde_json::to_string(&pkg.labels).expect("json");
         let hctl = sb.ctl.clone();
+        let cancel_ctl = sb.ctl.clone();
         let fut = sb.ctx.async_with(async move |ctx| -> Result<(), String> {
             let js = |ctx: &Ctx<'_>, e: rquickjs::Error| Err::<(), _>(e).catch(ctx).unwrap_err().to_string();
             let host_call = Function::new(
@@ -392,8 +410,13 @@ impl Sandbox {
                 }),
             )
             .map_err(|e| js(&ctx, e))?;
+            let cctl = cancel_ctl.clone();
+            let is_cancelled = Function::new(ctx.clone(), move |call_id: f64| -> bool {
+                cctl.calls.lock().unwrap().get(&(call_id as u64)).is_none_or(|(t, _)| t.is_cancelled())
+            })
+            .map_err(|e| js(&ctx, e))?;
             let boot: Function = ctx.eval(BOOTSTRAP).map_err(|e| js(&ctx, e))?;
-            let obj: Object = boot.call((host_call, declared, labels)).map_err(|e| js(&ctx, e))?;
+            let obj: Object = boot.call((host_call, is_cancelled, declared, labels)).map_err(|e| js(&ctx, e))?;
             let host_obj: Object = obj.get("host").map_err(|e| js(&ctx, e))?;
             let dispatch: Function = obj.get("dispatch").map_err(|e| js(&ctx, e))?;
             let _ = ctx.store_userdata(Dispatch(dispatch));
@@ -429,6 +452,21 @@ impl Sandbox {
         info: CallInfo,
         cancel: Option<CancelToken>,
     ) -> Result<Value, SandboxError> {
+        self.call_with(kind, name, func, args, info, cancel, self.cfg.call_timeout).await
+    }
+
+    /// `call` with its own time budget (actions get longer than renders, D288).
+    #[allow(clippy::too_many_arguments)]
+    pub async fn call_with(
+        &self,
+        kind: &str,
+        name: &str,
+        func: &str,
+        args: &Value,
+        info: CallInfo,
+        cancel: Option<CancelToken>,
+        timeout: Duration,
+    ) -> Result<Value, SandboxError> {
         let token = cancel.unwrap_or_default();
         let call_id = self.ctl.next_call.fetch_add(1, Ordering::SeqCst);
         self.ctl.calls.lock().unwrap().insert(call_id, (token.clone(), Arc::new(info)));
@@ -445,7 +483,7 @@ impl Sandbox {
         });
         let watchdog = self.ctl.watchdog.notified();
         let res = tokio::select! {
-            r = tokio::time::timeout(self.cfg.call_timeout, watched(fut)) => match r {
+            r = tokio::time::timeout(timeout, watched(fut)) => match r {
                 Err(_) => { token.cancel(); Err(SandboxError::Timeout) }
                 Ok(_) if token.is_cancelled() => Err(SandboxError::Cancelled),
                 Ok(Err(msg)) => Err(classify(&self.ctl, msg)),
