@@ -44,6 +44,10 @@ pub fn install_builtin(src_root: &Path, plugin_root: &Path) -> io::Result<Vec<St
             continue;
         }
         let dest = plugin_root.join(id).join(version);
+        // The user removed this built-in version: do not put it back (a version they installed again is kept up to date).
+        if !dest.exists() && crate::install::was_removed(plugin_root, id, version) {
+            continue;
+        }
         let wanted = tree_of(&dir)?;
         if dest.is_dir() && tree_of(&dest)? == wanted {
             continue;
