@@ -97,10 +97,19 @@ export function Frame({ tab, descriptor, meta, actions, children, panel }: Frame
         />
       }
       notice={
-        descriptor.state !== "ok" && descriptor.stateReason ? (
-          <Banner tone={descriptor.state === "broken" ? "danger" : descriptor.state === "disabled" ? "info" : "warning"} title={stateName[descriptor.state]}>
-            {tx(descriptor.stateReason)}
-          </Banner>
+        envMissing || (descriptor.state !== "ok" && descriptor.stateReason) ? (
+        <>
+          {envMissing && (
+            <Banner tone="warning" title={t("page.envDeletedTitle")}>
+              {t("page.envDeletedBody")}
+            </Banner>
+          )}
+          {descriptor.state !== "ok" && descriptor.stateReason && (
+            <Banner tone={descriptor.state === "broken" ? "danger" : descriptor.state === "disabled" ? "info" : "warning"} title={stateName[descriptor.state]}>
+              {tx(descriptor.stateReason)}
+            </Banner>
+          )}
+        </>
         ) : undefined
       }
       panel={

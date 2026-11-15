@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { KERNEL_ERRORS, KERNEL_LABELS } from "./kernel-texts";
+import { AUDIT_OPERATIONS, KERNEL_ERRORS, KERNEL_LABELS } from "./kernel-texts";
 
 describe("kernel texts", () => {
   it("has a Chinese word for every English one", () => {
@@ -14,5 +14,9 @@ describe("kernel texts", () => {
     const codes = [...body.matchAll(/^\s{4}([A-Z]\w+),/gm)].map((m) => m[1]!.charAt(0).toLowerCase() + m[1]!.slice(1));
     expect(codes.length).toBeGreaterThan(8);
     for (const code of codes) expect(KERNEL_ERRORS["en-US"][code], code).toBeTruthy();
+  });
+
+  it("words audit operations in both languages", () => {
+    expect(Object.keys(AUDIT_OPERATIONS["zh-CN"]).sort()).toEqual(Object.keys(AUDIT_OPERATIONS["en-US"]).sort());
   });
 });

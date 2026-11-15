@@ -11,7 +11,10 @@ function fakeKernel(): KernelClient {
   return {
     hello: { protocol: "1", workspace: { id: "w", name: "W" } },
     transport: { request: async () => null, onEvent: () => () => undefined, close() {} },
-    workspace: { info: async () => ({ id: "w", name: "W" }) },
+    workspace: { info: async () => ({ id: "w", name: "W" }), getConfig: async (n: string) => (n === "ui.language" ? "zh-CN" : null), setConfig: async () => undefined },
+    params: { envOptions: async () => [{ id: "e1", name: "Default", depth: 0 }] } as never,
+    search: { query: async () => [{ target: "resource:k1", title: "kernel hit", icon: "file", subtitle: "", state: "ok" }] },
+    audit: { list: async () => [], facets: async () => ({ actors: [], operations: [] }) },
     tree: {
       list: async () => trees,
       children: async () => ({ nodes: [] }),
@@ -22,7 +25,16 @@ function fakeKernel(): KernelClient {
       },
       rename: async () => undefined,
     },
-    resource: { get: async (id) => (id === "kernel-1" ? ({ id, tree: "resources" } as never) : null), delete: async () => undefined },
+    resource: {
+      get: async (id) => (id === "kernel-1" ? ({ id, tree: "resources" } as never) : null),
+      delete: async () => undefined,
+      history: async () => [{ id: "h", at: 1, actor: "user", op: "update", field: "name", before: "a", after: "b" }],
+      restore: async () => undefined,
+      listDeleted: async () => [],
+      undelete: async () => undefined,
+      purge: async () => undefined,
+      setFavorite: async () => undefined,
+    },
     page: {
       resolve: async (target) => ({ target, title: "from kernel" }) as never,
       save: async (target) => ({ page: { target, title: "saved by kernel" } as never }),
@@ -90,5 +102,29 @@ describe("mixed client", () => {
     await client.tree.list();
     await client.page.save("node:org.onedesk.files%3Afiles/a.txt", { "body.text": "x" }, "7");
     expect(seen).toEqual({ target: "node:org.onedesk.files%3Afiles/a.txt", basis: "7" });
+  });
+
+  it("takes configuration, environments, search and audit from the kernel and drops the demo environment tree", async () => {
+    const client = createMixedClient(fakeKernel(), createMockClient({ fresh: true, quiet: true }));
+    const ids = (await client.tree.list()).map((t) => t.id);
+    expect(ids).not.toContain("environments");
+    expect(await client.workspace.getConfig("ui.language")).toBe("zh-CN");
+    expect((await client.params.envOptions())[0]?.id).toBe("e1");
+    expect((await client.search.query("x"))[0]?.title).toBe("kernel hit");
+  });
+
+  it("asks the kernel for history of kernel resources and the demo for demo ones", async () => {
+    const client = createMixedClient(fakeKernel(), createMockClient({ fresh: true, quiet: true }));
+    await client.tree.list();
+    expect((await client.resource.history("kernel-1"))[0]?.id).toBe("h");
+    const demo = (await client.tree.children("demo:resources", null)).nodes.find((n) => n.target?.startsWith("resource:"));
+    if (demo?.target) expect((await client.resource.history(demo.target.slice(9))).every((h) => h.id !== "h")).toBe(true);
+  });
+
+  it("treats core: pages (audit, deleted) as kernel pages", async () => {
+    const client = createMixedClient(fakeKernel(), createMockClient({ fresh: true, quiet: true }));
+    await client.tree.list();
+    expect((await client.page.resolve("core:audit")).title).toBe("from kernel");
+    expect(client.demo?.target("core:audit")).toBe(false);
   });
 });

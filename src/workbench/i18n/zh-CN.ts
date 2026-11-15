@@ -9,6 +9,8 @@ export const zhCN: Partial<Record<MessageKey, string>> = {
   "common.notifications": "通知（{hotkey}）",
   "common.notInPrototype": "原型里没有这一项",
   "error.title": "操作没有成功",
+  "page.envDeletedTitle": "这个标签页选的环境已被删除",
+  "page.envDeletedBody": "请在上方重新选择一个环境。",
   "folder.granted": "已授权文件夹：{path}",
   "folder.title": "授权文件夹",
   "folder.body": "输入一个已存在文件夹的绝对路径。插件之后可以读写其中的内容。",

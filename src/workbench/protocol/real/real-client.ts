@@ -1,6 +1,6 @@
 import type { ConnectionState, EventMessage, HelloResult, TreePage } from "../generated";
 import type { ProtocolClient } from "../client";
-import type { CommandContext, CommandEffect, NewItem, PageContext, PageDescriptor, PageSaveResult, PluginGrants, Resource, TreeInfo, TreeNode, WorkspaceInfo } from "../types";
+import type { AuditFacets, AuditFilter, AuditRow, EnvOption, EnvView, HistoryEntry, ResolvedParam, SearchHit, CommandContext, CommandEffect, NewItem, PageContext, PageDescriptor, PageSaveResult, PluginGrants, Resource, TreeInfo, TreeNode, WorkspaceInfo } from "../types";
 import { EventBus } from "./event-bus";
 import { KernelError } from "../errors";
 import type { Transport } from "./transport";
@@ -12,9 +12,12 @@ export const PROTOCOL_VERSION = "1";
 export interface KernelClient {
   readonly hello: HelloResult;
   readonly transport: Transport;
-  workspace: Pick<ProtocolClient["workspace"], "info">;
+  workspace: Pick<ProtocolClient["workspace"], "info" | "getConfig" | "setConfig">;
+  params: ProtocolClient["params"];
+  search: ProtocolClient["search"];
+  audit: ProtocolClient["audit"];
   tree: Pick<ProtocolClient["tree"], "list" | "children" | "path" | "move" | "createGroup" | "rename">;
-  resource: Pick<ProtocolClient["resource"], "get" | "delete">;
+  resource: Pick<ProtocolClient["resource"], "get" | "delete" | "history" | "restore" | "listDeleted" | "undelete" | "purge" | "setFavorite">;
   page: Pick<ProtocolClient["page"], "resolve" | "save">;
   command: Pick<ProtocolClient["command"], "newItems" | "execute">;
   plugin: Pick<ProtocolClient["plugin"], "grants" | "grantFolder" | "revokeFolder">;
@@ -55,7 +58,24 @@ export async function createKernelClient(transport: Transport, locale?: () => st
   return {
     hello,
     transport,
-    workspace: { info: () => call<WorkspaceInfo>("workspace.info") },
+    workspace: {
+      info: () => call<WorkspaceInfo>("workspace.info"),
+      getConfig: async (name) => ((await call<string | null>("workspace.getConfig", { name })) ?? null),
+      setConfig: async (name, value) => void (await call("workspace.setConfig", { name, value })),
+    },
+    params: {
+      env: async (envId) => ((await call<EnvView | null>("params.env", { envId })) ?? null),
+      envOptions: () => call<EnvOption[]>("params.envOptions"),
+      resolve: (envId, name) => call<ResolvedParam>("params.resolve", compact({ envId, name })),
+      set: async (node, name, value) => void (await call("params.set", { node, name, value })),
+      unset: async (node, name) => void (await call("params.unset", { node, name })),
+      acknowledge: async (node, name) => void (await call("params.acknowledge", { node, name })),
+    },
+    search: { query: (text, limit) => call<SearchHit[]>("search.query", compact({ text, limit })) },
+    audit: {
+      list: (filter: AuditFilter) => call<AuditRow[]>("audit.list", compact(filter)),
+      facets: () => call<AuditFacets>("audit.facets"),
+    },
     tree: {
       list: () => call<TreeInfo[]>("tree.list"),
       children: (tree, parent, offset) => call<TreePage>("tree.children", compact({ tree, parent, offset })),
@@ -67,6 +87,12 @@ export async function createKernelClient(transport: Transport, locale?: () => st
     resource: {
       get: (id) => call<Resource | null>("resource.get", { id }),
       delete: async (id) => void (await call("resource.delete", { id })),
+      history: (id) => call<HistoryEntry[]>("resource.history", { id }),
+      restore: async (id, entryId) => void (await call("resource.restore", { id, entryId })),
+      listDeleted: () => call<Resource[]>("resource.listDeleted"),
+      undelete: async (id) => void (await call("resource.undelete", { id })),
+      purge: async (id) => void (await call("resource.purge", { id })),
+      setFavorite: async (id, favorite) => void (await call("resource.setFavorite", { id, favorite })),
     },
     page: {
       resolve: (target, context) => call<PageDescriptor>("page.resolve", compact({ target, context: pageContext(context, locale?.()) })),
