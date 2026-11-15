@@ -5,6 +5,7 @@ import type { PluginPermission } from "./PluginPermission";
 import type { PluginProvides } from "./PluginProvides";
 import type { PluginSetting } from "./PluginSetting";
 import type { PluginVersion } from "./PluginVersion";
+import type { UpgradeBatchInfo } from "./UpgradeBatchInfo";
 
 /**
  * The plugin page (§9.1: drawn by the shell, read straight from the protocol).
@@ -17,4 +18,12 @@ resourceCount: number,
 /**
  * Folders granted to its `files` capability (D261).
  */
-folders: Array<string>, };
+folders: Array<string>, 
+/**
+ * The latest takeover batch of this plugin (for “undo upgrade”). Round 4.
+ */
+lastUpgrade?: UpgradeBatchInfo, 
+/**
+ * Installed versions whose permissions are not confirmed yet. Round 4.
+ */
+unconfirmed: Array<string>, };

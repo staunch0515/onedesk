@@ -659,6 +659,8 @@ impl Inner {
                 load: PluginLoad { state: PluginLoadState::Error, message: Some(rej.reason.clone()), at: None, ms: None },
                 resource_count: 0,
                 folders: vec![],
+                last_upgrade: None,
+                unconfirmed: vec![],
             }));
         };
         let m = &p.manifest;
@@ -682,11 +684,8 @@ impl Inner {
             })
             .collect();
         let folders = self.folder_grants(id)?;
-        let permissions = if m.requires.files {
-            vec![PluginPermission { id: "files".into(), detail: String::new(), granted: !folders.is_empty(), required: true }]
-        } else {
-            vec![]
-        };
+        let confirmed = self.version_confirmed(p);
+        let permissions = p.permission_list(|pid| if pid == "files" { !folders.is_empty() } else { confirmed });
         let kinds: Vec<String> = m.contributes.kinds.iter().map(|k| p.full(&k.id)).collect();
         let resource_count: u64 = self.read(|c| {
             kinds.iter().try_fold(0u64, |n, k| {
@@ -704,7 +703,7 @@ impl Inner {
             homepage: m.homepage.clone(),
             enabled,
             builtin: false,
-            versions: vec![PluginVersion { version: p.version.clone(), installed_at: 0, active: true, pinned: false, notes: String::new() }],
+            versions: self.version_rows(id)?,
             settings,
             permissions,
             provides: PluginProvides {
@@ -722,6 +721,8 @@ impl Inner {
             },
             resource_count,
             folders,
+            last_upgrade: self.last_upgrade(id)?,
+            unconfirmed: self.registry.versions(id).into_iter().filter(|v| !self.version_confirmed(v)).map(|v| v.version.clone()).collect(),
         }))
     }
 

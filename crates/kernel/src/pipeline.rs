@@ -256,7 +256,12 @@ impl Outcome {
     }
 }
 
-type Job = (Actor, Command, oneshot::Sender<KResult<Outcome>>);
+enum Reply {
+    Async(oneshot::Sender<KResult<Outcome>>),
+    Blocking(mpsc::Sender<KResult<Outcome>>),
+}
+
+type Job = (Actor, Command, Reply);
 
 pub struct Pipeline {
     tx: std::sync::Mutex<Option<mpsc::Sender<Job>>>,
@@ -277,7 +282,15 @@ impl Pipeline {
                 }
                 let _ = ready_tx.send(());
                 while let Ok((actor, cmd, reply)) = rx.recv() {
-                    let _ = reply.send(w.run(&actor, cmd));
+                    let out = w.run(&actor, cmd);
+                    match reply {
+                        Reply::Async(r) => {
+                            let _ = r.send(out);
+                        }
+                        Reply::Blocking(r) => {
+                            let _ = r.send(out);
+                        }
+                    }
                 }
             })
             .expect("spawn writer thread");
@@ -289,8 +302,16 @@ impl Pipeline {
     pub async fn execute(&self, actor: Actor, cmd: Command) -> KResult<Outcome> {
         let (reply, rx) = oneshot::channel();
         let tx = self.tx.lock().unwrap().clone().ok_or_else(|| internal("pipeline stopped"))?;
-        tx.send((actor, cmd, reply)).map_err(|_| internal("writer thread gone"))?;
+        tx.send((actor, cmd, Reply::Async(reply))).map_err(|_| internal("writer thread gone"))?;
         rx.await.map_err(|_| internal("writer thread gone"))?
+    }
+
+    /// The same, waiting on the calling thread (start-up code that is not async).
+    pub fn execute_blocking(&self, actor: Actor, cmd: Command) -> KResult<Outcome> {
+        let (reply, rx) = mpsc::channel();
+        let tx = self.tx.lock().unwrap().clone().ok_or_else(|| internal("pipeline stopped"))?;
+        tx.send((actor, cmd, Reply::Blocking(reply))).map_err(|_| internal("writer thread gone"))?;
+        rx.recv().map_err(|_| internal("writer thread gone"))?
     }
 
     /// Finishes the queued commands and stops the writer thread.

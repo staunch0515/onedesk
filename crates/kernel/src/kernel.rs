@@ -125,6 +125,20 @@ impl Kernel {
             secret_cache: Default::default(),
             rules,
         });
+        // D299 first sight, then each plugin's active version.
+        inner.first_sight_blocking();
+        inner.refresh_active();
+        // A newer confirmed version that arrived while the worker was off takes over now (D303).
+        if let Ok(rt) = tokio::runtime::Handle::try_current() {
+            let me = inner.clone();
+            rt.spawn(async move {
+                for id in me.registry.ids() {
+                    if let Err(e) = me.auto_switch(&id).await {
+                        eprintln!("onedesk: automatic switch of {id} failed: {e:?}");
+                    }
+                }
+            });
+        }
         Ok(Kernel { inner })
     }
 
@@ -289,6 +303,9 @@ impl Inner {
                 Ok(Value::Null)
             }
             _ => {
+                if crate::versions::METHODS.contains(&m) {
+                    return self.handle4(m, params).await.unwrap_or_else(|| Err(err_p(ErrorCode::UnknownMethod, &[("method", m)])));
+                }
                 if crate::runs::METHODS.contains(&m) {
                     return self.handle3(client, m, params).await.unwrap_or_else(|| Err(err_p(ErrorCode::UnknownMethod, &[("method", m)])));
                 }

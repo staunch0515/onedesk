@@ -537,7 +537,17 @@ impl Inner {
         rows.into_iter()
             .map(|(seq, at, actor, op, object, summary, result)| {
                 let target = self.read(|c| store::get_any(c, &object))?.map(|r| r.name).unwrap_or(object);
+                // D309: repeated calls merged into this row.
+                let merged: Option<(i64, i64)> = self
+                    .read(|c| {
+                        c.query_row("SELECT count, last_at FROM audit_counts WHERE audit_seq = ?1", [seq], |r| Ok((r.get(0)?, r.get(1)?)))
+                            .map(Some)
+                            .or_else(|e| if e == rusqlite::Error::QueryReturnedNoRows { Ok(None) } else { Err(e) })
+                    })?
+                    .filter(|(n, _)| *n > 1);
                 Ok(AuditRow {
+                    count: merged.map(|(n, _)| n as u64),
+                    last_at: merged.map(|(_, t)| t),
                     id: seq.to_string(),
                     at,
                     source: actor.split(':').next().unwrap_or_default().to_string(),

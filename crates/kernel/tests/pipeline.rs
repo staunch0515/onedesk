@@ -205,11 +205,16 @@ async fn grants_are_written_through_the_pipeline_and_validated() {
     assert_eq!(c.ok("plugin.grants", json!({ "plugin": "test.alpha" })).await["folders"].as_array().unwrap().len(), 1);
     let conn = db(&env);
     let n: i64 = conn
-        .query_row("SELECT count(*) FROM revisions r JOIN resources x ON x.id = r.resource_id WHERE x.kind = 'core:plugin-state'", [], |r| r.get(0))
+        .query_row(
+            "SELECT count(*) FROM revisions r JOIN resources x ON x.id = r.resource_id
+             WHERE x.kind = 'core:plugin-state' AND x.name = 'test.alpha' AND r.fields LIKE '%files.folders%'",
+            [],
+            |r| r.get(0),
+        )
         .unwrap();
-    assert_eq!(n, 1);
+    assert_eq!(n, 1, "one grant, one revision (the state node itself exists since start-up)");
     // The hidden plugin-state tree is not reachable through the generic methods.
-    let id: String = conn.query_row("SELECT id FROM resources WHERE kind = 'core:plugin-state'", [], |r| r.get(0)).unwrap();
+    let id: String = conn.query_row("SELECT id FROM resources WHERE kind = 'core:plugin-state' AND name = 'test.alpha'", [], |r| r.get(0)).unwrap();
     assert_eq!(c.ok("resource.get", json!({ "id": id })).await, Value::Null);
     assert_eq!(c.call("resource.delete", json!({ "id": id })).await.unwrap_err().code, ErrorCode::NotFound);
     assert_eq!(c.call("tree.children", json!({ "tree": "core:plugin-state" })).await.unwrap_err().code, ErrorCode::NotFound);
@@ -238,7 +243,7 @@ async fn concurrent_grants_lose_nothing_and_make_one_state_node() {
     let g = c.ok("plugin.grants", json!({ "plugin": "test.alpha" })).await;
     assert_eq!(g["folders"].as_array().unwrap().len(), 8);
     let conn = db(&env);
-    let n: i64 = conn.query_row("SELECT count(*) FROM resources WHERE kind = 'core:plugin-state'", [], |r| r.get(0)).unwrap();
+    let n: i64 = conn.query_row("SELECT count(*) FROM resources WHERE kind = 'core:plugin-state' AND name = 'test.alpha'", [], |r| r.get(0)).unwrap();
     assert_eq!(n, 1);
 }
 

@@ -523,6 +523,11 @@ fn inside(dir: &Path, rel: &str) -> Option<PathBuf> {
 
 /// Loads and validates the package in `dir` (= `<plugins>/<id>/<version>`).
 pub fn load_package(dir: &Path) -> Result<Plugin, Rejection> {
+    load_package_opts(dir, true)
+}
+
+/// `check_folder = false` for a package the user picked to install (any folder name).
+pub fn load_package_opts(dir: &Path, check_folder: bool) -> Result<Plugin, Rejection> {
     let folder_version = dir.file_name().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
     let folder_id = dir.parent().and_then(|p| p.file_name()).map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
     let mpath = dir.join("manifest.json");
@@ -537,13 +542,13 @@ pub fn load_package(dir: &Path) -> Result<Plugin, Rejection> {
     if !valid_id(&m.id) {
         return Err(reject(dir, "badId", m.id.clone()));
     }
-    if m.id != folder_id {
+    if check_folder && m.id != folder_id {
         return Err(reject(dir, "idMismatch", format!("{} in folder {folder_id}", m.id)));
     }
     if semver::Version::parse(&m.version).is_err() {
         return Err(reject(dir, "badVersion", m.version.clone()));
     }
-    if m.version != folder_version {
+    if check_folder && m.version != folder_version {
         return Err(reject(dir, "versionMismatch", format!("{} in folder {folder_version}", m.version)));
     }
     if inside(dir, &m.main).is_none() || !m.main.ends_with(".js") {
