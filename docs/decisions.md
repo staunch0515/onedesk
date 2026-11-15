@@ -453,3 +453,4 @@
 - **D307** 网络白名单两种来源（清单写死的主机；本插件资源里声明为授权地址的字段），再与 `network.allow` 逐层取交集；空名单 = 该层禁止一切网络。
 - **D308** 拒绝解析到回环、链路本地地址的主机，除非白名单里明确写出；重定向最多 5 次且逐跳复查。
 - **D309** 审计的合并计数用一张单独的计数表实现，不改只追加的 `audit` 表。新依赖 `reqwest`（native-tls）、`keyring`：许可证由内核会话核对后补记。
+- **D310** 第四轮新依赖（规则 9）：`reqwest` 0.12（MIT/Apache-2.0，只开 `native-tls`，TLS 走系统，不带 `rustls`/`ring`；替代方案 `ureq` 同样要自带 TLS）；`keyring` 3（MIT/Apache-2.0，`apple-native`；替代方案是直接调 Security.framework）。连带的 `hyper-tls`、`native-tls`、`tokio-native-tls`、`security-framework` 等均为 MIT 或 MIT/Apache-2.0，明细见 `docs/handoff/round4-kernel-done.md`。
