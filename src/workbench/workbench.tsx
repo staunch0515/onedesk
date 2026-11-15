@@ -14,12 +14,15 @@ import { useQuery, useUi, useWorkbench } from "./state/context";
 
 export interface WorkbenchProps {
   settings: Settings;
-  onSetting: (name: "ui.language" | "ui.theme" | "ui.density", value: string) => void;
+  /** Rejects when the workspace refused to store the setting. */
+  onSetting: (name: "ui.language" | "ui.theme" | "ui.density", value: string) => Promise<void>;
 }
 
 /** The whole window: top bar, activity bar, side panel, tabs + page, status bar (I.8). */
-export function Workbench({ settings, onSetting }: WorkbenchProps) {
+export function Workbench({ settings, onSetting: storeSetting }: WorkbenchProps) {
   const { client, store, actions } = useWorkbench();
+  // A refused write shows as a toast; the shell has already read the stored value back.
+  const onSetting = useMemo(() => (name: "ui.language" | "ui.theme" | "ui.density", value: string) => void storeSetting(name, value).catch(actions.fail), [storeSetting, actions]);
   const { t, tx } = useI18n();
   const { resolvedTheme } = useTheme();
   const trees = useQuery((c) => c.tree.list(), []);

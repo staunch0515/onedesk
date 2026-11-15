@@ -22,3 +22,12 @@
 - **没有用真内核（本轮内核另一会话在写）实跑**：环境页、配置页、已删除页、审计页、历史与恢复、搜索、语言/主题/密度落内核，都只按生成类型和文档写，用假内核客户端测。
 - 配置节点的页面（`stack` 表单、`autosave`）沿用现有 `ViewPage`，没有为它改任何东西；`params.<名字>` 绑定路径经 `page.save` 发出，是否正好对得上内核，要合并后看。
 - 内核的 `config` 事件之外，主题/语言切换仍有“先立即应用再等事件确认”的行为（沿用）。
+
+## 审查后的修改
+- 已合并 `claude/week1-slice-3b4ae5`（84b66f5）。
+- #6 归属：`ownerOf` 只缓存某一边明确给出的肯定答案。内核出错就把错误抛出去（写操作不会发给假实现）；内核说没有再问假实现，假实现有才缓存为“演示”；两边都没有就交给内核（它会答 notFound），不缓存否定结果。测试：`mixed-client.test.ts` 的“内核出错/说没有时不把写操作发给假实现”。
+- #3 并发：`params.set/unset/acknowledge` 带可选 `basis`（`String(EnvView.rev)`）；环境页用它，失败（含 `conflict`）时提示并重新读取环境。测试：`real-client.test.ts`（有 basis 时发送、没有时不发送）。环境页对 conflict 的刷新没有单独的界面测试。
+- #8 `setConfig`：失败不再被吞——`onSetting` 返回 Promise，失败时把存着的设置读回来恢复界面，并弹出错误提示。没有专门测试。
+- #12 默认名：`env.newChild`、`config.newChild`、`node.newGroup` 在 `args.name` 里带当前语言的默认名（`default.newEnv/newConfig/newGroup`，英中）；调用方给了名字就不覆盖。演示实现忽略 `args`，纯演示外观不变。
+- 文字：审计操作名 `params.set/unset/acknowledge` 早已有；新增错误原因 `invalid.secretUnsupported`（英中）。
+- 检查：`pnpm typecheck`、`pnpm lint`、`pnpm test`（99）通过；纯演示 e2e 22 过 1 失败 1 跳过，失败项仍是上一节说的、干净提交上也会失败的“tree: drag onto a group”。截图已还原。

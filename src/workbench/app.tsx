@@ -61,7 +61,11 @@ function Shell({ store, initial, startupError }: { store: Store; initial: Settin
     (name: "ui.language" | "ui.theme" | "ui.density", value: string) => {
       // Apply at once; the config event confirms it.
       setSettings((s) => ({ ...s, ...(name === "ui.language" ? { locale: value as Locale } : name === "ui.theme" ? { theme: value as ThemePreference } : { density: value as Density }) }));
-      void client.workspace.setConfig(name, value);
+      // A refused write must not look like success: read the stored settings again and tell the caller.
+      return client.workspace.setConfig(name, value).catch(async (error) => {
+        await readSettings(client).then(setSettings, () => undefined);
+        throw error;
+      });
     },
     [client],
   );

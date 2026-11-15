@@ -49,13 +49,26 @@ export function createMixedClient(kernel: KernelClient, mock: ProtocolClient): P
     return [...real, ...demo];
   };
 
-  /** Which side owns `resource:<id>`; asks the kernel first and remembers the answer. */
+  /**
+   * Which side owns `resource:<id>`. Only what a side positively answered is remembered. A kernel
+   * error is not an answer: it is thrown, so a write is never sent to the demo by mistake. When the
+   * kernel says "none" the demo is asked; if it has none either, the kernel gets the call (and
+   * answers notFound). A negative answer is never cached.
+   */
   const ownerOf = async (id: string): Promise<"kernel" | "demo"> => {
     if (kernelIds.has(id)) return "kernel";
     if (demoIds.has(id)) return "demo";
-    const res = await kernel.resource.get(id).catch(() => null);
-    (res ? kernelIds : demoIds).add(id);
-    return res ? "kernel" : "demo";
+    const res = await kernel.resource.get(id);
+    if (res) {
+      kernelIds.add(id);
+      return "kernel";
+    }
+    const demo = await mock.resource.get(id).catch(() => null);
+    if (demo) {
+      demoIds.add(id);
+      return "demo";
+    }
+    return "kernel";
   };
   const targetOwner = async (target: string): Promise<"kernel" | "demo"> => {
     if (target.startsWith("resource:")) return ownerOf(target.slice(9));

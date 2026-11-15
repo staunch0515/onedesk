@@ -85,4 +85,17 @@ describe("kernel client", () => {
     await client.command.execute("a:b", { tree: "t", nodeKey: null });
     expect(calls[1]).toEqual({ method: "command.execute", params: { id: "a:b", context: { locale: "zh-CN", tree: "t" } } });
   });
+
+  it("sends the environment revision as basis with parameter changes, and nothing when there is none", async () => {
+    const { transport, calls } = fakeTransport({ hello, "params.set": () => null, "params.unset": () => null, "params.acknowledge": () => null });
+    const client = await createKernelClient(transport);
+    await client.params.set("e1", "host", "db", "7");
+    await client.params.unset("e1", "host", "7");
+    await client.params.acknowledge("e1", "host");
+    expect(calls.slice(1).map((c) => c.params)).toEqual([
+      { node: "e1", name: "host", value: "db", basis: "7" },
+      { node: "e1", name: "host", basis: "7" },
+      { node: "e1", name: "host" },
+    ]);
+  });
 });
