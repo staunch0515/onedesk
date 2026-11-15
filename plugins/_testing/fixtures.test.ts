@@ -15,7 +15,7 @@ const t = (v: string) => (key: string) => ({ "en-US": locale(v, "en-US")[key], "
 describe("fixture: sample 0.2.0", () => {
   const m = json("org.onedesk.sample/0.2.0/manifest.json");
   it("is version 0.2.0, upgrades 0.1.x and asks for one more permission (network, one fixed host)", () => {
-    expect(m).toMatchObject({ id: "org.onedesk.sample", version: "0.2.0", upgradesFrom: ">=0.1.0 <0.2.0" });
+    expect(m).toMatchObject({ id: "org.onedesk.sample", version: "0.2.0", upgradesFrom: ">=0.1.0, <0.2.0" });
     expect(m.requires.network).toEqual({ hosts: ["example.com"] });
   });
   it("migrate adds a note naming the old version and keeps the rest of the body", () => {

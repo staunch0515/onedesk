@@ -23,3 +23,7 @@
 ## 没验证
 - 没有在真沙箱里跑：`host.network.request` 的返回形状 `{status, headers, body, truncated}`、`host.kinds.handle`、`migrate` 的签名都按计划文字假设。
 - `e2e/round4.spec.ts` 第二阶段再写（本机 HTTP 测试服务器）。
+
+## 第二阶段进度（协调会话 2026-11-16 记）
+
+旧测试会话没有提交就停在运行中；协调会话把它工作树里未提交的修改原样带进了协调分支（提交“tests: 带入旧测试会话未提交的第二阶段进度”）：HTTP 插件清单的 `secrets: true`（D318）与相应的 `main.js`/语言文件/vitest 修改、`0.2.0` 夹具的 `upgradesFrom` 改成带逗号的写法（内核用 Rust `semver` 的范围语法，`">=0.1.0, <0.2.0"`；不带逗号被拒 `badUpgradesFrom`）、`e2e/kernel-host.ts`、`e2e/round3.spec.ts`、`e2e/round4.spec.ts`（约 2.3 万字节，**没跑过，状态不明**）。带入后 `pnpm exec vitest run plugins` 73 个通过。新测试会话从这里接着做：先跑一遍 `round4.spec.ts` 看哪些过、哪些没写。

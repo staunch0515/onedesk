@@ -22,5 +22,7 @@
   "error.noUrl": "地址是空的。",
   "error.network": "请求失败",
   "summary.sent": "{status} · {ms} 毫秒 · {bytes} 字节",
-  "summary.truncated": " · 已截断"
+  "summary.truncated": " · 已截断",
+  "field.token": "令牌（密钥）",
+  "field.token.hint": "写入钥匙串；在请求头里用 {{token}}。"
 }

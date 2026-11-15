@@ -258,7 +258,8 @@ test("plugin page lists the granted folders and removes one", async ({ page }) =
   await openPlugin(page, "Files");
   await expect(page.getByText(dir)).toBeVisible();
   await shot(page, "plugin-folders");
-  await page.getByRole("button", { name: "Remove" }).click();
+  // (the versions table has Remove buttons too: take the one in the same row as the folder path)
+  await page.getByText(dir).locator("xpath=ancestor::*[.//button[normalize-space()='Remove']][1]").getByRole("button", { name: "Remove" }).click();
   await expect(page.getByText("No folder granted yet.")).toBeVisible();
   expect((await call<{ folders: string[] }>(page, "plugin.grants", { plugin: "org.onedesk.files" })).folders).toEqual([]);
 });
