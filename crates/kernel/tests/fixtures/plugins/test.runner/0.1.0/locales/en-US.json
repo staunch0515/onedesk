@@ -1,0 +1,6 @@
+{ "plugin.name": "Runner", "plugin.description": "Test plugin for runs", "kind.job": "Job", "kind.job.new": "New job",
+  "action.run": "Run", "action.say": "Say", "action.say.confirm": "Really say it?", "action.save": "Save",
+  "action.saveRun": "Save and run", "action.tidy": "Tidy", "tab.result": "Result", "tab.final": "Final",
+  "tab.history": "History", "command.probe": "Probe", "setting.rowLimit": "Row limit", "setting.rowLimit.hint": "At most",
+  "setting.style": "Style", "setting.style.upper": "Upper", "setting.style.lower": "Lower", "setting.verbose": "Verbose",
+  "msg.tidied": "Tidied" }

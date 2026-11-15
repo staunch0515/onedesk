@@ -206,7 +206,7 @@ impl Inner {
         Ok(out)
     }
 
-    fn resolve_param(&self, p: ParamsResolveParams) -> KResult<ResolvedParam> {
+    pub(crate) fn resolve_param(&self, p: ParamsResolveParams) -> KResult<ResolvedParam> {
         let missing = ResolvedParam { name: p.name.clone(), found: false, value: String::new(), display: String::new(), source_name: String::new() };
         let Some(env) = p.env_id else { return Ok(missing) };
         let Some(row) = self.read(|c| store::get(c, &env))?.filter(|r| r.kind == KIND_ENV) else { return Ok(missing) };

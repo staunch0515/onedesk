@@ -517,6 +517,10 @@ pub struct ActionDecl {
     pub shortcut: Option<Vec<String>>,
     pub role: ActionRole,
     pub disabled: Option<bool>,
+    /// `run` / `save-run`: the full action id `<pluginId>:<name>` this item runs (D284).
+    pub action: Option<String>,
+    /// Ask before running (D289): the shell confirms, the kernel only executes.
+    pub confirm: Option<Label>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -690,7 +694,12 @@ pub enum ToastTone {
 #[serde(tag = "type", rename_all = "kebab-case", rename_all_fields = "camelCase")]
 #[ts(export, optional_fields)]
 pub enum CommandEffect {
-    Open { target: String },
+    Open {
+        target: String,
+        /// Initial page state for the opened tab (§9.1, D292), e.g. a run's parameters.
+        params: Option<BTreeMap<String, String>>,
+        env_id: Option<String>,
+    },
     Toast { message: Label, tone: Option<ToastTone> },
     /// Start inline rename of this node.
     Rename { tree: String, key: String },

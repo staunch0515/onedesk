@@ -25,9 +25,17 @@ pub const DEFAULT_CLIENT: &str = "default";
 pub const DEFAULT_GROUP_NAME: &str = "New group";
 pub use crate::pipeline::GRANTS_KEY;
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct KernelConfig {
     pub sandbox: SandboxConfig,
+    /// Total time of one action invocation (D288: 60 s).
+    pub action_timeout: std::time::Duration,
+}
+
+impl Default for KernelConfig {
+    fn default() -> Self {
+        KernelConfig { sandbox: SandboxConfig::default(), action_timeout: std::time::Duration::from_secs(60) }
+    }
 }
 
 pub struct Kernel {
@@ -46,6 +54,7 @@ pub(crate) struct Inner {
     slots: Mutex<HashMap<String, Slot>>,
     pub activations: AtomicU64,
     pub me: Weak<Inner>,
+    pub runs_active: crate::runs::ActiveRuns,
 }
 
 pub(crate) fn parse<T: DeserializeOwned>(v: Value) -> KResult<T> {
@@ -103,6 +112,7 @@ impl Kernel {
             slots: Mutex::new(HashMap::new()),
             activations: AtomicU64::new(0),
             me: me.clone(),
+            runs_active: Default::default(),
         });
         Ok(Kernel { inner })
     }
@@ -263,10 +273,15 @@ impl Inner {
                 self.pipeline.execute(Actor::User, Command::UiSet { client: c, key: p.key, value: p.value }).await?;
                 Ok(Value::Null)
             }
-            _ => match self.handle2(client, m, params).await {
-                Some(r) => r,
-                None => Err(err_p(ErrorCode::UnknownMethod, &[("method", m)])),
-            },
+            _ => {
+                if crate::runs::METHODS.contains(&m) {
+                    return self.handle3(client, m, params).await.unwrap_or_else(|| Err(err_p(ErrorCode::UnknownMethod, &[("method", m)])));
+                }
+                match self.handle2(client, m, params).await {
+                    Some(r) => r,
+                    None => Err(err_p(ErrorCode::UnknownMethod, &[("method", m)])),
+                }
+            }
         }
     }
 
@@ -307,7 +322,8 @@ impl Inner {
                 draggable: k.draggable,
                 accepts: k.accepts.iter().map(|a| p.kind_ref(a)).collect(),
                 commands: k.menu.iter().map(|c| self.plugin_menu_cmd(p, c)).collect(),
-                state: NodeState::Ok,
+                // D290: a disabled plugin's resources stay, greyed out.
+                state: if self.plugin_enabled(&p.id) { NodeState::Ok } else { NodeState::Disabled },
             },
             None => KindMeta {
                 label: Label::Text(kind.into()),
@@ -444,6 +460,8 @@ impl Inner {
             },
             list_tree(store::TREE_FAVORITES, "star", vec![]),
             list_tree(store::TREE_DELETED, "trash-2", vec![kernel_cmd("open.deleted", "external-link")]),
+            list_tree(store::TREE_PLUGINS, "puzzle", vec![]),
+            list_tree(store::TREE_RUNS, "history", vec![]),
         ];
         let mut out = vec![TreeInfo {
             id: TREE_RESOURCES.into(),
@@ -455,7 +473,12 @@ impl Inner {
             menu: new_menu(TREE_RESOURCES),
         }];
         for p in &self.registry.plugins {
+            let enabled = self.plugin_enabled(&p.id);
             for t in &p.manifest.contributes.trees {
+                // D290: a disabled plugin's provided trees are not shown.
+                if !enabled && t.source == TreeSource::Provided {
+                    continue;
+                }
                 let full = p.full(&t.id);
                 let declared: Vec<MenuCommand> = t.toolbar.iter().map(|c| self.plugin_menu_cmd(p, c)).collect();
                 let (toolbar, menu) = if t.source == TreeSource::Stored {
@@ -532,6 +555,21 @@ impl Inner {
         if p.tree == store::TREE_FAVORITES || p.tree == store::TREE_DELETED {
             return self.list_tree_page(&p.tree, p.parent.as_deref(), offset);
         }
+        if p.tree == store::TREE_PLUGINS || p.tree == store::TREE_RUNS {
+            if p.parent.is_some() {
+                return Ok(TreePage { nodes: vec![], next: None });
+            }
+            let all = if p.tree == store::TREE_PLUGINS { self.plugins_tree()? } else { self.runs_tree()? };
+            let total = all.len();
+            let nodes: Vec<TreeNode> = all.into_iter().skip(offset as usize).take(BATCH as usize).collect();
+            let next = offset + BATCH;
+            return Ok(TreePage { nodes, next: ((next as usize) < total).then_some(next) });
+        }
+        if let Some((pl, _)) = self.registry.tree(&p.tree) {
+            if !self.plugin_enabled(&pl.id) {
+                return Err(not_found("tree"));
+            }
+        }
         if self.stored_tree(&p.tree).is_ok() {
             let rows = self.read(|c| store::children(c, &p.tree, p.parent.as_deref(), offset, BATCH + 1))?;
             let more = rows.len() > BATCH as usize;
@@ -605,7 +643,7 @@ impl Inner {
     }
 
     async fn tree_path(&self, p: TreeNodeParams, client: Option<String>) -> KResult<Vec<String>> {
-        if p.tree == store::TREE_FAVORITES || p.tree == store::TREE_DELETED {
+        if [store::TREE_FAVORITES, store::TREE_DELETED, store::TREE_PLUGINS, store::TREE_RUNS].contains(&p.tree.as_str()) {
             return Ok(vec![p.key]);
         }
         if self.stored_tree(&p.tree).is_ok() {
@@ -724,7 +762,7 @@ impl Inner {
             disabled: None,
         }];
         let mut first = true;
-        for p in &self.registry.plugins {
+        for p in self.registry.plugins.iter().filter(|p| self.plugin_enabled(&p.id)) {
             for k in &p.manifest.contributes.menus.new {
                 let Some(decl) = p.kind(k) else { continue };
                 let kt = decl.tree.as_deref().map(|t| p.tree_ref(t));
@@ -764,6 +802,7 @@ impl Inner {
                 pages: plugin.manifest.contributes.pages.iter().map(|p| p.id.clone()).collect(),
                 trees: plugin.manifest.contributes.trees.iter().map(|t| t.id.clone()).collect(),
                 commands: plugin.manifest.contributes.commands.iter().map(|c| c.id.clone()).collect(),
+                actions: plugin.manifest.contributes.actions.iter().map(|a| a.id.clone()).collect(),
             },
             labels: plugin.all_labels(),
         };
@@ -784,28 +823,63 @@ impl Inner {
         args: Value,
         client: Option<String>,
     ) -> KResult<Value> {
-        let p = self.registry.plugin(plugin).ok_or_else(|| err_p(ErrorCode::PluginError, &[("reason", "notLoaded")]))?;
-        let sb = self.sandbox(p).await?;
+        let info = CallInfo { client, ..Default::default() };
+        self.call_plugin_with(plugin, kind, name, func, args, info, None, None).await.map_err(|e| e.to_protocol())
+    }
+
+    /// The general form: the call's context, cancel token and time budget (actions get longer).
+    #[allow(clippy::too_many_arguments)]
+    pub async fn call_plugin_with(
+        &self,
+        plugin: &str,
+        kind: &str,
+        name: &str,
+        func: &str,
+        args: Value,
+        info: CallInfo,
+        cancel: Option<crate::sandbox::CancelToken>,
+        timeout: Option<std::time::Duration>,
+    ) -> Result<Value, SandboxError> {
+        let host = |e: ProtocolError| SandboxError::Host(e);
+        let p = self.registry.plugin(plugin).ok_or_else(|| host(err_p(ErrorCode::PluginError, &[("reason", "notLoaded")])))?;
+        if !self.plugin_enabled(plugin) {
+            return Err(host(err_p(ErrorCode::PluginError, &[("reason", "pluginDisabled")])));
+        }
+        let sb = self.sandbox(p).await.map_err(host)?;
+        let timeout = timeout.unwrap_or(self.cfg.sandbox.call_timeout);
         // Plugin code is polled on the runtime's worker threads, never on the connection reader.
         let call = {
             let sb = sb.clone();
             let (kind, name, func) = (kind.to_string(), name.to_string(), func.to_string());
-            tokio::spawn(async move { sb.call(&kind, &name, &func, &args, CallInfo { client }, None).await })
+            tokio::spawn(async move { sb.call_with(&kind, &name, &func, &args, info, cancel, timeout).await })
         };
         let res = call.await.unwrap_or_else(|e| Err(SandboxError::Engine(e.to_string())));
-        match res {
-            Ok(v) => Ok(v),
-            Err(e) => {
-                if e.poisons() {
-                    let slot = self.slot(plugin);
-                    let mut g = slot.lock().await;
-                    if g.as_ref().is_some_and(|cur| Arc::ptr_eq(cur, &sb)) {
-                        *g = None;
-                    }
+        if let Err(e) = &res {
+            if e.poisons() {
+                let slot = self.slot(plugin);
+                let mut g = slot.lock().await;
+                if g.as_ref().is_some_and(|cur| Arc::ptr_eq(cur, &sb)) {
+                    *g = None;
                 }
-                Err(e.to_protocol())
             }
         }
+        res
+    }
+
+    /// Drops a plugin's runtime (disabled, reloaded); the next use activates it again.
+    pub async fn drop_runtime(&self, plugin: &str) {
+        let slot = self.slot(plugin);
+        *slot.lock().await = None;
+    }
+
+    /// D290: a plugin is enabled unless its state node says `enabled = false`.
+    pub fn plugin_enabled(&self, plugin: &str) -> bool {
+        self.plugin_param(plugin, "enabled").is_none_or(|v| v != "false")
+    }
+
+    /// A parameter of the plugin's state node (`enabled`, `settings.<name>`).
+    pub fn plugin_param(&self, plugin: &str, name: &str) -> Option<String> {
+        self.read(|c| store::plugin_state(c, plugin)).ok().flatten().and_then(|r| crate::params::get(&r, name)).map(|p| p.value)
     }
 }
 

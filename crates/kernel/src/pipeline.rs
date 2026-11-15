@@ -202,6 +202,19 @@ pub enum Command {
     UiSet { client: String, key: String, value: Value },
     /// Runs once when the writer starts.
     Startup,
+    /// A run begins (§8); the writer gives it the next `seq`. Audited as `run.start`.
+    RunInsert(Box<store::RunRow>),
+    /// Throttled progress of a running run; not audited.
+    RunProgress { id: String, progress: Value },
+    /// A run ends (only a `running` one); audited as `run.end`; applies the retention rule (D288).
+    RunFinish { id: String, status: String, summary: Option<Value>, error: Option<Value>, output: Option<Value> },
+    RunKeep { id: String, kept: bool, name: Option<String> },
+    /// Drops finished runs from the task panel.
+    RunClearFinished,
+    /// Parameters of a plugin's state node (`enabled`, `settings.<name>`); `None` removes (D290).
+    PluginState { plugin: String, set: Vec<(String, Option<String>)> },
+    /// A plugin's key-value storage, per plugin and version (D286); not audited.
+    Storage { plugin: String, version: String, key: String, value: Option<String> },
 }
 
 /// What the kernel needs to know about a kind to validate writes.
@@ -307,7 +320,10 @@ impl Writer {
             return self.ui_set(client, key, value);
         }
         let (op, object) = describe(&cmd);
-        let quiet = matches!(cmd, Command::Meta { .. } | Command::Startup);
+        let quiet = matches!(
+            cmd,
+            Command::Meta { .. } | Command::Startup | Command::RunProgress { .. } | Command::RunClearFinished | Command::Storage { .. }
+        );
         let purge = matches!(cmd, Command::Purge { .. });
         let res = self.transact(actor, cmd);
         if purge && res.is_ok() {
@@ -362,6 +378,46 @@ impl Writer {
                 Command::Purge { id } => cx.purge(&id)?,
                 Command::Meta { id, favorite, touch } => cx.meta(&id, favorite, touch)?,
                 Command::Startup => cx.startup()?,
+                Command::RunInsert(r) => cx.run_insert(*r)?,
+                Command::RunProgress { id, progress } => {
+                    let n = cx
+                        .tx
+                        .execute("UPDATE runs SET progress = ?2 WHERE id = ?1 AND status = 'running'", params![id, progress.to_string()])
+                        .map_err(sql)?;
+                    Outcome { changed: n > 0, ..Default::default() }
+                }
+                Command::RunFinish { id, status, summary, error, output } => cx.run_finish(&id, &status, summary, error, output)?,
+                Command::RunKeep { id, kept, name } => {
+                    let n = cx
+                        .tx
+                        .execute("UPDATE runs SET kept = ?2, kept_name = ?3 WHERE id = ?1", params![id, i64::from(kept), name])
+                        .map_err(sql)?;
+                    if n == 0 {
+                        return Err(not_found("run"));
+                    }
+                    cx.audit(if kept { "run.keep" } else { "run.unkeep" }, &id, &json!({}))?;
+                    Outcome { id: Some(id), changed: true, rows: vec![] }
+                }
+                Command::RunClearFinished => {
+                    let n = cx.tx.execute("UPDATE runs SET in_task_panel = 0 WHERE status <> 'running' AND in_task_panel = 1", []).map_err(sql)?;
+                    Outcome { changed: n > 0, ..Default::default() }
+                }
+                Command::PluginState { plugin, set } => cx.plugin_state(&plugin, &set)?,
+                Command::Storage { plugin, version, key, value } => {
+                    match value {
+                        Some(v) => cx.tx.execute(
+                            "INSERT INTO plugin_storage (plugin, version, key, value) VALUES (?1, ?2, ?3, ?4)
+                             ON CONFLICT(plugin, version, key) DO UPDATE SET value = excluded.value",
+                            params![plugin, version, key, v],
+                        ),
+                        None => cx.tx.execute(
+                            "DELETE FROM plugin_storage WHERE plugin = ?1 AND version = ?2 AND key = ?3",
+                            params![plugin, version, key],
+                        ),
+                    }
+                    .map_err(sql)?;
+                    Outcome { changed: true, ..Default::default() }
+                }
                 Command::UiSet { .. } => unreachable!("handled above"),
             }
         };
@@ -386,6 +442,13 @@ fn describe(cmd: &Command) -> (String, String) {
         Command::Purge { id } => ("resource.purge".into(), id.clone()),
         Command::Meta { id, .. } => ("resource.meta".into(), id.clone()),
         Command::Startup => ("workspace.startup".into(), String::new()),
+        Command::RunInsert(r) => ("run.start".into(), r.id.clone()),
+        Command::RunProgress { id, .. } => ("run.progress".into(), id.clone()),
+        Command::RunFinish { id, .. } => ("run.end".into(), id.clone()),
+        Command::RunKeep { id, .. } => ("run.keep".into(), id.clone()),
+        Command::RunClearFinished => ("run.clearFinished".into(), String::new()),
+        Command::PluginState { plugin, .. } => ("plugin.state".into(), plugin.clone()),
+        Command::Storage { plugin, .. } => ("plugin.storage".into(), plugin.clone()),
     }
 }
 
@@ -932,7 +995,7 @@ impl Tx<'_> {
                 .execute("DELETE FROM search WHERE rowid = (SELECT rowid FROM resources WHERE id = ?1)", [&r.id])
                 .map_err(sql)?;
             for table in ["DELETE FROM resources WHERE id = ?1", "DELETE FROM revisions WHERE resource_id = ?1",
-                          "DELETE FROM resource_meta WHERE resource_id = ?1"] {
+                          "DELETE FROM resource_meta WHERE resource_id = ?1", "DELETE FROM runs WHERE resource_id = ?1"] {
                 self.tx.execute(table, [&r.id]).map_err(sql)?;
             }
         }
@@ -969,6 +1032,14 @@ impl Tx<'_> {
     /// D273: a root `Default` environment and a root `Workspace` configuration node;
     /// D277: (re)builds the search index when it was never built.
     fn startup(&mut self) -> KResult<Outcome> {
+        // §8: a run that was going when the worker stopped will never finish.
+        let error = json!({ "code": "interrupted", "message": "" }).to_string();
+        self.tx
+            .execute(
+                "UPDATE runs SET status = 'error', error = ?1, ended_at = ?2, progress = NULL WHERE status = 'running'",
+                params![error, self.at],
+            )
+            .map_err(sql)?;
         let mut rows = Vec::new();
         for (kind, name) in [(KIND_ENV, "Default"), (KIND_CONFIG, "Workspace")] {
             let has_root: bool = self
@@ -1013,6 +1084,111 @@ impl Tx<'_> {
         Ok(Outcome { changed: !rows.is_empty(), rows, ..Default::default() })
     }
 
+    fn run_insert(&mut self, mut r: store::RunRow) -> KResult<Outcome> {
+        r.seq = self.tx.query_row("SELECT COALESCE(MAX(seq), 0) + 1 FROM runs", [], |x| x.get(0)).map_err(sql)?;
+        r.started_at = self.at;
+        r.actor = self.actor.as_text();
+        let j = |v: &Value| v.to_string();
+        let o = |v: &Option<Value>| v.as_ref().map(|v| v.to_string());
+        self.tx
+            .execute(
+                &format!(
+                    "INSERT INTO runs ({}) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22,?23,?24,?25,?26)",
+                    store::RUN_COLUMNS
+                ),
+                params![
+                    r.id, r.seq, r.title, r.icon, r.resource_id, r.resource_kind, r.plugin, r.action, j(&r.action_label),
+                    r.tab_id, r.env_id, r.env_name, r.actor, r.source, r.started_at, r.ended_at, r.status, j(&r.params),
+                    j(&r.input), o(&r.progress), o(&r.summary), o(&r.error), o(&r.output), i64::from(r.kept), r.kept_name,
+                    i64::from(r.in_task_panel)
+                ],
+            )
+            .map_err(sql)?;
+        self.audit("run.start", &r.id, &json!({ "action": r.action, "resource": r.resource_id }))?;
+        Ok(Outcome { id: Some(r.id), changed: true, rows: vec![] })
+    }
+
+    fn run_finish(
+        &mut self,
+        id: &str,
+        status: &str,
+        summary: Option<Value>,
+        error: Option<Value>,
+        output: Option<Value>,
+    ) -> KResult<Outcome> {
+        let o = |v: &Option<Value>| v.as_ref().map(|v| v.to_string());
+        let n = self
+            .tx
+            .execute(
+                "UPDATE runs SET status = ?2, ended_at = ?3, summary = ?4, error = ?5, output = ?6, progress = NULL
+                 WHERE id = ?1 AND status = 'running'",
+                params![id, status, self.at, o(&summary), o(&error), o(&output)],
+            )
+            .map_err(sql)?;
+        if n == 0 {
+            return Ok(Outcome::default());
+        }
+        let code = error.as_ref().and_then(|e| e.get("code")).cloned();
+        self.audit("run.end", id, &json!({ "status": status, "code": code }))?;
+        // D288 retention: newest 200 per resource (or per action without a resource); kept ones stay.
+        let (resource, action): (Option<String>, String) =
+            self.tx.query_row("SELECT resource_id, action FROM runs WHERE id = ?1", [id], |r| Ok((r.get(0)?, r.get(1)?))).map_err(sql)?;
+        let (cond, arg) = match &resource {
+            Some(rid) => ("resource_id = ?1", rid.clone()),
+            None => ("resource_id IS NULL AND action = ?1", action),
+        };
+        self.tx
+            .execute(
+                &format!(
+                    "DELETE FROM runs WHERE {cond} AND kept = 0 AND status <> 'running'
+                     AND id NOT IN (SELECT id FROM runs WHERE {cond} ORDER BY seq DESC LIMIT {RUNS_KEPT})"
+                ),
+                [arg],
+            )
+            .map_err(sql)?;
+        Ok(Outcome { id: Some(id.to_string()), changed: true, rows: vec![] })
+    }
+
+    /// Edits parameters of a plugin's state node, creating the node when needed.
+    fn plugin_state(&mut self, plugin: &str, set: &[(String, Option<String>)]) -> KResult<Outcome> {
+        let existing = store::plugin_state(self.tx, plugin).map_err(sql)?;
+        let mut row = match existing.clone() {
+            Some(r) => r,
+            None => {
+                let out = self.create(NewResource {
+                    kind: KIND_PLUGIN_STATE.into(),
+                    tree: None,
+                    parent: None,
+                    name: plugin.into(),
+                    description: String::new(),
+                    tags: vec![],
+                    body: JsonMap::new(),
+                    plugin_version: None,
+                })?;
+                out.rows.into_iter().next().ok_or_else(|| internal("no row"))?
+            }
+        };
+        let mut changed = Vec::new();
+        for (name, value) in set {
+            let old = crate::params::get(&row, name);
+            let new = value.as_ref().map(|v| crate::params::Param { ty: ParamType::Text, value: v.clone(), based_on: None });
+            if old.as_ref().map(|p| &p.value) != new.as_ref().map(|p| &p.value) {
+                crate::params::put(&mut row, name, new.as_ref());
+                changed.push(format!("params.{name}"));
+            }
+        }
+        if changed.is_empty() {
+            return Ok(Outcome { id: Some(row.id.clone()), changed: existing.is_none(), rows: vec![row] });
+        }
+        row.rev += 1;
+        row.updated_at = self.at;
+        row.updated_by = self.actor.as_text();
+        self.save(&row)?;
+        self.revision(&row, "update", &changed)?;
+        self.audit("plugin.state", plugin, &json!({ "fields": changed }))?;
+        Ok(Outcome { id: Some(row.id.clone()), changed: true, rows: vec![row] })
+    }
+
     fn siblings(&self, tree: Option<&str>, parent: Option<&str>, except: &str) -> KResult<Vec<Row>> {
         let all = store::children(self.tx, tree.unwrap_or_default(), parent, 0, u32::MAX).map_err(sql)?;
         Ok(all.into_iter().filter(|r| r.id != except).collect())
@@ -1052,6 +1228,9 @@ fn dest_tree(cx: &Tx<'_>, dest: &MoveDest) -> KResult<Option<String>> {
     };
     Ok(store::get(cx.tx, id).map_err(sql)?.and_then(|r| r.tree))
 }
+
+/// Runs kept per resource (or per action without a resource), besides the kept ones (D288).
+pub const RUNS_KEPT: u32 = 200;
 
 /// Body key of `core:plugin-state` holding the granted folders.
 pub const GRANTS_KEY: &str = "files.folders";
