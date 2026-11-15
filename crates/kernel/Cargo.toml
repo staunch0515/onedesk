@@ -15,6 +15,10 @@ rusqlite.workspace = true
 semver.workspace = true
 # openat/renameat for writes pinned to an already-resolved folder (review #7)
 libc = "0.2"
+# host.network (D307): system TLS only (native-tls → Security.framework), no rustls/ring.
+reqwest = { version = "0.12", default-features = false, features = ["native-tls"] }
+# Keychain (D305): macOS native backend only.
+keyring = { version = "3", default-features = false, features = ["apple-native"] }
 
 [dev-dependencies]
 tempfile.workspace = true

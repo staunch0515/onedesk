@@ -97,10 +97,11 @@ impl Kernel {
         let (ws, conn) = Workspace::open(workspace_dir)?;
         let reader = ws.open_reader()?;
         let registry = Registry::scan(plugins_dir);
-        for r in &registry.rejected {
+        for r in &registry.rejected() {
             eprintln!("onedesk: plugin package {} not loaded: {} ({})", r.path.display(), r.reason, r.detail);
         }
-        let pipeline = Pipeline::start(conn, Arc::new(registry.rules()));
+        let rules: crate::pipeline::SharedRules = Arc::new(std::sync::RwLock::new(registry.rules()));
+        let pipeline = Pipeline::start(conn, rules.clone());
         let (events, _) = broadcast::channel(1024);
         let inner = Arc::new_cyclic(|me| Inner {
             ws,
@@ -152,7 +153,7 @@ impl Kernel {
     }
 
     pub fn rejected_plugins(&self) -> Vec<crate::manifest::Rejection> {
-        self.inner.registry.rejected.clone()
+        self.inner.registry.rejected().clone()
     }
 
     pub fn db_path(&self) -> PathBuf {
@@ -473,7 +474,7 @@ impl Inner {
             toolbar: new_menu(TREE_RESOURCES),
             menu: new_menu(TREE_RESOURCES),
         }];
-        for p in &self.registry.plugins {
+        for p in &self.registry.plugins() {
             let enabled = self.plugin_enabled(&p.id);
             for t in &p.manifest.contributes.trees {
                 // D290: a disabled plugin's provided trees are not shown.
@@ -763,7 +764,7 @@ impl Inner {
             disabled: None,
         }];
         let mut first = true;
-        for p in self.registry.plugins.iter().filter(|p| self.plugin_enabled(&p.id)) {
+        for p in self.registry.plugins().iter().filter(|p| self.plugin_enabled(&p.id)) {
             for k in &p.manifest.contributes.menus.new {
                 let Some(decl) = p.kind(k) else { continue };
                 let kt = decl.tree.as_deref().map(|t| p.tree_ref(t));

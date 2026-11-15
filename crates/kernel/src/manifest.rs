@@ -2,7 +2,7 @@
 //! Validation is strict: unknown or missing fields, a wrong `apiVersion`, an id or version that
 //! does not match its folder, dangling references — the package is not loaded.
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use onedesk_protocol::{ActionRole, JsonMap, Label, TreeSource};
@@ -36,6 +36,9 @@ pub struct Manifest {
     pub license: String,
     #[serde(default)]
     pub homepage: String,
+    /// Versions whose data this one can take over (semver range, §7.6).
+    #[serde(default)]
+    pub upgrades_from: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -43,6 +46,50 @@ pub struct Manifest {
 pub struct Requires {
     #[serde(default)]
     pub files: bool,
+    /// D307: hosts written here, and/or hosts taken from this plugin's own resources.
+    #[serde(default)]
+    pub network: Option<NetworkReq>,
+    /// D305/D306: secret names it may use; `plaintext` lets it read values (a separate permission).
+    #[serde(default)]
+    pub secrets: Option<SecretsReq>,
+    /// Declared only (shown at install); the capabilities come in a later round.
+    #[serde(default)]
+    pub programs: Vec<String>,
+    #[serde(default)]
+    pub resources: bool,
+    #[serde(default)]
+    pub plugins: bool,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct NetworkReq {
+    /// `host`, `host:port`, or `*.domain` (any subdomain).
+    #[serde(default)]
+    pub hosts: Vec<String>,
+    /// Hosts of fields declared `"grants": "network"` in its own resources (I.10h).
+    #[serde(default)]
+    pub from_resources: bool,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SecretsReq {
+    #[serde(default)]
+    pub names: Vec<String>,
+    #[serde(default)]
+    pub plaintext: bool,
+}
+
+/// A body field of a kind with a meaning the kernel acts on (round 4).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct FieldDecl {
+    #[serde(rename = "type")]
+    pub ty: onedesk_protocol::FieldKind,
+    /// `network`: the host of this field's URL is granted to the plugin (D307).
+    #[serde(default)]
+    pub grants: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -169,6 +216,9 @@ pub struct KindDecl {
     pub accepts: Vec<String>,
     #[serde(default)]
     pub menu: Vec<String>,
+    /// Body keys with a kernel meaning: secret fields, granting fields.
+    #[serde(default)]
+    pub fields: BTreeMap<String, FieldDecl>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -243,12 +293,95 @@ pub struct Plugin {
     pub id: String,
     pub version: String,
     pub dir: PathBuf,
+    /// Fingerprint of `manifest.json` (a re-installed version with other content is reloaded).
+    pub manifest_hash: String,
     pub manifest: Manifest,
     /// Locale → (key → text).
     pub locales: BTreeMap<String, BTreeMap<String, String>>,
 }
 
+/// One permission atom; a version's permission set is a set of these (D299).
+pub fn permission_atoms(m: &Manifest) -> BTreeSet<String> {
+    let mut a = BTreeSet::new();
+    let r = &m.requires;
+    if r.files {
+        a.insert("files".to_string());
+    }
+    if let Some(n) = &r.network {
+        for h in &n.hosts {
+            a.insert(format!("network:{}", h.to_ascii_lowercase()));
+        }
+        if n.from_resources {
+            a.insert("network:@resources".to_string());
+        }
+    }
+    if let Some(sec) = &r.secrets {
+        for n in &sec.names {
+            a.insert(format!("secrets:{n}"));
+        }
+        if sec.plaintext {
+            a.insert("secrets.plaintext".to_string());
+        }
+    }
+    for p in &r.programs {
+        a.insert(format!("programs:{p}"));
+    }
+    if r.resources {
+        a.insert("resources".to_string());
+    }
+    if r.plugins {
+        a.insert("plugins".to_string());
+    }
+    a
+}
+
+/// The permission id an atom belongs to (`network:x` → `network`).
+pub fn atom_id(atom: &str) -> &str {
+    atom.split(':').next().unwrap_or(atom)
+}
+
+/// Fingerprint stored when a version's permissions are confirmed.
+pub fn atoms_fingerprint(atoms: &BTreeSet<String>) -> String {
+    atoms.iter().cloned().collect::<Vec<_>>().join("\n")
+}
+
 impl Plugin {
+    pub fn permissions(&self) -> BTreeSet<String> {
+        permission_atoms(&self.manifest)
+    }
+
+    /// Display form (`PluginPermission`): one entry per id, details joined.
+    pub fn permission_list(&self, granted: impl Fn(&str) -> bool) -> Vec<onedesk_protocol::PluginPermission> {
+        let mut by_id: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        for a in self.permissions() {
+            let id = atom_id(&a).to_string();
+            let detail = a.split_once(':').map(|(_, d)| d.to_string());
+            let e = by_id.entry(id).or_default();
+            if let Some(d) = detail {
+                e.push(d);
+            }
+        }
+        by_id
+            .into_iter()
+            .map(|(id, details)| onedesk_protocol::PluginPermission {
+                granted: granted(&id),
+                required: true,
+                detail: details.join(", "),
+                id,
+            })
+            .collect()
+    }
+
+    pub fn semver(&self) -> semver::Version {
+        semver::Version::parse(&self.version).unwrap_or(semver::Version::new(0, 0, 0))
+    }
+
+    /// Whether this version can take over data bound to `from` (§7.6).
+    pub fn upgrades_from(&self, from: &str) -> bool {
+        let (Some(req), Ok(v)) = (self.manifest.upgrades_from.as_deref(), semver::Version::parse(from)) else { return false };
+        semver::VersionReq::parse(req).is_ok_and(|r| r.matches(&v)) && v < self.semver()
+    }
+
     pub fn actor(&self) -> crate::pipeline::Actor {
         crate::pipeline::Actor::Plugin { id: self.id.clone(), version: self.version.clone() }
     }
@@ -352,6 +485,28 @@ fn valid_id(id: &str) -> bool {
         && id != "core"
 }
 
+/// `host`, `host:port`, `*.domain`, an IPv4 address; lower case letters, digits, `-`, `.`.
+pub fn valid_host_pattern(h: &str) -> bool {
+    let (host, port) = match h.rsplit_once(':') {
+        Some((a, p)) => (a, Some(p)),
+        None => (h, None),
+    };
+    if port.is_some_and(|p| p.parse::<u16>().is_err()) {
+        return false;
+    }
+    let host = host.strip_prefix("*.").unwrap_or(host);
+    !host.is_empty()
+        && host.len() <= 253
+        && host.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '.')
+        && !host.starts_with('.')
+        && !host.ends_with('.')
+}
+
+/// Secret names: letters, digits, `.`, `-`, `_`; at most 128.
+pub fn valid_secret_name(n: &str) -> bool {
+    !n.is_empty() && n.len() <= 128 && n.chars().all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == '_')
+}
+
 fn valid_short(s: &str) -> bool {
     !s.is_empty() && s.len() <= 64 && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.')
 }
@@ -374,6 +529,7 @@ pub fn load_package(dir: &Path) -> Result<Plugin, Rejection> {
     let bytes = std::fs::read(&mpath).map_err(|e| reject(dir, "noManifest", e.to_string()))?;
     let raw: serde_json::Value = serde_json::from_slice(&bytes).map_err(|e| reject(dir, "badJson", e.to_string()))?;
     let m: Manifest = serde_json::from_value(raw).map_err(|e| reject(dir, "schema", e.to_string()))?;
+    let manifest_hash = crate::util::fingerprint(&bytes);
 
     if m.api_version != "2" {
         return Err(reject(dir, "apiVersion", m.api_version.clone()));
@@ -495,6 +651,38 @@ pub fn load_package(dir: &Path) -> Result<Plugin, Rejection> {
         }
     }
 
+    if let Some(r) = &m.upgrades_from {
+        if semver::VersionReq::parse(r).is_err() {
+            return Err(reject(dir, "badUpgradesFrom", r.clone()));
+        }
+    }
+    if let Some(n) = &m.requires.network {
+        for h in &n.hosts {
+            if !valid_host_pattern(h) {
+                return Err(reject(dir, "badHost", h.clone()));
+            }
+        }
+    }
+    if let Some(sec) = &m.requires.secrets {
+        for n in &sec.names {
+            if !valid_secret_name(n) {
+                return Err(reject(dir, "badSecretName", n.clone()));
+            }
+        }
+    }
+    for k in &c.kinds {
+        for (name, f) in &k.fields {
+            match f.grants.as_deref() {
+                None => {}
+                Some("network") if f.ty == onedesk_protocol::FieldKind::Text => {
+                    if !m.requires.network.as_ref().is_some_and(|n| n.from_resources) {
+                        return Err(reject(dir, "grantsUndeclared", format!("kind {} field {name}", k.id)));
+                    }
+                }
+                Some(g) => return Err(reject(dir, "badGrants", format!("kind {} field {name}: {g}", k.id))),
+            }
+        }
+    }
     let mut locales = BTreeMap::new();
     if !c.locales.is_empty() && !c.locales.contains_key("en-US") {
         return Err(reject(dir, "localeMissing", "en-US"));
@@ -508,51 +696,138 @@ pub fn load_package(dir: &Path) -> Result<Plugin, Rejection> {
         locales.insert(loc.clone(), table);
     }
 
-    Ok(Plugin { id: m.id.clone(), version: m.version.clone(), dir: dir.to_path_buf(), manifest: m, locales })
+    Ok(Plugin { id: m.id.clone(), version: m.version.clone(), dir: dir.to_path_buf(), manifest_hash, manifest: m, locales })
 }
 
-/// Every valid plugin under the plugins folder (highest version of each id), plus what was refused.
-#[derive(Debug, Default)]
+#[derive(Default)]
+struct RegState {
+    /// id → every installed version, ascending. Entries are leaked once per (id, version, manifest):
+    /// they are tiny, live for the process, and let callers hold `&'static Plugin` across awaits.
+    all: BTreeMap<String, Vec<&'static Plugin>>,
+    rejected: Vec<Rejection>,
+}
+
+/// Every valid plugin version under the plugins folder, the active version of each, and what was refused.
+#[derive(Default)]
 pub struct Registry {
-    pub plugins: Vec<Plugin>,
-    pub rejected: Vec<Rejection>,
+    root: PathBuf,
+    state: std::sync::RwLock<RegState>,
+    /// id → active version (set by the kernel from the workspace's plugin state).
+    active: std::sync::RwLock<HashMap<String, String>>,
+}
+
+/// Versions added and removed by a rescan.
+#[derive(Debug, Default)]
+pub struct RescanDiff {
+    pub added: Vec<(String, String)>,
+    pub removed: Vec<(String, String)>,
+}
+
+fn read_root(root: &Path, old: &BTreeMap<String, Vec<&'static Plugin>>) -> (BTreeMap<String, Vec<&'static Plugin>>, Vec<Rejection>) {
+    let mut all: BTreeMap<String, Vec<&'static Plugin>> = BTreeMap::new();
+    let mut rejected = Vec::new();
+    let dirs = |p: &Path| -> Vec<PathBuf> {
+        let mut v: Vec<PathBuf> = std::fs::read_dir(p)
+            .map(|rd| rd.filter_map(|e| e.ok()).map(|e| e.path()).filter(|p| p.is_dir()).collect())
+            .unwrap_or_default();
+        v.sort();
+        v
+    };
+    for id_dir in dirs(root) {
+        // `.removed`, `.index` and other dot folders belong to the main process.
+        if id_dir.file_name().is_some_and(|n| n.to_string_lossy().starts_with('.')) {
+            continue;
+        }
+        for vdir in dirs(&id_dir) {
+            match load_package(&vdir) {
+                Ok(p) => {
+                    let reuse = old
+                        .get(&p.id)
+                        .and_then(|vs| vs.iter().find(|o| o.version == p.version && o.manifest_hash == p.manifest_hash))
+                        .copied();
+                    let leaked: &'static Plugin = reuse.unwrap_or_else(|| Box::leak(Box::new(p)));
+                    all.entry(leaked.id.clone()).or_default().push(leaked);
+                }
+                Err(r) => rejected.push(r),
+            }
+        }
+    }
+    for vs in all.values_mut() {
+        vs.sort_by_key(|p| p.semver());
+    }
+    (all, rejected)
 }
 
 impl Registry {
     pub fn scan(root: &Path) -> Registry {
-        let mut reg = Registry::default();
-        let mut best: HashMap<String, Plugin> = HashMap::new();
-        let mut ids: Vec<PathBuf> = std::fs::read_dir(root)
-            .map(|rd| rd.filter_map(|e| e.ok()).map(|e| e.path()).filter(|p| p.is_dir()).collect())
-            .unwrap_or_default();
-        ids.sort();
-        for id_dir in ids {
-            let mut versions: Vec<PathBuf> = std::fs::read_dir(&id_dir)
-                .map(|rd| rd.filter_map(|e| e.ok()).map(|e| e.path()).filter(|p| p.is_dir()).collect())
-                .unwrap_or_default();
-            versions.sort();
-            for vdir in versions {
-                match load_package(&vdir) {
-                    Ok(p) => {
-                        let newer = best.get(&p.id).is_none_or(|old| {
-                            semver::Version::parse(&p.version).ok() > semver::Version::parse(&old.version).ok()
-                        });
-                        if newer {
-                            best.insert(p.id.clone(), p);
-                        }
-                    }
-                    Err(r) => reg.rejected.push(r),
-                }
-            }
-        }
-        let mut plugins: Vec<Plugin> = best.into_values().collect();
-        plugins.sort_by(|a, b| a.id.cmp(&b.id));
-        reg.plugins = plugins;
-        reg
+        let (all, rejected) = read_root(root, &BTreeMap::new());
+        Registry { root: root.to_path_buf(), state: std::sync::RwLock::new(RegState { all, rejected }), active: Default::default() }
     }
 
-    pub fn plugin(&self, id: &str) -> Option<&Plugin> {
-        self.plugins.iter().find(|p| p.id == id)
+    /// Reads the folder again (plugin.rescan); returns which versions appeared and went.
+    pub fn rescan(&self) -> RescanDiff {
+        let old = self.state.read().unwrap().all.clone();
+        let (all, rejected) = read_root(&self.root, &old);
+        let key = |m: &BTreeMap<String, Vec<&'static Plugin>>| -> BTreeSet<(String, String)> {
+            m.values().flatten().map(|p| (p.id.clone(), p.version.clone())).collect()
+        };
+        let (before, after) = (key(&old), key(&all));
+        *self.state.write().unwrap() = RegState { all, rejected };
+        RescanDiff {
+            added: after.difference(&before).cloned().collect(),
+            removed: before.difference(&after).cloned().collect(),
+        }
+    }
+
+    pub fn root(&self) -> &Path {
+        &self.root
+    }
+
+    pub fn ids(&self) -> Vec<String> {
+        self.state.read().unwrap().all.keys().cloned().collect()
+    }
+
+    /// Installed versions of a plugin, ascending.
+    pub fn versions(&self, id: &str) -> Vec<&'static Plugin> {
+        self.state.read().unwrap().all.get(id).cloned().unwrap_or_default()
+    }
+
+    pub fn version(&self, id: &str, version: &str) -> Option<&'static Plugin> {
+        self.versions(id).into_iter().find(|p| p.version == version)
+    }
+
+    pub fn set_active(&self, id: &str, version: Option<&str>) {
+        let mut a = self.active.write().unwrap();
+        match version {
+            Some(v) => {
+                a.insert(id.to_string(), v.to_string());
+            }
+            None => {
+                a.remove(id);
+            }
+        }
+    }
+
+    pub fn active_version(&self, id: &str) -> Option<String> {
+        self.active.read().unwrap().get(id).cloned()
+    }
+
+    /// The active version (the one used for new resources, trees, commands, settings).
+    pub fn plugin(&self, id: &str) -> Option<&'static Plugin> {
+        let vs = self.versions(id);
+        match self.active.read().unwrap().get(id) {
+            Some(v) => vs.into_iter().find(|p| &p.version == v),
+            None => vs.last().copied(),
+        }
+    }
+
+    /// The active version of every plugin, by id.
+    pub fn plugins(&self) -> Vec<&'static Plugin> {
+        self.ids().iter().filter_map(|id| self.plugin(id)).collect()
+    }
+
+    pub fn rejected(&self) -> Vec<Rejection> {
+        self.state.read().unwrap().rejected.clone()
     }
 
     /// Splits `<pluginId>:<name>` (plugin ids contain no `:`).
@@ -560,22 +835,31 @@ impl Registry {
         full.split_once(':')
     }
 
-    pub fn kind(&self, full: &str) -> Option<(&Plugin, &KindDecl)> {
+    pub fn kind(&self, full: &str) -> Option<(&'static Plugin, &'static KindDecl)> {
         let (pid, k) = Self::split(full)?;
         let p = self.plugin(pid)?;
         Some((p, p.kind(k)?))
     }
 
-    pub fn tree(&self, full: &str) -> Option<(&Plugin, &TreeDecl)> {
+    /// The kind as a given version declares it (a resource is handled by the version it is bound to).
+    pub fn kind_at(&self, full: &str, version: Option<&str>) -> Option<(&'static Plugin, &'static KindDecl)> {
+        let Some(v) = version else { return self.kind(full) };
+        let (pid, k) = Self::split(full)?;
+        let p = self.version(pid, v)?;
+        Some((p, p.kind(k)?))
+    }
+
+    pub fn tree(&self, full: &str) -> Option<(&'static Plugin, &'static TreeDecl)> {
         let (pid, t) = Self::split(full)?;
         let p = self.plugin(pid)?;
         Some((p, p.tree(t)?))
     }
 
-    /// Write rules of every plugin kind (tree and accepted children, full names).
+    /// Write rules of every kind of every installed version (tree and accepted children, full names).
     pub fn rules(&self) -> HashMap<String, KindRule> {
         let mut m = crate::pipeline::core_rules();
-        for p in &self.plugins {
+        let all = self.state.read().unwrap().all.clone();
+        for p in all.values().flatten() {
             for k in &p.manifest.contributes.kinds {
                 m.insert(
                     p.full(&k.id),

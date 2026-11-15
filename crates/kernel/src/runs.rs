@@ -714,10 +714,10 @@ impl Inner {
         }))
     }
 
-    pub fn rejected_for(&self, id: &str) -> Option<&crate::manifest::Rejection> {
+    pub fn rejected_for(&self, id: &str) -> Option<crate::manifest::Rejection> {
         self.registry
-            .rejected
-            .iter()
+            .rejected()
+            .into_iter()
             .find(|r| r.path.parent().and_then(|p| p.file_name()).is_some_and(|n| n.to_string_lossy() == id))
     }
 
@@ -739,7 +739,7 @@ impl Inner {
             k("open.audit", "scroll-text"),
             k("open.deleted", "trash-2"),
         ];
-        for p in self.registry.plugins.iter().filter(|p| self.plugin_enabled(&p.id)) {
+        for p in self.registry.plugins().iter().filter(|p| self.plugin_enabled(&p.id)) {
             let group = p.label(&p.manifest.name);
             // D296: only commands that ask for it; node commands stay in their context menus.
             for c in p.manifest.contributes.commands.iter().filter(|c| c.palette) {
@@ -773,7 +773,7 @@ impl Inner {
     /// `plugins`: one node per package (refused ones as `broken`); `runs`: the latest 200 runs.
     pub fn plugins_tree(&self) -> KResult<Vec<TreeNode>> {
         let mut out = Vec::new();
-        for p in &self.registry.plugins {
+        for p in &self.registry.plugins() {
             let enabled = self.plugin_enabled(&p.id);
             let toggle = if enabled { kernel_cmd("plugin.disable", "power-off") } else { kernel_cmd("plugin.enable", "power") };
             out.push(TreeNode {
@@ -794,7 +794,7 @@ impl Inner {
             });
         }
         let mut seen: Vec<String> = out.iter().map(|n| n.key.clone()).collect();
-        for r in &self.registry.rejected {
+        for r in &self.registry.rejected() {
             let Some(id) = r.path.parent().and_then(|p| p.file_name()).map(|n| n.to_string_lossy().into_owned()) else { continue };
             if seen.contains(&id) {
                 continue;

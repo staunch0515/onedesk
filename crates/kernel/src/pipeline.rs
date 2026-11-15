@@ -256,7 +256,7 @@ pub struct Pipeline {
 }
 
 impl Pipeline {
-    pub fn start(conn: Connection, rules: Arc<HashMap<String, KindRule>>) -> Pipeline {
+    pub fn start(conn: Connection, rules: SharedRules) -> Pipeline {
         let (tx, rx) = mpsc::channel::<Job>();
         let (ready_tx, ready_rx) = mpsc::channel::<()>();
         let thread = std::thread::Builder::new()
@@ -303,8 +303,11 @@ impl Drop for Pipeline {
 
 struct Writer {
     conn: Connection,
-    rules: Arc<HashMap<String, KindRule>>,
+    rules: SharedRules,
 }
+
+/// Kind rules of every installed plugin version; replaced when the plugins folder is read again.
+pub type SharedRules = Arc<std::sync::RwLock<HashMap<String, KindRule>>>;
 
 fn sql(e: rusqlite::Error) -> onedesk_protocol::ProtocolError {
     internal(e)
@@ -357,7 +360,7 @@ impl Writer {
     }
 
     fn transact(&mut self, actor: &Actor, cmd: Command) -> KResult<Outcome> {
-        let rules = self.rules.clone();
+        let rules = self.rules.read().unwrap().clone();
         let tx = self.conn.transaction().map_err(sql)?;
         let out = {
             let mut cx = Tx { tx: &tx, actor, rules: &rules, at: now_ms() };
