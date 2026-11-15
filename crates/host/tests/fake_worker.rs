@@ -62,6 +62,25 @@ async fn main() {
                     tokio::time::sleep(Duration::from_millis(1500)).await;
                     ok(json!("slow done"));
                 }
+                "plugin.inspect" => {
+                    // Reads the package's manifest like the real worker would; "bad" in the manifest id means refused.
+                    let folder = params["folder"].as_str().unwrap_or("");
+                    let manifest = std::fs::read_to_string(std::path::Path::new(folder).join("manifest.json")).ok().and_then(|t| serde_json::from_str::<Value>(&t).ok());
+                    let preview = match manifest {
+                        Some(m) if !m["id"].as_str().unwrap_or("").contains("bad") => json!({ "valid": true, "id": m["id"], "version": m["version"], "name": "N", "description": "D", "icon": "i", "author": "a", "permissions": [], "installed": [], "addedPermissions": [], "provides": { "kinds": [], "actions": [], "trees": [], "resultTabs": [], "other": [] } }),
+                        _ => json!({ "valid": false, "problem": { "code": "invalid", "params": { "reason": "schema" } }, "id": "", "version": "", "name": "", "description": "", "icon": "", "author": "", "permissions": [], "installed": [], "addedPermissions": [], "provides": { "kinds": [], "actions": [], "trees": [], "resultTabs": [], "other": [] } }),
+                    };
+                    ok(preview);
+                }
+                "plugin.rescan" => {
+                    // Leaves a note in the workspace folder so tests can count rescans and see what was on disk then.
+                    let listing = std::fs::read_dir(std::path::Path::new(&plugins)).map(|rd| rd.filter_map(|e| e.ok()).map(|e| e.file_name().to_string_lossy().into_owned()).collect::<Vec<_>>().join(",")).unwrap_or_default();
+                    let note = std::path::Path::new(&workspace).join("rescans.log");
+                    let mut text = std::fs::read_to_string(&note).unwrap_or_default();
+                    text.push_str(&format!("{listing}\n"));
+                    let _ = std::fs::write(&note, text);
+                    ok(Value::Null);
+                }
                 "crash" => std::process::exit(1),
                 "emit" => {
                     let client = params["client"].as_str().map(str::to_string);

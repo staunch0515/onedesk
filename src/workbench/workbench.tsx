@@ -3,6 +3,8 @@ import { ActivityBar, Button, CommandPalette, Dialog, Sized, Splitter, Workbench
 import { LOCALES, useI18n } from "./i18n";
 import { loadChildren } from "./protocol";
 import { CommandDialogs } from "./parts/command-dialogs";
+import { InstallDialogs, startInstall } from "./parts/install-dialogs";
+import { SECRETS_TARGET } from "./pages/secrets-page";
 import { NoTabs, PageHost } from "./parts/page-host";
 import { TreePanel } from "./parts/side-panel";
 import { StatusBarPart, type Settings } from "./parts/status-bar";
@@ -129,6 +131,8 @@ export function Workbench({ settings, onSetting: storeSetting }: WorkbenchProps)
         id: "view",
         heading: t("palette.view"),
         items: [
+          ...(client.secrets ? [{ id: "secrets", label: t("secrets.title"), icon: "key-round", onSelect: () => actions.open(SECRETS_TARGET) }] : []),
+          ...(client.app ? [{ id: "install", label: t("install.action"), icon: "package-plus", onSelect: () => void startInstall(client, store, actions) }] : []),
           { id: "view.side", label: t("palette.toggleSide"), icon: "panel-left", shortcut: ["⌘", "B"], onSelect: () => store.set((x) => ({ sideOpen: !x.sideOpen })) },
           { id: "view.panel", label: t("palette.togglePanel"), icon: "panel-bottom", shortcut: ["⌘", "J"], onSelect: () => store.set((x) => ({ panelOpen: !x.panelOpen })) },
           { id: "view.info", label: t("palette.toggleInfo"), icon: "panel-right", onSelect: () => store.set((x) => ({ infoOpen: !x.infoOpen })) },
@@ -230,6 +234,7 @@ export function Workbench({ settings, onSetting: storeSetting }: WorkbenchProps)
         }
       />
       <CommandDialogs />
+      <InstallDialogs />
     </WorkbenchFrame>
   );
 }

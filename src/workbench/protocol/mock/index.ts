@@ -1697,11 +1697,12 @@ export function createMockClient(options: MockOptions = {}): ProtocolClient {
       async activateVersion(id, version) {
         await wait(120);
         const p = db.plugins.find((x) => x.id === id);
-        if (!p) return;
+        if (!p) return { upgraded: 0, kept: 0 };
         for (const v of p.versions) v.active = v.version === version;
         audit("plugin.enable", p.id, `version ${version}`);
         persist();
         emit("plugins", "tree:plugins");
+        return { upgraded: 0, kept: 0 };
       },
       async setPinned(id, version, pinned) {
         await wait(20);
@@ -1720,6 +1721,10 @@ export function createMockClient(options: MockOptions = {}): ProtocolClient {
         persist();
         emit("plugins");
       },
+      async undoUpgrade() {
+        return { restored: 0, modified: [] };
+      },
+      async confirmPermissions() {},
       async setPermission(id, permission, granted) {
         await wait(20);
         const perm = db.plugins.find((x) => x.id === id)?.permissions.find((x) => x.id === permission);

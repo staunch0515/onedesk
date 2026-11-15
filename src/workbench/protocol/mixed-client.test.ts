@@ -13,6 +13,8 @@ function fakeKernel(): KernelClient {
     transport: { request: async () => null, onEvent: () => () => undefined, close() {} },
     workspace: { info: async () => ({ id: "w", name: "W" }), getConfig: async (n: string) => (n === "ui.language" ? "zh-CN" : null), setConfig: async () => undefined },
     params: { envOptions: async () => [{ id: "e1", name: "Default", depth: 0 }] } as never,
+    app: { inspectPlugin: async () => ({ valid: true }) as never, installPlugin: async () => ({ plugin: "p", version: "1" }), removePlugin: async () => undefined },
+    secrets: { list: async () => [{ name: "token", updatedAt: 1, usedBy: [] }], set: async () => undefined, delete: async () => undefined },
     search: { query: async () => [{ target: "resource:k1", title: "kernel hit", icon: "file", subtitle: "", state: "ok" }] },
     audit: { list: async () => [], facets: async () => ({ actors: [], operations: [] }) },
     tree: {
@@ -51,7 +53,7 @@ function fakeKernel(): KernelClient {
       setKept: async () => undefined,
     },
     command: { palette: async () => [{ id: "k:cmd", label: "k", group: "k" }], newItems: async () => [{ id: "new:k", label: "k", icon: "file" }], execute: async () => [{ type: "reload" }] },
-    plugin: { get: async (id: string) => ({ id } as never), setEnabled: async () => undefined, setSetting: async () => undefined, reload: async () => undefined, grants: async (plugin) => ({ plugin, folders: [] }), grantFolder: async (plugin, path) => ({ plugin, folders: [path] }), revokeFolder: async (plugin) => ({ plugin, folders: [] }) },
+    plugin: { get: async (id: string) => ({ id } as never), setEnabled: async () => undefined, setSetting: async () => undefined, reload: async () => undefined, activateVersion: async () => ({ upgraded: 1, kept: 0 }), setPinned: async () => undefined, undoUpgrade: async () => ({ restored: 0, modified: [] }), confirmPermissions: async () => undefined, grants: async (plugin) => ({ plugin, folders: [] }), grantFolder: async (plugin, path) => ({ plugin, folders: [path] }), revokeFolder: async (plugin) => ({ plugin, folders: [] }) },
     ui: { get: async <T,>(k: string) => (ui.get(k) ?? null) as T | null, set: async (k, v) => void ui.set(k, v) },
     events: { subscribe: () => () => undefined },
     connection: () => "restored",
@@ -201,5 +203,12 @@ describe("mixed client", () => {
     expect((await client.command.palette())[0]?.id).toBe("k:cmd");
     expect((await client.page.event("resource:kernel-1", "tidy", {})).message).toBe("kernel event");
     expect(client.demo?.target("plugin:org.example")).toBe(false);
+  });
+
+  it("sends installing, removing, versions and secrets to the kernel", async () => {
+    const client = createMixedClient(fakeKernel(), createMockClient({ fresh: true, quiet: true }));
+    expect((await client.app?.installPlugin("/x"))?.plugin).toBe("p");
+    expect((await client.secrets?.list())?.[0]?.name).toBe("token");
+    expect((await client.plugin.activateVersion("p", "2")).upgraded).toBe(1);
   });
 });

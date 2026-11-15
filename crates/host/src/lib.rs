@@ -12,16 +12,17 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use onedesk_protocol::{
-    ConnectionState, ErrorCode, EventMessage, HelloParams, HelloResult, ProtocolError, Request, Response,
+    ConnectionState, ErrorCode, EventMessage, HelloParams, HelloResult, PluginFolderRef, PluginVersionParams, ProtocolError, Request, Response,
     PROTOCOL_VERSION,
 };
-use serde_json::Value;
+use serde_json::{json, Value};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::unix::OwnedWriteHalf;
 use tokio::net::UnixStream;
 use tokio::sync::{broadcast, oneshot, watch};
 
 pub mod data_dir;
+pub mod install;
 pub mod plugins;
 pub mod ws;
 
@@ -53,6 +54,15 @@ impl std::fmt::Display for HostError {
 }
 
 impl std::error::Error for HostError {}
+
+/// `invalid` with a `reason` the shell words.
+fn invalid(reason: &str) -> ProtocolError {
+    ProtocolError { code: ErrorCode::Invalid, params: [("reason".to_string(), reason.to_string())].into(), detail: None }
+}
+
+fn parse<T: serde::de::DeserializeOwned>(params: Value) -> Result<T, ProtocolError> {
+    serde_json::from_value(params).map_err(|e| err(ErrorCode::InvalidParams, e.to_string()))
+}
 
 fn err(code: ErrorCode, detail: impl Into<String>) -> ProtocolError {
     ProtocolError { code, params: Default::default(), detail: Some(detail.into()) }
@@ -222,6 +232,8 @@ impl Shared {
 }
 
 pub struct Host {
+    data_dir: PathBuf,
+    install_lock: tokio::sync::Mutex<()>,
     shared: Arc<Shared>,
     monitor: Mutex<Option<tokio::task::JoinHandle<()>>>,
     restarts: Arc<std::sync::atomic::AtomicU32>,
@@ -244,8 +256,9 @@ impl Host {
         *shared.hello.lock().unwrap() = first.hello.clone();
         shared.current.send_replace(Some(first.conn.clone()));
         let restarts = Arc::new(std::sync::atomic::AtomicU32::new(0));
+        let data_dir = cfg.data_dir.clone();
         let monitor = tokio::spawn(monitor(cfg, shared.clone(), first, restarts.clone()));
-        Ok(Arc::new(Host { shared, monitor: Mutex::new(Some(monitor)), restarts }))
+        Ok(Arc::new(Host { data_dir, install_lock: tokio::sync::Mutex::new(()), shared, monitor: Mutex::new(Some(monitor)), restarts }))
     }
 
     /// Every event of the worker plus the main process's own `connection` events.
@@ -271,6 +284,70 @@ impl Host {
             }
             return Ok(self.shared.hello.lock().unwrap().clone());
         }
+        match method {
+            "app.inspectPlugin" => return self.inspect_plugin(client, params).await,
+            "app.installPlugin" => return self.install_plugin(client, params).await,
+            "app.removePlugin" => return self.remove_plugin(client, params).await,
+            _ => {}
+        }
+        self.forward(client, method, params).await
+    }
+
+    /// `app.inspectPlugin`: the worker reads and validates the folder; nothing is copied.
+    async fn inspect_plugin(&self, client: Option<&str>, params: Value) -> Result<Value, ProtocolError> {
+        let folder = parse::<PluginFolderRef>(params)?;
+        self.forward(client, "plugin.inspect", json!({ "folder": folder.folder })).await
+    }
+
+    /// `app.installPlugin`: check the folder, check the manifest again (must be valid), copy to a
+    /// temporary folder, rename into `plugins/<id>/<version>`, ask the worker to rescan.
+    async fn install_plugin(&self, client: Option<&str>, params: Value) -> Result<Value, ProtocolError> {
+        let folder = parse::<PluginFolderRef>(params)?;
+        let src = PathBuf::from(&folder.folder);
+        install::check_package(&src, install::MAX_PACKAGE_BYTES).map_err(|p| invalid(p.reason()))?;
+        let preview = self.forward(client, "plugin.inspect", json!({ "folder": folder.folder })).await?;
+        if preview.get("valid").and_then(Value::as_bool) != Some(true) {
+            return Err(ProtocolError { code: ErrorCode::Invalid, params: [("reason".to_string(), "notValid".to_string())].into(), detail: Some(preview.get("problem").map(Value::to_string).unwrap_or_default()) });
+        }
+        let (Some(id), Some(version)) = (preview["id"].as_str(), preview["version"].as_str()) else { return Err(invalid("notValid")) };
+        if !install::safe_segment(id) || !install::safe_segment(version) {
+            return Err(invalid("notValid"));
+        }
+        let _one_at_a_time = self.install_lock.lock().await;
+        let plugin_root = self.data_dir.join("plugins");
+        let dest = plugin_root.join(id).join(version);
+        if dest.exists() {
+            return Err(invalid("alreadyInstalled"));
+        }
+        let tmp = plugin_root.join(id).join(format!(".{version}.tmp-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        let copied = install::copy_package(&src, &tmp).and_then(|_| std::fs::rename(&tmp, &dest));
+        if let Err(e) = copied {
+            let _ = std::fs::remove_dir_all(&tmp);
+            return Err(err(ErrorCode::Internal, format!("copy plugin: {e}")));
+        }
+        self.forward(client, "plugin.rescan", Value::Null).await?;
+        Ok(json!({ "plugin": id, "version": version }))
+    }
+
+    /// `app.removePlugin`: move the version to `plugins/.removed/`, rescan.
+    async fn remove_plugin(&self, client: Option<&str>, params: Value) -> Result<Value, ProtocolError> {
+        let p = parse::<PluginVersionParams>(params)?;
+        if !install::safe_segment(&p.plugin) || !install::safe_segment(&p.version) {
+            return Err(invalid("badTarget"));
+        }
+        let _one_at_a_time = self.install_lock.lock().await;
+        match install::remove_version(&self.data_dir.join("plugins"), &p.plugin, &p.version) {
+            Ok(_) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Err(ProtocolError { code: ErrorCode::NotFound, params: [("what".to_string(), "plugin".to_string())].into(), detail: None }),
+            Err(e) => return Err(err(ErrorCode::Internal, format!("remove plugin: {e}"))),
+        }
+        self.forward(client, "plugin.rescan", Value::Null).await?;
+        Ok(Value::Null)
+    }
+
+    /// Sends one request to the worker (waiting for a restarting one).
+    async fn forward(&self, client: Option<&str>, method: &str, params: Value) -> Result<Value, ProtocolError> {
         let id = self.shared.next_id();
         let mut rx = self.shared.current.subscribe();
         let deadline = tokio::time::Instant::now() + WAIT_FOR_WORKER;
