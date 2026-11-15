@@ -43,6 +43,14 @@
           },
           "token": {
             "type": "secret"
+          },
+          "headers": {
+            "type": "longtext",
+            "secrets": true
+          },
+          "body": {
+            "type": "code",
+            "secrets": true
           }
         },
         "draggable": true,
