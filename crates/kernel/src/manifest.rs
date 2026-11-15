@@ -1008,9 +1008,9 @@ mod tests {
         write(tmp.path(), "test.alpha", "0.10.0", &with(good(), &["version"], json!("0.10.0")));
         write(tmp.path(), "test.alpha", "0.2.0", &good()); // version mismatch: rejected
         let reg = Registry::scan(tmp.path());
-        assert_eq!(reg.plugins.len(), 1);
-        assert_eq!(reg.plugins[0].version, "0.10.0");
-        assert_eq!(reg.rejected.len(), 1);
+        assert_eq!(reg.plugins().len(), 1);
+        assert_eq!(reg.plugins()[0].version, "0.10.0");
+        assert_eq!(reg.rejected().len(), 1);
         let rules = reg.rules();
         assert_eq!(rules["test.alpha:item"].tree.as_deref(), Some("resources"));
     }
