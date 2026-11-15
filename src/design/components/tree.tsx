@@ -260,7 +260,7 @@ export function Tree({
             aria-level={row.depth + 1}
             aria-expanded={row.expandable ? Boolean(row.expanded) : undefined}
             aria-selected={selectedKey === row.key}
-            aria-disabled={state === "disabled" || undefined}
+            // A disabled item is greyed out, not blocked (D220): it still opens, e.g. to be enabled again.
             data-tree-key={row.key}
             data-state={state}
             title={row.stateLabel ? `${row.label} — ${row.stateLabel}` : undefined}

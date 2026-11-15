@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import { Button, CodeEditor, Dialog, DropdownMenu, FieldStrip, FormField, IconButton, Input, Pane, Select, StripField, Switch, Textarea, useToast, type ActionBarItem } from "../../design";
 import { useI18n } from "../i18n";
 import type { ActionDecl, PageDescriptor, RunStatus, ViewField, ViewNode } from "../protocol";
+import { runParams } from "./run-params";
+import { useRunEndRefresh } from "./run-refresh";
 import { useQuery, useUi, useWorkbench } from "../state/context";
 import type { TabState } from "../state/store";
 import { Frame } from "../parts/frame";
@@ -118,17 +120,12 @@ export function ViewPage({ tab, descriptor: initial }: { tab: TabState; descript
 
   useEffect(() => setDescriptor(initial), [initial]);
 
-  // A plugin page may show what its last run left behind (e.g. a summary it stored): when this tab's run
-  // ends, ask for the page again.
-  const lastStatus = useRef(running.data?.status);
-  useEffect(() => {
-    const now = running.data?.status;
-    const was = lastStatus.current;
-    lastStatus.current = now;
-    if (was === "running" && now && now !== "running" && client.demo !== undefined && !client.demo.target(tab.target)) {
-      actions.updateTab(tab.id, { reload: (store.get().tabs.find((x) => x.id === tab.id)?.reload ?? 0) + 1 });
-    }
-  }, [running.data?.status, client, tab.id, tab.target, actions, store]);
+  // A plugin page may show what its last run left behind (e.g. a summary it stored): when a run started
+  // here ends, ask for the page again. Unsaved drafts live in the store and stay.
+  const kernelRun = client.demo !== undefined && !client.demo.target(tab.target);
+  useRunEndRefresh(tab.runId, running.data, () => {
+    if (kernelRun) actions.updateTab(tab.id, { reload: (store.get().tabs.find((x) => x.id === tab.id)?.reload ?? 0) + 1 });
+  });
 
   // "Recompute after the content changed" (§9.3): ask the plugin again 300 ms after typing stops.
   const draftKey = JSON.stringify(draft);
@@ -186,7 +183,7 @@ export function ViewPage({ tab, descriptor: initial }: { tab: TabState; descript
       }
       if (action.role === "run" || action.role === "save-run") {
         const fresh = store.get().tabs.find((x) => x.id === tab.id) ?? now.tab;
-        const params = Object.fromEntries(paramFields.map((f) => [f.name, fresh.params[f.name] || f.envValue || ""]));
+        const params = runParams(paramFields, fresh.params, kernelPage);
         const runId = await client.run.start({
           action: action.action ?? (action.role === "save-run" ? "run" : action.id),
           resourceId: fresh.target.startsWith("resource:") ? fresh.target.slice(9) : undefined,

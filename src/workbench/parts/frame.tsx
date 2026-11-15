@@ -41,6 +41,15 @@ export function Frame({ tab, descriptor, meta, actions, children, panel }: Frame
     conflict: t("state.conflict"),
   };
 
+  // Said when the kernel gives no reason of its own (D220: shown greyed, never hidden).
+  const stateHint: Record<NodeState, string> = {
+    ok: "",
+    disabled: t("state.disabledHint"),
+    "missing-plugin": t("state.missingPluginHint"),
+    broken: t("state.brokenHint"),
+    conflict: t("state.conflictHint"),
+  };
+
   const crumbs = descriptor.breadcrumb.map((c, i) => ({
     key: `${i}-${c.label}`,
     label: c.label,
@@ -97,16 +106,16 @@ export function Frame({ tab, descriptor, meta, actions, children, panel }: Frame
         />
       }
       notice={
-        envMissing || (descriptor.state !== "ok" && descriptor.stateReason) ? (
+        envMissing || descriptor.state !== "ok" ? (
         <>
           {envMissing && (
             <Banner tone="warning" title={t("page.envDeletedTitle")}>
               {t("page.envDeletedBody")}
             </Banner>
           )}
-          {descriptor.state !== "ok" && descriptor.stateReason && (
+          {descriptor.state !== "ok" && (
             <Banner tone={descriptor.state === "broken" ? "danger" : descriptor.state === "disabled" ? "info" : "warning"} title={stateName[descriptor.state]}>
-              {tx(descriptor.stateReason)}
+              {descriptor.stateReason ? tx(descriptor.stateReason) : stateHint[descriptor.state]}
             </Banner>
           )}
         </>

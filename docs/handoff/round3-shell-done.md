@@ -51,3 +51,11 @@
 - 错误原因：按内核文档补齐全部 `reason`（`emptyName`、`parentNotFound`、…、`cancelled`、`timeout`、`threw`、`badOutput`、`outOfMemory`、`engine` 等，英中），所以“停用插件的资源 `page.save` → `denied/pluginDisabled`”、“取消后的宿主调用 → `cancelled`”“超时 → `timeout`”都有文字；清单被拒的原因（`schema`、`apiVersion`、`mainMissing`…）也配了文字，插件树里 `stateReason` 会显示出来。测试：`i18n/index.test.tsx`（失败文字不空白、回退句、`denied/pluginDisabled`、`cancelled`、`timeout`）、`kernel-texts.test.ts`（全部原因都有英中文字）。
 - 内核还在修，我是按它文档里列出的名字对的；它提交后再合并时若有出入，改 `kernel-texts.ts` 的表和测试清单即可。没有再对着真内核实跑这几处。
 - 检查：`pnpm typecheck`、`pnpm lint`、`pnpm test`（143）通过；纯假数据 e2e 22 过 1 失败 1 跳过，失败的仍是早已知道的“tree: drag onto a group”偶发项（干净提交上也会失败）；截图已还原。
+
+## 界面检查后的修改（S-R1、S-R2、S-R3）
+- 已合并 `claude/week1-slice-3b4ae5`（9d51358）。
+- S-R1：原先只盯着“运行状态由进行中变结束”，运行很快时第一次读到的就是已结束，所以对已保存的页面不触发。改成 `pages/run-refresh.ts` 的 `useRunEndRefresh`：这个标签页开始的运行一旦结束（无论第一次读到的是什么状态）就让页面重新解析一次；只是从布局里恢复出来的旧运行不算。未保存的草稿放在界面状态里，不受影响。测试：`run-refresh.test.ts`（一读就是成功、先进行中再结束、旧运行不触发）。
+- S-R2：树的行不再带 `aria-disabled`（设计 D220：停用只是变灰，仍可打开）；`data-state="disabled"` 保留，灰色样式不变。其他状态（缺少插件、失效、冲突）本来就没有被挡。停用插件的资源页，内核没给原因时页面顶部显示一条通用说明（`state.*Hint`，英中）。测试：`design/components/tree.test.tsx`（四种状态的行都可点、无 `aria-disabled`）。**`e2e/round3.spec.ts:218` 里 `toHaveAttribute("aria-disabled","true")` 会因此失败，需要测试会话改成检查 `data-state="disabled"`。**
+- S-R3：对内核页面，运行参数只发用户在本标签页填过的（`pages/run-params.ts`），环境里的值只是占位；演示页仍发显示的值。测试：`run-params.test.ts`。
+- 对着真内核实跑（devhost + 临时目录 + 不提交的临时 Playwright 脚本，已删除）：已保存的示例查询上，环境里设了 `limit=42`，参数条显示占位 42 且输入框为空；填 `user_id=7`、编辑区再加一段未保存的文字后运行：结束后页面上“上次运行：200 / 347 行”自动更新，编辑区草稿和“未保存”标记还在；`run.get` 的 `params` 只有 `{"user_id":"7"}`。停用示例插件后，插件树节点（`data-state=disabled`、无 `aria-disabled`）用普通点击就能打开插件页，页面有“启用”；它的资源节点可点，资源页显示“插件已停用”徽标和说明；再启用恢复。顺带看到一条控制台警告：`Select is changing from uncontrolled to controlled`（出现在这个流程里，来源没有查，不影响功能，记在这里）。
+- 检查：`pnpm typecheck`、`pnpm lint`、`pnpm test`（149）通过；纯假数据 e2e 23 过 1 跳过；截图已还原。
