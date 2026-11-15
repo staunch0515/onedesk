@@ -62,7 +62,7 @@ async fn suite(env: &Env, c: &Client) {
     let node = &kids["nodes"][0];
     assert_eq!((node["key"].as_str().unwrap(), node["target"].as_str().unwrap()), (rid.as_str(), format!("resource:{rid}").as_str()));
     let menu: Vec<&str> = node["menu"].as_array().unwrap().iter().map(|m| m["id"].as_str().unwrap()).collect();
-    assert_eq!(menu, vec!["node.open", "node.rename", "test.alpha:probe", "node.delete"]);
+    assert_eq!(menu, vec!["node.open", "node.rename", "node.favorite", "test.alpha:probe", "node.delete"]);
     assert_eq!(c.ok("tree.path", json!({ "tree": "resources", "key": rid })).await, json!([gid, rid]));
 
     c.ok("tree.rename", json!({ "tree": "resources", "key": rid, "name": "Renamed" })).await;
