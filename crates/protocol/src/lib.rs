@@ -1082,6 +1082,341 @@ pub struct AuditFacets {
     pub operations: Vec<String>,
 }
 
+/* ================================================================== round 3 (D284–D292)
+   Runs (§8), page events (§9.3), plugin state and settings (§6.1, §7.1), command palette. */
+
+/// Method names of round 3; see docs/handoff/round3-plan.md §3.
+pub mod method3 {
+    pub const RUN_START: &str = "run.start";
+    pub const RUN_GET: &str = "run.get";
+    pub const RUN_CANCEL: &str = "run.cancel";
+    pub const RUN_LIST_FOR: &str = "run.listFor";
+    pub const RUN_TASKS: &str = "run.tasks";
+    pub const RUN_CLEAR_FINISHED: &str = "run.clearFinished";
+    pub const RUN_SET_KEPT: &str = "run.setKept";
+    pub const RUN_RENDER: &str = "run.render";
+    pub const PAGE_EVENT: &str = "page.event";
+    pub const PLUGIN_GET: &str = "plugin.get";
+    pub const PLUGIN_SET_ENABLED: &str = "plugin.setEnabled";
+    pub const PLUGIN_SET_SETTING: &str = "plugin.setSetting";
+    pub const PLUGIN_RELOAD: &str = "plugin.reload";
+    pub const COMMAND_PALETTE: &str = "command.palette";
+}
+
+/// Topics of round 3: `runs` (any run started, progressed or ended), `run:<id>`.
+pub mod topic3 {
+    pub const RUNS: &str = "runs";
+    pub const RUN: &str = "run:";
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum RunStatus {
+    Running,
+    Success,
+    Error,
+    Cancelled,
+}
+
+/// Output of a run (§8). Plugin output is validated against this type and against the
+/// output type the action declared in the manifest.
+#[skip_serializing_none]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(tag = "type", rename_all = "camelCase", rename_all_fields = "camelCase", deny_unknown_fields)]
+#[ts(export, optional_fields)]
+pub enum RunOutput {
+    Table {
+        columns: Vec<OutputColumn>,
+        rows: Vec<Vec<Value>>,
+        /// Rows the action produced; `rows` may hold fewer (see `truncated`).
+        total: u64,
+        truncated: bool,
+    },
+    Text {
+        text: String,
+    },
+    Link {
+        label: String,
+        target: String,
+    },
+    None,
+}
+
+#[skip_serializing_none]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, optional_fields)]
+pub struct RunProgress {
+    /// 0–1; absent = indeterminate.
+    pub fraction: Option<f64>,
+    /// Plugin-supplied text.
+    pub message: Option<String>,
+}
+
+#[skip_serializing_none]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, optional_fields)]
+pub struct RunSummary {
+    pub rows: Option<u64>,
+    pub message: Option<String>,
+    pub duration_ms: Option<i64>,
+}
+
+/// Why a run failed (§8: failures never leave the result area).
+#[skip_serializing_none]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, optional_fields)]
+pub struct RunError {
+    /// Kernel reasons: `unknownAction`, `pluginDisabled`, `invalidInput`, `denied`, `badOutput`,
+    /// `timeout`, `interrupted`, `pluginError`. The shell supplies their text.
+    pub code: String,
+    /// Text from the plugin (its thrown error); empty for kernel reasons.
+    pub message: String,
+    pub detail: Option<String>,
+    pub hint: Option<String>,
+}
+
+#[skip_serializing_none]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, optional_fields)]
+pub struct Run {
+    pub id: String,
+    /// Short running number shown to the user.
+    pub seq: i64,
+    /// Resource name at start, or the action's label key for runs without a resource.
+    pub title: String,
+    pub icon: String,
+    pub resource_id: Option<String>,
+    /// Full action id `<pluginId>:<name>`.
+    pub action: String,
+    pub action_label: Label,
+    pub tab_id: Option<String>,
+    pub env_id: Option<String>,
+    pub env_name: Option<String>,
+    pub actor: String,
+    /// `manual`, `scheduled`, `ai` (§4.1).
+    pub source: String,
+    pub started_at: i64,
+    pub ended_at: Option<i64>,
+    pub status: RunStatus,
+    pub params: BTreeMap<String, String>,
+    /// What was actually used, possibly unsaved (§8 input snapshot).
+    pub input: JsonMap,
+    pub progress: Option<RunProgress>,
+    pub summary: Option<RunSummary>,
+    pub error: Option<RunError>,
+    /// Carried by `run.get` only; lists leave it out.
+    pub output: Option<RunOutput>,
+    pub kept: bool,
+    /// Name given when kept.
+    pub kept_name: Option<String>,
+    /// Listed in the task panel until cleared.
+    pub in_task_panel: bool,
+    pub cancellable: bool,
+}
+
+#[skip_serializing_none]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, optional_fields)]
+pub struct RunStartParams {
+    /// Action id as the page declared it (`ActionDecl.id`) or the full id.
+    pub action: String,
+    pub resource_id: Option<String>,
+    /// The tab's target; with `resource_id` absent the action runs for this target.
+    pub target: String,
+    pub tab_id: String,
+    pub env_id: Option<String>,
+    /// Bound content as on screen (unsaved included), by bind path.
+    #[serde(default)]
+    pub input: JsonMap,
+    /// Values of the page's run parameters (`ViewField.param`).
+    #[serde(default)]
+    pub params: BTreeMap<String, String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct RunIdParams {
+    pub id: String,
+}
+
+#[skip_serializing_none]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, optional_fields)]
+pub struct RunSetKeptParams {
+    pub id: String,
+    pub kept: bool,
+    pub name: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct RunRenderParams {
+    pub id: String,
+    /// A result tab of type `view` declared by the page.
+    pub tab_id: String,
+}
+
+#[skip_serializing_none]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, optional_fields)]
+pub struct PageEventParams {
+    pub target: String,
+    /// Event name: an `ActionDecl.id` with role `event`, or a name a view node carries.
+    pub event: String,
+    pub context: Option<PageContext>,
+}
+
+/// What the plugin answers to a page event (§9.3): changes to the unsaved content.
+#[skip_serializing_none]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, optional_fields)]
+pub struct PageEventResult {
+    /// Bind path → new value; applied by the interface to the draft, still unsaved.
+    pub changes: Option<JsonMap>,
+    pub message: Option<Label>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct PluginVersion {
+    pub version: String,
+    pub installed_at: i64,
+    /// The version used for new resources in this workspace.
+    pub active: bool,
+    pub pinned: bool,
+    pub notes: String,
+}
+
+#[skip_serializing_none]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, optional_fields)]
+pub struct PluginSetting {
+    pub name: String,
+    pub label: Label,
+    /// `text`, `number`, `boolean` or `enum`.
+    pub kind: FieldKind,
+    pub value: String,
+    pub options: Option<Vec<FieldOption>>,
+    pub hint: Option<Label>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct PluginPermission {
+    /// `files`, `network`, `secrets`, `programs`, `resources`, `plugins` (§7.2 `requires`).
+    pub id: String,
+    /// What the manifest asks for, as text for display (hosts, names…); empty when a plain flag.
+    pub detail: String,
+    pub granted: bool,
+    pub required: bool,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct PluginProvides {
+    pub kinds: Vec<Label>,
+    pub actions: Vec<Label>,
+    pub trees: Vec<Label>,
+    pub result_tabs: Vec<Label>,
+    pub other: Vec<Label>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "kebab-case")]
+#[ts(export)]
+pub enum PluginLoadState {
+    /// Manifest valid and enabled (code is activated lazily).
+    Loaded,
+    Disabled,
+    /// Manifest rejected or activation failed; `message` says why.
+    Error,
+    NotInstalled,
+}
+
+#[skip_serializing_none]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, optional_fields)]
+pub struct PluginLoad {
+    pub state: PluginLoadState,
+    pub message: Option<String>,
+    /// When it was last activated, and how long activation took.
+    pub at: Option<i64>,
+    pub ms: Option<i64>,
+}
+
+/// The plugin page (§9.1: drawn by the shell, read straight from the protocol).
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct PluginDetail {
+    pub id: String,
+    pub name: Label,
+    pub icon: String,
+    pub description: Label,
+    pub author: String,
+    pub license: String,
+    pub homepage: String,
+    pub enabled: bool,
+    pub builtin: bool,
+    pub versions: Vec<PluginVersion>,
+    pub settings: Vec<PluginSetting>,
+    pub permissions: Vec<PluginPermission>,
+    pub provides: PluginProvides,
+    pub load: PluginLoad,
+    /// Resources of this workspace bound to this plugin.
+    pub resource_count: u64,
+    /// Folders granted to its `files` capability (D261).
+    pub folders: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct PluginSetEnabledParams {
+    pub plugin: String,
+    pub enabled: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct PluginSetSettingParams {
+    pub plugin: String,
+    pub name: String,
+    pub value: String,
+}
+
+#[skip_serializing_none]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, optional_fields)]
+pub struct PaletteCommand {
+    /// Executed with `command.execute`.
+    pub id: String,
+    pub label: Label,
+    pub icon: Option<String>,
+    /// Kernel commands: the group id `core`; plugin commands: the plugin's name.
+    pub group: Label,
+    pub shortcut: Option<Vec<String>>,
+    pub keywords: Option<Vec<String>>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
