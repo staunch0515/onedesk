@@ -156,6 +156,7 @@ fn blank(target: &str) -> PageDescriptor {
         values: JsonMap::new(),
         autosave: false,
         basis: None,
+        restrictions: None,
     }
 }
 
@@ -243,11 +244,13 @@ impl Inner {
         if crate::runs::json_size(&cx.draft) > crate::runs::MAX_INPUT_BYTES {
             return Err(err_p(ErrorCode::InvalidParams, &[("reason", "tooLarge")]));
         }
-        match parse_target(target) {
+        let mut d = match parse_target(target) {
             Target::Resource(id) => match self.read(|c| store::get(c, &id))? {
                 Some(r) if !self.hidden_tree(&r) => {
                     self.touch(&r.id).await;
-                    self.resolve_resource(target, &r, &cx, client).await
+                    // D321: the page shows resolved references under their targets' current names.
+                    let shown = self.display_row(&r)?;
+                    self.resolve_resource(target, &shown, &cx, client).await
                 }
                 _ => Ok(missing(target)),
             },
@@ -257,7 +260,15 @@ impl Inner {
             Target::New { kind, parent } => self.resolve_new(target, &kind, parent, &cx, client).await,
             Target::Node { tree, key } => self.resolve_node(target, &tree, &key, &cx, client).await,
             Target::Other => Ok(missing(target)),
-        }
+        }?;
+        // §6.3: the prohibitions in force for this page (workspace configuration + the tab's environment).
+        let env = match parse_target(target) {
+            Target::Run(id) => self.read(|c| store::run_get(c, &id))?.and_then(|r| r.env_id),
+            _ => cx.env_id.clone(),
+        };
+        let r = self.read(|c| crate::policy::restrictions(c, env.as_deref()))?;
+        d.restrictions = (!r.is_empty()).then_some(r);
+        Ok(d)
     }
 
     /// D290 / review #3: a disabled plugin's resources keep their data but cannot be edited.
@@ -558,6 +569,18 @@ impl Inner {
 
     pub async fn save(&self, p: PageSaveParams, client: Option<String>) -> KResult<PageSaveResult> {
         let cx = p.context.clone().unwrap_or_default();
+        // D327: a save with the tab's environment also obeys that environment's chain. Parameter
+        // tables themselves stay editable (otherwise the policy could not be turned off).
+        let params_only = !p.changes.is_empty() && p.changes.keys().all(|k| k.starts_with("params."));
+        if !params_only {
+            if let Err(e) = self.read(|c| Ok(crate::policy::check(c, crate::policy::READONLY, cx.env_id.as_deref())))? {
+                let _ = self
+                    .pipeline
+                    .execute(Actor::User, Command::Refused { op: "page.save".into(), object: p.target.clone(), error: e.clone() })
+                    .await;
+                return Err(e);
+            }
+        }
         match parse_target(&p.target) {
             Target::Resource(id) => {
                 let row = self.live_row(&id)?;

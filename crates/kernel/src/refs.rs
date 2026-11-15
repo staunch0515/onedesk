@@ -1,0 +1,301 @@
+//! References between resources (kernel-design §10, D321–D323).
+//!
+//! Two kinds of declared fields hold references: text fields with `"refs": true` (every
+//! `[[name]]` in them) and single-reference fields (`{ "type": "ref" }`, stored `{ "ref": id }`).
+//! The `refs` table is derived from them in the same transaction as the write; the text itself is
+//! never rewritten (D321) — readers get the targets' current names substituted.
+
+use std::collections::{BTreeSet, HashMap};
+
+use rusqlite::{params, Connection};
+use serde_json::Value;
+
+use crate::pipeline::KindRule;
+use crate::store::{self, Row, KIND_CONFIG, KIND_ENV, KIND_GROUP, KIND_PLUGIN_STATE, TREE_PLUGIN_STATE};
+
+/// Longest name between `[[` and `]]`, in characters.
+pub const MAX_LEN: usize = 200;
+
+/// One `[[text]]` in a string: byte range of the whole mark and the text inside.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Mark {
+    pub start: usize,
+    pub end: usize,
+    pub text: String,
+}
+
+/// Every reference mark, in order. `\[[` is not a mark; the text may not be empty, contain a line
+/// break, or be longer than `MAX_LEN` characters.
+pub fn marks(s: &str) -> Vec<Mark> {
+    let b = s.as_bytes();
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i + 1 < b.len() {
+        if b[i] == b'[' && b[i + 1] == b'[' && !(i > 0 && b[i - 1] == b'\\') {
+            let from = i + 2;
+            let Some(off) = s[from..].find("]]") else { break };
+            let inner = &s[from..from + off];
+            if inner.contains("[[") {
+                // A later `[[` opens the mark that this `]]` closes.
+                i += 1;
+                continue;
+            }
+            if inner.is_empty() || inner.contains(['\n', '\r']) || inner.chars().count() > MAX_LEN {
+                i += 2;
+                continue;
+            }
+            out.push(Mark { start: i, end: from + off + 2, text: inner.to_string() });
+            i = from + off + 2;
+            continue;
+        }
+        i += 1;
+    }
+    out
+}
+
+/// Groups, environments, configuration and plugin state nodes cannot be referenced.
+pub fn referenceable(r: &Row) -> bool {
+    ![KIND_GROUP, KIND_ENV, KIND_CONFIG, KIND_PLUGIN_STATE].contains(&r.kind.as_str()) && r.tree.as_deref() != Some(TREE_PLUGIN_STATE)
+}
+
+/// Tree, positions from the root down, id: orders rows as the tree shows them.
+type PathKey = (String, Vec<i64>, String);
+
+/// Position of a row in its tree, root first (for "the one nearest the top").
+fn path_key(conn: &Connection, r: &Row) -> rusqlite::Result<PathKey> {
+    let mut pos: Vec<i64> = store::ancestors(conn, r)?.iter().map(|a| a.pos).collect();
+    pos.push(r.pos);
+    Ok((r.tree.clone().unwrap_or_default(), pos, r.id.clone()))
+}
+
+/// D322: exact name (case-sensitive) of a live, referenceable resource; among several, the ones
+/// under the source's parent first, then the one nearest the top of the tree.
+pub fn resolve(conn: &Connection, name: &str, source: &Row) -> rusqlite::Result<Option<String>> {
+    let mut st = conn.prepare_cached(&format!("SELECT {} FROM resources WHERE name = ?1 AND deleted_at IS NULL", store::COLUMNS))?;
+    let all: Vec<Row> = st.query_map([name], store::from_sql)?.collect::<Result<Vec<_>, _>>()?;
+    let mut cands: Vec<Row> = all.into_iter().filter(referenceable).collect();
+    if cands.len() > 1 {
+        let near: Vec<Row> =
+            cands.iter().filter(|c| c.parent_id == source.parent_id && c.tree == source.tree).cloned().collect();
+        if !near.is_empty() {
+            cands = near;
+        }
+    }
+    let mut best: Option<(PathKey, String)> = None;
+    for c in &cands {
+        let k = path_key(conn, c)?;
+        if best.as_ref().is_none_or(|(b, _)| k < *b) {
+            best = Some((k, c.id.clone()));
+        }
+    }
+    Ok(best.map(|(_, id)| id))
+}
+
+/// One row of the `refs` table.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RefRow {
+    pub field: String,
+    pub seq: i64,
+    pub text: String,
+    pub target: Option<String>,
+}
+
+pub fn rows_of(conn: &Connection, source: &str) -> rusqlite::Result<Vec<RefRow>> {
+    let mut st = conn.prepare_cached("SELECT field, seq, text, target_id FROM refs WHERE source_id = ?1 ORDER BY field, seq")?;
+    let v = st.query_map([source], |r| Ok(RefRow { field: r.get(0)?, seq: r.get(1)?, text: r.get(2)?, target: r.get(3)? }))?;
+    v.collect()
+}
+
+/// Sources of live rows referring to `target` (its incoming references; deleted sources too when `all`).
+pub fn sources_of(conn: &Connection, target: &str, all: bool) -> rusqlite::Result<Vec<(String, RefRow)>> {
+    let cond = if all { "" } else { "AND r.deleted_at IS NULL" };
+    let mut st = conn.prepare_cached(&format!(
+        "SELECT f.source_id, f.field, f.seq, f.text, f.target_id FROM refs f JOIN resources r ON r.id = f.source_id
+         WHERE f.target_id = ?1 {cond} ORDER BY r.name, f.source_id, f.field, f.seq"
+    ))?;
+    let v = st.query_map([target], |r| {
+        Ok((r.get(0)?, RefRow { field: r.get(1)?, seq: r.get(2)?, text: r.get(3)?, target: r.get(4)? }))
+    })?;
+    v.collect()
+}
+
+pub fn replace(conn: &Connection, source: &str, field: &str, rows: &[RefRow]) -> rusqlite::Result<()> {
+    conn.execute("DELETE FROM refs WHERE source_id = ?1 AND field = ?2", params![source, field])?;
+    let mut st = conn.prepare_cached("INSERT INTO refs (source_id, field, seq, text, target_id) VALUES (?1, ?2, ?3, ?4, ?5)")?;
+    for r in rows {
+        st.execute(params![source, field, r.seq, r.text, r.target])?;
+    }
+    Ok(())
+}
+
+/// The declared reference fields of a rule, as `body.<key>`.
+pub fn fields_of(rule: &KindRule) -> Vec<String> {
+    rule.text_refs.iter().chain(&rule.ref_fields).map(|k| format!("body.{k}")).collect()
+}
+
+/// The id a single-reference value points at.
+pub fn ref_id(v: &Value) -> Option<&str> {
+    v.get("ref").and_then(Value::as_str).filter(|s| !s.is_empty())
+}
+
+/// Recomputes the references of `row` in the fields that `changed` lists (`None` = all declared).
+/// A `[[text]]` that was there before with a target that still exists keeps that target (references
+/// are by id, D323); others are resolved by name. Returns every target id before and after.
+pub fn update(conn: &Connection, rule: &KindRule, row: &Row, changed: Option<&[String]>) -> rusqlite::Result<BTreeSet<String>> {
+    let mut touched = BTreeSet::new();
+    let wanted = |f: &str| changed.is_none_or(|c| c.iter().any(|x| x == f || x == "body"));
+    for key in &rule.text_refs {
+        let field = format!("body.{key}");
+        if !wanted(&field) {
+            continue;
+        }
+        let old: Vec<RefRow> = rows_of(conn, &row.id)?.into_iter().filter(|r| r.field == field).collect();
+        let mut keep: HashMap<String, String> = HashMap::new();
+        for o in &old {
+            if let Some(t) = &o.target {
+                touched.insert(t.clone());
+                if !keep.contains_key(&o.text) && store::get_any(conn, t)?.is_some() {
+                    keep.insert(o.text.clone(), t.clone());
+                }
+            }
+        }
+        let text = row.body.get(key).and_then(Value::as_str).unwrap_or_default();
+        let mut rows = Vec::new();
+        for (i, m) in marks(text).into_iter().enumerate() {
+            let target = match keep.get(&m.text) {
+                Some(t) => Some(t.clone()),
+                None => resolve(conn, &m.text, row)?,
+            };
+            if let Some(t) = &target {
+                touched.insert(t.clone());
+            }
+            rows.push(RefRow { field: field.clone(), seq: i as i64, text: m.text, target });
+        }
+        replace(conn, &row.id, &field, &rows)?;
+    }
+    for key in &rule.ref_fields {
+        let field = format!("body.{key}");
+        if !wanted(&field) {
+            continue;
+        }
+        for o in rows_of(conn, &row.id)?.into_iter().filter(|r| r.field == field) {
+            touched.extend(o.target);
+        }
+        let mut rows = Vec::new();
+        if let Some(id) = row.body.get(key).and_then(ref_id) {
+            let target = store::get_any(conn, id)?.filter(referenceable);
+            let text = target.as_ref().map(|t| t.name.clone()).unwrap_or_else(|| id.to_string());
+            touched.extend(target.as_ref().map(|t| t.id.clone()));
+            rows.push(RefRow { field: field.clone(), seq: 0, text, target: target.map(|t| t.id) });
+        }
+        replace(conn, &row.id, &field, &rows)?;
+    }
+    Ok(touched)
+}
+
+/// Rebuilds the whole table from every stored resource (after migration 0008, or on demand).
+pub fn rebuild(conn: &Connection, rules: &HashMap<String, KindRule>) -> rusqlite::Result<usize> {
+    conn.execute("DELETE FROM refs", [])?;
+    let mut st = conn.prepare(&format!("SELECT {} FROM resources ORDER BY tree, parent_id, pos, id", store::COLUMNS))?;
+    let all: Vec<Row> = st.query_map([], store::from_sql)?.collect::<Result<_, _>>()?;
+    drop(st);
+    for r in &all {
+        if let Some(rule) = rules.get(&r.kind) {
+            update(conn, rule, r, None)?;
+        }
+    }
+    conn.query_row("SELECT count(*) FROM refs", [], |r| r.get::<_, i64>(0)).map(|n| n as usize)
+}
+
+/// What readers see (D321): in each text field with references, every resolved `[[old]]` shows the
+/// target's current name. The stored row is not changed.
+pub fn display(conn: &Connection, rule: Option<&KindRule>, row: &Row) -> rusqlite::Result<Row> {
+    let Some(rule) = rule.filter(|r| !r.text_refs.is_empty()) else { return Ok(row.clone()) };
+    let rows = rows_of(conn, &row.id)?;
+    let mut out = row.clone();
+    for key in &rule.text_refs {
+        let field = format!("body.{key}");
+        let Some(text) = row.body.get(key).and_then(Value::as_str) else { continue };
+        let mine: Vec<&RefRow> = rows.iter().filter(|r| r.field == field).collect();
+        let mut s = String::with_capacity(text.len());
+        let mut at = 0;
+        for (i, m) in marks(text).into_iter().enumerate() {
+            let Some(r) = mine.get(i).filter(|r| r.text == m.text) else { continue };
+            let Some(t) = r.target.as_deref().map(|t| store::get_any(conn, t)).transpose()?.flatten() else { continue };
+            s.push_str(&text[at..m.start]);
+            s.push_str("[[");
+            s.push_str(&t.name);
+            s.push_str("]]");
+            at = m.end;
+        }
+        s.push_str(&text[at..]);
+        if s != text {
+            out.body.insert(key.clone(), Value::String(s));
+        }
+    }
+    Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn texts(s: &str) -> Vec<String> {
+        marks(s).into_iter().map(|m| m.text).collect()
+    }
+
+    #[test]
+    fn marks_are_found_in_order_with_escapes_lines_and_limits() {
+        assert_eq!(texts("a [[One]] b [[Two]] [[One]]"), ["One", "Two", "One"]);
+        assert_eq!(texts(r"\[[Not]] but [[Yes]]"), ["Yes"]);
+        assert_eq!(texts("[[across\nlines]] [[ok]]"), ["ok"]);
+        assert_eq!(texts("[[]] [[x]]"), ["x"]);
+        let long = "x".repeat(MAX_LEN + 1);
+        assert_eq!(texts(&format!("[[{long}]] [[fine]]")), ["fine"]);
+        let edge = "é".repeat(MAX_LEN);
+        assert_eq!(texts(&format!("[[{edge}]]")), vec![edge]);
+        assert_eq!(texts("[[a [[b]] c]]"), ["b"]);
+        assert_eq!(texts("[[unclosed"), Vec::<String>::new());
+        let m = &marks("ab[[c]]d")[0];
+        assert_eq!((m.start, m.end), (2, 7));
+    }
+}
+
+#[cfg(test)]
+mod rebuild_tests {
+    use super::*;
+    use crate::pipeline::KindRule;
+    use rusqlite::Connection;
+
+    fn insert(conn: &Connection, id: &str, kind: &str, parent: Option<&str>, pos: i64, name: &str, body: Value) {
+        conn.execute(
+            "INSERT INTO resources (id, kind, tree, parent_id, pos, name, body, rev, created_at, created_by, updated_at, updated_by)
+             VALUES (?1, ?2, 'resources', ?3, ?4, ?5, ?6, 1, 0, 'user', 0, 'user')",
+            params![id, kind, parent, pos, name, body.to_string()],
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn rebuild_fills_the_table_from_every_resource() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        crate::workspace::migrate(&mut conn).unwrap();
+        let mut rules = crate::pipeline::core_rules();
+        rules.insert("p:doc".into(), KindRule { text_refs: vec!["text".into()], ref_fields: vec!["to".into()], ..Default::default() });
+        insert(&conn, "g", KIND_GROUP, None, 0, "Target", serde_json::json!({}));
+        insert(&conn, "t", "p:doc", None, 1, "Target", serde_json::json!({}));
+        insert(&conn, "s", "p:doc", None, 2, "Source", serde_json::json!({ "text": "[[Target]] [[None]]", "to": { "ref": "t" } }));
+        conn.execute("INSERT INTO refs (source_id, field, seq, text, target_id) VALUES ('stale', 'body.text', 0, 'x', NULL)", []).unwrap();
+        assert_eq!(rebuild(&conn, &rules).unwrap(), 3);
+        let rows = rows_of(&conn, "s").unwrap();
+        let got: Vec<(&str, i64, &str, Option<&str>)> =
+            rows.iter().map(|r| (r.field.as_str(), r.seq, r.text.as_str(), r.target.as_deref())).collect();
+        assert_eq!(got, [("body.text", 0, "Target", Some("t")), ("body.text", 1, "None", None), ("body.to", 0, "Target", Some("t"))]);
+        assert!(rows_of(&conn, "stale").unwrap().is_empty());
+        // What readers see after the target is renamed.
+        conn.execute("UPDATE resources SET name = 'Renamed' WHERE id = 't'", []).unwrap();
+        let s = store::get(&conn, "s").unwrap().unwrap();
+        let shown = display(&conn, rules.get("p:doc"), &s).unwrap();
+        assert_eq!(shown.body["text"], "[[Renamed]] [[None]]");
+    }
+}

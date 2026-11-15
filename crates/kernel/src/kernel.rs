@@ -226,6 +226,7 @@ impl Inner {
                 .unwrap_or_default(),
             ),
             Command::Create(_) | Command::Undelete { .. } => Some(vec![]),
+            Command::Import(plan) => Some(plan.items.iter().filter(|i| i.update).map(|i| i.id.clone()).collect()),
             _ => None,
         };
         let granted_before: Option<HashMap<String, BTreeSet<String>>> = ids.map(|ids| {
@@ -349,6 +350,9 @@ impl Inner {
                 Ok(Value::Null)
             }
             _ => {
+                if crate::transfer::METHODS.contains(&m) {
+                    return self.handle5(m, params).await.unwrap_or_else(|| Err(err_p(ErrorCode::UnknownMethod, &[("method", m)])));
+                }
                 if crate::versions::METHODS.contains(&m) {
                     return self.handle4(m, params).await.unwrap_or_else(|| Err(err_p(ErrorCode::UnknownMethod, &[("method", m)])));
                 }
@@ -495,6 +499,8 @@ impl Inner {
     }
 
     pub fn resource(&self, r: &Row) -> KResult<Resource> {
+        // D321: resolved `[[old]]` marks read as the target's current name.
+        let r = &self.display_row(r)?;
         let meta = self.row_meta(r);
         let location = self.read(|c| store::ancestors(c, r))?.into_iter().map(|a| a.name).collect();
         Ok(Resource {
