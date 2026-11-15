@@ -286,13 +286,15 @@ export interface StripFieldProps {
   /** Where the value comes from when the user has not typed one ("From environment X"); shown as a small marker with a tooltip. */
   source?: string;
   wide?: boolean;
+  /** Takes the room the other fields leave (a long text such as an address). */
+  fill?: boolean;
   htmlFor?: string;
   children: ReactNode;
 }
 
-export function StripField({ label, hint, source, wide, htmlFor, children }: StripFieldProps) {
+export function StripField({ label, hint, source, wide, fill, htmlFor, children }: StripFieldProps) {
   return (
-    <div className={cx("od-strip__field", wide && "od-strip__field--wide")}>
+    <div className={cx("od-strip__field", wide && "od-strip__field--wide", fill && "od-strip__field--fill")}>
       <div className="od-strip__label-row">
         <label className="od-strip__label od-mono" htmlFor={htmlFor}>
           {label}

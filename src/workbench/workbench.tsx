@@ -42,7 +42,10 @@ export function Workbench({ settings, onSetting: storeSetting }: WorkbenchProps)
   const sideResize = useResize("sideWidth", 1);
 
   const tree = trees.data?.find((x) => x.id === activity) ?? trees.data?.[0];
-  const firstNew = newItems.data?.find((i) => !i.disabled)?.id;
+  // The default "new": the first thing that is not a group or a core folder-like entry (groups come first with a real kernel).
+  const usable = newItems.data?.filter((i) => !i.disabled) ?? [];
+  const firstItem = usable.find((i) => !/^(node|env|config)\./.test(i.id)) ?? usable[0];
+  const firstNew = firstItem?.id;
   const newDefault = () => {
     if (firstNew) void actions.command(firstNew, { tree: activity, nodeKey: store.get().selected[activity] ?? null });
   };
@@ -196,7 +199,7 @@ export function Workbench({ settings, onSetting: storeSetting }: WorkbenchProps)
         </>
       )}
       <WorkbenchMain label={t("main.label")} tabs={<TabsPart />}>
-        {activeTab ? <PageHost key={activeTab.id} tab={activeTab} /> : <NoTabs onNew={newDefault} />}
+        {activeTab ? <PageHost key={activeTab.id} tab={activeTab} /> : <NoTabs onNew={newDefault} label={client.secrets && firstItem ? tx(firstItem.label) : undefined} />}
       </WorkbenchMain>
 
       <CommandPalette

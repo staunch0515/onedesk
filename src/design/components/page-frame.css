@@ -351,6 +351,12 @@
   min-width: 0;
 }
 
+.od-strip__field--fill {
+  flex: 1 1 var(--strip-field-width-wide);
+  width: auto;
+  min-width: var(--strip-field-width-wide);
+}
+
 .od-strip__field--wide {
   width: var(--strip-field-width-wide);
 }

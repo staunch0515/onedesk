@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Badge, Banner, Button, Dialog, FormField, Input, Pane, Text, useToast } from "../../design";
+import { Badge, Banner, Button, Dialog, FormField, Input, Pane, Text, TextBlock, useToast } from "../../design";
 import { useI18n } from "../i18n";
 import type { ProtocolClient } from "../protocol";
 import type { Actions } from "../state/context";
@@ -113,9 +113,16 @@ export function InstallDialogs() {
         }
       >
         {preview && !preview.valid && (
-          <Banner tone="danger" title={t("install.invalid")}>
-            {preview.problem ? error(preview.problem) : t("install.invalidUnknown")}
-          </Banner>
+          <Pane gap="sm">
+            <Banner tone="danger" title={t("install.invalid")}>
+              {preview.problem ? error(preview.problem) : t("install.invalidUnknown")}
+            </Banner>
+            {preview.problem?.detail && (
+              <TextBlock variant="code" tone="danger">
+                {preview.problem.detail}
+              </TextBlock>
+            )}
+          </Pane>
         )}
         {preview?.valid && (
           <Pane gap="md">

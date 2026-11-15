@@ -56,13 +56,13 @@ export function SecretsPage({ tab }: { tab: TabState }) {
   };
 
   const columns: Array<DataGridColumn<SecretInfo>> = [
-    { key: "name", header: t("secrets.name"), width: 260, mono: true, value: (s) => s.name },
-    { key: "updated", header: t("secrets.updated"), width: 168, value: (s) => s.updatedAt, render: (s) => dateTime(s.updatedAt) },
-    { key: "usedBy", header: t("secrets.usedBy"), width: 320, value: (s) => s.usedBy.join(", ") },
+    { key: "name", header: t("secrets.name"), width: 180, mono: true, value: (s) => s.name },
+    { key: "updated", header: t("secrets.updated"), width: 150, value: (s) => s.updatedAt, render: (s) => dateTime(s.updatedAt) },
+    { key: "usedBy", header: t("secrets.usedBy"), width: 200, value: (s) => s.usedBy.join(", ") },
     {
       key: "actions",
       header: "",
-      width: 260,
+      width: 170,
       sortable: false,
       resizable: false,
       render: (s) => (

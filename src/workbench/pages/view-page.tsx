@@ -257,6 +257,7 @@ export function ViewPage({ tab, descriptor: initial }: { tab: TabState; descript
                 hint={f.hint ? tx(f.hint) : undefined}
                 source={f.param && f.envSource && !tab.params[f.name] ? t("field.fromEnv", { name: f.envSource }) : undefined}
                 wide={f.kind === "date" || f.kind === "datetime"}
+                fill={f.fill}
                 htmlFor={id}
               >
                 <FieldControl

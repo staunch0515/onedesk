@@ -80,7 +80,7 @@ function ResolvedPage({ tab }: { tab: TabState }) {
 }
 
 /** Shown when no tab is open: one sentence about what to do next, no illustration (ui-spec §7). */
-export function NoTabs({ onNew }: { onNew: () => void }) {
+export function NoTabs({ onNew, label }: { onNew: () => void; label?: string }) {
   const { store } = useWorkbench();
   const { t } = useI18n();
   return (
@@ -91,7 +91,7 @@ export function NoTabs({ onNew }: { onNew: () => void }) {
         action={
           <Pane direction="row" gap="sm" align="center">
             <Button variant="primary" icon="plus" onClick={onNew}>
-              {t("empty.new")}
+              {label ?? t("empty.new")}
             </Button>
             <Button icon="search" onClick={() => store.set((s) => ({ searchFocus: s.searchFocus + 1 }))}>
               {t("empty.search")}
