@@ -6,7 +6,6 @@
  * The UI knows no resource kind: it draws what these shapes describe.
  */
 import type {
-  ActionDecl as KernelActionDecl,
   CommandContext as KernelCommandContext,
   CommandEffect as KernelEffect,
   PluginDetail as KernelPluginDetail,
@@ -21,6 +20,7 @@ import type {
 } from "./generated";
 
 export type {
+  ActionDecl,
   ActionRole,
   AuditFacets,
   AuditFilter,
@@ -87,12 +87,6 @@ export type PageDescriptor = Omit<KernelPageDescriptor, "view" | "values"> & { v
 
 export type PageSaveResult = { page: PageDescriptor };
 
-/**
- * Round 3: an action declaration may name the plugin action it runs (`action`, full id) and ask for a
- * confirmation before running (`confirm`). Becomes the generated type once the protocol has the fields (round3-plan §6).
- */
-export type ActionDecl = KernelActionDecl & { action?: string; confirm?: Label };
-
 /** Demo only: the workspace switcher list (the kernel has one workspace in week 1). */
 export interface WorkspaceEntry {
   id: string;
@@ -112,7 +106,7 @@ export type ViewNode = KernelViewNode | PlaceholderNode;
  */
 export type CommandEffect =
   | Exclude<KernelEffect, { type: "open" }>
-  | { type: "open"; target: string; state?: { params?: Record<string, string>; envId?: string | null } }
+  | (Extract<KernelEffect, { type: "open" }> & { state?: { params?: Record<string, string>; envId?: string | null } })
   | { type: "set-tab-env"; envId: string }
   | { type: "show-tasks" };
 

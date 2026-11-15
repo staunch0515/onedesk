@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { EventMessage } from "../generated";
 import { KernelError } from "../errors";
-import { createKernelClient, normalizeEffects } from "./real-client";
+import { createKernelClient } from "./real-client";
 import type { Transport } from "./transport";
 
 function fakeTransport(answers: Record<string, (params: unknown) => unknown>) {
@@ -106,10 +106,12 @@ describe("kernel client", () => {
     expect(calls[1]?.params).toEqual({ action: "run", resourceId: "x", target: "resource:x", tabId: "t", input: { "body.limit": 5 }, params: { id: "7" } });
   });
 
-  it("folds an open effect's params and envId into the shell's state", () => {
-    expect(normalizeEffects([{ type: "open", target: "resource:x", params: { a: "1" }, envId: "e1" } as never, { type: "reload" }])).toEqual([
-      { type: "open", target: "resource:x", state: { params: { a: "1" }, envId: "e1" } },
-      { type: "reload" },
-    ]);
+  it("hands the interface language to run.start and run.render", async () => {
+    const { transport, calls } = fakeTransport({ hello, "run.start": () => "r1", "run.render": () => [] });
+    const client = await createKernelClient(transport, () => "zh-CN");
+    await client.run.start({ action: "run", target: "resource:x", tabId: "t", envId: null, input: {}, params: {} });
+    await client.run.render("r1", "final");
+    expect(calls[1]?.params).toMatchObject({ locale: "zh-CN" });
+    expect(calls[2]?.params).toEqual({ id: "r1", tabId: "final", locale: "zh-CN" });
   });
 });

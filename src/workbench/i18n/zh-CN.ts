@@ -9,6 +9,7 @@ export const zhCN: Partial<Record<MessageKey, string>> = {
   "common.notifications": "通知（{hotkey}）",
   "common.notInPrototype": "原型里没有这一项",
   "error.title": "操作没有成功",
+  "plugin.loadOkPlain": "已加载",
   "plugin.grantFolder": "授权文件夹…",
   "plugin.folders": "已授权的文件夹",
   "plugin.foldersHint": "插件可以读写这些文件夹里的文件。",

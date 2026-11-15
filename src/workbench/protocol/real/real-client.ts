@@ -28,19 +28,6 @@ export interface KernelClient {
   connection(): ConnectionState;
 }
 
-/**
- * `open` effects from the kernel may carry the initial page state as `params` / `envId` (§9.1);
- * the shell keeps it under `state`.
- */
-export function normalizeEffects(effects: CommandEffect[]): CommandEffect[] {
-  return effects.map((e) => {
-    const open = e as { type: string; target?: string; params?: Record<string, string>; envId?: string; state?: unknown };
-    if (open.type !== "open" || (open.params === undefined && open.envId === undefined)) return e;
-    const { params, envId, ...rest } = open;
-    return { ...rest, state: { ...(params ? { params } : {}), ...(envId !== undefined ? { envId } : {}) } } as CommandEffect;
-  });
-}
-
 /** Removes `null` and `undefined` members: the kernel's optional fields are absent, not null. */
 /** The wire type of a parameter `basis` is the node's numeric `rev`; the UI carries it as text. */
 const rev = (basis?: string) => (basis === undefined || basis === "" ? undefined : Number(basis));
@@ -117,19 +104,19 @@ export async function createKernelClient(transport: Transport, locale?: () => st
       event: async (target, event, context) => call<PageEventResult>("page.event", compact({ target, event, context: pageContext(context, locale?.()) })),
     },
     run: {
-      start: (request) => call<string>("run.start", compact({ action: request.action, resourceId: request.resourceId, target: request.target, tabId: request.tabId, envId: request.envId, input: request.input, params: request.params })),
+      start: (request) => call<string>("run.start", compact({ locale: locale?.(), action: request.action, resourceId: request.resourceId, target: request.target, tabId: request.tabId, envId: request.envId, input: request.input, params: request.params })),
       get: async (id) => ((await call<Run | null>("run.get", { id })) ?? null),
       cancel: async (id) => void (await call("run.cancel", { id })),
       listFor: (resourceId) => call<Run[]>("run.listFor", { id: resourceId }),
       tasks: () => call<Run[]>("run.tasks"),
       clearFinished: async () => void (await call("run.clearFinished")),
-      render: (id, tabId) => call<ViewNode[]>("run.render", { id, tabId }),
+      render: (id, tabId) => call<ViewNode[]>("run.render", compact({ id, tabId, locale: locale?.() })),
       setKept: async (id, kept) => void (await call("run.setKept", { id, kept })),
     },
     command: {
       palette: () => call<PaletteCommand[]>("command.palette"),
       newItems: () => call<NewItem[]>("command.newItems"),
-      execute: async (id, context: CommandContext) => normalizeEffects(await call<CommandEffect[]>("command.execute", { id, context: compact({ locale: locale?.(), ...context }) })),
+      execute: (id, context: CommandContext) => call<CommandEffect[]>("command.execute", { id, context: compact({ locale: locale?.(), ...context }) }),
     },
     plugin: {
       grants: (plugin) => call<PluginGrants>("plugin.grants", { plugin }),
