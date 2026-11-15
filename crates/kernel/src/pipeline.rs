@@ -91,6 +91,11 @@ impl Changes {
         Ok(c)
     }
 
+    /// Only parameter changes (a configuration or environment page's own form).
+    pub fn params_only(&self) -> bool {
+        !self.params.is_empty() && Changes { params: Default::default(), ..self.clone() }.is_empty()
+    }
+
     pub fn is_empty(&self) -> bool {
         self.name.is_none()
             && self.description.is_none()
@@ -223,6 +228,10 @@ pub enum Command {
     CountedAudit { run: Option<String>, op: String, object: String, summary: Value },
     /// A plugin's key-value storage, per plugin and version (D286); not audited.
     Storage { plugin: String, version: String, key: String, value: Option<String> },
+    /// Round 5 (§3.5): everything of one import, in one transaction.
+    Import(Box<crate::transfer::ImportPlan>),
+    /// Recomputes the whole `refs` table (§10: it can be rebuilt at any time).
+    RebuildRefs,
 }
 
 /// What the kernel needs to know about a kind to validate writes.
@@ -233,6 +242,10 @@ pub struct KindRule {
     pub accepts: Vec<String>,
     /// D311: body keys only a user may write (network-granting addresses, secret references).
     pub protected: Vec<String>,
+    /// Round 5 (§10): body keys of text fields holding `[[name]]` references.
+    pub text_refs: Vec<String>,
+    /// Body keys of single-reference fields (`{ "ref": id }`).
+    pub ref_fields: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -242,12 +255,17 @@ pub struct Outcome {
     pub changed: bool,
     /// Every row the command touched, after the change (deleted rows included).
     pub rows: Vec<Row>,
+    /// Other resources whose references changed (§10: both ends get `resource:<id>`).
+    pub touched: Vec<String>,
 }
 
 impl Outcome {
     /// `tree:<id>` and `resource:<id>` topics to publish after commit.
     pub fn topics(&self) -> Vec<String> {
         let mut t = BTreeSet::new();
+        for id in &self.touched {
+            t.insert(format!("{}{id}", onedesk_protocol::topic::RESOURCE));
+        }
         for r in &self.rows {
             if let Some(tree) = &r.tree {
                 t.insert(format!("{}{tree}", onedesk_protocol::topic::TREE));
@@ -393,9 +411,13 @@ impl Writer {
     fn transact(&mut self, actor: &Actor, cmd: Command) -> KResult<Outcome> {
         let rules = self.rules.read().unwrap().clone();
         let tx = self.conn.transaction().map_err(sql)?;
-        let out = {
-            let mut cx = Tx { tx: &tx, actor, rules: &rules, at: now_ms() };
-            match cmd {
+        let mut out = {
+            let mut cx = Tx { tx: &tx, actor, rules: &rules, at: now_ms(), touched: Default::default() };
+            // D327: `protection.readonly` of the workspace configuration refuses every content write.
+            if blocked_by_readonly(&cmd) {
+                crate::policy::check(&tx, crate::policy::READONLY, None)?;
+            }
+            let out = match cmd {
                 Command::Create(n) => cx.create(n)?,
                 Command::Update { id, changes, basis } => cx.update(&id, &changes, basis)?,
                 Command::Params { id, changes, basis, op } => cx.update_as(&id, &changes, basis, "update", None, &op)?,
@@ -430,7 +452,7 @@ impl Writer {
                         return Err(not_found("run"));
                     }
                     cx.audit(if kept { "run.keep" } else { "run.unkeep" }, &id, &json!({}))?;
-                    Outcome { id: Some(id), changed: true, rows: vec![] }
+                    Outcome { id: Some(id), changed: true, rows: vec![], ..Default::default() }
                 }
                 Command::RunClearFinished => {
                     let n = cx.tx.execute("UPDATE runs SET in_task_panel = 0 WHERE status <> 'running' AND in_task_panel = 1", []).map_err(sql)?;
@@ -474,9 +496,19 @@ impl Writer {
                     .map_err(sql)?;
                     Outcome { changed: true, ..Default::default() }
                 }
+                Command::Import(plan) => cx.import(*plan)?,
+                Command::RebuildRefs => {
+                    crate::refs::rebuild(cx.tx, cx.rules).map_err(sql)?;
+                    Outcome { changed: true, ..Default::default() }
+                }
                 Command::UiSet { .. } => unreachable!("handled above"),
-            }
+            };
+            let touched = std::mem::take(&mut *cx.touched.borrow_mut());
+            (out, touched)
         };
+        let ids: BTreeSet<&String> = out.0.rows.iter().map(|r| &r.id).collect();
+        out.0.touched = out.1.into_iter().filter(|t| !ids.contains(t)).collect();
+        let out = out.0;
         tx.commit().map_err(sql)?;
         Ok(out)
     }
@@ -509,17 +541,63 @@ fn describe(cmd: &Command) -> (String, String) {
         Command::UndoUpgrade { batch, .. } => ("plugin.undoUpgrade".into(), batch.clone()),
         Command::SecretName { name, present, .. } => ((if *present { "secrets.set" } else { "secrets.delete" }).into(), name.clone()),
         Command::CountedAudit { op, object, .. } => (op.clone(), object.clone()),
+        Command::Import(plan) => ("workspace.import".into(), plan.source.clone()),
+        Command::RebuildRefs => ("refs.rebuild".into(), String::new()),
     }
 }
 
-struct Tx<'a> {
-    tx: &'a Transaction<'a>,
-    actor: &'a Actor,
-    rules: &'a HashMap<String, KindRule>,
-    at: i64,
+/// D327: what `protection.readonly` refuses. Not: parameters themselves (else it could not be
+/// turned off), secrets, interface state, favourites, audit, plugin state (enable, settings,
+/// folders), runs already going, and a version switch that rewrites nothing.
+fn blocked_by_readonly(cmd: &Command) -> bool {
+    match cmd {
+        Command::Create(_)
+        | Command::Move { .. }
+        | Command::Delete { .. }
+        | Command::Restore { .. }
+        | Command::Undelete { .. }
+        | Command::Purge { .. }
+        | Command::UndoUpgrade { .. }
+        | Command::RunInsert(_)
+        | Command::Storage { .. }
+        | Command::Import(_) => true,
+        Command::Upgrade { items, .. } => !items.is_empty(),
+        Command::Update { changes, .. } => !changes.params_only(),
+        _ => false,
+    }
+}
+
+pub(crate) struct Tx<'a> {
+    pub tx: &'a Transaction<'a>,
+    pub actor: &'a Actor,
+    pub rules: &'a HashMap<String, KindRule>,
+    pub at: i64,
+    /// Resources whose references changed besides the rows of the outcome.
+    pub touched: std::cell::RefCell<BTreeSet<String>>,
 }
 
 impl Tx<'_> {
+    /// Recomputes the references of `row` in the fields that changed (`None` = all), §10.
+    pub fn refs_after(&self, row: &Row, changed: Option<&[String]>) -> KResult<()> {
+        if let Some(rule) = self.rules.get(&row.kind) {
+            let t = crate::refs::update(self.tx, rule, row, changed).map_err(sql)?;
+            self.touched.borrow_mut().extend(t);
+        }
+        Ok(())
+    }
+
+    /// Both ends of `id`'s references change how they look (rename, delete, restore, purge).
+    pub fn touch_ends(&self, id: &str) -> KResult<()> {
+        let mut t = self.touched.borrow_mut();
+        for (src, _) in crate::refs::sources_of(self.tx, id, true).map_err(sql)? {
+            t.insert(src);
+        }
+        for r in crate::refs::rows_of(self.tx, id).map_err(sql)? {
+            t.extend(r.target);
+        }
+        Ok(())
+    }
+
     fn rule(&self, kind: &str) -> KResult<&KindRule> {
         self.rules.get(kind).ok_or_else(|| err_p(ErrorCode::Invalid, &[("reason", "unknownKind"), ("kind", kind)]))
     }
@@ -540,7 +618,7 @@ impl Tx<'_> {
         }
     }
 
-    fn live(&self, id: &str) -> KResult<Row> {
+    pub(crate) fn live(&self, id: &str) -> KResult<Row> {
         store::get(self.tx, id).map_err(sql)?.ok_or_else(|| not_found("resource"))
     }
 
@@ -559,7 +637,7 @@ impl Tx<'_> {
         }
     }
 
-    fn next_pos(&self, tree: Option<&str>, parent: Option<&str>) -> KResult<i64> {
+    pub(crate) fn next_pos(&self, tree: Option<&str>, parent: Option<&str>) -> KResult<i64> {
         self.tx
             .query_row(
                 "SELECT COALESCE(MAX(pos) + 1, 0) FROM resources WHERE tree IS ?1 AND parent_id IS ?2 AND deleted_at IS NULL",
@@ -569,7 +647,7 @@ impl Tx<'_> {
             .map_err(sql)
     }
 
-    fn insert(&self, r: &Row) -> KResult<()> {
+    pub(crate) fn insert(&self, r: &Row) -> KResult<()> {
         self.tx
             .execute(
                 &format!(
@@ -615,7 +693,7 @@ impl Tx<'_> {
         Ok(())
     }
 
-    fn save(&self, r: &Row) -> KResult<()> {
+    pub(crate) fn save(&self, r: &Row) -> KResult<()> {
         self.tx
             .execute(
                 "UPDATE resources SET parent_id=?2, pos=?3, name=?4, description=?5, tags=?6, body=?7, rev=?8,
@@ -639,11 +717,11 @@ impl Tx<'_> {
         self.index(r)
     }
 
-    fn revision(&self, r: &Row, op: &str, fields: &[String]) -> KResult<()> {
+    pub(crate) fn revision(&self, r: &Row, op: &str, fields: &[String]) -> KResult<()> {
         self.revision_from(r, op, fields, None)
     }
 
-    fn revision_from(&self, r: &Row, op: &str, fields: &[String], restored_from: Option<&str>) -> KResult<()> {
+    pub(crate) fn revision_from(&self, r: &Row, op: &str, fields: &[String], restored_from: Option<&str>) -> KResult<()> {
         self.tx
             .execute(
                 "INSERT INTO revisions (resource_id, rev, at, actor, op, fields, snapshot, restored_from)
@@ -663,7 +741,7 @@ impl Tx<'_> {
         Ok(())
     }
 
-    fn audit(&self, op: &str, object: &str, summary: &Value) -> KResult<()> {
+    pub(crate) fn audit(&self, op: &str, object: &str, summary: &Value) -> KResult<()> {
         self.tx
             .execute(
                 "INSERT INTO audit (at, actor, op, object, summary, result) VALUES (?1,?2,?3,?4,?5,'ok')",
@@ -690,7 +768,7 @@ impl Tx<'_> {
         Ok(())
     }
 
-    fn create(&mut self, n: NewResource) -> KResult<Outcome> {
+    pub(crate) fn create(&mut self, n: NewResource) -> KResult<Outcome> {
         self.permit(&n.kind)?;
         self.guard_protected(&n.kind, None, &n.body)?;
         let rule_tree = self.rule(&n.kind)?.tree.clone();
@@ -722,11 +800,12 @@ impl Tx<'_> {
             deleted_at: None,
         };
         self.insert(&row)?;
+        self.refs_after(&row, None)?;
         let fields: Vec<String> = vec!["*".into()];
         self.revision(&row, "create", &fields)?;
         // No names or content in audit rows: they outlive a permanent deletion (§3.4).
         self.audit("resource.create", &row.id, &json!({ "kind": row.kind }))?;
-        Ok(Outcome { id: Some(row.id.clone()), changed: true, rows: vec![row] })
+        Ok(Outcome { id: Some(row.id.clone()), changed: true, rows: vec![row], ..Default::default() })
     }
 
     fn update(&mut self, id: &str, changes: &Changes, basis: Option<i64>) -> KResult<Outcome> {
@@ -774,15 +853,19 @@ impl Tx<'_> {
         self.guard_protected(&row.kind, Some(&before_body), &row.body)?;
         changed.extend(self.apply_params(&mut row, &changes.params)?);
         if changed.is_empty() {
-            return Ok(Outcome { id: Some(row.id.clone()), changed: false, rows: vec![] });
+            return Ok(Outcome { id: Some(row.id.clone()), changed: false, rows: vec![], ..Default::default() });
         }
         row.rev += 1;
         row.updated_at = self.at;
         row.updated_by = self.actor.as_text();
         self.save(&row)?;
+        self.refs_after(&row, Some(&changed))?;
+        if changed.iter().any(|f| f == "name") {
+            self.touch_ends(&row.id)?;
+        }
         self.revision_from(&row, op, &changed, restored_from)?;
         self.audit(audit_op, &row.id, &audit_fields(&changed))?;
-        Ok(Outcome { id: Some(row.id.clone()), changed: true, rows: vec![row] })
+        Ok(Outcome { id: Some(row.id.clone()), changed: true, rows: vec![row], ..Default::default() })
     }
 
     fn move_to(&mut self, id: &str, dest: MoveDest) -> KResult<Outcome> {
@@ -851,7 +934,7 @@ impl Tx<'_> {
             changed.push("pos".to_string());
         }
         if changed.is_empty() {
-            return Ok(Outcome { id: Some(row.id.clone()), changed: false, rows: vec![] });
+            return Ok(Outcome { id: Some(row.id.clone()), changed: false, rows: vec![], ..Default::default() });
         }
         row.rev += 1;
         row.updated_at = self.at;
@@ -862,7 +945,7 @@ impl Tx<'_> {
         }
         self.revision(&row, "move", &changed)?;
         self.audit("resource.move", &row.id, &json!({ "parent": row.parent_id, "pos": row.pos }))?;
-        Ok(Outcome { id: Some(row.id.clone()), changed: true, rows: vec![row] })
+        Ok(Outcome { id: Some(row.id.clone()), changed: true, rows: vec![row], ..Default::default() })
     }
 
     fn grant(&mut self, plugin: &str, folder: &str, add: bool) -> KResult<Outcome> {
@@ -1059,12 +1142,13 @@ impl Tx<'_> {
             self.save(r)?;
             self.tx.execute("UPDATE resources SET delete_batch = NULL WHERE id = ?1", [&r.id]).map_err(sql)?;
             self.revision(r, "undelete", &fields)?;
+            self.touch_ends(&r.id)?;
         }
         for r in batch.iter().filter(|r| r.kind == KIND_CONFIG) {
             self.check_config_node(r)?;
         }
         self.audit("resource.undelete", id, &json!({ "batch": batch_id, "count": batch.len() }))?;
-        Ok(Outcome { id: Some(id.to_string()), changed: true, rows: batch })
+        Ok(Outcome { id: Some(id.to_string()), changed: true, rows: batch, ..Default::default() })
     }
 
     fn purge(&mut self, id: &str) -> KResult<Outcome> {
@@ -1093,6 +1177,10 @@ impl Tx<'_> {
         }
         drop(st);
         for r in &doomed {
+            // §10: its own references go; references to it stay, without a target ("missing").
+            self.touch_ends(&r.id)?;
+            self.tx.execute("DELETE FROM refs WHERE source_id = ?1", [&r.id]).map_err(sql)?;
+            self.tx.execute("UPDATE refs SET target_id = NULL WHERE target_id = ?1", [&r.id]).map_err(sql)?;
             self.tx
                 .execute("DELETE FROM search WHERE rowid = (SELECT rowid FROM resources WHERE id = ?1)", [&r.id])
                 .map_err(sql)?;
@@ -1104,7 +1192,7 @@ impl Tx<'_> {
         // Drop deleted entries from the full-text segments too.
         self.tx.execute("INSERT INTO search (search) VALUES ('optimize')", []).map_err(sql)?;
         self.audit("resource.purge", id, &json!({ "kind": row.kind, "count": doomed.len() }))?;
-        Ok(Outcome { id: Some(id.to_string()), changed: true, rows: doomed })
+        Ok(Outcome { id: Some(id.to_string()), changed: true, rows: doomed, ..Default::default() })
     }
 
     fn meta(&mut self, id: &str, favorite: Option<bool>, touch: bool) -> KResult<Outcome> {
@@ -1128,7 +1216,7 @@ impl Tx<'_> {
                 )
                 .map_err(sql)?;
         }
-        Ok(Outcome { id: Some(id.to_string()), changed: true, rows: vec![] })
+        Ok(Outcome { id: Some(id.to_string()), changed: true, rows: vec![], ..Default::default() })
     }
 
     /// D273: a root `Default` environment and a root `Workspace` configuration node;
@@ -1191,6 +1279,15 @@ impl Tx<'_> {
             }
             self.tx.execute("INSERT INTO meta (key, value) VALUES ('search_built', '1')", []).map_err(sql)?;
         }
+        // §10 / migration 0008: references of the resources that existed before the table did.
+        let refs_built: bool = self
+            .tx
+            .query_row("SELECT EXISTS(SELECT 1 FROM meta WHERE key = 'refs_built')", [], |r| r.get(0))
+            .map_err(sql)?;
+        if !refs_built {
+            crate::refs::rebuild(self.tx, self.rules).map_err(sql)?;
+            self.tx.execute("INSERT INTO meta (key, value) VALUES ('refs_built', '1')", []).map_err(sql)?;
+        }
         Ok(Outcome { changed: !rows.is_empty(), rows, ..Default::default() })
     }
 
@@ -1215,7 +1312,7 @@ impl Tx<'_> {
             )
             .map_err(sql)?;
         self.audit("run.start", &r.id, &json!({ "action": r.action, "resource": r.resource_id }))?;
-        Ok(Outcome { id: Some(r.id), changed: true, rows: vec![] })
+        Ok(Outcome { id: Some(r.id), changed: true, rows: vec![], ..Default::default() })
     }
 
     fn run_finish(
@@ -1256,7 +1353,7 @@ impl Tx<'_> {
                 [arg],
             )
             .map_err(sql)?;
-        Ok(Outcome { id: Some(id.to_string()), changed: true, rows: vec![] })
+        Ok(Outcome { id: Some(id.to_string()), changed: true, rows: vec![], ..Default::default() })
     }
 
     /// Edits parameters of a plugin's state node, creating the node when needed.
@@ -1288,7 +1385,7 @@ impl Tx<'_> {
             }
         }
         if changed.is_empty() {
-            return Ok(Outcome { id: Some(row.id.clone()), changed: existing.is_none(), rows: vec![row] });
+            return Ok(Outcome { id: Some(row.id.clone()), changed: existing.is_none(), rows: vec![row], ..Default::default() });
         }
         row.rev += 1;
         row.updated_at = self.at;
@@ -1296,7 +1393,7 @@ impl Tx<'_> {
         self.save(&row)?;
         self.revision(&row, "update", &changed)?;
         self.audit("plugin.state", plugin, &json!({ "fields": changed }))?;
-        Ok(Outcome { id: Some(row.id.clone()), changed: true, rows: vec![row] })
+        Ok(Outcome { id: Some(row.id.clone()), changed: true, rows: vec![row], ..Default::default() })
     }
 
     fn upgrade(&mut self, plugin: &str, to: &str, items: Vec<UpgradeItem>, set_active: bool, prev_active: Option<&str>) -> KResult<Outcome> {
@@ -1325,6 +1422,7 @@ impl Tx<'_> {
             row.updated_at = self.at;
             row.updated_by = self.actor.as_text();
             self.save(&row)?;
+            self.refs_after(&row, Some(&changed))?;
             self.revision(&row, "upgrade", &changed)?;
             self.tx
                 .execute(
@@ -1347,7 +1445,7 @@ impl Tx<'_> {
             self.plugin_state(plugin, &[("active".into(), Some(to.to_string()))])?;
         }
         self.audit("plugin.upgrade", plugin, &json!({ "to": to, "count": rows.len(), "batch": (!rows.is_empty()).then_some(&batch) }))?;
-        Ok(Outcome { id: (!rows.is_empty()).then_some(batch), changed: true, rows })
+        Ok(Outcome { id: (!rows.is_empty()).then_some(batch), changed: true, rows, ..Default::default() })
     }
 
     fn undo_upgrade(&mut self, batch: &str, also: &[String]) -> KResult<Outcome> {
@@ -1387,6 +1485,7 @@ impl Tx<'_> {
             row.updated_at = self.at;
             row.updated_by = self.actor.as_text();
             self.save(&row)?;
+            self.refs_after(&row, None)?;
             self.revision(&row, "undoUpgrade", &["body".to_string(), "pluginVersion".to_string()])?;
             rows.push(row);
         }
@@ -1402,7 +1501,7 @@ impl Tx<'_> {
             self.plugin_state(&plugin, &[("active".into(), Some(v.clone())), ("pinned".into(), Some(v))])?;
         }
         self.audit("plugin.undoUpgrade", &plugin, &json!({ "batch": batch, "restored": rows.len(), "modified": modified.len() }))?;
-        Ok(Outcome { id: Some(json!(modified).to_string()), changed: true, rows })
+        Ok(Outcome { id: Some(json!(modified).to_string()), changed: true, rows, ..Default::default() })
     }
 
     fn counted_audit(&mut self, run: Option<&str>, op: &str, object: &str, summary: &Value) -> KResult<Outcome> {
@@ -1456,10 +1555,11 @@ impl Tx<'_> {
                 .execute("UPDATE resources SET delete_batch = ?2 WHERE id = ?1", params![r.id, batch_id])
                 .map_err(sql)?;
             self.revision(r, "delete", &["deleted".to_string()])?;
+            self.touch_ends(&r.id)?;
         }
         let ids: Vec<&str> = batch.iter().map(|r| r.id.as_str()).collect();
         self.audit("resource.delete", id, &json!({ "batch": batch_id, "count": ids.len(), "ids": ids }))?;
-        Ok(Outcome { id: Some(id.to_string()), changed: true, rows: batch })
+        Ok(Outcome { id: Some(id.to_string()), changed: true, rows: batch, ..Default::default() })
     }
 }
 
@@ -1488,11 +1588,11 @@ pub const GRANTS_KEY: &str = "files.folders";
 /// Rules of the kernel's own kinds; plugin kinds are added by the registry.
 pub fn core_rules() -> HashMap<String, KindRule> {
     let mut m = HashMap::new();
-    m.insert(KIND_GROUP.to_string(), KindRule { tree: Some(store::TREE_RESOURCES.into()), accepts: vec!["*".into()], protected: vec![] });
-    m.insert(KIND_PLUGIN_STATE.to_string(), KindRule { tree: Some(TREE_PLUGIN_STATE.into()), accepts: vec![], protected: vec![] });
+    m.insert(KIND_GROUP.to_string(), KindRule { tree: Some(store::TREE_RESOURCES.into()), accepts: vec!["*".into()], protected: vec![], ..Default::default() });
+    m.insert(KIND_PLUGIN_STATE.to_string(), KindRule { tree: Some(TREE_PLUGIN_STATE.into()), accepts: vec![], protected: vec![], ..Default::default() });
     // D274: environments only under environments, configuration only under configuration.
-    m.insert(KIND_ENV.to_string(), KindRule { tree: Some(store::TREE_ENV.into()), accepts: vec![KIND_ENV.into()], protected: vec![] });
-    m.insert(KIND_CONFIG.to_string(), KindRule { tree: Some(store::TREE_CONFIG.into()), accepts: vec![KIND_CONFIG.into()], protected: vec![] });
+    m.insert(KIND_ENV.to_string(), KindRule { tree: Some(store::TREE_ENV.into()), accepts: vec![KIND_ENV.into()], protected: vec![], ..Default::default() });
+    m.insert(KIND_CONFIG.to_string(), KindRule { tree: Some(store::TREE_CONFIG.into()), accepts: vec![KIND_CONFIG.into()], protected: vec![], ..Default::default() });
     m
 }
 

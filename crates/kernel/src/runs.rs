@@ -236,6 +236,14 @@ impl Inner {
     }
 
     pub async fn run_start(&self, p: RunStartParams, client: Option<String>) -> KResult<String> {
+        // D327: a run writes its record, so read-only refuses the whole run (with the tab's environment).
+        if let Err(e) = self.read(|c| Ok(crate::policy::check(c, crate::policy::READONLY, p.env_id.as_deref())))? {
+            let _ = self
+                .pipeline
+                .execute(Actor::User, Command::Refused { op: "run.start".into(), object: p.action.clone(), error: e.clone() })
+                .await;
+            return Err(e);
+        }
         let id = new_id();
         let res = match &p.resource_id {
             Some(r) => self.read(|c| store::get(c, r))?.filter(|r| !self.hidden_tree(r)),

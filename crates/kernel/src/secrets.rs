@@ -258,7 +258,7 @@ impl Inner {
     pub fn secret_fields(&self, kind: &str, version: Option<&str>) -> Vec<String> {
         self.registry
             .kind_at(kind, version)
-            .map(|(_, k)| k.fields.iter().filter(|(_, f)| f.ty == FieldKind::Secret).map(|(n, _)| format!("body.{n}")).collect())
+            .map(|(_, k)| k.fields.iter().filter(|(_, f)| f.ty == crate::manifest::DeclType::Secret).map(|(n, _)| format!("body.{n}")).collect())
             .unwrap_or_default()
     }
 
@@ -330,7 +330,7 @@ pub fn resource_secret_names(k: &crate::manifest::KindDecl, body: &JsonMap) -> B
     let mut out = BTreeSet::new();
     for (name, f) in &k.fields {
         let Some(v) = body.get(name) else { continue };
-        if f.ty == FieldKind::Secret {
+        if f.ty == crate::manifest::DeclType::Secret {
             if let Some(n) = v.get("secret").and_then(Value::as_str) {
                 out.insert(n.to_string());
             }

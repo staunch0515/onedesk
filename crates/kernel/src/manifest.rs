@@ -86,7 +86,7 @@ pub struct SecretsReq {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct FieldDecl {
     #[serde(rename = "type")]
-    pub ty: onedesk_protocol::FieldKind,
+    pub ty: DeclType,
     /// `network`: the host of this field's URL is granted to the plugin (D307).
     #[serde(default)]
     pub grants: Option<String>,
@@ -94,9 +94,34 @@ pub struct FieldDecl {
     /// user lets the plugin use for this resource.
     #[serde(default)]
     pub secrets: bool,
+    /// Round 5 (D321): a text field whose `[[name]]` marks are references to other resources.
+    #[serde(default)]
+    pub refs: bool,
+}
+
+/// Type of a declared body field: the view field kinds plus `ref` (a single reference stored as
+/// `{ "ref": "<id>" }`, round 5). Manifest-only; the protocol's `FieldKind` is unchanged.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum DeclType {
+    Text,
+    Longtext,
+    Code,
+    Number,
+    Boolean,
+    Date,
+    Datetime,
+    Enum,
+    Secret,
+    Ref,
 }
 
 impl FieldDecl {
+    /// A text field holding `[[name]]` references.
+    pub fn text_refs(&self) -> bool {
+        self.refs && matches!(self.ty, DeclType::Text | DeclType::Longtext | DeclType::Code)
+    }
+
     pub fn holds_secret_refs(&self) -> bool {
         self.secrets
     }
@@ -236,7 +261,7 @@ impl KindDecl {
     pub fn protected_fields(&self) -> Vec<String> {
         self.fields
             .iter()
-            .filter(|(_, f)| f.grants.is_some() || f.secrets || f.ty == onedesk_protocol::FieldKind::Secret)
+            .filter(|(_, f)| f.grants.is_some() || f.secrets || f.ty == DeclType::Secret)
             .map(|(n, _)| n.clone())
             .collect()
     }
@@ -703,13 +728,20 @@ pub fn load_package_opts(dir: &Path, check_folder: bool) -> Result<Plugin, Rejec
     }
     for k in &c.kinds {
         for (name, f) in &k.fields {
-            use onedesk_protocol::FieldKind as F;
+            use DeclType as F;
             if f.secrets && (f.grants.is_some() || !matches!(f.ty, F::Text | F::Longtext | F::Code)) {
                 return Err(reject(dir, "badSecretsField", format!("kind {} field {name}", k.id)));
             }
+            // Round 5: `refs` only on text fields, never together with `grants` (a reference is not
+            // a grant); a single-reference field carries no other marks.
+            if (f.refs && (f.grants.is_some() || !matches!(f.ty, F::Text | F::Longtext | F::Code)))
+                || (f.ty == F::Ref && (f.refs || f.grants.is_some()))
+            {
+                return Err(reject(dir, "badRefsField", format!("kind {} field {name}", k.id)));
+            }
             match f.grants.as_deref() {
                 None => {}
-                Some("network") if f.ty == onedesk_protocol::FieldKind::Text => {
+                Some("network") if f.ty == DeclType::Text => {
                     if !m.requires.network.as_ref().is_some_and(|n| n.from_resources) {
                         return Err(reject(dir, "grantsUndeclared", format!("kind {} field {name}", k.id)));
                     }
@@ -907,12 +939,27 @@ impl Registry {
                     protected.sort();
                     protected.dedup();
                 }
+                // Reference fields: those of any installed version (a resource may be bound to any).
+                let (mut text_refs, mut ref_fields): (Vec<String>, Vec<String>) = (
+                    k.fields.iter().filter(|(_, f)| f.text_refs()).map(|(n, _)| n.clone()).collect(),
+                    k.fields.iter().filter(|(_, f)| f.ty == DeclType::Ref).map(|(n, _)| n.clone()).collect(),
+                );
+                if let Some(prev) = m.get(&p.full(&k.id)) {
+                    text_refs.extend(prev.text_refs.iter().cloned());
+                    ref_fields.extend(prev.ref_fields.iter().cloned());
+                }
+                for v in [&mut text_refs, &mut ref_fields] {
+                    v.sort();
+                    v.dedup();
+                }
                 m.insert(
                     p.full(&k.id),
                     KindRule {
                         tree: k.tree.as_deref().map(|t| p.tree_ref(t)),
                         accepts: k.accepts.iter().map(|a| p.kind_ref(a)).collect(),
                         protected,
+                        text_refs,
+                        ref_fields,
                     },
                 );
             }
@@ -1063,6 +1110,32 @@ mod tests {
         assert_eq!(reason(with(field(json!({ "type": "text", "grants": "network", "secrets": true })), &["requires", "network"], json!({ "fromResources": true }))), "badSecretsField");
         assert_eq!(reason(with(good(), &["contributes", "commands", "0", "palette"], json!(true))), "ok");
         assert_eq!(reason(with(with(good(), &["author"], json!("me")), &["license"], json!("MIT"))), "ok");
+    }
+
+    #[test]
+    fn reference_field_declarations_and_their_rejections() {
+        let field = |f: Value| with(good(), &["contributes", "kinds", "0", "fields"], json!({ "body": f }));
+        let net = |m: Value| with(m, &["requires", "network"], json!({ "fromResources": true }));
+        for ty in ["text", "longtext", "code"] {
+            assert_eq!(reason(field(json!({ "type": ty, "refs": true }))), "ok", "{ty}");
+        }
+        assert_eq!(reason(field(json!({ "type": "ref" }))), "ok");
+        // refs and secrets on one field: two different marks, allowed.
+        assert_eq!(reason(field(json!({ "type": "longtext", "refs": true, "secrets": true }))), "ok");
+        for ty in ["number", "boolean", "date", "datetime", "enum", "secret", "ref"] {
+            assert_eq!(reason(field(json!({ "type": ty, "refs": true }))), "badRefsField", "{ty}");
+        }
+        assert_eq!(reason(net(field(json!({ "type": "text", "refs": true, "grants": "network" })))), "badRefsField");
+        assert_eq!(reason(net(field(json!({ "type": "ref", "grants": "network" })))), "badRefsField");
+        assert_eq!(reason(field(json!({ "type": "ref", "secrets": true }))), "badSecretsField");
+        assert_eq!(reason(field(json!({ "type": "text", "refs": "yes" }))), "schema");
+        // The write rules carry the reference fields.
+        let tmp = tempfile::tempdir().unwrap();
+        let m = with(good(), &["contributes", "kinds", "0", "fields"], json!({ "body": { "type": "longtext", "refs": true }, "to": { "type": "ref" } }));
+        write(tmp.path(), "test.alpha", "0.1.0", &m);
+        let rules = Registry::scan(tmp.path()).rules();
+        let r = &rules["test.alpha:item"];
+        assert_eq!((r.text_refs.clone(), r.ref_fields.clone()), (vec!["body".to_string()], vec!["to".to_string()]));
     }
 
     #[test]
