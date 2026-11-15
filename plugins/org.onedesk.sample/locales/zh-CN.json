@@ -16,7 +16,7 @@
   "setting.style.upper": "大写",
   "setting.style.lower": "小写",
   "field.text": "正文",
-  "field.placeholder": "随便写点什么。参数写成 :name；!fail、!slow、!text 会改变运行的表现。",
+  "field.placeholder": "随便写点什么。参数写成 :name；!fail、!slow 会改变运行的表现。",
   "message.tidied": "已整理关键字",
   "message.tidyNothing": "没有需要整理的内容",
   "last.none": "还没有运行过",
@@ -27,8 +27,13 @@
   "step.slow": "处理中… {n}/20",
   "error.fail": "正文里有 !fail，这次运行故意失败。",
   "summary.rows": "{rows} 行",
-  "summary.text": "文字输出",
   "summary.slow": "慢速运行已结束",
   "summary.cancelled": "已取消",
-  "text.out": "输出：{text}"
+  "action.explain": "说明",
+  "explain.head": "这段正文用到的参数：",
+  "explain.none": "这段正文没有用到参数。",
+  "explain.hand": "在这里填写",
+  "explain.env": "来自环境 {source}",
+  "explain.unset": "未设置",
+  "summary.explain": "已说明"
 }
