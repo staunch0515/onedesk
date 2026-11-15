@@ -175,7 +175,7 @@ async fn leftover_running_runs_become_interrupted_after_restart() {
     let tmp = tempfile::tempdir().unwrap();
     let ws = tmp.path().join("ws");
     let id = {
-        let k = Arc::new(onedesk_kernel::Kernel::open(&ws, &fixtures(), test_config()).unwrap());
+        let k = Arc::new(onedesk_kernel::Kernel::open(&ws, &fixtures(), config_for(&fixtures())).unwrap());
         let c = Client::in_proc(k.clone());
         c.hello().await;
         let j = job(&c, "").await;
@@ -184,7 +184,7 @@ async fn leftover_running_runs_become_interrupted_after_restart() {
         k.shutdown();
         id
     };
-    let k = Arc::new(onedesk_kernel::Kernel::open(&ws, &fixtures(), test_config()).unwrap());
+    let k = Arc::new(onedesk_kernel::Kernel::open(&ws, &fixtures(), config_for(&fixtures())).unwrap());
     let c = Client::in_proc(k.clone());
     c.hello().await;
     let r = c.ok("run.get", json!({ "id": id })).await;
@@ -297,7 +297,7 @@ async fn storage_is_isolated_per_plugin_and_version_and_limited() {
     let plugins = plugins_with(tmp.path(), &[]);
     let ws = tmp.path().join("ws");
     {
-        let k = Arc::new(onedesk_kernel::Kernel::open(&ws, &plugins, test_config()).unwrap());
+        let k = Arc::new(onedesk_kernel::Kernel::open(&ws, &plugins, config_for(&plugins)).unwrap());
         let c = Client::in_proc(k.clone());
         c.hello().await;
         assert_eq!(c.probe("test.runner", "storage.set", json!(["k", { "a": 1 }])).await["ok"], Value::Null);
@@ -319,7 +319,7 @@ async fn storage_is_isolated_per_plugin_and_version_and_limited() {
     std::fs::rename(&old, &new).unwrap();
     let m = std::fs::read_to_string(new.join("manifest.json")).unwrap().replace("\"0.1.0\"", "\"0.2.0\"");
     std::fs::write(new.join("manifest.json"), m).unwrap();
-    let k = Arc::new(onedesk_kernel::Kernel::open(&ws, &plugins, test_config()).unwrap());
+    let k = Arc::new(onedesk_kernel::Kernel::open(&ws, &plugins, config_for(&plugins)).unwrap());
     let c = Client::in_proc(k.clone());
     c.hello().await;
     assert_eq!(c.probe("test.runner", "storage.get", json!(["k"])).await["ok"], Value::Null);

@@ -113,6 +113,13 @@ const MIGRATE_V2: &str = r#"async migrate(body, from, ctx) {
     return { ...body, note: "from " + from, writeError, old };
   }"#;
 
+/// Confirms a version with the fingerprint the plugin page shows for it (D312).
+async fn confirm(c: &Client, plugin: &str, version: &str) -> Result<Value, onedesk_protocol::ProtocolError> {
+    let d = c.ok("plugin.get", json!({ "plugin": plugin })).await;
+    let fp = d["versions"].as_array().unwrap().iter().find(|v| v["version"] == version).unwrap()["fingerprint"].clone();
+    c.call("plugin.confirmPermissions", json!({ "plugin": plugin, "version": version, "fingerprint": fp })).await
+}
+
 async fn doc(c: &Client, text: &str) -> String {
     let r = c.ok("page.save", json!({ "target": "new:test.vers:doc", "changes": { "body.text": text } })).await;
     r["page"]["resourceId"].as_str().unwrap().to_string()
@@ -184,7 +191,7 @@ async fn versions_install_confirm_take_over_switch_back_undo_and_remove() {
     assert_eq!(view_text(c, &a).await, "v1");
 
     // Confirm → automatic switch with takeover (migrate: note, refused write, readFrom).
-    c.ok("plugin.confirmPermissions", json!({ "plugin": "test.vers", "version": "0.2.0" })).await;
+    confirm(c, "test.vers", "0.2.0").await.unwrap();
     let r = c.ok("resource.get", json!({ "id": a })).await;
     assert_eq!(r["pluginVersion"], "0.2.0");
     assert_eq!(r["body"]["note"], "from 0.1.0");
@@ -250,7 +257,7 @@ async fn failed_migrate_changes_nothing_subset_needs_no_confirmation_and_old_ran
     package(&w.plugins, "test.vers", "0.2.0", vers_manifest(Some(">=0.1.0"), true), &vers_main("v2", MIGRATE_V2));
     c.ok("plugin.rescan", Value::Null).await;
     // One migrate fails: nothing is written, the active version does not change.
-    let e = c.call("plugin.confirmPermissions", json!({ "plugin": "test.vers", "version": "0.2.0" })).await.unwrap_err();
+    let e = confirm(c, "test.vers", "0.2.0").await.unwrap_err();
     assert_eq!((e.code, e.params["reason"].as_str(), e.params["resource"].as_str()), (ErrorCode::PluginError, "migrateFailed", bad.as_str()));
     for id in [&a, &bad] {
         assert_eq!(c.ok("resource.get", json!({ "id": id })).await["pluginVersion"], "0.1.0");
@@ -263,10 +270,13 @@ async fn failed_migrate_changes_nothing_subset_needs_no_confirmation_and_old_ran
     // takes over 0.2.0 data — a 0.1.0 resource stays where it is.
     package(&w.plugins, "test.vers", "0.3.0", vers_manifest(Some(">=0.2.0"), true), &vers_main("v3", ""));
     let old = {
+        // Going back by hand pins 0.1.0 (D314), so the scan below does not switch yet.
         c.ok("plugin.activateVersion", json!({ "plugin": "test.vers", "version": "0.1.0" })).await;
         doc(c, "old").await
     };
     c.ok("plugin.rescan", Value::Null).await;
+    assert_eq!(c.ok("resource.get", json!({ "id": a })).await["pluginVersion"], "0.2.0", "pinned: no automatic switch");
+    c.ok("plugin.setPinned", json!({ "plugin": "test.vers", "version": "0.1.0", "pinned": false })).await;
     let d = c.ok("plugin.get", json!({ "plugin": "test.vers" })).await;
     assert_eq!(d["unconfirmed"], json!([]));
     assert_eq!(c.ok("resource.get", json!({ "id": a })).await["pluginVersion"], "0.3.0");
@@ -277,12 +287,13 @@ async fn failed_migrate_changes_nothing_subset_needs_no_confirmation_and_old_ran
     package(&w.plugins, "test.vers", "0.4.0", vers_manifest(Some(">=0.1.0"), true), &vers_main("v4", ""));
     c.ok("plugin.rescan", Value::Null).await;
     assert_eq!(c.ok("resource.get", json!({ "id": a })).await["pluginVersion"], "0.3.0");
-    // History restore of a pre-upgrade value works on the current version.
+    // History restore of a pre-upgrade value (review #10): the snapshot was bound to 0.1.0, which
+    // is still installed, so the restored content goes back to 0.1.0.
     let h = c.ok("resource.history", json!({ "id": a })).await;
     let entry = h.as_array().unwrap().iter().find(|e| e["field"] == "body.note").unwrap()["id"].clone();
     c.ok("resource.restore", json!({ "id": a, "entryId": entry })).await;
     let r = c.ok("resource.get", json!({ "id": a })).await;
-    assert_eq!((r["pluginVersion"].as_str(), r["body"].get("note")), (Some("0.3.0"), None));
+    assert_eq!((r["pluginVersion"].as_str(), r["body"].get("note")), (Some("0.1.0"), None));
 }
 
 /* ------------------------------------------------------------------ local HTTP server */

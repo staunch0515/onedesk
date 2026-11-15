@@ -27,4 +27,9 @@ installed: Array<string>,
 /**
  * Permission ids this version asks for that the confirmed version did not (§7.1).
  */
-addedPermissions: Array<string>, provides: PluginProvides, };
+addedPermissions: Array<string>, provides: PluginProvides, 
+/**
+ * Fingerprint of this package's permission list (D312); sent back with the install and the
+ * confirmation so the user confirms exactly what was shown.
+ */
+fingerprint: string, };

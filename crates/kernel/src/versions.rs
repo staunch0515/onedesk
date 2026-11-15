@@ -9,7 +9,7 @@ use onedesk_protocol::*;
 use serde_json::{json, Value};
 
 use crate::kernel::{parse, Inner};
-use crate::manifest::{atom_id, atoms_fingerprint, load_package_opts, Plugin};
+use crate::manifest::{atom_id, atoms_fingerprint, load_package_opts, perm_fingerprint, Plugin};
 use crate::pipeline::{Actor, Command, UpgradeItem};
 use crate::sandbox::{CallInfo, SandboxError};
 use crate::store::{self, Row};
@@ -35,7 +35,10 @@ impl Inner {
     pub async fn handle4(&self, m: &str, params: Value) -> Option<KResult<Value>> {
         Some(match m {
             M::PLUGIN_INSPECT => parse::<PluginFolderRef>(params).and_then(|p| to_value(self.inspect(&p.folder))),
-            M::PLUGIN_RESCAN => self.rescan().await.map(|_| Value::Null),
+            M::PLUGIN_RESCAN => match parse::<PluginRescanParams>(params) {
+                Ok(p) => self.rescan(&p.builtin).await.map(|_| Value::Null),
+                Err(e) => Err(e),
+            },
             M::PLUGIN_ACTIVATE_VERSION => match parse::<PluginVersionParams>(params) {
                 Ok(p) => self.activate_version(&p.plugin, &p.version).await.and_then(to_value),
                 Err(e) => Err(e),
@@ -48,8 +51,8 @@ impl Inner {
                 Ok(p) => self.undo_upgrade(&p.batch, p.also).await.and_then(to_value),
                 Err(e) => Err(e),
             },
-            M::PLUGIN_CONFIRM_PERMISSIONS => match parse::<PluginVersionParams>(params) {
-                Ok(p) => self.confirm_permissions(&p.plugin, &p.version).await.map(|_| Value::Null),
+            M::PLUGIN_CONFIRM_PERMISSIONS => match parse::<PluginConfirmParams>(params) {
+                Ok(p) => self.confirm_permissions(&p.plugin, &p.version, &p.fingerprint).await.map(|_| Value::Null),
                 Err(e) => Err(e),
             },
             M::SECRETS_LIST => self.secrets_list().and_then(to_value),
@@ -104,20 +107,24 @@ impl Inner {
         }
     }
 
-    /// D299: versions already present the first time a workspace sees a plugin (built-ins copied
-    /// by the main process, or packages from before round 4) count as confirmed.
+    /// D313: only the built-in packages the main process names are confirmed without asking
+    /// (they ship with the application). Every other version is "installed, not confirmed".
+    /// The first time a workspace sees a plugin, its newest usable version becomes active.
     pub fn first_sight_blocking(&self) {
+        let builtin = self.cfg.builtin.clone();
         for id in self.registry.ids() {
-            if self.plugin_param(&id, "seen").is_some() {
+            let mut set = self.builtin_confirmations(&id, &builtin);
+            if self.plugin_param(&id, "seen").is_none() {
+                set.push(("seen".to_string(), Some("1".to_string())));
+                let usable = self.registry.versions(&id).into_iter().rev().find(|p| {
+                    p.permissions().is_empty() || builtin.contains(&format!("{}@{}", p.id, p.version)) || self.version_confirmed(p)
+                });
+                if let Some(v) = usable {
+                    set.push(("active".to_string(), Some(v.version.clone())));
+                }
+            }
+            if set.is_empty() {
                 continue;
-            }
-            let mut set = vec![("seen".to_string(), Some("1".to_string()))];
-            // The newest version present is the active one; later versions arrive by takeover.
-            if let Some(newest) = self.registry.versions(&id).last() {
-                set.push(("active".to_string(), Some(newest.version.clone())));
-            }
-            for p in self.registry.versions(&id) {
-                set.push((format!("confirmed.{}", p.version), Some(atoms_fingerprint(&p.permissions()))));
             }
             if let Err(e) = self.pipeline.execute_blocking(Actor::Core, Command::PluginState { plugin: id.clone(), set }) {
                 eprintln!("onedesk: could not record plugin {id}: {e:?}");
@@ -125,8 +132,22 @@ impl Inner {
         }
     }
 
-    pub async fn confirm_permissions(&self, plugin: &str, version: &str) -> KResult<()> {
+    /// `confirmed.<version>` entries for built-in versions of `id` not confirmed yet.
+    fn builtin_confirmations(&self, id: &str, builtin: &[String]) -> Vec<(String, Option<String>)> {
+        self.registry
+            .versions(id)
+            .into_iter()
+            .filter(|p| builtin.contains(&format!("{}@{}", p.id, p.version)) && !self.version_confirmed(p))
+            .map(|p| (format!("confirmed.{}", p.version), Some(atoms_fingerprint(&p.permissions()))))
+            .collect()
+    }
+
+    pub async fn confirm_permissions(&self, plugin: &str, version: &str, fingerprint: &str) -> KResult<()> {
         let p = self.registry.version(plugin, version).ok_or_else(|| not_found("plugin"))?;
+        // D312: the user confirms exactly the permissions they were shown.
+        if perm_fingerprint(&p.permissions()) != fingerprint {
+            return Err(invalid("fingerprintMismatch"));
+        }
         let set = vec![
             ("seen".to_string(), Some("1".to_string())),
             (format!("confirmed.{version}"), Some(atoms_fingerprint(&p.permissions()))),
@@ -167,6 +188,7 @@ impl Inner {
             installed: vec![],
             added_permissions: vec![],
             provides: PluginProvides::default(),
+            fingerprint: String::new(),
         };
         let dir = std::path::Path::new(folder);
         if !dir.is_absolute() || !dir.is_dir() {
@@ -195,6 +217,7 @@ impl Inner {
             pv.problem = Some(err_p(ErrorCode::Invalid, &[("reason", "alreadyInstalled")]));
         }
         pv.permissions = p.permission_list(|id| !added.iter().any(|a| a == id) && !confirmed.is_empty());
+        pv.fingerprint = perm_fingerprint(&atoms);
         pv.added_permissions = added;
         pv.name = p.label(&m.name);
         pv.description = m.description.as_deref().map(|d| p.label(d)).unwrap_or(Label::Text(String::new()));
@@ -213,9 +236,16 @@ impl Inner {
     }
 
     /// Reads the plugins folder again: audits what appeared and went, switches versions (D303).
-    pub async fn rescan(&self) -> KResult<()> {
+    pub async fn rescan(&self, builtin: &[String]) -> KResult<()> {
         let diff = self.registry.rescan();
         *self.rules.write().unwrap() = self.registry.rules();
+        // D313: built-in packages the main process just copied are confirmed by it.
+        for id in self.registry.ids() {
+            let set = self.builtin_confirmations(&id, builtin);
+            if !set.is_empty() {
+                self.execute(Actor::Core, Command::PluginState { plugin: id.clone(), set }).await?;
+            }
+        }
         for (id, v) in &diff.added {
             let _ = self
                 .execute(Actor::User, Command::Audit { op: "plugin.install".into(), object: format!("{id}@{v}"), summary: json!({}) })
@@ -272,7 +302,7 @@ impl Inner {
     }
 
     /// Computes the takeover of `rows` by `to` outside any transaction (D301); any failure stops all.
-    async fn migrate_rows(&self, to: &'static Plugin, rows: &[Row]) -> KResult<Vec<UpgradeItem>> {
+    pub(crate) async fn migrate_rows(&self, to: &'static Plugin, rows: &[Row]) -> KResult<Vec<UpgradeItem>> {
         let mut items = Vec::new();
         for r in rows {
             let from = r.plugin_version.clone().unwrap_or_default();
@@ -299,6 +329,14 @@ impl Inner {
                     return Err(err_p(ErrorCode::PluginError, &[("reason", "migrateFailed"), ("resource", &r.id)]));
                 }
             };
+            // D311: a takeover may not touch what only the user grants.
+            let mut keys = to.kind(short).map(|k| k.protected_fields()).unwrap_or_default();
+            if let Some((_, old)) = self.registry.kind_at(&r.kind, r.plugin_version.as_deref()) {
+                keys.extend(old.protected_fields());
+            }
+            if let Some(k) = keys.iter().find(|k| r.body.get(k.as_str()) != body.get(k.as_str())) {
+                return Err(err_p(ErrorCode::Denied, &[("reason", "grantField"), ("field", k), ("resource", &r.id)]));
+            }
             items.push(UpgradeItem { id: r.id.clone(), rev: r.rev, body });
         }
         Ok(items)
@@ -343,9 +381,18 @@ impl Inner {
             }
         };
         let upgraded = items.len() as u32;
+        let prev_active = self.registry.active_version(plugin);
         let out = self
-            .execute(Actor::User, Command::Upgrade { plugin: plugin.into(), to: version.into(), items, set_active: true })
+            .execute(Actor::User, Command::Upgrade { plugin: plugin.into(), to: version.into(), items, set_active: true, prev_active: prev_active.clone() })
             .await?;
+        // D314: going back to an older version by hand pins it (no automatic upgrade on the next scan).
+        let older = prev_active
+            .and_then(|v| semver::Version::parse(&v).ok())
+            .is_some_and(|v| to.semver() < v);
+        if older {
+            let set = vec![("pinned".to_string(), Some(version.to_string()))];
+            self.execute(Actor::User, Command::PluginState { plugin: plugin.into(), set }).await?;
+        }
         self.registry.set_active(plugin, Some(version));
         self.plugins_changed(plugin);
         Ok(UpgradeResult { batch: out.id, upgraded, kept })
@@ -379,7 +426,8 @@ impl Inner {
                 return Err(invalid("needsVersion"));
             }
             let items = self.migrate_rows(to, &rows).await?;
-            self.execute(Actor::User, Command::Upgrade { plugin: pid.clone(), to: to.version.clone(), items, set_active: false }).await?;
+            self.execute(Actor::User, Command::Upgrade { plugin: pid.clone(), to: to.version.clone(), items, set_active: false, prev_active: None })
+                .await?;
         }
         Ok(())
     }
@@ -414,6 +462,9 @@ impl Inner {
                     notes: String::new(),
                     confirmed: Some(self.version_confirmed(p)),
                     resource_count: Some(n as u64),
+                    // D312: each version's own permissions, and the fingerprint to confirm them.
+                    permissions: p.permission_list(|_| self.version_confirmed(p)),
+                    fingerprint: perm_fingerprint(&p.permissions()),
                 })
             })
             .collect()

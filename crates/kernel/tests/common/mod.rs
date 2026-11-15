@@ -33,6 +33,7 @@ pub fn test_config() -> KernelConfig {
         action_timeout: Duration::from_secs(5),
         // Never the real keychain in tests.
         secrets: onedesk_kernel::secrets::SecretStoreHandle::memory().0,
+        builtin: vec![],
     }
 }
 
@@ -57,7 +58,33 @@ pub fn open_in(tmp: tempfile::TempDir, plugins: &Path) -> Env {
     open_with(tmp, plugins, test_config())
 }
 
-pub fn open_with(tmp: tempfile::TempDir, plugins: &Path, cfg: KernelConfig) -> Env {
+/// `<id>@<version>` of every package in a plugins folder (what the main process would pass as
+/// built-in for its own packages, D313).
+pub fn all_builtin(plugins: &Path) -> Vec<String> {
+    let mut out = Vec::new();
+    for id in std::fs::read_dir(plugins).into_iter().flatten().flatten() {
+        for v in std::fs::read_dir(id.path()).into_iter().flatten().flatten() {
+            out.push(format!("{}@{}", id.file_name().to_string_lossy(), v.file_name().to_string_lossy()));
+        }
+    }
+    out
+}
+
+/// `test_config` with the packages of `plugins` as built-in.
+pub fn config_for(plugins: &Path) -> KernelConfig {
+    KernelConfig { builtin: all_builtin(plugins), ..test_config() }
+}
+
+/// Opens with the packages already in `plugins` treated as built-in (like the main process does).
+pub fn open_with(tmp: tempfile::TempDir, plugins: &Path, mut cfg: KernelConfig) -> Env {
+    if cfg.builtin.is_empty() {
+        cfg.builtin = all_builtin(plugins);
+    }
+    open_exact(tmp, plugins, cfg)
+}
+
+/// Opens with exactly the given configuration (no built-in list unless `cfg` has one).
+pub fn open_exact(tmp: tempfile::TempDir, plugins: &Path, cfg: KernelConfig) -> Env {
     let kernel = Arc::new(Kernel::open(&tmp.path().join("ws"), plugins, cfg).unwrap());
     Env { tmp, kernel }
 }
