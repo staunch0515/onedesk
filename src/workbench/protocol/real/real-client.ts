@@ -103,7 +103,7 @@ export async function createKernelClient(transport: Transport, locale?: () => st
     },
     tree: {
       list: () => call<TreeInfo[]>("tree.list"),
-      children: (tree, parent, offset) => call<TreePage>("tree.children", compact({ tree, parent, offset })),
+      children: (tree, parent, offset, locale) => call<TreePage>("tree.children", compact({ tree, parent, offset, locale })),
       path: (tree, key) => call<string[]>("tree.path", { tree, key }),
       move: async (tree, key, target, position) => void (await call("tree.move", compact({ tree, key, target, position }))),
       createGroup: (tree, parent, name) => call<TreeNode>("tree.createGroup", compact({ tree, parent, name })),

@@ -128,7 +128,7 @@ export function createMixedClient(kernel: KernelClient, mock: ProtocolClient): P
     audit: kernel.audit,
     tree: {
       list: listTrees,
-      children: (tree, parent, offset) => (isDemoTree(tree) ? mock.tree.children(toMock({ tree }).tree, parent, offset).then(fromMock) : kernel.tree.children(tree, parent, offset)),
+      children: (tree, parent, offset, locale) => (isDemoTree(tree) ? mock.tree.children(toMock({ tree }).tree, parent, offset, locale).then(fromMock) : kernel.tree.children(tree, parent, offset, locale)),
       path: (tree, key) => (isDemoTree(tree) ? mock.tree.path(toMock({ tree }).tree, key) : kernel.tree.path(tree, key)),
       move: (tree, key, target, position) => (isDemoTree(tree) ? mock.tree.move(toMock({ tree }).tree, key, target, position) : kernel.tree.move(tree, key, target, position)),
       createGroup: (tree, parent, name) => (isDemoTree(tree) ? mock.tree.createGroup(toMock({ tree }).tree, parent, name).then(fromMock) : kernel.tree.createGroup(tree, parent, name)),

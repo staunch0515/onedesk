@@ -39,6 +39,8 @@ describe("kernel client", () => {
     await client.tree.children("resources", null);
     expect(calls[0]).toEqual({ method: "hello", params: { protocol: "1" } });
     expect(calls[1]).toEqual({ method: "tree.children", params: { tree: "resources" } });
+    await client.tree.children("resources", null, undefined, "zh-CN");
+    expect(calls[2]).toEqual({ method: "tree.children", params: { tree: "resources", locale: "zh-CN" } });
   });
 
   it("sends the locale and unsaved draft with page.resolve, but no null environment", async () => {

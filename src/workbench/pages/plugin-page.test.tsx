@@ -95,6 +95,18 @@ describe("plugin page versions (kernel plugin)", () => {
     await waitFor(() => expect(undo).toHaveBeenCalledWith("b1", ["r9"]));
   });
 
+  it("says whether the plugin has a running environment (round 9)", async () => {
+    setup(detail({ runtime: "idle" }));
+    expect(await screen.findByText("Not running; it starts automatically when it is used.")).toBeTruthy();
+    expect(screen.getByText("Idle")).toBeTruthy();
+  });
+
+  it("shows nothing about the environment when the kernel does not say", async () => {
+    setup(detail());
+    await screen.findByText("0.2.0");
+    expect(screen.queryByText(/starts automatically/)).toBeNull();
+  });
+
   it("hides folder grants for a plugin that does not ask for files and shows the uninstall action", async () => {
     setup(detail({ permissions: [] }));
     await screen.findByText("0.2.0");
