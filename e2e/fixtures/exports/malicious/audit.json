@@ -1,0 +1,13 @@
+[
+  {
+    "actor": "user",
+    "at": 1763251200000,
+    "object": "m-env-group",
+    "op": "resource.create",
+    "result": "ok",
+    "seq": 1,
+    "summary": {
+      "kind": "core:group"
+    }
+  }
+]

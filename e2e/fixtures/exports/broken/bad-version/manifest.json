@@ -1,7 +1,11 @@
 {
   "appVersion": "0.0.0-fixture",
   "counts": {
-    "resources": 0
+    "audit": 0,
+    "blobs": 0,
+    "resources": 0,
+    "revisions": 0,
+    "runs": 0
   },
   "exportedAt": 1763251200000,
   "format": "onedesk-export",
