@@ -69,3 +69,5 @@
 
 ## 没验证
 右键菜单只看了协议里的菜单项，没在界面里点；“重新扫描”按钮只在 vitest 里测了事件，没在界面里点；冷却的 30 秒是真实等待。
+
+**外壳的缺口（不是我的文件，没改）**：`pnpm test` 里 `src/workbench/i18n/kernel-texts.test.ts`（“has words for every error reason the kernel gives”）失败，合并后的内核新增了原因码（见上，疑为 `cooldown` 等），外壳文字还没补。
