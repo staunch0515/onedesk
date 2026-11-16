@@ -53,3 +53,5 @@
 - （第五轮审查）导入与安装插件的指纹用 FNV-1a，不防蓄意碰撞；两处一起换成 SHA-256（需新依赖 sha2，MIT/Apache-2.0）。
 
 - [round5-tests] 外壳：假实现/测试补 `ImportPreview.grantHosts/secretNames`（typecheck 3 处）；导入预览对话框渲染这两项；删除确认的被引用数（见 round5-tests-done.md 的 fixme）；`kernel-texts` 补 `run.export` 与新原因码。
+- （第五轮）已删除页里“永久删除”的确认框没有被引用数（普通删除已有）；`e2e/round5.spec.ts` 里留了一条 `test.fixme`，下一轮由外壳补。
+- （第五轮验收）信息面板“引用”一节里显示的是字段的内部名（“位于 body.text”），应显示字段的标签或不显示。
