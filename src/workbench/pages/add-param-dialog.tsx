@@ -61,7 +61,7 @@ export function AddParamDialog({ layer, own, open, onOpenChange, onAdd }: { laye
       ) : (
         <Pane gap="md">
           <FormField label={t("params.addPick")}>
-            <Select aria-label={t("params.addPick")} placeholder={t("params.addPickPlaceholder")} value={name} onValueChange={pick} options={options.map((k) => ({ value: k.name, label: k.name }))} />
+            <Select key={name ?? "none"} aria-label={t("params.addPick")} placeholder={t("params.addPickPlaceholder")} value={name} onValueChange={pick} options={options.map((k) => ({ value: k.name, label: k.name }))} />
           </FormField>
           {chosen && (
             <>

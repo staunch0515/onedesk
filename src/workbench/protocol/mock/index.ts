@@ -1562,7 +1562,7 @@ export function createMockClient(options: MockOptions = {}): ProtocolClient {
       },
       async importPreview(folder) {
         await wait(40);
-        if (folder.includes("bad")) return { valid: false, problem: { code: "invalid", params: { reason: "notExport" } }, source: "", exportedAt: 0, create: 0, update: 0, skipped: [], fingerprint: "" };
+        if (folder.includes("bad")) return { valid: false, problem: { code: "invalid", params: { reason: "notExport" } }, source: "", exportedAt: 0, create: 0, update: 0, skipped: [], fingerprint: "", grantHosts: [], secretNames: [] };
         return {
           valid: true,
           source: "Personal",
@@ -1571,9 +1571,12 @@ export function createMockClient(options: MockOptions = {}): ProtocolClient {
           update: 1,
           skipped: [
             { name: "Weekly sync", kind: "org.example.sync.job", reason: "unknownKind" },
+            { name: "Workspace settings", kind: "core:config", reason: "config" },
             { name: "Old report", kind: "org.onedesk.sql.query", reason: "needsVersion" },
           ],
           fingerprint: "mock-fingerprint",
+          grantHosts: ["api.example.com:443"],
+          secretNames: ["api-token"],
         };
       },
       async import(folder, fingerprint) {

@@ -16,6 +16,8 @@ const preview = (over: Partial<ImportPreview> = {}): ImportPreview => ({
   update: 1,
   skipped: [{ name: "Weekly sync", kind: "x.sync", reason: "unknownKind" }],
   fingerprint: "fp1",
+  grantHosts: ["api.example.com:443"],
+  secretNames: ["token", "other"],
   ...over,
 });
 
@@ -23,6 +25,7 @@ function setup(p: ImportPreview, pick?: () => Promise<string | null>) {
   const importFn = vi.fn(async () => ({ created: 3, updated: 1, skipped: p.skipped, group: { id: "g1", name: "Personal" } }));
   const base = createMockClient({ fresh: true, quiet: true });
   const client = kernelLikeClient(base, {
+    secrets: { list: async () => [{ name: "token", updatedAt: 1, usedBy: [] }], set: async () => undefined, delete: async () => undefined },
     workspace: { ...base.workspace, importPreview: vi.fn(async () => p), import: importFn },
     platform: pick ? { pickFolder: pick } : undefined,
   });
@@ -38,6 +41,9 @@ describe("import flow", () => {
     expect(screen.getByText("3 new, 1 updated, 1 not imported")).toBeTruthy();
     expect(screen.getByText("Weekly sync")).toBeTruthy();
     expect(screen.getByText("No installed plugin handles this type")).toBeTruthy();
+    expect(screen.getByText("api.example.com:443")).toBeTruthy();
+    await waitFor(() => expect(screen.getAllByText("on this computer")).toHaveLength(1));
+    expect(screen.getAllByText("not set here")).toHaveLength(1);
     expect(importFn).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "Import" }));
     await waitFor(() => expect(importFn).toHaveBeenCalledWith("/exp", "fp1"));
