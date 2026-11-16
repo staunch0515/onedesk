@@ -1778,6 +1778,13 @@ pub struct ImportPreview {
     pub skipped: Vec<ImportSkip>,
     /// Hash of the export's manifest: `workspace.import` refuses when it changed since the preview.
     pub fingerprint: String,
+    /// D329: `host:port` that importing would grant to plugins (granting address fields); sorted, unique.
+    #[serde(default)]
+    pub grant_hosts: Vec<String>,
+    /// D329: secret names the imported content refers to (secret fields, `secrets: true` text,
+    /// secret parameters); sorted, unique.
+    #[serde(default)]
+    pub secret_names: Vec<String>,
 }
 
 #[skip_serializing_none]

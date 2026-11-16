@@ -22,6 +22,7 @@ pub const MIGRATIONS: &[(&str, &str)] = &[
     ("0006_versions_secrets_counts", include_str!("../migrations/0006_versions_secrets_counts.sql")),
     ("0007_upgrade_prev_active", include_str!("../migrations/0007_upgrade_prev_active.sql")),
     ("0008_refs", include_str!("../migrations/0008_refs.sql")),
+    ("0009_resource_names", include_str!("../migrations/0009_resource_names.sql")),
 ];
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

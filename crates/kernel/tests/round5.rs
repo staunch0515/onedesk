@@ -30,11 +30,13 @@ fn refs_plugin(root: &Path) {
     std::fs::create_dir_all(&dir).unwrap();
     let m = json!({
         "id": "test.refs", "version": "0.1.0", "apiVersion": "2", "name": "n", "icon": "box", "main": "main.js",
+        "requires": { "network": { "fromResources": true } },
         "contributes": {
             "kinds": [{ "id": "doc", "label": "k", "icon": "file", "tree": "resources", "page": "p", "newName": "k",
                         "defaults": { "text": "" }, "accepts": [],
                         "fields": { "text": { "type": "longtext", "refs": true }, "link": { "type": "ref" },
-                                    "token": { "type": "secret" } } }],
+                                    "token": { "type": "secret" }, "url": { "type": "text", "grants": "network" },
+                                    "headers": { "type": "text", "secrets": true } } }],
             "pages": [{ "id": "p" }],
             "actions": [{ "id": "tab", "label": "a", "kinds": ["doc"], "output": "table" },
                         { "id": "txt", "label": "a", "kinds": ["doc"], "output": "text" }],
@@ -52,7 +54,7 @@ export default {{ activate(host) {{
   }} }});
   host.actions.handle("tab", async () => ({{ output: {{ type: "table",
     columns: [{{ key: "a", label: "Name" }}, {{ key: "b", label: "Note, \"q\"" }}],
-    rows: [["中文", "a,b"], ["x\ny", 3], [null, true]] }} }}));
+    rows: [["中文", "a,b"], ["x\ny", 3], [null, true], ["long", "row", "dropped"], ["short"]] }} }}));
   host.actions.handle("txt", async () => ({{ output: {{ type: "text", text: "hi" }} }}));
 }} }};"#
     );
@@ -298,7 +300,7 @@ async fn migration_0008_rebuilds_references_of_existing_resources() {
     // Make it look like a database from before 0008.
     {
         let conn = Connection::open(ws.join("workspace.db")).unwrap();
-        conn.execute_batch("DROP TABLE refs; DELETE FROM meta WHERE key = 'refs_built'; UPDATE meta SET value = '7' WHERE key = 'schema_version';").unwrap();
+        conn.execute_batch("DROP TABLE refs; DROP INDEX resources_name; DELETE FROM meta WHERE key = 'refs_built'; UPDATE meta SET value = '7' WHERE key = 'schema_version';").unwrap();
     }
     tokio::time::sleep(Duration::from_millis(50)).await;
     let k = onedesk_kernel::Kernel::open(&ws, &plugins, config_for(&plugins)).unwrap();
@@ -571,7 +573,6 @@ async fn readonly_refuses_every_content_write_and_lets_the_rest_through() {
     ro(c.call("resource.purge", json!({ "id": deleted })).await.unwrap_err());
     ro(c.call("resource.restore", json!({ "id": d, "entryId": entry })).await.unwrap_err());
     ro(c.call("run.start", json!({ "action": "test.refs:txt", "resourceId": d, "target": format!("resource:{d}"), "tabId": "t" })).await.unwrap_err());
-    ro(c.call("plugin.undoUpgrade", json!({ "batch": "none" })).await.unwrap_err());
     for (m, args) in [
         ("resources.update", json!([d, { "name": "P" }])),
         ("resources.create", json!([{ "kind": "doc", "name": "P" }])),
@@ -695,11 +696,12 @@ async fn run_export_writes_rfc4180_csv_with_a_bom_and_never_overwrites() {
     assert_eq!(wait_run(c, &run).await["status"], "success");
     let path = w.out("result.csv");
     let r = c.ok("run.export", json!({ "run": run, "path": path, "format": "csv" })).await;
-    assert_eq!(r["rows"], 3);
+    assert_eq!(r["rows"], 5);
     let bytes = std::fs::read(&path).unwrap();
     assert_eq!(&bytes[..3], b"\xEF\xBB\xBF");
     let text = String::from_utf8(bytes[3..].to_vec()).unwrap();
-    assert_eq!(text, "Name,\"Note, \"\"q\"\"\"\r\n中文,\"a,b\"\r\n\"x\ny\",3\r\n,true\r\n");
+    // Review #10: every line has as many fields as the header.
+    assert_eq!(text, "Name,\"Note, \"\"q\"\"\"\r\n中文,\"a,b\"\r\n\"x\ny\",3\r\n,true\r\nlong,row\r\nshort,\r\n");
     let e = c.call("run.export", json!({ "run": run, "path": path, "format": "csv" })).await.unwrap_err();
     assert_eq!(reason(&e), (&ErrorCode::Invalid, Some("exists")));
     assert_eq!(std::fs::read(&path).unwrap().len(), text.len() + 3, "untouched");
@@ -715,4 +717,212 @@ async fn run_export_writes_rfc4180_csv_with_a_bom_and_never_overwrites() {
     let e = c.call("run.export", json!({ "run": run, "path": inside, "format": "csv" })).await.unwrap_err();
     assert_eq!(reason(&e), (&ErrorCode::Invalid, Some("insideDataDir")));
     assert_eq!(w.count("SELECT count(*) FROM audit WHERE op = 'run.export' AND result = 'ok'"), 1);
+    // Review #10: a cleared result says so.
+    w.db().execute("UPDATE runs SET output = NULL WHERE id = ?1", [&run]).unwrap();
+    let e = c.call("run.export", json!({ "run": run, "path": w.out("gone.csv"), "format": "csv" })).await.unwrap_err();
+    assert_eq!(reason(&e), (&ErrorCode::Invalid, Some("noOutput")));
+}
+
+/* ------------------------------------------------------------------ review (docs/handoff/round5-review.md) */
+
+async fn preview(c: &Client, folder: &Path) -> Value {
+    c.ok("workspace.importPreview", json!({ "folder": folder })).await
+}
+
+async fn import(c: &Client, folder: &Path) -> Value {
+    let p = preview(c, folder).await;
+    c.ok("workspace.import", json!({ "folder": folder, "fingerprint": p["fingerprint"] })).await
+}
+
+fn skipped(p: &Value) -> Vec<(String, String)> {
+    p["skipped"].as_array().unwrap().iter().map(|s| (s["name"].as_str().unwrap().into(), s["reason"].as_str().unwrap().into())).collect()
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn review1_imported_structure_follows_the_creation_rules() {
+    let w = world().await;
+    let c = &w.c;
+    let hidden_before = w.count("SELECT count(*) FROM resources WHERE tree NOT IN ('resources')");
+    let f = write_export(
+        w.out.path(),
+        "forged",
+        json!([
+            { "id": "g1", "kind": "core:group", "tree": "env", "name": "GroupInEnv" },
+            { "id": "g2", "kind": "core:group", "tree": "core:plugin-state", "name": "GroupInState" },
+            { "id": "g3", "kind": "core:group", "tree": "config", "name": "GroupInConfig" },
+            { "id": "d1", "kind": "test.refs:doc", "tree": "core:plugin-state", "name": "DocClaimsHidden" },
+            { "id": "e1", "kind": "core:env", "name": "Env" },
+            { "id": "d2", "kind": "test.refs:doc", "parent": "e1", "name": "DocUnderEnv" },
+            { "id": "d3", "kind": "test.refs:doc", "parent": "d1", "name": "DocUnderDoc" },
+            { "id": "e2", "kind": "core:env", "parent": "d1", "name": "EnvUnderDoc" },
+            { "id": "s1", "kind": "core:plugin-state", "tree": "core:plugin-state", "name": "test.refs" }
+        ]),
+    );
+    let p = preview(c, &f).await;
+    let mut got = skipped(&p);
+    got.sort();
+    let mut want: Vec<(String, String)> = ["DocUnderDoc", "DocUnderEnv", "EnvUnderDoc", "GroupInConfig", "GroupInEnv", "GroupInState", "test.refs"]
+        .iter()
+        .map(|n| (n.to_string(), "invalid".to_string()))
+        .collect();
+    want.sort();
+    assert_eq!(got, want);
+    assert_eq!(p["create"], 2);
+    let r = import(c, &f).await;
+    assert_eq!(r["created"], 2);
+    // The document that claimed the hidden tree is an ordinary visible resource; nothing hidden came in.
+    let kids = c.ok("tree.children", json!({ "tree": "resources", "parent": r["group"]["id"] })).await;
+    assert_eq!(kids["nodes"][0]["label"], "DocClaimsHidden");
+    assert_eq!(w.count("SELECT count(*) FROM resources WHERE tree NOT IN ('resources')"), hidden_before + 1, "only the environment");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn review2_preview_lists_granted_hosts_and_secret_names() {
+    let w = world().await;
+    let c = &w.c;
+    let f = write_export(
+        w.out.path(),
+        "grants",
+        json!([
+            { "id": "d1", "kind": "test.refs:doc", "name": "A", "body": { "url": "https://evil.example:8443/x", "token": { "secret": "stolen" },
+                                                                      "headers": "Authorization: {{secret:api}}" } },
+            { "id": "d2", "kind": "test.refs:doc", "name": "B", "body": { "url": "http://evil.example:8443/y" } },
+            { "id": "e1", "kind": "core:env", "name": "E", "body": { "params": { "k": { "type": "secret", "value": "env_key" } } } },
+            { "id": "x", "kind": "nobody.here:x", "name": "Skipped", "body": { "url": "https://skipped.example/" } }
+        ]),
+    );
+    let p = preview(c, &f).await;
+    assert_eq!(p["grantHosts"], json!(["evil.example:8443"]));
+    assert_eq!(p["secretNames"], json!(["api", "env_key", "stolen"]));
+    import(c, &f).await;
+    assert_eq!(w.count("SELECT count(*) FROM audit WHERE op = 'network.grant' AND object = 'evil.example:8443'"), 2);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn review3_saving_what_was_shown_after_a_rename_keeps_the_target() {
+    let w = world().await;
+    let c = &w.c;
+    let other = doc(c, "New", "").await;
+    let t = doc(c, "Old", "").await;
+    let s = doc(c, "S", "[[Old]] x").await;
+    c.ok("tree.rename", json!({ "tree": "resources", "key": t, "name": "New" })).await;
+    let shown = c.ok("resource.get", json!({ "id": s })).await["body"]["text"].as_str().unwrap().to_string();
+    assert_eq!(shown, "[[New]] x");
+    save_text(c, &s, &format!("{shown} y")).await.unwrap();
+    assert_eq!(outgoing(c, &s).await[0].2.as_deref(), Some(t.as_str()), "not the other resource named New ({other})");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn review4_a_single_reference_to_something_not_imported_is_cleared() {
+    let w = world().await;
+    let c = &w.c;
+    let local = doc(c, "Local", "").await;
+    let f = write_export(
+        w.out.path(),
+        "single",
+        json!([{ "id": "d1", "kind": "test.refs:doc", "name": "A", "body": { "link": { "ref": local } },
+                 "refs": [{ "field": "body.link", "seq": 0, "text": "Far away", "target": local }] }]),
+    );
+    let r = import(c, &f).await;
+    let id = c.ok("tree.children", json!({ "tree": "resources", "parent": r["group"]["id"] })).await["nodes"][0]["key"].as_str().unwrap().to_string();
+    assert_eq!(c.ok("resource.get", json!({ "id": id })).await["body"]["link"]["ref"], Value::Null);
+    let v = c.ok("refs.outgoing", json!({ "id": id })).await;
+    assert_eq!((v[0]["text"].as_str(), v[0]["state"].as_str()), (Some("Far away"), Some("missing")));
+    // Saving it again does not connect it to the local resource.
+    c.ok("page.save", json!({ "target": format!("resource:{id}"), "changes": { "name": "A2" } })).await;
+    assert!(incoming(c, &local).await.is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn review5_8_limits_duplicate_ids_and_untrusted_refs() {
+    let w = world().await;
+    let c = &w.c;
+    // Too large: checked from the size, before reading.
+    let big = write_export(w.out.path(), "big", json!([]));
+    std::fs::File::options().write(true).open(big.join("resources.json")).unwrap().set_len(257 * 1024 * 1024).unwrap();
+    let p = preview(c, &big).await;
+    assert_eq!((p["valid"].as_bool(), p["problem"]["params"]["reason"].as_str()), (Some(false), Some("tooLarge")));
+    let many: Vec<Value> = (0..200_001).map(|i| json!({ "id": format!("i{i}"), "kind": "x:y", "name": "n" })).collect();
+    let p = preview(c, &write_export(w.out.path(), "many", Value::Array(many))).await;
+    assert_eq!(p["problem"]["params"]["reason"], "tooLarge");
+    let huge = "x".repeat(9 * 1024 * 1024);
+    let p = preview(c, &write_export(w.out.path(), "huge", json!([{ "id": "h", "kind": "test.refs:doc", "name": "Huge", "body": { "text": huge } }]))).await;
+    assert_eq!(skipped(&p), [("Huge".to_string(), "invalid".to_string())]);
+    // Duplicate ids.
+    let dup = write_export(w.out.path(), "dup", json!([{ "id": "a", "kind": "test.refs:doc", "name": "A" }, { "id": "a", "kind": "test.refs:doc", "name": "B" }]));
+    let p = preview(c, &dup).await;
+    assert_eq!((p["valid"].as_bool(), p["problem"]["params"]["reason"].as_str()), (Some(false), Some("duplicateId")));
+    let e = c.call("workspace.import", json!({ "folder": dup, "fingerprint": "x" })).await.unwrap_err();
+    assert_eq!(reason(&e), (&ErrorCode::Invalid, Some("duplicateId")));
+    // The file's refs rows are hints: wrong or repeated rows do not decide anything.
+    let f = write_export(
+        w.out.path(),
+        "hints",
+        json!([
+            { "id": "a", "kind": "test.refs:doc", "name": "A", "body": { "text": "[[B]] [[C]]" },
+              "refs": [{ "field": "body.text", "seq": 0, "text": "Z", "target": "c" }, { "field": "body.text", "seq": 0, "text": "Z", "target": "c" },
+                       { "field": "body.text", "seq": 1, "text": "C", "target": "c" }, { "field": "body.other", "seq": 0, "text": "Q", "target": "b" }] },
+            { "id": "b", "kind": "test.refs:doc", "name": "B" },
+            { "id": "c", "kind": "test.refs:doc", "name": "C" }
+        ]),
+    );
+    let r = import(c, &f).await;
+    let kids = c.ok("tree.children", json!({ "tree": "resources", "parent": r["group"]["id"] })).await;
+    let id = |n: &str| kids["nodes"].as_array().unwrap().iter().find(|x| x["label"] == n).unwrap()["key"].as_str().unwrap().to_string();
+    let o = outgoing(c, &id("A")).await;
+    assert_eq!(o.len(), 2, "only what the content holds");
+    assert_eq!((o[0].0.as_str(), o[0].2.clone()), ("B", Some(id("B"))));
+    assert_eq!((o[1].0.as_str(), o[1].2.clone()), ("C", Some(id("C"))));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn review6_resource_names_are_indexed() {
+    let w = world().await;
+    assert_eq!(w.count("SELECT count(*) FROM sqlite_master WHERE type = 'index' AND name = 'resources_name'"), 1);
+}
+
+fn refs_v2(root: &Path) {
+    let dir = root.join("test.refs").join("0.2.0");
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut m: Value = serde_json::from_slice(&std::fs::read(root.join("test.refs/0.1.0/manifest.json")).unwrap()).unwrap();
+    m["version"] = json!("0.2.0");
+    m["upgradesFrom"] = json!(">=0.1.0");
+    m["contributes"]["kinds"][0]["fields"]["note"] = json!({ "type": "text", "refs": true });
+    std::fs::write(dir.join("manifest.json"), serde_json::to_vec_pretty(&m).unwrap()).unwrap();
+    let main = std::fs::read_to_string(root.join("test.refs/0.1.0/main.js")).unwrap().replace(
+        "host.commands.handle(\"probe\", probe);",
+        "host.commands.handle(\"probe\", probe);\n  host.kinds.handle(\"doc\", { async migrate(body) { return body; } });",
+    );
+    std::fs::write(dir.join("main.js"), main).unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn review7_9_new_reference_fields_and_undo_under_readonly() {
+    let w = world().await;
+    let c = &w.c;
+    let a = doc(c, "A", "").await;
+    let d = doc(c, "D", "").await;
+    c.probe("test.refs", "resources.update", json!([d, { "body.note": "see [[A]]" }])).await;
+    assert!(outgoing(c, &d).await.is_empty(), "note is not a reference field yet");
+    let plugins = w.env.path().join("plugins");
+    refs_v2(&plugins);
+    c.ok("plugin.rescan", json!({ "builtin": ["test.refs@0.2.0"] })).await;
+    // Review #7: the newly declared field's references appear.
+    assert_eq!(outgoing(c, &d).await, vec![("A".into(), "ok".into(), Some(a.clone()))]);
+    let batch: String = w.db().query_row("SELECT id FROM upgrade_batches ORDER BY at DESC LIMIT 1", [], |r| r.get(0)).unwrap();
+    let ws = root(c, "config").await;
+    c.ok("params.set", json!({ "node": ws, "name": "protection.readonly", "value": "true", "type": "boolean" })).await;
+    // Review #9: an empty save writes nothing and is not refused …
+    c.ok("page.save", json!({ "target": format!("resource:{d}"), "changes": {} })).await;
+    // … an undo that would rewrite resources is …
+    let e = c.call("plugin.undoUpgrade", json!({ "batch": batch })).await.unwrap_err();
+    assert_eq!(reason(&e), (&ErrorCode::Denied, Some("readonly")));
+    // … and one that rewrites nothing (everything changed since) is not.
+    c.ok("params.set", json!({ "node": ws, "name": "protection.readonly", "value": "false" })).await;
+    save_text(c, &d, "changed").await.unwrap();
+    save_text(c, &a, "changed").await.unwrap();
+    c.ok("params.set", json!({ "node": ws, "name": "protection.readonly", "value": "true" })).await;
+    let r = c.ok("plugin.undoUpgrade", json!({ "batch": batch })).await;
+    assert_eq!(r["restored"], 0);
+    assert_eq!(r["modified"].as_array().unwrap().len(), 2);
 }

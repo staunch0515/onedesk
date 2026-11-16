@@ -572,7 +572,7 @@ impl Inner {
         // D327: a save with the tab's environment also obeys that environment's chain. Parameter
         // tables themselves stay editable (otherwise the policy could not be turned off).
         let params_only = !p.changes.is_empty() && p.changes.keys().all(|k| k.starts_with("params."));
-        if !params_only {
+        if !params_only && !p.changes.is_empty() {
             if let Err(e) = self.read(|c| Ok(crate::policy::check(c, crate::policy::READONLY, cx.env_id.as_deref())))? {
                 let _ = self
                     .pipeline

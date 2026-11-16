@@ -154,8 +154,11 @@ pub fn update(conn: &Connection, rule: &KindRule, row: &Row, changed: Option<&[S
         for o in &old {
             if let Some(t) = &o.target {
                 touched.insert(t.clone());
-                if !keep.contains_key(&o.text) && store::get_any(conn, t)?.is_some() {
-                    keep.insert(o.text.clone(), t.clone());
+                if let Some(tr) = store::get_any(conn, t)? {
+                    // Review #3: what was written, and the target's current name (what readers saw
+                    // and saved back after a rename), both keep the target.
+                    keep.entry(o.text.clone()).or_insert_with(|| t.clone());
+                    keep.entry(tr.name).or_insert_with(|| t.clone());
                 }
             }
         }
@@ -193,6 +196,111 @@ pub fn update(conn: &Connection, rule: &KindRule, row: &Row, changed: Option<&[S
     Ok(touched)
 }
 
+/// `<kind>` → `text:body.<key>` / `ref:body.<key>` of every kind with reference fields.
+pub type Decls = std::collections::BTreeMap<String, BTreeSet<String>>;
+
+pub fn decls(rules: &HashMap<String, KindRule>) -> Decls {
+    rules
+        .iter()
+        .map(|(k, r)| {
+            let mut s: BTreeSet<String> = r.text_refs.iter().map(|f| format!("text:body.{f}")).collect();
+            s.extend(r.ref_fields.iter().map(|f| format!("ref:body.{f}")));
+            (k.clone(), s)
+        })
+        .filter(|(_, s)| !s.is_empty())
+        .collect()
+}
+
+pub fn store_decls(conn: &Connection, d: &Decls) -> rusqlite::Result<()> {
+    conn.execute(
+        "INSERT INTO meta (key, value) VALUES ('refs_decl', ?1) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        [serde_json::to_string(d).expect("json")],
+    )?;
+    Ok(())
+}
+
+/// Review #7: the reference fields declared now against those the table was built for. Fields that
+/// went lose their rows; fields that came are computed for every resource of the kind (deleted ones
+/// too). Unchanged fields keep their rows (and their targets). Returns the resources touched.
+pub fn sync_decls(conn: &Connection, rules: &HashMap<String, KindRule>) -> rusqlite::Result<BTreeSet<String>> {
+    let cur = decls(rules);
+    let old: Decls = conn
+        .query_row("SELECT value FROM meta WHERE key = 'refs_decl'", [], |r| r.get::<_, String>(0))
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default();
+    let mut touched = BTreeSet::new();
+    if cur == old {
+        return Ok(touched);
+    }
+    let none = BTreeSet::new();
+    let kinds: BTreeSet<&String> = cur.keys().chain(old.keys()).collect();
+    for kind in kinds {
+        let (now, before) = (cur.get(kind).unwrap_or(&none), old.get(kind).unwrap_or(&none));
+        if now == before {
+            continue;
+        }
+        let field = |d: &String| d.split_once(':').map(|(_, f)| f.to_string()).unwrap_or_default();
+        for gone in before.difference(now) {
+            conn.execute(
+                "DELETE FROM refs WHERE field = ?1 AND source_id IN (SELECT id FROM resources WHERE kind = ?2)",
+                params![field(gone), kind],
+            )?;
+        }
+        let added: Vec<String> = now.difference(before).map(field).collect();
+        if added.is_empty() {
+            continue;
+        }
+        let Some(rule) = rules.get(kind) else { continue };
+        let mut st = conn.prepare(&format!("SELECT {} FROM resources WHERE kind = ?1", store::COLUMNS))?;
+        let rows: Vec<Row> = st.query_map([kind], store::from_sql)?.collect::<Result<_, _>>()?;
+        drop(st);
+        for r in &rows {
+            touched.extend(update(conn, rule, r, Some(&added))?);
+            touched.insert(r.id.clone());
+        }
+    }
+    store_decls(conn, &cur)?;
+    Ok(touched)
+}
+
+/// Review #4/#8: the references of an imported row, computed from its content. A mark the export
+/// listed at the same field, position and text takes that row's target (already a new id here, or
+/// none when the target was not imported); other marks are resolved by name. `lost`: single
+/// references whose target was not imported (`field`, text) — kept as "missing".
+pub fn import_rows(conn: &Connection, rule: &KindRule, row: &Row, hints: &[RefRow], lost: &[(String, String)]) -> rusqlite::Result<BTreeSet<String>> {
+    let mut touched = BTreeSet::new();
+    for key in &rule.text_refs {
+        let field = format!("body.{key}");
+        let text = row.body.get(key).and_then(Value::as_str).unwrap_or_default();
+        let mut rows = Vec::new();
+        for (i, m) in marks(text).into_iter().enumerate() {
+            let hint = hints.iter().find(|h| h.field == field && h.seq == i as i64 && h.text == m.text);
+            let target = match hint {
+                Some(h) => h.target.clone().filter(|t| store::get_any(conn, t).ok().flatten().is_some_and(|r| referenceable(&r))),
+                None => resolve(conn, &m.text, row)?,
+            };
+            touched.extend(target.clone());
+            rows.push(RefRow { field: field.clone(), seq: i as i64, text: m.text, target });
+        }
+        replace(conn, &row.id, &field, &rows)?;
+    }
+    for key in &rule.ref_fields {
+        let field = format!("body.{key}");
+        let mut rows = Vec::new();
+        if let Some(id) = row.body.get(key).and_then(ref_id) {
+            let target = store::get_any(conn, id)?.filter(referenceable);
+            let text = target.as_ref().map(|t| t.name.clone()).unwrap_or_else(|| id.to_string());
+            touched.extend(target.as_ref().map(|t| t.id.clone()));
+            rows.push(RefRow { field: field.clone(), seq: 0, text, target: target.map(|t| t.id) });
+        } else if let Some((_, text)) = lost.iter().find(|(f, _)| *f == field) {
+            rows.push(RefRow { field: field.clone(), seq: 0, text: text.clone(), target: None });
+        }
+        replace(conn, &row.id, &field, &rows)?;
+    }
+    Ok(touched)
+}
+
 /// Rebuilds the whole table from every stored resource (after migration 0008, or on demand).
 pub fn rebuild(conn: &Connection, rules: &HashMap<String, KindRule>) -> rusqlite::Result<usize> {
     conn.execute("DELETE FROM refs", [])?;
@@ -205,6 +313,11 @@ pub fn rebuild(conn: &Connection, rules: &HashMap<String, KindRule>) -> rusqlite
         }
     }
     conn.query_row("SELECT count(*) FROM refs", [], |r| r.get::<_, i64>(0)).map(|n| n as usize)
+}
+
+/// Whether `[[name]]` parses back as exactly this name.
+pub fn shows_as_mark(name: &str) -> bool {
+    !name.is_empty() && !name.contains("]]") && !name.contains("[[") && !name.contains(['\n', '\r']) && name.chars().count() <= MAX_LEN && !name.ends_with(']')
 }
 
 /// What readers see (D321): in each text field with references, every resolved `[[old]]` shows the
@@ -222,6 +335,10 @@ pub fn display(conn: &Connection, rule: Option<&KindRule>, row: &Row) -> rusqlit
         for (i, m) in marks(text).into_iter().enumerate() {
             let Some(r) = mine.get(i).filter(|r| r.text == m.text) else { continue };
             let Some(t) = r.target.as_deref().map(|t| store::get_any(conn, t)).transpose()?.flatten() else { continue };
+            // Review #11: a name that could not be read back as one mark is left as written.
+            if !shows_as_mark(&t.name) {
+                continue;
+            }
             s.push_str(&text[at..m.start]);
             s.push_str("[[");
             s.push_str(&t.name);
@@ -297,5 +414,33 @@ mod rebuild_tests {
         let s = store::get(&conn, "s").unwrap().unwrap();
         let shown = display(&conn, rules.get("p:doc"), &s).unwrap();
         assert_eq!(shown.body["text"], "[[Renamed]] [[None]]");
+    }
+}
+
+#[cfg(test)]
+mod review_tests {
+    use super::*;
+
+    #[test]
+    fn names_that_would_not_read_back_are_not_substituted() {
+        for n in ["a]]b", "a\nb", "x]", "[[x", ""] {
+            assert!(!shows_as_mark(n), "{n:?}");
+        }
+        assert!(shows_as_mark("Plain name [x]y"));
+        let mut conn = rusqlite::Connection::open_in_memory().unwrap();
+        crate::workspace::migrate(&mut conn).unwrap();
+        let rule = KindRule { text_refs: vec!["text".into()], ..Default::default() };
+        for (id, name, body) in [("t", "Old", "{}"), ("s", "S", r#"{"text":"[[Old]]"}"#)] {
+            conn.execute(
+                "INSERT INTO resources (id, kind, tree, name, body, rev, created_at, created_by, updated_at, updated_by)
+                 VALUES (?1, 'p:doc', 'resources', ?2, ?3, 1, 0, 'u', 0, 'u')",
+                params![id, name, body],
+            )
+            .unwrap();
+        }
+        let s = store::get(&conn, "s").unwrap().unwrap();
+        update(&conn, &rule, &s, None).unwrap();
+        conn.execute("UPDATE resources SET name = 'a]]b' WHERE id = 't'", []).unwrap();
+        assert_eq!(display(&conn, Some(&rule), &s).unwrap().body["text"], "[[Old]]");
     }
 }
