@@ -251,6 +251,17 @@ fn with_an_index_the_scan_reads_only_it_and_finds_the_same() {
     idx["entries"].as_array_mut().unwrap().push(json!({ "dir": "../escape", "mtime": 0, "size": 0, "manifest": "{}" }));
     std::fs::write(cached.join(".index"), serde_json::to_vec(&idx).unwrap()).unwrap();
     assert_eq!(seen(&Registry::scan(&cached), &cached), expected, "an entry that is not <id>/<version> is ignored");
+    // Review #10: an absolute `dir` is ignored; a repeated `dir` counts once (the first).
+    let mut idx = index_of(&full);
+    let first = idx["entries"].as_array().unwrap().iter().find(|e| e["dir"] == "t.two/1.0.0").unwrap().clone();
+    let mut twin = first.clone();
+    twin["manifest"] = json!(first["manifest"].as_str().unwrap().replace("\"icon\": \"box\"", "\"icon\": \"star\""));
+    let abs = full.join("t.two/1.0.0").display().to_string();
+    idx["entries"].as_array_mut().unwrap().extend([twin, json!({ "dir": abs, "mtime": 0, "size": 0, "manifest": first["manifest"] })]);
+    std::fs::write(cached.join(".index"), serde_json::to_vec(&idx).unwrap()).unwrap();
+    let reg = Registry::scan(&cached);
+    assert_eq!(seen(&reg, &cached), expected, "the twin and the absolute entry change nothing");
+    assert_eq!(reg.version("t.two", "1.0.0").unwrap().manifest.icon, "box", "the first of two entries wins");
 
     // Rescan reads the cache again: the main process refreshed it with t.extra.
     std::fs::write(cached.join(".index"), serde_json::to_vec(&index_of(&full)).unwrap()).unwrap();
@@ -278,6 +289,23 @@ fn without_a_usable_index_the_folder_is_scanned() {
     std::fs::remove_file(root.join(".index")).unwrap();
     std::fs::create_dir(root.join(".index")).unwrap();
     assert_eq!(seen(&Registry::scan(&root), &root), expected);
+}
+
+#[test]
+fn a_scan_does_not_follow_symlinked_package_folders() {
+    // Review #4: like the main process's cache, a link is not a package (id level or version level).
+    let tmp = tempfile::tempdir().unwrap();
+    let elsewhere = tmp.path().join("elsewhere");
+    pkg(&elsewhere, "t.linked", "0.1.0", json!({}), "export default { activate() {} };");
+    pkg(&elsewhere, "t.inner", "0.1.0", json!({}), "export default { activate() {} };");
+    let root = tmp.path().join("plugins");
+    pkg(&root, "t.real", "0.1.0", json!({}), "export default { activate() {} };");
+    std::os::unix::fs::symlink(elsewhere.join("t.linked"), root.join("t.linked")).unwrap();
+    std::fs::create_dir_all(root.join("t.inner")).unwrap();
+    std::os::unix::fs::symlink(elsewhere.join("t.inner/0.1.0"), root.join("t.inner/0.1.0")).unwrap();
+    let reg = Registry::scan(&root);
+    assert_eq!(reg.ids(), vec!["t.real".to_string()]);
+    assert!(reg.rejected().is_empty(), "{:?}", reg.rejected());
 }
 
 #[tokio::test]
@@ -486,6 +514,23 @@ async fn nothing_in_flight_is_released() {
     wait_idle(&w).await;
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn releases_racing_new_calls_lose_nothing() {
+    // Review #10: a release every few milliseconds while calls keep coming.
+    let w = world_cfg(|r| { pkg(r, "t.idle", "0.1.0", idle_manifest(), IDLE_MAIN); }, |c| c.plugin_idle = Duration::from_millis(5)).await;
+    let c = &w.c;
+    c.probe("t.idle", "storage.set", json!(["n", 0])).await;
+    for i in 0..60u64 {
+        let r = c.probe("t.idle", "storage.set", json!(["n", i])).await;
+        assert_eq!(r, json!({ "ok": null }), "call {i}");
+        tokio::time::sleep(Duration::from_millis(i % 4 * 20)).await;
+    }
+    let r = run(c, "t.idle:hold", json!({ "ms": 200 })).await;
+    assert_eq!(r["status"], "success", "{r}");
+    assert_eq!(c.probe("t.idle", "storage.get", json!(["n"])).await, json!({ "ok": 59 }));
+    assert!(w.env.kernel.activation_count() > 2, "it was released in between: {}", w.env.kernel.activation_count());
+}
+
 /* ================================================================== §5 ctx.host per invocation (D366) */
 
 const CTX_MAIN: &str = r#"
@@ -618,6 +663,72 @@ async fn a_kept_ctx_host_works_only_for_its_own_invocation() {
     tokio::time::sleep(Duration::from_millis(500)).await;
     let late = copy_cmd(c, "t.ctx:late").await;
     assert_eq!(late, json!(["callEnded", "callEnded"]), "{late}");
+}
+
+const SHARE_MAIN: &str = r#"
+const reason = (r) => r.error ? (r.params.reason || r.error) : "ok";
+export default { activate(host) {
+  host.commands.handle("probe", probe);
+  // Keeps its host, then settles the promise a page event waits on.
+  host.actions.handle("opener", async (ctx) => {
+    globalThis.saved = ctx.host;
+    await ctx.host.util.sleep(400);
+    if (globalThis.release) globalThis.release();
+    await ctx.host.util.sleep(400);
+    return text("opened");
+  });
+  // Waits on a promise a page event settles, then uses its own host.
+  host.actions.handle("waiter", async (ctx) => {
+    await new Promise((r) => { globalThis.wake = r; });
+    const own = reason(await tryIt(() => ctx.host.storage.get("x")));
+    return text(own);
+  });
+  host.pages.handle("p", {
+    async render() { return { view: [] }; },
+    async onEvent(ctx, e) {
+      if (e === "wait") {
+        await new Promise((r) => { globalThis.release = r; });
+        return { message: reason(await tryIt(() => globalThis.saved.storage.get("x"))) };
+      }
+      if (globalThis.wake) globalThis.wake();
+      return { message: "woke" };
+    },
+  });
+} };
+"#;
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_shared_promise_continues_as_the_invocation_that_settled_it() {
+    // D370 (known limit, fixed here so a change is noticed): code after awaiting a promise that
+    // another invocation settles runs as that invocation.
+    let manifest = json!({ "contributes": {
+        "kinds": [{ "id": "k", "label": "K", "icon": "box", "tree": "resources", "page": "p", "newName": "k" }],
+        "pages": [{ "id": "p" }],
+        "actions": [{ "id": "opener", "label": "O", "output": "text" }, { "id": "waiter", "label": "W", "output": "text" }],
+        "commands": [{ "id": "probe", "label": "probe" }]
+    } });
+    let w = world_cfg(|r| { pkg(r, "t.share", "0.1.0", manifest, SHARE_MAIN); }, |c| c.action_timeout = Duration::from_secs(20)).await;
+    let c = &w.c;
+    let page = c.ok("page.save", json!({ "target": "new:t.share:k", "changes": { "name": "x" } })).await["page"]["resourceId"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let target = format!("resource:{page}");
+    // A page event waiting on a promise the run settles may then use the run's kept host.
+    let ev = c.ok("page.event", json!({ "target": target, "event": "wait" }));
+    let opener = async {
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        run(c, "t.share:opener", json!({})).await
+    };
+    let (e, r) = tokio::join!(ev, opener);
+    assert_eq!(e["message"], "ok", "{e}");
+    assert_eq!(out(&r), json!("opened"));
+    // A run waiting on a promise a page event settles: its own host is refused afterwards.
+    let id = start(c, "t.share:waiter", json!({})).await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let e = c.ok("page.event", json!({ "target": target, "event": "wake" })).await;
+    assert_eq!(e["message"], "woke");
+    assert_eq!(out(&wait_run(c, &id).await), json!("staleContext"));
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -764,6 +875,16 @@ async fn cancelled_and_timed_out_transfers_are_audited() {
         let row = audit(env, &op_name).into_iter().find(|r| r.3 == "cancelled").unwrap();
         assert_eq!((row.0.as_str(), row.1.as_str()), ("plugin:t.fix@0.1.0", object), "{row:?}");
     }
+    // Review #1 (D369): audit.list shows them as `cancelled` / `timeout` and filters by them.
+    let results = |v: Value| -> Vec<String> { v.as_array().unwrap().iter().map(|r| r["result"].as_str().unwrap().to_string()).collect() };
+    let all = results(c.ok("audit.list", json!({ "operation": "transfer.download" })).await);
+    assert!(all.contains(&"timeout".to_string()) && all.contains(&"cancelled".to_string()), "{all:?}");
+    for want in ["cancelled", "timeout"] {
+        let got = results(c.ok("audit.list", json!({ "result": want })).await);
+        assert!(!got.is_empty() && got.iter().all(|r| r == want), "{want}: {got:?}");
+    }
+    let errors = results(c.ok("audit.list", json!({ "result": "error" })).await);
+    assert!(errors.iter().all(|r| r == "error"), "{errors:?}");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -824,6 +945,11 @@ async fn provided_trees_get_the_locale_and_progress_may_have_no_fraction() {
     assert_eq!(zh["nodes"][0]["label"], "词");
     let none = c.ok("tree.children", json!({ "tree": "t.fix:words" })).await;
     assert_eq!(none["nodes"][0]["label"], "word:null");
+    // Review #7: a locale that is not letters, digits and `-` (≤ 35) is as if not given.
+    for bad in ["../x", "zh_CN", "a b"] {
+        let t = c.ok("tree.children", json!({ "tree": "t.fix:words", "locale": bad })).await;
+        assert_eq!(t["nodes"][0]["label"], "word:null", "{bad}");
+    }
     // ctx.progress(null | undefined, …): no fraction, the message kept.
     let id = start(c, "t.fix:unknown", json!({})).await;
     for (message, want) in [

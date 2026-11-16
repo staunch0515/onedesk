@@ -123,3 +123,16 @@
 | `94c8c90` | §4 空闲回收与 `PluginDetail.runtime`；§6 `tree.children` 的 `locale`；协议只增与生成的 TS；工作进程读 `ONEDESK_PLUGIN_IDLE_MS` |
 | `33d963f` | §5：`ctx.host` 只在自己的调用上有效（`staleContext`）；宿主错误的 `detail` 带到 `RunError.detail` |
 | `e0d4e35` | `round9.rs` 测试与本文件 |
+
+## 审查后的修改（`round9-review.md`，内核部分）
+
+先合并了协调分支 `claude/onedesk-coord-3-f0c048`。
+
+| # | 怎么改的 | 测试 |
+|---|---|---|
+| 1 | D369：`AuditResult` 只增 `cancelled`、`timeout`（生成的 `AuditResult.ts` 已更新）。`audit.list` 把库里的 `cancelled`/`timeout` 映射成这两个值（原来落进 `error`），筛选 `result: cancelled|timeout` 按它们选；`error` 仍只选 `failed:%`（不含 `failed:denied`），不包括这两种。外壳的强转由外壳会话去掉。 | `cancelled_and_timed_out_transfers_are_audited` 末尾：经 `audit.list` 看结果、按两种值筛选、`error` 里没有它们 |
+| 4 | 直接扫描不再跟随符号链接：`id` 层和版本层都用不跟随的文件类型判断（与主进程 `crates/host/src/index.rs` 一致），链接既不加载也不报问题。 | `a_scan_does_not_follow_symlinked_package_folders` |
+| 7 | `tree.children` 的 `locale` 只认 35 个字符内的字母、数字、`-`，否则当作没给（`kernel::valid_locale`；对提供的树和插件树都一样）。`tree.path` 仍传 `null`：`TreeNodeParams` 没有 `locale`，加字段是协议变更，本轮没定，留着。 | 单元测试 `locales_are_checked`；`provided_trees_…` 里三种坏值 |
+| 10 | 补测试：经 `audit.list` 的结果（同 #1）；`.index` 里绝对路径的 `dir` 被忽略、同一 `dir` 两条只取第一条（`with_an_index_…`）；回收与新调用同时发生（`releases_racing_new_calls_lose_nothing`：空闲 5 ms，60 次调用与运行全部成功、写入不丢、期间确有释放）；D370 把共享 promise 的现有行为固定下来（`a_shared_promise_continues_as_the_invocation_that_settled_it`：页面事件等运行兑现的 promise 后能用运行存下的接口；运行等页面事件兑现的 promise 后自己的接口被拒 `staleContext`）。 | 见左 |
+
+检查（实际跑过，机器负载 260–300）：`cargo test -p onedesk-kernel -p onedesk-worker -p onedesk-protocol` 全过（`round9.rs` 14 个）；clippy `-D warnings` 通过；`sh scripts/gen-types.sh --check` 最新；`pnpm lint`、`pnpm typecheck`、`cargo check -p onedesk-host --tests` 通过。

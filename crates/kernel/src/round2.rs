@@ -544,6 +544,8 @@ impl Inner {
             Some(AuditResult::Ok) => wheres.push("result = 'ok'".into()),
             Some(AuditResult::Denied) => wheres.push("result = 'failed:denied'".into()),
             Some(AuditResult::Error) => wheres.push("result LIKE 'failed:%' AND result <> 'failed:denied'".into()),
+            Some(AuditResult::Cancelled) => wheres.push("result = 'cancelled'".into()),
+            Some(AuditResult::Timeout) => wheres.push("result = 'timeout'".into()),
             None => {}
         }
         if let Some(t) = f.text.as_ref().filter(|t| !t.is_empty()) {
@@ -616,6 +618,8 @@ impl Inner {
                     result: match result.as_str() {
                         "ok" => AuditResult::Ok,
                         "failed:denied" => AuditResult::Denied,
+                        "cancelled" => AuditResult::Cancelled,
+                        "timeout" => AuditResult::Timeout,
                         _ => AuditResult::Error,
                     },
                     detail: summary,

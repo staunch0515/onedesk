@@ -1204,7 +1204,11 @@ fn read_root(root: &Path, old: &BTreeMap<String, Vec<&'static Plugin>>) -> (BTre
     } else {
         let dirs = |p: &Path| -> Vec<PathBuf> {
             let mut v: Vec<PathBuf> = std::fs::read_dir(p)
-                .map(|rd| rd.filter_map(|e| e.ok()).map(|e| e.path()).filter(|p| p.is_dir()).collect())
+                // Review #4: a symbolic link is not a package folder (the main process's cache
+                // does not follow them either), at the id level and the version level.
+                .map(|rd| {
+                    rd.filter_map(|e| e.ok()).filter(|e| e.file_type().is_ok_and(|t| t.is_dir())).map(|e| e.path()).collect()
+                })
                 .unwrap_or_default();
             v.sort();
             v
