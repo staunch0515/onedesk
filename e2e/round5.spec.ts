@@ -183,8 +183,7 @@ async function referencedByThree(page: Page, name: string) {
   return victim;
 }
 
-// The permanent-delete dialog of the Deleted page ("deleted.purgeBody") has no reference count either: the count in
-// `CommandDialogs` only serves command confirmations, which the kernel asks for nowhere on a delete.
+// Still open: the Deleted page's own permanent-delete dialog ("deleted.purgeBody") shows no reference count (the shell fixed the plain delete only).
 test.fixme("references: the confirmation of a permanent delete names how many items refer to the resource", async ({ page }) => {
   const victim = await referencedByThree(page, "Popular");
   await call(page, "resource.delete", { id: victim });
@@ -199,9 +198,8 @@ test.fixme("references: the confirmation of a permanent delete names how many it
   expect((await get(page, victim)).name).toBe("Popular"); // still there
 });
 
-// round5-plan §1: "删除一条被别人引用的资源时，确认框写明有几处引用它". The kernel only asks for confirmation on a permanent
-// delete; a plain delete (to the Deleted tree) goes straight through, so there is no dialog to carry the count.
-test.fixme("references: deleting a referenced resource asks first and names the count", async ({ page }) => {
+// round5-plan §1: deleting a referenced resource asks first and names the count.
+test("references: deleting a referenced resource asks first and names the count", async ({ page }) => {
   await referencedByThree(page, "Popular two");
   await openKernel(page, host);
   await showTree(page, "Resources");
@@ -394,7 +392,7 @@ test("a forged export: wrong trees and forged plugin state are invalid; granted 
   expect(audit.map((a) => a.operation)).toContain("network.grant");
 });
 
-test.fixme("import dialog shows the hosts that will be granted and the secret names (round5-review #2; the shell does not render grantHosts/secretNames yet)", async ({ page }) => {
+test("import dialog shows the hosts that will be granted and the secret names (round5-review #2)", async ({ page }) => {
   await openKernel(page, host);
   await settingsMenu(page).click();
   await page.getByRole("menuitem", { name: /Import/ }).click();
