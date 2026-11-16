@@ -23,3 +23,26 @@
 
 ## 没验证的
 没有对着真内核跑过（第二阶段 `e2e/round7.spec.ts` 才做）：清单是否被内核接受（`exports`、`depends`、`requires.plugins`）、`broken/` 是否确实被拒、市场页面在真外壳里的显示和点击流程、依赖方动作的运行与只读限制。
+
+---
+
+# 第二阶段（合并后，连真内核）
+
+`git merge claude/onedesk-coord-2-91a88b` 后写了 `e2e/round7.spec.ts`，用真 devhost（`ONEDESK_SECRET_STORE=memory`、临时数据目录）跑：`E2E_PORT=1435 pnpm exec playwright test e2e/round7.spec.ts` → **13 通过、1 `test.fixme`**（0 失败）。截图 `docs/screenshots/round7-*.png`（market-empty、market-list、market-install-dialog、market-installed、plugin-depends）。另跑了 `pnpm typecheck`、`pnpm lint`、插件 vitest，通过。没跑 Rust 测试、`workbench.spec.ts`。
+
+## 用例
+市场页无授权文件夹的说明；授权 `e2e/fixtures/market` 后三种状态（未安装 / 不可用+原因 / 已安装）；未声明 `plugins.install` 的插件（新夹具 `com.example.no-install`）被拒 `denied/notRequested`；授权范围外的文件夹被拒（`outsideGrant`，且无登记的请求）；同时两个请求第二个被拒（市场捕获 `conflict/pendingRequest` 并提示，请求仍只有一个，答复后结束）；框架确认框标题带“Plugin market”，取消后什么都没装且 `plugin.installRequests` 为空；确认后装上、列表“Installed 0.1.0”、插件树里出现；note-tools 的确认框权限 `resources` 的明细含 `org.onedesk.note:note`；笔记页出现 `count`，结果“5 words, 2 lines”；`stamp` 被拒 `denied/foreignKind`、笔记不变、审计里有 note-tools 作操作者的 `resources.update` 被拒行；插件页依赖/被依赖（协议 + 一张截图）；笔记停用被拒 `conflict/dependents`，`params.plugins = com.example.note-tools`，`plugin.checkRemove` 同；先停 note-tools 才能停笔记；笔记停用时启用 note-tools → `load.message = dependsUnmet`、`count` 不出现，重新启用笔记后恢复；只读策略下 `count` 被拒 `denied/readonly`。
+
+## 对着真内核核对后的修正与发现
+- 夹具新增：`e2e/fixtures/market/unreadable/`（残缺 JSON，让“不可用”有例子）、`e2e/fixtures/plugins/com.example.no-install/`。
+- `plugin.grantFolder` 的参数是 `path`；`page.event` 的 `context.draft.pick` 带选择，市场页和 note-tools 的假设都对上了（`ctx.resource.body.text`、`id`、`resources.update` 被拒的错误原样抛出，真内核给出 `denied/foreignKind`）。
+- **运行记录的操作者是 `user`**（谁点的运行），不是 note-tools；note-tools 是它在这次运行里做的宿主调用的操作者（审计行 `actor = plugin:com.example.note-tools@0.1.0`）。用例按这个断言。
+- 依赖方不满足时，对它的动作 `run.start` 没有被同步拒绝（返回 run id；用例只断言不会成功）。如果期望是同步拒绝，是内核行为待定。
+- 协议类用例用一个连着 mock 数据的 `workbench.html`（不连内核）当 WebSocket 载体，因为 `about:blank` 连不上 devhost；这样不会有真外壳去自动答复安装请求。
+- 市场页的“选包”下拉有 Radix 的 “Select is changing from uncontrolled to controlled” 控制台警告（外壳问题：`pick` 的值初始为空串后变受控）。不影响用例，未改。
+
+## fixme
+1. `removing the note version through the app is refused`：`app.removePlugin` 要等外壳把 `plugin.checkRemove` 接到主进程（`crates/host`）；`plugin.checkRemove` 本身的拒绝已在协议层用例里测过（通过）。
+
+## 没验证
+没在桌面应用（Tauri）里跑，只在 devhost + 浏览器里；右键菜单里的依赖方动作（内核说还没做）没测；5 分钟过期没测（内核测试里有）；中文界面的文字没断言。
