@@ -15,6 +15,9 @@ use crate::sandbox::{CallInfo, SandboxError};
 use crate::store::{self, Row};
 use crate::util::*;
 
+/// Plugin state parameter holding the last failed automatic switch (JSON of `SwitchFailure`, D337).
+pub const SWITCH_FAILURE: &str = "switchFailure";
+
 pub const METHODS: &[&str] = &[
     M::PLUGIN_INSPECT,
     M::PLUGIN_RESCAN,
@@ -282,13 +285,40 @@ impl Inner {
         let Some(active) = self.registry.plugin(plugin) else { return Ok(None) };
         let newest = self.registry.versions(plugin).into_iter().rev().find(|p| self.version_confirmed(p));
         match newest {
-            Some(n) if n.semver() > active.semver() => self.activate_version(plugin, &n.version.clone()).await.map(Some),
+            Some(n) if n.semver() > active.semver() => {
+                let res = self.activate_version(plugin, &n.version.clone()).await;
+                if let Err(e) = &res {
+                    // D337: recorded on the plugin, shown until the next success or the user's choice.
+                    let reason = e.params.get("reason").cloned().unwrap_or_else(|| {
+                        serde_json::to_value(e.code).ok().and_then(|v| v.as_str().map(String::from)).unwrap_or_default()
+                    });
+                    let f = SwitchFailure { version: n.version.clone(), reason, at: now_ms() };
+                    let set = vec![(SWITCH_FAILURE.to_string(), Some(json!(f).to_string()))];
+                    let _ = self.execute(Actor::Core, Command::PluginState { plugin: plugin.into(), set }).await;
+                    self.plugins_changed(plugin);
+                }
+                res.map(Some)
+            }
             _ => Ok(None),
+        }
+    }
+
+    /// D337: the last failed automatic switch, if not cleared since.
+    pub fn switch_failure(&self, plugin: &str) -> Option<SwitchFailure> {
+        self.plugin_param(plugin, SWITCH_FAILURE).and_then(|v| serde_json::from_str(&v).ok())
+    }
+
+    async fn clear_switch_failure(&self, plugin: &str) {
+        if self.plugin_param(plugin, SWITCH_FAILURE).is_some() {
+            let set = vec![(SWITCH_FAILURE.to_string(), None)];
+            let _ = self.execute(Actor::Core, Command::PluginState { plugin: plugin.into(), set }).await;
         }
     }
 
     pub async fn set_pinned(&self, plugin: &str, version: &str, pinned: bool) -> KResult<()> {
         self.registry.version(plugin, version).ok_or_else(|| not_found("plugin"))?;
+        // The user dealt with the plugin's versions (D337).
+        self.clear_switch_failure(plugin).await;
         if pinned {
             if self.registry.active_version(plugin).as_deref() != Some(version) {
                 self.activate_version(plugin, version).await?;
@@ -409,6 +439,7 @@ impl Inner {
             self.execute(Actor::User, Command::PluginState { plugin: plugin.into(), set }).await?;
         }
         self.registry.set_active(plugin, Some(version));
+        self.clear_switch_failure(plugin).await;
         self.plugins_changed(plugin);
         Ok(UpgradeResult { batch: out.id, upgraded, kept })
     }

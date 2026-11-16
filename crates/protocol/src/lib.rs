@@ -1127,6 +1127,12 @@ pub mod topic3 {
     pub const RUN: &str = "run:";
 }
 
+/// Topic of round 6: `plugin:<id>` — the plugin's own state changed (e.g. an event handler wrote
+/// its storage); the interface resolves that plugin's open pages again.
+pub mod topic6 {
+    pub const PLUGIN: &str = "plugin:";
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
@@ -1431,6 +1437,24 @@ pub struct PluginDetail {
     /// Installed versions whose permissions are not confirmed yet. Round 4.
     #[serde(default)]
     pub unconfirmed: Vec<String>,
+    /// The last automatic version switch that failed (round 6, D337); cleared by the next
+    /// successful switch or when the user picks or pins a version.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub switch_failure: Option<SwitchFailure>,
+}
+
+/// An automatic version switch that failed (round 6, D337).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct SwitchFailure {
+    /// The version that could not take over.
+    pub version: String,
+    /// `migrateFailed`, `readonly`, `grantField`, … (the refusal's reason, else its code).
+    pub reason: String,
+    /// Milliseconds since the epoch.
+    pub at: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -1701,6 +1725,9 @@ pub struct RefInfo {
     /// The target with its current name; absent when `state` is `missing`.
     pub target: Option<NamedRef>,
     pub state: RefState,
+    /// The label of the field in the source kind's declaration (round 6); absent when it has none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub field_label: Option<Label>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]

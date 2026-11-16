@@ -439,6 +439,13 @@ impl Inner {
         })
     }
 
+    /// Round 6: the label the source kind's declaration gives the field (`body.<key>`), if any.
+    fn field_label(&self, src: &Row, field: &str) -> Option<Label> {
+        let key = field.strip_prefix("body.")?;
+        let (p, k) = self.registry.kind_at(&src.kind, src.plugin_version.as_deref()).or_else(|| self.registry.kind(&src.kind))?;
+        k.fields.get(key)?.label.as_deref().map(|l| p.label(l))
+    }
+
     fn visible_row(&self, id: &str) -> KResult<Row> {
         match self.read(|c| store::get_any(c, id))? {
             Some(r) if !self.hidden_tree(&r) => Ok(r),
@@ -451,7 +458,8 @@ impl Inner {
         let mut out = Vec::new();
         for r in self.read(|c| crate::refs::rows_of(c, id))? {
             let (target, state) = self.ref_target(r.target.as_deref())?;
-            out.push(RefInfo { source: self.named(&src), field: r.field, text: r.text, target, state });
+            let field_label = self.field_label(&src, &r.field);
+            out.push(RefInfo { source: self.named(&src), field: r.field, text: r.text, target, state, field_label });
         }
         Ok(out)
     }
@@ -462,7 +470,8 @@ impl Inner {
         let mut out = Vec::new();
         for (src, r) in self.read(|c| crate::refs::sources_of(c, id, false))? {
             let Some(s) = self.read(|c| store::get(c, &src))? else { continue };
-            out.push(RefInfo { source: self.named(&s), field: r.field, text: r.text, target: Some(self.named(&me)), state });
+            let field_label = self.field_label(&s, &r.field);
+            out.push(RefInfo { source: self.named(&s), field: r.field, text: r.text, target: Some(self.named(&me)), state, field_label });
         }
         Ok(out)
     }

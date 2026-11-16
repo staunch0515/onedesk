@@ -728,6 +728,7 @@ impl Inner {
                 folders: vec![],
                 last_upgrade: None,
                 unconfirmed: vec![],
+                switch_failure: None,
             }));
         };
         let m = &p.manifest;
@@ -790,6 +791,7 @@ impl Inner {
             folders,
             last_upgrade: self.last_upgrade(id)?,
             unconfirmed: self.registry.versions(id).into_iter().filter(|v| !self.version_confirmed(v)).map(|v| v.version.clone()).collect(),
+            switch_failure: self.switch_failure(id),
         }))
     }
 
@@ -864,13 +866,13 @@ impl Inner {
                 kind: store::KIND_PLUGIN.into(),
                 expandable: false,
                 state: if enabled { NodeState::Ok } else { NodeState::Disabled },
-                // A newer version waits for the user to confirm its permissions (D299).
-                state_reason: self
-                    .registry
-                    .versions(&p.id)
-                    .iter()
-                    .any(|v| !self.version_confirmed(v))
-                    .then(|| Label::Text("unconfirmedVersion".into())),
+                // D337: a failed automatic switch first; then a newer version waiting for the user
+                // to confirm its permissions (D299).
+                state_reason: if self.switch_failure(&p.id).is_some() {
+                    Some(Label::Text("switchFailed".into()))
+                } else {
+                    self.registry.versions(&p.id).iter().any(|v| !self.version_confirmed(v)).then(|| Label::Text("unconfirmedVersion".into()))
+                },
                 badge: Some(p.version.clone()),
                 target: Some(format!("plugin:{}", p.id)),
                 menu: vec![kernel_cmd("node.open", "external-link"), toggle],
