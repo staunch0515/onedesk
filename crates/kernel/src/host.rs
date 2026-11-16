@@ -51,7 +51,7 @@ impl Inner {
         // D301: `migrate` is pure computation — only reads; `storage.readFrom` only there.
         const PURE_OK: &[&str] = &[
             "resources.get", "resources.list", "files.roots", "files.list", "files.stat", "files.readText",
-            "params.get", "storage.get", "storage.keys", "storage.readFrom", "settings.get",
+            "params.get", "storage.get", "storage.keys", "storage.readFrom", "settings.get", "process.ready",
         ];
         let res = if info.pure && !PURE_OK.contains(&method) {
             Err(denied("pureCall"))
@@ -67,10 +67,13 @@ impl Inner {
     async fn host_dispatch(&self, plugin: &'static Plugin, info: &CallInfo, cap: &str, op: &str, method: &str, args: &Value) -> KResult<Value> {
         let args = args.clone();
         match cap {
-            "resources" => self.host_resources(plugin, op, &args).await,
+            "resources" => self.host_resources(plugin, info, op, &args).await,
             "files" => self.host_files(plugin, op, &args).await,
             "ui" => self.host_ui(info, op, &args),
+            // D336: an event handler does what a page handler does, but no network and no programs.
+            "network" if op == "request" && info.event => Err(denied("notInRun")),
             "network" if op == "request" => self.host_network(plugin, info, &args).await,
+            "process" => self.host_process(plugin, info, op, &args).await,
             "secrets" if op == "get" => self.host_secret_get(plugin, info, &args).await,
             "params" => self.host_params(info, op, &args),
             "storage" => self.host_storage(plugin, op, &args).await,
@@ -95,7 +98,8 @@ impl Inner {
     /// for plugin calls (the checks come first), so nothing is recorded twice.
     async fn audit_refusal(&self, plugin: &Plugin, method: &str, args: &Value, res: &KResult<Value>) {
         if let Err(e) = res {
-            if e.code == ErrorCode::Denied {
+            // `process.run` audits its own refusals and failures.
+            if e.code == ErrorCode::Denied && !method.starts_with("process.") {
                 // Network calls are audited by host (never by URL, which may carry content).
                 let object = if method == "network.request" {
                     args.get(0).and_then(|o| o.get("url")).and_then(Value::as_str).and_then(crate::network::host_of).unwrap_or_default()
@@ -131,8 +135,10 @@ impl Inner {
         }
     }
 
-    async fn host_resources(&self, plugin: &Plugin, op: &str, args: &Value) -> KResult<Value> {
+    async fn host_resources(&self, plugin: &Plugin, info: &CallInfo, op: &str, args: &Value) -> KResult<Value> {
         let actor = plugin.actor();
+        // D336: what an event handler writes raises no event for the same plugin.
+        let quiet = info.event.then_some(plugin.id.as_str());
         match op {
             "get" => {
                 let id = arg_str(args, 0, "id")?;
@@ -172,7 +178,7 @@ impl Inner {
                     None => vec![],
                 };
                 let out = self
-                    .execute(
+                    .execute_quiet(
                         actor,
                         Command::Create(NewResource {
                             kind,
@@ -184,6 +190,7 @@ impl Inner {
                             body,
                             plugin_version: Some(plugin.version.clone()),
                         }),
+                        quiet,
                     )
                     .await?;
                 let row = self.live_row(&out.id.unwrap_or_default())?;
@@ -196,7 +203,7 @@ impl Inner {
                     serde_json::from_value(arg(args, 1)).map_err(|_| invalid_params("changes must be an object"))?;
                 let changes = Changes::from_bind_map(&changes)?;
                 let basis = args.get(2).and_then(|v| v.as_i64().or_else(|| v.as_str().and_then(|s| s.parse().ok())));
-                self.execute(actor, Command::Update { id: id.clone(), changes, basis }).await?;
+                self.execute_quiet(actor, Command::Update { id: id.clone(), changes, basis }, quiet).await?;
                 Ok(json!({ "rev": self.live_row(&id)?.rev }))
             }
             "move" => {
@@ -207,13 +214,13 @@ impl Inner {
                     Some(b) => MoveDest::Before(b.to_string()),
                     None => MoveDest::Inside(to.get("parent").and_then(Value::as_str).map(String::from)),
                 };
-                self.execute(actor, Command::Move { id, dest }).await?;
+                self.execute_quiet(actor, Command::Move { id, dest }, quiet).await?;
                 Ok(Value::Null)
             }
             "remove" => {
                 let id = arg_str(args, 0, "id")?;
                 self.own_row(plugin, &id)?.ok_or_else(|| not_found("resource"))?;
-                self.execute(actor, Command::Delete { id }).await?;
+                self.execute_quiet(actor, Command::Delete { id }, quiet).await?;
                 Ok(Value::Null)
             }
             _ => Err(err_p(ErrorCode::UnknownMethod, &[("method", &format!("resources.{op}"))])),

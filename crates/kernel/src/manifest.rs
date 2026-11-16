@@ -52,14 +52,31 @@ pub struct Requires {
     /// D305/D306: secret names it may use; `plaintext` lets it read values (a separate permission).
     #[serde(default)]
     pub secrets: Option<SecretsReq>,
-    /// Declared only (shown at install); the capabilities come in a later round.
+    /// Round 6 (D331): external programs `host.process` may run, by name.
     #[serde(default)]
-    pub programs: Vec<String>,
+    pub programs: Vec<ProgramDecl>,
     #[serde(default)]
     pub resources: bool,
     #[serde(default)]
     pub plugins: bool,
 }
+
+/// One declared external program (D331): `system` (found in the fixed system folders) or
+/// `plugin` (its own: `plugin-data/<id>/bin/<name>`, then `path` inside the package).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ProgramDecl {
+    pub name: String,
+    pub source: String,
+    #[serde(default)]
+    pub path: Option<String>,
+}
+
+pub const PROGRAM_SYSTEM: &str = "system";
+pub const PROGRAM_PLUGIN: &str = "plugin";
+
+/// Round 6 (D335): the events a plugin can subscribe to.
+pub const EVENTS: &[&str] = &["resource.changed", "run.ended"];
 
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -97,6 +114,9 @@ pub struct FieldDecl {
     /// Round 5 (D321): a text field whose `[[name]]` marks are references to other resources.
     #[serde(default)]
     pub refs: bool,
+    /// Round 6: a label key (or text) for the field, shown e.g. in the reference panel.
+    #[serde(default)]
+    pub label: Option<String>,
 }
 
 /// Type of a declared body field: the view field kinds plus `ref` (a single reference stored as
@@ -147,6 +167,9 @@ pub struct Contributes {
     pub actions: Vec<ActionDef>,
     #[serde(default)]
     pub settings: Vec<SettingDecl>,
+    /// Round 6 (D335): events it subscribes to (`host.events.on` only for these).
+    #[serde(default)]
+    pub events: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -369,8 +392,13 @@ pub fn permission_atoms(m: &Manifest) -> BTreeSet<String> {
             a.insert("secrets.plaintext".to_string());
         }
     }
+    // D331: the program list is part of the fingerprint; the plugin's own are marked.
     for p in &r.programs {
-        a.insert(format!("programs:{p}"));
+        if p.source == PROGRAM_PLUGIN {
+            a.insert(format!("programs:{} (plugin)", p.name));
+        } else {
+            a.insert(format!("programs:{}", p.name));
+        }
     }
     if r.resources {
         a.insert("resources".to_string());
@@ -483,6 +511,9 @@ impl Plugin {
     pub fn action(&self, short: &str) -> Option<&ActionDef> {
         self.manifest.contributes.actions.iter().find(|a| a.id == short)
     }
+    pub fn program(&self, name: &str) -> Option<&ProgramDecl> {
+        self.manifest.requires.programs.iter().find(|p| p.name == name)
+    }
     pub fn setting(&self, name: &str) -> Option<&SettingDecl> {
         self.manifest.contributes.settings.iter().find(|x| x.name == name)
     }
@@ -560,6 +591,29 @@ pub fn valid_secret_name(n: &str) -> bool {
 
 fn valid_short(s: &str) -> bool {
     !s.is_empty() && s.len() <= 64 && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.')
+}
+
+/// D331: `[A-Za-z0-9._-]{1,64}`.
+pub fn valid_program_name(n: &str) -> bool {
+    !n.is_empty() && n.len() <= 64 && n != "." && n != ".." && n.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
+}
+
+/// A plugin program's path in the package: relative, no `..`; when the file exists, it (after
+/// following links) must stay inside the package. A missing file is allowed (reported at run time).
+pub fn package_program(dir: &Path, rel: &str) -> Option<PathBuf> {
+    let p = Path::new(rel);
+    if rel.is_empty() || p.is_absolute() || p.components().any(|c| !matches!(c, std::path::Component::Normal(_) | std::path::Component::CurDir)) {
+        return None;
+    }
+    let full = dir.join(p);
+    if full.symlink_metadata().is_ok() {
+        let real = full.canonicalize().ok()?;
+        let root = dir.canonicalize().ok()?;
+        if !real.starts_with(&root) {
+            return None;
+        }
+    }
+    Some(full)
 }
 
 /// A relative path inside the package (no `..`, not absolute).
@@ -748,6 +802,34 @@ pub fn load_package_opts(dir: &Path, check_folder: bool) -> Result<Plugin, Rejec
                 }
                 Some(g) => return Err(reject(dir, "badGrants", format!("kind {} field {name}: {g}", k.id))),
             }
+        }
+    }
+    // D331: programs by name; system ones without a path, the plugin's own with one inside the package.
+    let mut names = HashSet::new();
+    for pr in &m.requires.programs {
+        let bad = |why: &str| reject(dir, "badPrograms", format!("{}: {why}", pr.name));
+        if !valid_program_name(&pr.name) {
+            return Err(bad("name"));
+        }
+        if !names.insert(pr.name.as_str()) {
+            return Err(bad("duplicate"));
+        }
+        match (pr.source.as_str(), &pr.path) {
+            (PROGRAM_SYSTEM, None) => {}
+            (PROGRAM_SYSTEM, Some(_)) => return Err(bad("a system program has no path")),
+            (PROGRAM_PLUGIN, Some(rel)) => {
+                if package_program(dir, rel).is_none() {
+                    return Err(bad("path"));
+                }
+            }
+            (PROGRAM_PLUGIN, None) => return Err(bad("path missing")),
+            _ => return Err(bad("source")),
+        }
+    }
+    let mut evs = HashSet::new();
+    for e in &c.events {
+        if !EVENTS.contains(&e.as_str()) || !evs.insert(e.as_str()) {
+            return Err(reject(dir, "badEvents", e.clone()));
         }
     }
     let mut locales = BTreeMap::new();
@@ -1110,6 +1192,55 @@ mod tests {
         assert_eq!(reason(with(field(json!({ "type": "text", "grants": "network", "secrets": true })), &["requires", "network"], json!({ "fromResources": true }))), "badSecretsField");
         assert_eq!(reason(with(good(), &["contributes", "commands", "0", "palette"], json!(true))), "ok");
         assert_eq!(reason(with(with(good(), &["author"], json!("me")), &["license"], json!("MIT"))), "ok");
+    }
+
+    #[test]
+    fn program_and_event_declarations_and_their_rejections() {
+        let progs = |v: Value| with(good(), &["requires", "programs"], v);
+        assert_eq!(reason(progs(json!([{ "name": "echo", "source": "system" }]))), "ok");
+        assert_eq!(reason(progs(json!([{ "name": "x", "source": "plugin", "path": "bin/x.sh" }]))), "ok", "a missing file is reported at run time");
+        for bad in [
+            json!([{ "name": "echo", "source": "system", "path": "bin/echo" }]),
+            json!([{ "name": "x", "source": "plugin" }]),
+            json!([{ "name": "x", "source": "plugin", "path": "../x" }]),
+            json!([{ "name": "x", "source": "plugin", "path": "/bin/echo" }]),
+            json!([{ "name": "x", "source": "plugin", "path": "" }]),
+            json!([{ "name": "x", "source": "elsewhere" }]),
+            json!([{ "name": "a b", "source": "system" }]),
+            json!([{ "name": "a/b", "source": "system" }]),
+            json!([{ "name": "", "source": "system" }]),
+            json!([{ "name": "x".repeat(65), "source": "system" }]),
+            json!([{ "name": "echo", "source": "system" }, { "name": "echo", "source": "system" }]),
+        ] {
+            assert_eq!(reason(progs(bad.clone())), "badPrograms", "{bad}");
+        }
+        // A link that leads out of the package.
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = write(tmp.path(), "test.alpha", "0.1.0", &progs(json!([{ "name": "x", "source": "plugin", "path": "bin/x" }])));
+        std::fs::create_dir_all(dir.join("bin")).unwrap();
+        std::os::unix::fs::symlink("/bin/echo", dir.join("bin/x")).unwrap();
+        assert_eq!(load_package(&dir).unwrap_err().reason, "badPrograms");
+
+        let evs = |v: Value| with(good(), &["contributes", "events"], v);
+        assert_eq!(reason(evs(json!(["resource.changed", "run.ended"]))), "ok");
+        assert_eq!(reason(evs(json!(["resource.saved"]))), "badEvents");
+        assert_eq!(reason(evs(json!(["run.ended", "run.ended"]))), "badEvents");
+
+        // The program list is part of the permissions and of their fingerprint (D331).
+        let tmp = tempfile::tempdir().unwrap();
+        let one = load_package(&write(tmp.path(), "test.alpha", "0.1.0", &progs(json!([{ "name": "echo", "source": "system" }])))).unwrap();
+        let tmp2 = tempfile::tempdir().unwrap();
+        let two = load_package(&write(
+            tmp2.path(),
+            "test.alpha",
+            "0.1.0",
+            &progs(json!([{ "name": "echo", "source": "system" }, { "name": "hello", "source": "plugin", "path": "bin/hello.sh" }])),
+        ))
+        .unwrap();
+        assert_ne!(perm_fingerprint(&one.permissions()), perm_fingerprint(&two.permissions()));
+        let list = two.permission_list(|_| false);
+        let programs = list.iter().find(|p| p.id == "programs").unwrap();
+        assert_eq!(programs.detail, "echo, hello (plugin)");
     }
 
     #[test]

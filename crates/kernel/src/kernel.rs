@@ -67,6 +67,10 @@ pub(crate) struct Inner {
     pub runs_active: crate::runs::ActiveRuns,
     pub secret_cache: Mutex<HashMap<String, String>>,
     pub rules: crate::pipeline::SharedRules,
+    /// Round 6: external programs running for this kernel.
+    pub procs: Arc<crate::process::Procs>,
+    /// Round 6: one ordered delivery queue per plugin (D335).
+    pub event_queues: Mutex<HashMap<String, tokio::sync::mpsc::UnboundedSender<crate::events::Delivery>>>,
 }
 
 pub(crate) fn parse<T: DeserializeOwned>(v: Value) -> KResult<T> {
@@ -132,6 +136,8 @@ impl Kernel {
             runs_active: Default::default(),
             secret_cache: Default::default(),
             rules,
+            procs: Default::default(),
+            event_queues: Default::default(),
         });
         // D299 first sight, then each plugin's active version.
         inner.first_sight_blocking();
@@ -161,6 +167,9 @@ impl Kernel {
 
     /// Finishes queued writes and stops the writer thread; drops every plugin runtime.
     pub fn shutdown(&self) {
+        // No orphans (D333): programs still running end with the worker.
+        self.inner.procs.kill_all();
+        self.inner.event_queues.lock().unwrap().clear();
         self.inner.slots.lock().unwrap().clear();
         self.inner.pipeline.shutdown();
     }
@@ -191,6 +200,11 @@ impl Kernel {
         self.inner.registry.rejected().clone()
     }
 
+    /// External programs still running (tests).
+    pub fn live_programs(&self) -> usize {
+        self.inner.procs.live_count()
+    }
+
     pub fn db_path(&self) -> PathBuf {
         self.inner.ws.dir.join(crate::workspace::DB_FILE)
     }
@@ -208,6 +222,26 @@ impl Inner {
 
     /// Runs a command through the pipeline and publishes its events after commit.
     pub async fn execute(&self, actor: Actor, cmd: Command) -> KResult<Outcome> {
+        self.execute_quiet(actor, cmd, None).await
+    }
+
+    /// `execute`; `quiet`: a plugin whose event handler made this write gets no
+    /// `resource.changed` for it (D336).
+    pub async fn execute_quiet(&self, actor: Actor, cmd: Command, quiet: Option<&str>) -> KResult<Outcome> {
+        // Round 6 (D335): what the command does to the resources it touches.
+        let change: Option<&'static str> = match &cmd {
+            Command::Create(_) | Command::Import(_) => Some("created"),
+            Command::Update { .. }
+            | Command::Params { .. }
+            | Command::Move { .. }
+            | Command::Restore { .. }
+            | Command::Upgrade { .. }
+            | Command::UndoUpgrade { .. } => Some("updated"),
+            Command::Delete { .. } => Some("deleted"),
+            Command::Undelete { .. } => Some("restored"),
+            Command::Purge { .. } => Some("purged"),
+            _ => None,
+        };
         let plugin_state = matches!(&cmd, Command::Update { .. } | Command::Create(_) | Command::Grant { .. });
         let deletion = matches!(&cmd, Command::Delete { .. } | Command::Undelete { .. } | Command::Purge { .. });
         let audited = !matches!(&cmd, Command::Meta { .. } | Command::UiSet { .. });
@@ -269,6 +303,17 @@ impl Inner {
         }
         if out.changed && audited {
             self.emit(onedesk_protocol::topic2::AUDIT, None, None);
+        }
+        if let (Some(change), true) = (change, out.changed) {
+            for r in &out.rows {
+                let Some((pid, _)) = Registry::split(&r.kind) else { continue };
+                if quiet == Some(pid) || self.registry.kind(&r.kind).is_none() {
+                    continue;
+                }
+                // A created row is new (rev 1); other rows a creation touched were updated.
+                let c = if change == "created" && r.rev > 1 { "updated" } else { change };
+                self.deliver(pid, crate::events::RESOURCE_CHANGED, json!({ "id": r.id, "kind": r.kind, "change": c }));
+            }
         }
         Ok(out)
     }
@@ -936,6 +981,7 @@ impl Inner {
                 commands: plugin.manifest.contributes.commands.iter().map(|c| c.id.clone()).collect(),
                 actions: plugin.manifest.contributes.actions.iter().map(|a| a.id.clone()).collect(),
                 kinds: plugin.manifest.contributes.kinds.iter().map(|k| k.id.clone()).collect(),
+                events: plugin.manifest.contributes.events.clone(),
             },
             labels: plugin.all_labels(),
         };

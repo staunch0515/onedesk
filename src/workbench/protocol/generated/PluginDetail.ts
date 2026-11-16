@@ -5,6 +5,7 @@ import type { PluginPermission } from "./PluginPermission";
 import type { PluginProvides } from "./PluginProvides";
 import type { PluginSetting } from "./PluginSetting";
 import type { PluginVersion } from "./PluginVersion";
+import type { SwitchFailure } from "./SwitchFailure";
 import type { UpgradeBatchInfo } from "./UpgradeBatchInfo";
 
 /**
@@ -26,4 +27,9 @@ lastUpgrade?: UpgradeBatchInfo,
 /**
  * Installed versions whose permissions are not confirmed yet. Round 4.
  */
-unconfirmed: Array<string>, };
+unconfirmed: Array<string>, 
+/**
+ * The last automatic version switch that failed (round 6, D337); cleared by the next
+ * successful switch or when the user picks or pins a version.
+ */
+switchFailure?: SwitchFailure, };

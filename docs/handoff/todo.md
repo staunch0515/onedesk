@@ -55,3 +55,6 @@
 - [round5-tests] 外壳：假实现/测试补 `ImportPreview.grantHosts/secretNames`（typecheck 3 处）；导入预览对话框渲染这两项；删除确认的被引用数（见 round5-tests-done.md 的 fixme）；`kernel-texts` 补 `run.export` 与新原因码。
 - （第五轮）已删除页里“永久删除”的确认框没有被引用数（普通删除已有）；`e2e/round5.spec.ts` 里留了一条 `test.fixme`，下一轮由外壳补。
 - （第五轮验收）信息面板“引用”一节里显示的是字段的内部名（“位于 body.text”），应显示字段的标签或不显示。
+
+- （第六轮内核）工作进程被强杀（SIGKILL）时，它启动的外部程序（各自一个进程组）不会随之结束；正常退出会清理。要做需要一个看门进程或用 kqueue `NOTE_EXIT` 监视父进程，请协调会话定。
+- （第六轮内核）动作的总时长仍是 D288 的 60 秒，`process.run` 的 `timeoutMs` 最长 600 秒实际被它截断；是否在运行外部程序时延长动作时长，请协调会话定。

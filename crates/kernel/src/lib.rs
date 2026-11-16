@@ -2,6 +2,8 @@
 //! knowledge of any particular plugin: it knows resources, plugins and views.
 
 mod commands;
+pub mod events;
+pub mod process;
 pub mod files;
 mod host;
 pub mod kernel;
