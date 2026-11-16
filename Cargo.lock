@@ -2499,6 +2499,7 @@ name = "onedesk-host"
 version = "0.2.0"
 dependencies = [
  "futures-util",
+ "libc",
  "onedesk-protocol",
  "serde",
  "serde_json",
