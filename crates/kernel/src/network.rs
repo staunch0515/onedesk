@@ -184,6 +184,11 @@ pub(crate) fn read_error(e: reqwest::Error) -> ProtocolError {
     if e.is_timeout() { err_p(ErrorCode::Invalid, &[("reason", "timeout")]) } else { err_d(ErrorCode::Invalid, e.to_string()) }
 }
 
+/// A refused address (round 8): `denied` with `host` = `<host>:<port>` — never the path or query.
+fn refused_host(reason: &str, host: &str, port: u16) -> ProtocolError {
+    err_p(ErrorCode::Denied, &[("reason", reason), ("host", &format!("{host}:{port}"))])
+}
+
 /// A response body as text, kept up to `MAX_BODY` bytes (and whether more came).
 pub(crate) async fn read_text_body(mut resp: reqwest::Response, deadline: tokio::time::Instant) -> KResult<(Vec<u8>, bool)> {
     let mut bytes: Vec<u8> = Vec::new();
@@ -266,12 +271,12 @@ impl Inner {
         let port = url.port_or_known_default().ok_or_else(|| invalid("badUrl"))?;
         let (ok, explicit) = match_list(granted, &host, port);
         if !ok {
-            return Err(denied("hostNotAllowed"));
+            return Err(refused_host("hostNotAllowed", &host, port));
         }
         // §6.3: every layer that defines a list must contain the host; an empty list allows nothing.
         for l in layers {
             if !match_list(l, &host, port).0 {
-                return Err(denied("blockedByPolicy"));
+                return Err(refused_host("blockedByPolicy", &host, port));
             }
         }
         let addrs: Vec<SocketAddr> = tokio::net::lookup_host((host.as_str(), port))
@@ -281,7 +286,7 @@ impl Inner {
         let addr = *addrs.first().ok_or_else(|| err_p(ErrorCode::NotFound, &[("what", "host")]))?;
         // D308: no loopback / link-local unless the allow list names exactly this host (or IP).
         if addrs.iter().any(|a| local_address(a.ip())) && !explicit {
-            return Err(denied("localAddress"));
+            return Err(refused_host("localAddress", &host, port));
         }
         Ok((host, addr))
     }
