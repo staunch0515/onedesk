@@ -241,6 +241,19 @@ export function WorkbenchProvider({ store, children }: { store: Store; children:
           const defaultName = DEFAULT_NAME_KEY[id];
           const args = defaultName && !context.args?.name ? { ...context.args, name: live.current.i18n.t(defaultName) } : context.args;
           const full = { tabId: active?.id, ...context, ...(args ? { args } : {}) };
+          // The kernel deletes at once (it can be undone); when other items refer to this one the shell asks first and says how many (§10).
+          // (Pure demo mode and demo trees keep deleting at once: their seeded references are only illustration.)
+          const real = client.demo !== undefined && !client.demo.tree(context.tree ?? "");
+          if (id === "node.delete" && real && !context.args?.confirmed) {
+            const subject = context.target?.startsWith("resource:") ? context.target.slice(9) : context.nodeKey;
+            const refs = subject ? await client.refs.incoming(subject).catch(() => []) : [];
+            const count = new Set(refs.map((r) => r.source.id)).size;
+            if (count > 0) {
+              const text = live.current.i18n.t("delete.refs", { count });
+              store.set({ confirmCommand: { message: { "en-US": text, "zh-CN": text }, command: id, danger: true, context: full } });
+              return;
+            }
+          }
           await applyEffects(await client.command.execute(id, full), full);
         } catch (error) {
           fail(error);

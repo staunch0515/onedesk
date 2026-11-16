@@ -156,7 +156,7 @@ export function TransferDialogs() {
         }
       >
         {preview && !preview.valid && (
-          <Banner tone="danger" title={t("transfer.refusedTitle")}>
+          <Banner tone="danger">
             {preview.problem ? error(preview.problem) : t("install.invalidUnknown")}
           </Banner>
         )}
