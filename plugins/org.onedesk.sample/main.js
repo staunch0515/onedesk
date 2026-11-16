@@ -88,6 +88,19 @@ export function buildRows(text, params, limit) {
   return { rows, total };
 }
 
+export const BIG_ROWS = 10000;
+
+// A fixed big table (10000 rows x 5 columns), the same every time; it ignores the rowLimit setting.
+export function buildBigRows(n) {
+  const rows = [];
+  let s = 12345;
+  for (let i = 0; i < n; i++) {
+    s = (Math.imul(s, 1103515245) + 12345) >>> 0;
+    rows.push([i + 1, `customer-${(s % 900) + 100}`, (s % 100000) / 100, STATUSES[s % STATUSES.length], `2026-01-${String((s % 28) + 1).padStart(2, "0")}`]);
+  }
+  return rows;
+}
+
 function bodyText(ctx) {
   if (ctx.run && ctx.run.input && typeof ctx.run.input["body.text"] === "string") return ctx.run.input["body.text"];
   if (ctx.draft && typeof ctx.draft["body.text"] === "string") return ctx.draft["body.text"];
@@ -187,6 +200,26 @@ export default {
         lines.push(found.found ? `${name} = ${found.value} (${tr(ctx, "explain.env", { source: found.sourceName })})` : `${name} (${tr(ctx, "explain.unset")})`);
       }
       return { output: { type: "text", text: lines.join("\n") }, summary: { message: tr(ctx, "summary.explain") } };
+    });
+
+    host.actions.handle("big", async (ctx) => {
+      ctx.progress(0.5, tr(ctx, "step.build"));
+      const rows = buildBigRows(BIG_ROWS);
+      return {
+        output: {
+          type: "table",
+          columns: [
+            { key: "id", label: "id", numeric: true },
+            { key: "customer", label: "customer" },
+            { key: "amount", label: "amount", numeric: true },
+            { key: "status", label: "status" },
+            { key: "date", label: "date" },
+          ],
+          rows,
+          total: rows.length,
+        },
+        summary: { rows: rows.length, message: tr(ctx, "summary.rows", { rows: rows.length }) },
+      };
     });
 
     host.actions.handle("run", async (ctx, input) => {

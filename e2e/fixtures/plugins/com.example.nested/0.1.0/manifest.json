@@ -1,0 +1,45 @@
+{
+  "id": "com.example.nested",
+  "version": "0.1.0",
+  "apiVersion": "2",
+  "name": "plugin.name",
+  "description": "plugin.description",
+  "icon": "layers",
+  "main": "main.js",
+  "author": "OneDesk",
+  "license": "MIT",
+  "requires": { "files": false },
+  "contributes": {
+    "kinds": [
+      {
+        "id": "shelf",
+        "label": "kind.shelf",
+        "icon": "layers",
+        "tree": "resources",
+        "page": "editor",
+        "newName": "kind.shelf.new",
+        "defaults": { "count": 0, "text": "" },
+        "draggable": true,
+        "accepts": [],
+        "children": true
+      }
+    ],
+    "actions": [
+      { "id": "touch", "label": "action.touch", "icon": "pencil", "kinds": ["shelf"], "output": "text", "saveFirst": false, "confirm": null }
+    ],
+    "pages": [
+      {
+        "id": "editor",
+        "actions": [
+          { "id": "touch", "role": "run", "action": "touch", "label": "action.touch", "icon": "pencil" },
+          { "id": "save", "role": "save", "label": "action.save", "icon": "save", "shortcut": ["Mod", "S"] }
+        ],
+        "resultTabs": [
+          { "id": "result", "type": "output", "label": "tab.result", "icon": "terminal" }
+        ]
+      }
+    ],
+    "menus": { "new": ["shelf"] },
+    "locales": { "en-US": "locales/en-US.json", "zh-CN": "locales/zh-CN.json" }
+  }
+}

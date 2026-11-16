@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 // @ts-ignore plain JS module, no types
-import plugin, { buildRows, fillParams, hash, paramKind, paramNames, tidy } from "./main.js";
+import plugin, { BIG_ROWS, buildBigRows, buildRows, fillParams, hash, paramKind, paramNames, tidy } from "./main.js";
 import { readFileSync } from "node:fs";
 import { EVENT_RESULT_KEYS, RENDER_KEYS, checkActionResult, checkView, onlyKeys, registry } from "../_testing/view-check";
 
@@ -70,7 +70,7 @@ describe("sample: page", () => {
   it("registers what the manifest declares", () => {
     const r = registry(plugin);
     expect(Object.keys(r.pages)).toEqual(["editor"]);
-    expect(Object.keys(r.actions).sort()).toEqual(["explain", "run"]);
+    expect(Object.keys(r.actions).sort()).toEqual(["big", "explain", "run"]);
     expect(r.trees).toEqual({});
   });
 
@@ -175,6 +175,22 @@ describe("sample: run action", () => {
     expect(checkActionResult(capped)).toEqual([]);
     const bad = await run(fakeHost({ settings: { get: vi.fn(async () => "abc") } }), "x").done;
     expect(bad.output.rows.length).toBeLessThanOrEqual(200);
+  });
+
+  it("big: a 10000 row, 5 column table of the declared shape, the same every time, ignoring the row limit", async () => {
+    const { actions } = registry(plugin);
+    const host = fakeHost({ settings: { get: vi.fn(async () => "3") } });
+    const res = await actions.big(ctxOf(host), {});
+    expect(checkActionResult(res)).toEqual([]);
+    expect(res.output.type).toBe("table");
+    expect(BIG_ROWS).toBe(10000);
+    expect(res.output.rows).toHaveLength(10000);
+    expect(res.output.total).toBe(10000);
+    expect(res.output.columns.map((c: any) => c.key)).toEqual(["id", "customer", "amount", "status", "date"]);
+    for (const row of [res.output.rows[0], res.output.rows[9999]]) expect(row).toHaveLength(5);
+    expect(res.output.rows[9999][0]).toBe(10000);
+    expect(res.summary).toEqual({ rows: 10000, message: "10000 rows" });
+    expect(buildBigRows(10000)).toEqual(res.output.rows);
   });
 
   it("!fail throws before doing anything", async () => {

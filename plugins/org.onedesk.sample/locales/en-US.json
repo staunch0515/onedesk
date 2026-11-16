@@ -35,5 +35,6 @@
   "explain.hand": "entered here",
   "explain.env": "from environment {source}",
   "explain.unset": "not set",
-  "summary.explain": "Explained"
+  "summary.explain": "Explained",
+  "action.big": "Big table (10000 rows)"
 }
