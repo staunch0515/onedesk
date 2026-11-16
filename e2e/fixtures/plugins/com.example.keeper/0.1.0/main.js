@@ -4,7 +4,9 @@
 // Sandbox rules: no console, timers or fetch; everything goes through ctx.host.
 
 const DRAFT_KEY = "draft";
-const SLOW_MS = 20000;
+// The host caps one util.sleep at 10 s (MAX_SLEEP_MS), so 20 s are two sleeps.
+const SLOW_STEP_MS = 10000;
+const SLOW_STEPS = 2;
 let stashed = null;
 
 export function tr(ctx, key, vars) {
@@ -62,7 +64,7 @@ export default {
     });
 
     host.actions.handle("slow", async (ctx) => {
-      await ctx.host.util.sleep(SLOW_MS);
+      for (let i = 0; i < SLOW_STEPS; i++) await ctx.host.util.sleep(SLOW_STEP_MS);
       return { output: { type: "text", text: tr(ctx, "result.slow") } };
     });
 

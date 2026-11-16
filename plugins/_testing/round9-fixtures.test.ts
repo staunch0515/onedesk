@@ -75,11 +75,11 @@ describe("fixture: keeper", () => {
     expect(request).toHaveBeenCalledWith({ method: "GET", url: "https://example.com/" });
     expect(out).toEqual({ message: "denied" });
   });
-  it("slow sleeps 20 seconds through the host", async () => {
+  it("slow sleeps 20 seconds through the host, in two 10 s steps (the host caps one sleep at 10 s)", async () => {
     const { actions } = registry(keeper);
     const sleep = vi.fn(async () => undefined);
     const res = await actions.slow(ctxOf({ util: { sleep } }), {});
-    expect(sleep).toHaveBeenCalledWith(20000);
+    expect(sleep.mock.calls).toEqual([[10000], [10000]]);
     expect(res.output.text).toBe("done slowly");
   });
   it("the provided tree has one node whose label follows ctx.locale", async () => {
