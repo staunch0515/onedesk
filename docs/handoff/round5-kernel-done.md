@@ -87,3 +87,27 @@
 - 导入时绑定版本缺失、由活动版本 `migrate` 接管的路径没有集成测试（预览的 `needsVersion` 有测试）。
 - `blobs/` 永远为空（内核还没有大块数据）。
 - 外壳、e2e 未运行（不在本会话范围）。
+
+## 审查后的修改（`round5-review.md`，D329）
+
+先合并了协调分支 `claude/onedesk-coord-2-91a88b`。11 条全部修了，每条有测试（`crates/kernel/tests/round5.rs` 末尾 `review*` 7 个，`refs.rs` 单元测试 1 个，原有测试相应补断言）。
+
+| # | 改了什么 | 测试 |
+|---|---|---|
+| 1 | 导入的每一条按新建的规则定树：插件类型只取清单规则的树；分组只能在 `resources` 或插件的存储树，文件写 `env`/`config`/`core:plugin-state` 的记 `invalid`；`core:plugin-state` 节点记 `invalid`。文件里的父节点要同树且 `accepts` 本类型，否则 `invalid`（父节点没被导入的照旧放进导入分组/树顶层）。写入事务里再过一遍 `check_parent` 和树校验（`otherTree`）。 | `review1_imported_structure_follows_the_creation_rules` |
+| 2 | 协议只增 `ImportPreview.grantHosts`、`ImportPreview.secretNames`（排序去重）。来源：授权地址字段；密钥字段 `{secret}`、`secrets: true` 文字里的 `{{secret:…}}`、环境参数中类型为 `secret` 的值。只算会被导入的条目；接管版本的条目按接管前的正文算。`network.grant` 审计照记。 | `review2_preview_lists_granted_hosts_and_secret_names` |
+| 3 | 保留表同时以旧文字和旧目标的**当前名称**为键，改名后保存读到的 `[[新名]]` 仍接原目标。 | `review3_saving_what_was_shown_after_a_rename_keeps_the_target` |
+| 4 | 单引用字段的目标没被导入：正文改写为 `{ "ref": null }`，`refs` 行保留文字（文件 `refs` 里该字段的文字，没有就用旧 id），状态 `missing`。 | `review4_a_single_reference_to_something_not_imported_is_cleared` |
+| 5 | 读之前查大小：`manifest.json`、`resources.json` 各 256 MB，超了 `invalid/tooLarge`；条数上限 200 000（`tooLarge`）；单条正文序列化超过 8 MB 的记 `invalid`。 | `review5_8_limits_duplicate_ids_and_untrusted_refs` |
+| 6 | 新迁移 `0009_resource_names.sql`：`CREATE INDEX resources_name ON resources (name)`（0008 未改）。 | `review6_resource_names_are_indexed`；迁移升级测试同时覆盖 |
+| 7 | `meta.refs_decl` 记下建表时各类型的引用字段；启动时和 `plugin.rescan` 之后（新命令 `SyncRefDecls`，审计名 `refs.sync` 只在失败时出现）比较：去掉的字段删行，新增的字段对该类型的全部资源（含已删除）计算，不变的字段不动。 | `review7_9_new_reference_fields_and_undo_under_readonly` |
+| 8 | 不信文件里的 `refs`：导入后按正文重算；同字段、同序号、同文字的文件行只作提示（目标按新旧 id 对应，没导入的为 `missing`），其余按名称解析；文件行重复、错位都不影响。预览查重复 id：`valid: false`，`problem` = `invalid/duplicateId`；`workspace.import` 同样拒绝。 | `review5_8_…` |
+| 9 | 只读：空的 `page.save` 放行（管线里空的 `Update` 也不拒）；撤销升级只在确有资源要改写时拒绝（检查移到撤销内部，第一条要恢复的资源之前）。 | `review7_9_…`（空保存、能改写时被拒、全部已被改过时放行） |
+| 10 | CSV 每行按表头列数截断或补空；结果已被清理（`output` 为空）的报 **`noOutput`**，有输出但不是表格才是 `notTable`。 | `run_export_writes_rfc4180_csv_…` |
+| 11 | 读出替换时，目标名称含 `]]`、`[[`、换行、以 `]` 结尾、为空或超过 200 字符的不替换，保持原样（`refs::shows_as_mark`）。 | `refs::review_tests` |
+
+新增错误原因码：`invalid/tooLarge`、`invalid/duplicateId`（预览 `problem` 与 `workspace.import`）、`invalid/noOutput`（`run.export`）、`invalid/otherTree`（导入事务内的防线，正常不会出现）。其余见上文各节。
+
+不改（按审查记录）：FNV 指纹（已在 `todo.md`）、`writeFailed` 的 `detail`、插件存储被拒不记审计。
+
+运行结果（本会话）：`cargo test -p onedesk-kernel -p onedesk-worker -p onedesk-protocol` 全过；clippy `-D warnings` 无警告；`gen-types --check` 最新（已提交 `ImportPreview.ts`）；`pnpm lint` 通过。另核对了 `e2e/fixtures/exports/sample` 在新规则下不受影响（都是 `resources` 树的顶层节点）。

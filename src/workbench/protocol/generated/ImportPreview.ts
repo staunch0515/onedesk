@@ -25,4 +25,13 @@ update: number, skipped: Array<ImportSkip>,
 /**
  * Hash of the export's manifest: `workspace.import` refuses when it changed since the preview.
  */
-fingerprint: string, };
+fingerprint: string, 
+/**
+ * D329: `host:port` that importing would grant to plugins (granting address fields); sorted, unique.
+ */
+grantHosts: Array<string>, 
+/**
+ * D329: secret names the imported content refers to (secret fields, `secrets: true` text,
+ * secret parameters); sorted, unique.
+ */
+secretNames: Array<string>, };

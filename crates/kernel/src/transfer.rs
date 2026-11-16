@@ -185,8 +185,10 @@ pub struct ImportItem {
     pub body: JsonMap,
     pub plugin_version: Option<String>,
     pub external_key: Option<String>,
-    /// Rewritten to new ids; `None` = resolve by name once everything is in.
-    pub refs: Option<Vec<RefRow>>,
+    /// The export's `refs` rows, targets rewritten to new ids (or none): hints only (review #8).
+    pub hints: Vec<RefRow>,
+    /// Single references whose target was not imported: (`body.<key>`, text), review #4.
+    pub lost: Vec<(String, String)>,
     /// Roots of the environment tree get a number when their name is taken.
     pub unique_name: bool,
 }
@@ -283,16 +285,17 @@ impl Tx<'_> {
                 rows.push(row);
                 continue;
             }
-            let tree = if it.kind == KIND_GROUP {
-                it.tree.clone().or(Some(TREE_RESOURCES.into()))
-            } else {
-                self.rules.get(&it.kind).and_then(|r| r.tree.clone()).or(it.tree.clone())
-            };
+            // Review #1: the tree the kernel decided by the creation rules; the parent must accept it.
+            let tree = it.tree.clone();
+            if tree.is_none() || (it.kind != KIND_GROUP && self.rules.get(&it.kind).and_then(|r| r.tree.clone()) != tree) {
+                return Err(invalid("otherTree"));
+            }
             let parent = match &it.parent {
                 ParentChoice::Group => Some(group.id.clone()),
                 ParentChoice::Top => None,
                 ParentChoice::Id(p) => Some(p.clone()),
             };
+            self.check_parent(&it.kind, tree.as_deref(), parent.as_deref())?;
             let name = if it.unique_name {
                 unique_name(self.tx, tree.as_deref().unwrap_or_default(), parent.as_deref(), &it.name)?
             } else {
@@ -330,26 +333,12 @@ impl Tx<'_> {
             created += 1;
             rows.push(row);
         }
-        // References once every row is in: rewritten rows as given, the others by name.
+        // References once every row is in, from the content (review #8: the file's rows are hints).
         for it in &plan.items {
             let Some(row) = store::get(self.tx, &it.id).map_err(sql)? else { continue };
-            match &it.refs {
-                Some(list) => {
-                    let mut by_field: BTreeMap<String, Vec<RefRow>> = BTreeMap::new();
-                    if let Some(rule) = self.rules.get(&row.kind) {
-                        for f in crate::refs::fields_of(rule) {
-                            by_field.entry(f).or_default();
-                        }
-                    }
-                    for r in list {
-                        by_field.entry(r.field.clone()).or_default().push(r.clone());
-                        self.touched.borrow_mut().extend(r.target.clone());
-                    }
-                    for (field, list) in by_field {
-                        crate::refs::replace(self.tx, &row.id, &field, &list).map_err(sql)?;
-                    }
-                }
-                None => self.refs_after(&row, None)?,
+            if let Some(rule) = self.rules.get(&row.kind) {
+                let t = crate::refs::import_rows(self.tx, rule, &row, &it.hints, &it.lost).map_err(sql)?;
+                self.touched.borrow_mut().extend(t);
             }
         }
         self.audit(
@@ -364,6 +353,21 @@ impl Tx<'_> {
 }
 
 /* ------------------------------------------------------------------ kernel side */
+
+/// Review #5: limits of what an import reads.
+pub const MAX_IMPORT_FILE_BYTES: u64 = 256 * 1024 * 1024;
+pub const MAX_IMPORT_ITEMS: usize = 200_000;
+
+/// What preview and import share.
+struct Analysis {
+    manifest: ExportManifest,
+    resources: Vec<ExportResource>,
+    fingerprint: String,
+    decisions: Vec<Decision>,
+    trees: Vec<Option<String>>,
+    grant_hosts: Vec<String>,
+    secret_names: Vec<String>,
+}
 
 /// How one exported node would be imported.
 enum Decision {
@@ -665,13 +669,19 @@ impl Inner {
 
     /* ---------------------------------------------------------------- import */
 
-    /// `manifest.json` and `resources.json` of an export folder, and their fingerprint.
+    /// `manifest.json` and `resources.json` of an export folder, and their fingerprint. Review #5:
+    /// sizes are checked before reading; review #8: ids must be unique.
     fn read_export(&self, folder: &str) -> Result<(ExportManifest, Vec<ExportResource>, String), &'static str> {
         let dir = Path::new(folder);
         if !dir.is_absolute() {
             return Err("unreadable");
         }
-        let mbytes = std::fs::read(dir.join("manifest.json")).map_err(|_| "notExport")?;
+        let size = |p: &Path| std::fs::metadata(p).map(|m| m.len());
+        let mpath = dir.join("manifest.json");
+        if size(&mpath).map_err(|_| "notExport")? > MAX_IMPORT_FILE_BYTES {
+            return Err("tooLarge");
+        }
+        let mbytes = std::fs::read(&mpath).map_err(|_| "notExport")?;
         let m: Value = serde_json::from_slice(&mbytes).map_err(|_| "notExport")?;
         if m.get("format").and_then(Value::as_str) != Some(EXPORT_FORMAT) {
             return Err("notExport");
@@ -680,11 +690,37 @@ impl Inner {
             return Err("badVersion");
         }
         let manifest: ExportManifest = serde_json::from_value(m).map_err(|_| "unreadable")?;
-        let rbytes = std::fs::read(dir.join("resources.json")).map_err(|_| "unreadable")?;
+        let rpath = dir.join("resources.json");
+        if size(&rpath).map_err(|_| "unreadable")? > MAX_IMPORT_FILE_BYTES {
+            return Err("tooLarge");
+        }
+        let rbytes = std::fs::read(&rpath).map_err(|_| "unreadable")?;
         let resources: Vec<ExportResource> = serde_json::from_slice(&rbytes).map_err(|_| "unreadable")?;
+        if resources.len() > MAX_IMPORT_ITEMS {
+            return Err("tooLarge");
+        }
+        let mut seen = BTreeSet::new();
+        if !resources.iter().all(|r| seen.insert(r.id.as_str())) {
+            return Err("duplicateId");
+        }
         let mut all = mbytes;
         all.extend_from_slice(&rbytes);
         Ok((manifest, resources, fingerprint(&all)))
+    }
+
+    /// Review #1: the tree a node goes to, by the creation rules only (never the file's word):
+    /// groups live in `resources` or a plugin's stored tree, never the environment, configuration
+    /// or plugin state trees.
+    fn import_tree(&self, r: &ExportResource) -> Option<String> {
+        match r.kind.as_str() {
+            KIND_GROUP => {
+                let t = r.tree.clone().unwrap_or_else(|| TREE_RESOURCES.into());
+                let kernel_only = [store::TREE_ENV, store::TREE_CONFIG, TREE_PLUGIN_STATE].contains(&t.as_str());
+                (!kernel_only && self.stored_tree(&t).is_ok()).then_some(t)
+            }
+            KIND_ENV => Some(store::TREE_ENV.into()),
+            k => self.rules.read().unwrap().get(k).and_then(|x| x.tree.clone()),
+        }
     }
 
     fn decide(&self, r: &ExportResource) -> KResult<Decision> {
@@ -692,15 +728,15 @@ impl Inner {
             // D326: this workspace's policies are not rewritten by foreign data.
             return Ok(Decision::Skip("config"));
         }
+        if r.kind == store::KIND_PLUGIN_STATE {
+            return Ok(Decision::Skip("invalid"));
+        }
+        if serde_json::to_vec(&r.body).map(|b| b.len()).unwrap_or(usize::MAX) > crate::runs::MAX_INPUT_BYTES {
+            return Ok(Decision::Skip("invalid"));
+        }
         if r.kind == KIND_GROUP || r.kind == KIND_ENV {
-            if r.name.trim().is_empty() {
+            if r.name.trim().is_empty() || self.import_tree(r).is_none() {
                 return Ok(Decision::Skip("invalid"));
-            }
-            if r.kind == KIND_GROUP {
-                let tree = r.tree.as_deref().unwrap_or(TREE_RESOURCES);
-                if tree != TREE_RESOURCES && self.stored_tree(tree).is_err() {
-                    return Ok(Decision::Skip("unknownKind"));
-                }
             }
             return Ok(Decision::Create { version: None, migrate: false });
         }
@@ -722,7 +758,7 @@ impl Inner {
                 None => return Ok(Decision::Skip("needsVersion")),
             },
         };
-        if !valid_body(Some(decl), r) {
+        if !valid_body(Some(decl), r) || self.import_tree(r).is_none() {
             return Ok(Decision::Skip("invalid"));
         }
         if let Some(key) = &r.external_key {
@@ -741,9 +777,89 @@ impl Inner {
         Ok(Decision::Create { version, migrate })
     }
 
-    pub fn import_preview(&self, folder: &str) -> KResult<ImportPreview> {
-        let (manifest, resources, fp) = match self.read_export(folder) {
+    /// Everything preview and import share: the decisions (parents checked like a creation,
+    /// review #1) and what the import would grant (D329).
+    fn analyze(&self, folder: &str) -> KResult<Result<Analysis, &'static str>> {
+        let (manifest, resources, fingerprint) = match self.read_export(folder) {
             Ok(x) => x,
+            Err(reason) => return Ok(Err(reason)),
+        };
+        let mut decisions = resources.iter().map(|r| self.decide(r)).collect::<KResult<Vec<_>>>()?;
+        let trees: Vec<Option<String>> = resources.iter().map(|r| self.import_tree(r)).collect();
+        let idx: HashMap<&str, usize> = resources.iter().enumerate().map(|(i, r)| (r.id.as_str(), i)).collect();
+        let rules = self.rules.read().unwrap().clone();
+        let accepts = |parent: &str, kind: &str| rules.get(parent).is_some_and(|r| r.accepts.iter().any(|a| a == "*" || a == kind));
+        loop {
+            let mut changed = false;
+            for i in 0..resources.len() {
+                if !matches!(decisions[i], Decision::Create { .. }) {
+                    continue;
+                }
+                // A parent outside the file or not imported: the node goes to the import group / top.
+                let Some(&j) = resources[i].parent.as_deref().and_then(|p| idx.get(p)) else { continue };
+                if matches!(decisions[j], Decision::Skip(_)) {
+                    continue;
+                }
+                if j == i || trees[j] != trees[i] || !accepts(&resources[j].kind, &resources[i].kind) {
+                    decisions[i] = Decision::Skip("invalid");
+                    changed = true;
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
+        let (mut grant_hosts, mut secret_names) = (BTreeSet::new(), BTreeSet::new());
+        for (r, d) in resources.iter().zip(&decisions) {
+            let version = match d {
+                Decision::Create { version, .. } | Decision::Update { version, .. } => version.clone(),
+                Decision::Skip(_) => continue,
+            };
+            grant_hosts.extend(self.grant_hosts_of(&r.kind, version.as_deref(), &r.body));
+            if let Some((_, decl)) = self.registry.kind_at(&r.kind, version.as_deref()) {
+                for (k, f) in &decl.fields {
+                    let v = r.body.get(k);
+                    if f.ty == DeclType::Secret {
+                        secret_names.extend(v.and_then(|v| v.get("secret")).and_then(Value::as_str).filter(|s| !s.is_empty()).map(String::from));
+                    }
+                    if f.secrets {
+                        secret_names.extend(v.and_then(Value::as_str).map(crate::secrets::references).unwrap_or_default());
+                    }
+                }
+            }
+            if r.kind == KIND_ENV {
+                for p in r.body.get(crate::params::PARAMS_KEY).and_then(Value::as_object).into_iter().flat_map(|m| m.values()) {
+                    if p.get("type").and_then(Value::as_str) == Some("secret") {
+                        secret_names.extend(p.get("value").and_then(Value::as_str).filter(|s| !s.is_empty()).map(String::from));
+                    }
+                }
+            }
+        }
+        Ok(Ok(Analysis {
+            manifest,
+            resources,
+            fingerprint,
+            decisions,
+            trees,
+            grant_hosts: grant_hosts.into_iter().collect(),
+            secret_names: secret_names.into_iter().collect(),
+        }))
+    }
+
+    fn skips(a: &Analysis) -> Vec<ImportSkip> {
+        a.resources
+            .iter()
+            .zip(&a.decisions)
+            .filter_map(|(r, d)| match d {
+                Decision::Skip(reason) => Some(ImportSkip { name: r.name.clone(), kind: r.kind.clone(), reason: (*reason).into() }),
+                _ => None,
+            })
+            .collect()
+    }
+
+    pub fn import_preview(&self, folder: &str) -> KResult<ImportPreview> {
+        let a = match self.analyze(folder)? {
+            Ok(a) => a,
             Err(reason) => {
                 return Ok(ImportPreview {
                     valid: false,
@@ -754,50 +870,41 @@ impl Inner {
                     update: 0,
                     skipped: vec![],
                     fingerprint: String::new(),
+                    grant_hosts: vec![],
+                    secret_names: vec![],
                 })
             }
         };
-        let (mut create, mut update, mut skipped) = (0, 0, Vec::new());
-        for r in &resources {
-            match self.decide(r)? {
-                Decision::Create { .. } => create += 1,
-                Decision::Update { .. } => update += 1,
-                Decision::Skip(reason) => skipped.push(ImportSkip { name: r.name.clone(), kind: r.kind.clone(), reason: reason.into() }),
-            }
-        }
+        let create = a.decisions.iter().filter(|d| matches!(d, Decision::Create { .. })).count() as u32;
+        let update = a.decisions.iter().filter(|d| matches!(d, Decision::Update { .. })).count() as u32;
         Ok(ImportPreview {
             valid: true,
             problem: None,
-            source: manifest.workspace.name,
-            exported_at: manifest.exported_at,
+            skipped: Self::skips(&a),
+            source: a.manifest.workspace.name,
+            exported_at: a.manifest.exported_at,
             create,
             update,
-            skipped,
-            fingerprint: fp,
+            fingerprint: a.fingerprint,
+            grant_hosts: a.grant_hosts,
+            secret_names: a.secret_names,
         })
     }
 
     pub async fn import(&self, p: ImportParams) -> KResult<ImportResult> {
-        let (manifest, resources, fp) = self.read_export(&p.folder).map_err(invalid)?;
-        if fp != p.fingerprint {
+        let a = self.analyze(&p.folder)?.map_err(invalid)?;
+        if a.fingerprint != p.fingerprint {
             return Err(invalid("fingerprintChanged"));
         }
         if let Err(e) = self.read(|c| Ok(crate::policy::check(c, crate::policy::READONLY, None)))? {
-            self.refused("workspace.import", &manifest.workspace.name, e.clone()).await;
+            self.refused("workspace.import", &a.manifest.workspace.name, e.clone()).await;
             return Err(e);
         }
-        let mut decisions = Vec::new();
-        let mut skipped = Vec::new();
-        for r in &resources {
-            let d = self.decide(r)?;
-            if let Decision::Skip(reason) = &d {
-                skipped.push(ImportSkip { name: r.name.clone(), kind: r.kind.clone(), reason: (*reason).into() });
-            }
-            decisions.push(d);
-        }
+        let skipped = Self::skips(&a);
+        let (resources, decisions) = (&a.resources, &a.decisions);
         // Old id → id here (new, or the existing resource with the same external key).
         let mut map: HashMap<String, String> = HashMap::new();
-        for (r, d) in resources.iter().zip(&decisions) {
+        for (r, d) in resources.iter().zip(decisions) {
             match d {
                 Decision::Create { .. } => {
                     map.insert(r.id.clone(), new_id());
@@ -809,25 +916,18 @@ impl Inner {
             }
         }
         let rules = self.rules.read().unwrap().clone();
-        let by_id: HashMap<&str, &ExportResource> = resources.iter().map(|r| (r.id.as_str(), r)).collect();
-        let tree_of = |r: &ExportResource| -> Option<String> {
-            match r.kind.as_str() {
-                KIND_GROUP => Some(r.tree.clone().unwrap_or_else(|| TREE_RESOURCES.into())),
-                KIND_ENV => Some(store::TREE_ENV.into()),
-                k => rules.get(k).and_then(|x| x.tree.clone()).or(r.tree.clone()),
-            }
-        };
+        let idx: HashMap<&str, usize> = resources.iter().enumerate().map(|(i, r)| (r.id.as_str(), i)).collect();
         // Bodies a newer active version takes over first (§7.6), outside the transaction.
         let mut bodies: HashMap<String, JsonMap> = HashMap::new();
         let mut to_migrate: BTreeMap<String, Vec<Row>> = BTreeMap::new();
-        for (r, d) in resources.iter().zip(&decisions) {
+        for ((r, d), tree) in resources.iter().zip(decisions).zip(&a.trees) {
             if let Decision::Create { migrate: true, .. } | Decision::Update { migrate: true, .. } = d {
                 let pid = Registry::split(&r.kind).map(|(p, _)| p.to_string()).unwrap_or_default();
                 to_migrate.entry(pid).or_default().push(Row {
                     id: r.id.clone(),
                     kind: r.kind.clone(),
                     plugin_version: r.plugin_version.clone(),
-                    tree: tree_of(r),
+                    tree: tree.clone(),
                     parent_id: None,
                     pos: 0,
                     name: r.name.clone(),
@@ -853,33 +953,41 @@ impl Inner {
             }
         }
         let mut items = Vec::new();
-        for (r, d) in resources.iter().zip(&decisions) {
+        for ((r, d), tree) in resources.iter().zip(decisions).zip(&a.trees) {
             let (update, version) = match d {
                 Decision::Create { version, .. } => (false, version.clone()),
                 Decision::Update { version, .. } => (true, version.clone()),
                 Decision::Skip(_) => continue,
             };
-            let tree = tree_of(r);
+            let file_refs = r.refs.clone().unwrap_or_default();
             let mut body = bodies.remove(&r.id).unwrap_or_else(|| r.body.clone());
+            let mut lost = Vec::new();
             if let Some(rule) = rules.get(&r.kind) {
                 for key in &rule.ref_fields {
-                    if let Some(old) = body.get(key).and_then(crate::refs::ref_id).map(String::from) {
-                        if let Some(new) = map.get(&old) {
+                    let Some(old) = body.get(key).and_then(crate::refs::ref_id).map(String::from) else { continue };
+                    match map.get(&old) {
+                        Some(new) => {
                             body.insert(key.clone(), json!({ "ref": new }));
+                        }
+                        None => {
+                            // Review #4: never an id of this workspace by accident.
+                            let field = format!("body.{key}");
+                            let text = file_refs.iter().find(|h| h.field == field).map(|h| h.text.clone()).unwrap_or(old);
+                            body.insert(key.clone(), json!({ "ref": null }));
+                            lost.push((field, text));
                         }
                     }
                 }
             }
-            let parent = match r.parent.as_deref().and_then(|p| by_id.get(p).map(|pr| (p, pr))) {
-                Some((p, pr)) if map.contains_key(p) && tree_of(pr) == tree => ParentChoice::Id(map[p].clone()),
+            let parent = match r.parent.as_deref().and_then(|p| idx.get(p)) {
+                Some(&j) if map.contains_key(&resources[j].id) => ParentChoice::Id(map[&resources[j].id].clone()),
                 _ if tree.as_deref() == Some(TREE_RESOURCES) => ParentChoice::Group,
                 _ => ParentChoice::Top,
             };
-            let refs = r.refs.as_ref().map(|list| {
-                list.iter()
-                    .map(|x| RefRow { field: x.field.clone(), seq: x.seq, text: x.text.clone(), target: x.target.as_ref().and_then(|t| map.get(t).cloned()) })
-                    .collect()
-            });
+            let hints = file_refs
+                .iter()
+                .map(|x| RefRow { field: x.field.clone(), seq: x.seq, text: x.text.clone(), target: x.target.as_ref().and_then(|t| map.get(t).cloned()) })
+                .collect();
             let deleted_key: bool = match &r.external_key {
                 Some(k) if !update => self.read(|c| {
                     c.query_row("SELECT EXISTS(SELECT 1 FROM resources WHERE kind = ?1 AND external_key = ?2)", params![r.kind, k], |x| x.get(0))
@@ -891,7 +999,7 @@ impl Inner {
                 update,
                 kind: r.kind.clone(),
                 unique_name: r.kind == KIND_ENV && matches!(parent, ParentChoice::Top),
-                tree,
+                tree: tree.clone(),
                 parent,
                 name: r.name.clone(),
                 description: r.description.clone(),
@@ -900,7 +1008,8 @@ impl Inner {
                 plugin_version: version,
                 // A deleted resource here holds the key: the imported one comes without it.
                 external_key: if deleted_key { None } else { r.external_key.clone() },
-                refs,
+                hints,
+                lost,
             });
         }
         // Parents before children.
@@ -929,11 +1038,11 @@ impl Inner {
         }
         let group = match &p.parent {
             Some(g) => GroupChoice::Existing(g.clone()),
-            None => GroupChoice::New(manifest.workspace.name.clone()),
+            None => GroupChoice::New(a.manifest.workspace.name.clone()),
         };
         let updated = ordered.iter().filter(|i| i.update).count() as u32;
         let created = ordered.len() as u32 - updated;
-        let plan = ImportPlan { source: manifest.workspace.name.clone(), group, items: ordered, skipped: skipped.len() as u32 };
+        let plan = ImportPlan { source: a.manifest.workspace.name.clone(), group, items: ordered, skipped: skipped.len() as u32 };
         // The network grants of imported rows are audited like a save (§3.5): see `Inner::execute`.
         let out = self.execute(Actor::User, Command::Import(Box::new(plan))).await?;
         let group = out.rows.first().cloned().ok_or_else(|| internal("no group"))?;
@@ -954,14 +1063,16 @@ impl Inner {
         if run.status == "running" {
             return Err(invalid("notFinished"));
         }
-        let output: Option<RunOutput> = run.output.clone().and_then(|o| serde_json::from_value(o).ok());
-        let Some(RunOutput::Table { columns, rows, .. }) = output else { return Err(invalid("notTable")) };
+        // Review #10: a result that was cleared is not "not a table".
+        let Some(raw) = run.output.clone().filter(|o| !o.is_null()) else { return Err(invalid("noOutput")) };
+        let Ok(RunOutput::Table { columns, rows, .. }) = serde_json::from_value::<RunOutput>(raw) else { return Err(invalid("notTable")) };
         let path = self.outside_path(&p.path)?;
         let mut text = String::from("\u{feff}");
         let line = |cells: Vec<String>| cells.iter().map(|c| csv_field(c)).collect::<Vec<_>>().join(",") + "\r\n";
         text.push_str(&line(columns.iter().map(|c| c.label.clone()).collect()));
         for r in &rows {
-            text.push_str(&line((0..columns.len().max(r.len())).map(|i| cell_text(r.get(i))).collect()));
+            // Review #10: as many fields as the header, cut or padded.
+            text.push_str(&line((0..columns.len()).map(|i| cell_text(r.get(i))).collect()));
         }
         let mut f = std::fs::OpenOptions::new().write(true).create_new(true).open(&path).map_err(|e| {
             if e.kind() == std::io::ErrorKind::AlreadyExists {

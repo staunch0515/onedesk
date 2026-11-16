@@ -232,6 +232,8 @@ pub enum Command {
     Import(Box<crate::transfer::ImportPlan>),
     /// Recomputes the whole `refs` table (§10: it can be rebuilt at any time).
     RebuildRefs,
+    /// Review #7: follows changed reference-field declarations after the plugins were read again.
+    SyncRefDecls,
 }
 
 /// What the kernel needs to know about a kind to validate writes.
@@ -499,7 +501,14 @@ impl Writer {
                 Command::Import(plan) => cx.import(*plan)?,
                 Command::RebuildRefs => {
                     crate::refs::rebuild(cx.tx, cx.rules).map_err(sql)?;
+                    crate::refs::store_decls(cx.tx, &crate::refs::decls(cx.rules)).map_err(sql)?;
                     Outcome { changed: true, ..Default::default() }
+                }
+                Command::SyncRefDecls => {
+                    let t = crate::refs::sync_decls(cx.tx, cx.rules).map_err(sql)?;
+                    let changed = !t.is_empty();
+                    cx.touched.borrow_mut().extend(t);
+                    Outcome { changed, ..Default::default() }
                 }
                 Command::UiSet { .. } => unreachable!("handled above"),
             };
@@ -543,6 +552,7 @@ fn describe(cmd: &Command) -> (String, String) {
         Command::CountedAudit { op, object, .. } => (op.clone(), object.clone()),
         Command::Import(plan) => ("workspace.import".into(), plan.source.clone()),
         Command::RebuildRefs => ("refs.rebuild".into(), String::new()),
+        Command::SyncRefDecls => ("refs.sync".into(), String::new()),
     }
 }
 
@@ -557,12 +567,12 @@ fn blocked_by_readonly(cmd: &Command) -> bool {
         | Command::Restore { .. }
         | Command::Undelete { .. }
         | Command::Purge { .. }
-        | Command::UndoUpgrade { .. }
         | Command::RunInsert(_)
         | Command::Storage { .. }
         | Command::Import(_) => true,
         Command::Upgrade { items, .. } => !items.is_empty(),
-        Command::Update { changes, .. } => !changes.params_only(),
+        // Review #9: an empty save writes nothing; an undo that restores nothing is checked in place.
+        Command::Update { changes, .. } => !changes.is_empty() && !changes.params_only(),
         _ => false,
     }
 }
@@ -623,7 +633,7 @@ impl Tx<'_> {
     }
 
     /// Checks that `parent` (live, same tree) accepts `kind`.
-    fn check_parent(&self, kind: &str, tree: Option<&str>, parent: Option<&str>) -> KResult<()> {
+    pub(crate) fn check_parent(&self, kind: &str, tree: Option<&str>, parent: Option<&str>) -> KResult<()> {
         let Some(pid) = parent else { return Ok(()) };
         let p = store::get(self.tx, pid).map_err(sql)?.ok_or_else(|| invalid("parentNotFound"))?;
         if p.tree.as_deref() != tree || tree.is_none() {
@@ -1286,7 +1296,11 @@ impl Tx<'_> {
             .map_err(sql)?;
         if !refs_built {
             crate::refs::rebuild(self.tx, self.rules).map_err(sql)?;
+            crate::refs::store_decls(self.tx, &crate::refs::decls(self.rules)).map_err(sql)?;
             self.tx.execute("INSERT INTO meta (key, value) VALUES ('refs_built', '1')", []).map_err(sql)?;
+        } else {
+            // Review #7: plugins that changed while the worker was off.
+            crate::refs::sync_decls(self.tx, self.rules).map_err(sql)?;
         }
         Ok(Outcome { changed: !rows.is_empty(), rows, ..Default::default() })
     }
@@ -1478,6 +1492,10 @@ impl Tx<'_> {
                 .tx
                 .query_row("SELECT snapshot FROM revisions WHERE resource_id = ?1 AND rev = ?2", params![id, old_rev], |r| r.get(0))
                 .map_err(sql)?;
+            if rows.is_empty() {
+                // D327 / review #9: refused only when the undo really rewrites resources.
+                crate::policy::check(self.tx, crate::policy::READONLY, None)?;
+            }
             let before: Row = serde_json::from_str(&snap).map_err(internal)?;
             row.body = before.body;
             row.plugin_version = Some(old_version);

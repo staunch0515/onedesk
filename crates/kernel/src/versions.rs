@@ -239,6 +239,8 @@ impl Inner {
     pub async fn rescan(&self, builtin: &[String]) -> KResult<()> {
         let diff = self.registry.rescan();
         *self.rules.write().unwrap() = self.registry.rules();
+        // Review #7: a version that declares other reference fields — the references follow.
+        self.execute(Actor::Core, Command::SyncRefDecls).await?;
         // D313: built-in packages the main process just copied are confirmed by it.
         for id in self.registry.ids() {
             let set = self.builtin_confirmations(&id, builtin);
