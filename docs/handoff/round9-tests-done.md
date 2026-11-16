@@ -15,7 +15,7 @@
 
 ## 我做的假设（合并后对着真内核核对）
 - keeper 的 `manifest.json` 没有被真内核的清单校验加载过（没有 Rust 测试读 `e2e/fixtures/plugins`）：`trees` 里 `source: "provided"` + `page: "tree"`（页面 `tree` 的 `actions` 为空数组）、`pages` 里的事件动作没有 `action` 字段（照 sample 的 `tidy`），都可能被严格校验挑剔——第二阶段第一件事就是装一次看。
-- （第一阶段的写法，第二阶段已改：真内核的错误 `message` 只是 `denied`，原因在 `params`，所以现在 `abuse` 返回 JSON：`{message, code, params}`）`abuse` 返回的 `message` 用 `String(err.message)`：我假设宿主错误的 `message` 带 code/原因（假 host 里是 code）。真内核给的 `message` 若不含 `staleContext`，第二阶段的断言要改成看别的地方。
+- （第一阶段的写法，第二阶段已改：真内核的错误 `message` 只是 `denied`，原因在 `params`，所以现在 `abuse` 返回 `<code>/<reason>`，如 `denied/staleContext`）`abuse` 返回的 `message` 用 `String(err.message)`：我假设宿主错误的 `message` 带 code/原因（假 host 里是 code）。真内核给的 `message` 若不含 `staleContext`，第二阶段的断言要改成看别的地方。
 - `stash` 之后 `abuse` 用的是模块级变量；空闲回收会丢掉它（这是预期，回收后 `abuse` 返回 “No handle kept.”）。
 - 市场插件的“必需字段”以当前内核 `Manifest` 为准（`apiVersion`、`name`、`icon`、`main`）；若内核再改，这里要跟着改。
 

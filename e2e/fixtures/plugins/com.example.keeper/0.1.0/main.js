@@ -45,8 +45,10 @@ export default {
             await stashed.network.request({ method: "GET", url: "https://example.com/" });
             return { message: "request went through" };
           } catch (err) {
-            // the host error as it arrives: its text, code and params (the real kernel puts the reason into params)
-            return { message: JSON.stringify({ message: String(err && err.message), code: err && err.code, params: err && err.params }) };
+            // the host error as "<code>/<reason>" (e.g. denied/staleContext): the real kernel puts the reason into err.params
+            const code = (err && err.code) || String(err && err.message);
+            const reason = (err && (err.reason || (err.params && err.params.reason))) || "";
+            return { message: reason ? `${code}/${reason}` : String(code) };
           }
         }
         throw new Error(`unknown event ${event}`);
