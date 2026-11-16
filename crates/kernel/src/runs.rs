@@ -812,6 +812,7 @@ impl Inner {
                 depends: Some(vec![]),
                 dependents: Some(vec![]),
                 unmet_exports: Some(vec![]),
+                runtime: Some(PluginRuntime::Idle),
             }));
         };
         let m = &p.manifest;
@@ -890,6 +891,7 @@ impl Inner {
             depends: Some(self.dependency_rows(p)),
             dependents: Some(self.dependents_of(id)),
             unmet_exports: Some(self.unmet_exports(p)),
+            runtime: Some(if self.runtime_live(id) { PluginRuntime::Live } else { PluginRuntime::Idle }),
         }))
     }
 
@@ -950,7 +952,8 @@ impl Inner {
     /* ---------------------------------------------------------------- kernel trees */
 
     /// `plugins`: one node per package (refused ones as `broken`); `runs`: the latest 200 runs.
-    pub fn plugins_tree(&self) -> KResult<Vec<TreeNode>> {
+    /// `locale` (D367): the plugin names are given in it (falling back to English).
+    pub fn plugins_tree(&self, locale: Option<&str>) -> KResult<Vec<TreeNode>> {
         let mut out = Vec::new();
         for p in &self.registry.plugins() {
             let enabled = self.plugin_enabled(&p.id);
@@ -961,7 +964,7 @@ impl Inner {
                 key: p.id.clone(),
                 tree: store::TREE_PLUGINS.into(),
                 parent_key: None,
-                label: p.text(&p.manifest.name, None),
+                label: p.text(&p.manifest.name, locale),
                 icon: p.manifest.icon.clone(),
                 kind: store::KIND_PLUGIN.into(),
                 expandable: false,

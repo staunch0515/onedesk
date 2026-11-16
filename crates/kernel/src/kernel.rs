@@ -35,7 +35,13 @@ pub struct KernelConfig {
     /// D313: `<id>@<version>` of the built-in packages (given by the main process); only these
     /// are confirmed without asking.
     pub builtin: Vec<String>,
+    /// D365: a plugin version's runtime that has nothing in flight for this long is released
+    /// (10 minutes; the worker takes `ONEDESK_PLUGIN_IDLE_MS` for tests and acceptance).
+    pub plugin_idle: std::time::Duration,
 }
+
+/// D365: the default idle time before a plugin runtime is released.
+pub const DEFAULT_PLUGIN_IDLE: std::time::Duration = std::time::Duration::from_secs(600);
 
 impl Default for KernelConfig {
     fn default() -> Self {
@@ -44,6 +50,7 @@ impl Default for KernelConfig {
             action_timeout: std::time::Duration::from_secs(60),
             secrets: crate::secrets::SecretStoreHandle::from_env(),
             builtin: vec![],
+            plugin_idle: DEFAULT_PLUGIN_IDLE,
         }
     }
 }
@@ -52,7 +59,42 @@ pub struct Kernel {
     pub(crate) inner: Arc<Inner>,
 }
 
-type Slot = Arc<tokio::sync::Mutex<Option<Arc<Sandbox>>>>;
+type Slot = Arc<SlotState>;
+
+/// One plugin version's runtime and how it is used (D365).
+#[derive(Default)]
+struct SlotState {
+    sb: tokio::sync::Mutex<Option<Arc<Sandbox>>>,
+    /// Invocations in flight (runs, renders, page and event handlers, migrate, tree handlers).
+    /// Host calls and install requests live inside an invocation, so they are counted by it.
+    busy: std::sync::atomic::AtomicUsize,
+    /// When the last invocation started or ended.
+    last: Mutex<Option<std::time::Instant>>,
+}
+
+impl SlotState {
+    fn touch(&self) {
+        *self.last.lock().unwrap() = Some(std::time::Instant::now());
+    }
+}
+
+/// Marks a slot busy for one invocation.
+struct Busy(Slot);
+
+impl Busy {
+    fn new(s: Slot) -> Busy {
+        s.busy.fetch_add(1, Ordering::SeqCst);
+        s.touch();
+        Busy(s)
+    }
+}
+
+impl Drop for Busy {
+    fn drop(&mut self) {
+        self.0.touch();
+        self.0.busy.fetch_sub(1, Ordering::SeqCst);
+    }
+}
 
 pub(crate) struct Inner {
     pub ws: Workspace,
@@ -151,6 +193,18 @@ impl Kernel {
         // D299 first sight, then each plugin's active version.
         inner.first_sight_blocking();
         inner.refresh_active();
+        // D365: the idle reaper; it holds the kernel weakly and ends with it.
+        if let Ok(rt) = tokio::runtime::Handle::try_current() {
+            let me = Arc::downgrade(&inner);
+            let every = (inner.cfg.plugin_idle / 4).clamp(std::time::Duration::from_millis(50), std::time::Duration::from_secs(30));
+            rt.spawn(async move {
+                loop {
+                    tokio::time::sleep(every).await;
+                    let Some(k) = me.upgrade() else { break };
+                    k.release_idle().await;
+                }
+            });
+        }
         // A newer confirmed version that arrived while the worker was off takes over now (D303).
         if let Ok(rt) = tokio::runtime::Handle::try_current() {
             let me = inner.clone();
@@ -194,7 +248,7 @@ impl Kernel {
         let slots: Vec<(String, Slot)> =
             self.inner.slots.lock().unwrap().iter().map(|(k, v)| (k.clone(), v.clone())).collect();
         let out: Vec<String> =
-            slots.into_iter().filter(|(_, s)| s.try_lock().map(|g| g.is_some()).unwrap_or(true)).map(|(k, _)| k).collect();
+            slots.into_iter().filter(|(_, s)| s.sb.try_lock().map(|g| g.is_some()).unwrap_or(true)).map(|(k, _)| k).collect();
         // Slots are per version (`id@version`); callers ask about plugins.
         let mut out: Vec<String> = out.into_iter().map(|k| k.split('@').next().unwrap_or_default().to_string()).collect();
         out.sort();
@@ -777,7 +831,7 @@ impl Inner {
             if p.parent.is_some() {
                 return Ok(TreePage { nodes: vec![], next: None });
             }
-            let all = if p.tree == store::TREE_PLUGINS { self.plugins_tree()? } else { self.runs_tree()? };
+            let all = if p.tree == store::TREE_PLUGINS { self.plugins_tree(p.locale.as_deref())? } else { self.runs_tree()? };
             let total = all.len();
             let nodes: Vec<TreeNode> = all.into_iter().skip(offset as usize).take(BATCH as usize).collect();
             let next = offset + BATCH;
@@ -795,7 +849,7 @@ impl Inner {
             return Ok(TreePage { next: more.then_some(offset + BATCH), nodes });
         }
         let (plugin, decl) = self.registry.tree(&p.tree).ok_or_else(|| not_found("tree"))?;
-        let ctx = json!({ "tree": p.tree, "locale": Value::Null });
+        let ctx = json!({ "tree": p.tree, "locale": p.locale });
         let out = self
             .call_plugin(&plugin.id, "trees", &decl.id, "children", json!([ctx, p.parent, offset]), client)
             .await?;
@@ -1013,7 +1067,7 @@ impl Inner {
 
     async fn sandbox(&self, plugin: &'static Plugin) -> KResult<Arc<Sandbox>> {
         let slot = self.slot(plugin);
-        let mut guard = slot.lock().await;
+        let mut guard = slot.sb.lock().await;
         if let Some(sb) = guard.as_ref() {
             return Ok(sb.clone());
         }
@@ -1035,6 +1089,10 @@ impl Inner {
         self.activations.fetch_add(1, Ordering::SeqCst);
         let sb = Arc::new(Sandbox::activate(pkg, host, self.cfg.sandbox.clone()).await.map_err(|e| e.to_protocol())?);
         *guard = Some(sb.clone());
+        slot.touch();
+        drop(guard);
+        // D365: `PluginDetail.runtime` changed.
+        self.emit(topic::PLUGINS, None, None);
         Ok(sb)
     }
 
@@ -1092,6 +1150,8 @@ impl Inner {
         if !self.version_confirmed(p) {
             return Err(host(err_p(ErrorCode::PluginError, &[("reason", "unconfirmedVersion")])));
         }
+        // D365: in flight from before activation until the call is over (never released meanwhile).
+        let _busy = Busy::new(self.slot(p));
         let sb = self.sandbox(p).await.map_err(host)?;
         let timeout = timeout.unwrap_or(self.cfg.sandbox.call_timeout);
         // Plugin code is polled on the runtime's worker threads, never on the connection reader.
@@ -1104,7 +1164,7 @@ impl Inner {
         if let Err(e) = &res {
             if e.poisons() {
                 let slot = self.slot(p);
-                let mut g = slot.lock().await;
+                let mut g = slot.sb.lock().await;
                 if g.as_ref().is_some_and(|cur| Arc::ptr_eq(cur, &sb)) {
                     *g = None;
                 }
@@ -1119,8 +1179,42 @@ impl Inner {
         let slots: Vec<Slot> =
             self.slots.lock().unwrap().iter().filter(|(k, _)| k.starts_with(&prefix)).map(|(_, v)| v.clone()).collect();
         for s in slots {
-            *s.lock().await = None;
+            *s.sb.lock().await = None;
         }
+    }
+
+    /// D365: whether the active version of `plugin` has a runtime now.
+    pub fn runtime_live(&self, plugin: &str) -> bool {
+        let Some(p) = self.registry.plugin(plugin) else { return false };
+        let key = format!("{}@{}", p.id, p.version);
+        let slot = self.slots.lock().unwrap().get(&key).cloned();
+        slot.is_some_and(|s| s.sb.try_lock().map(|g| g.is_some()).unwrap_or(true))
+    }
+
+    /// D365: releases every runtime with nothing in flight for at least `plugin_idle`. Not a
+    /// deactivation: no state change, no audit; only the `plugins` topic says `runtime` changed.
+    pub async fn release_idle(&self) -> usize {
+        let idle = self.cfg.plugin_idle;
+        let slots: Vec<Slot> = self.slots.lock().unwrap().values().cloned().collect();
+        let mut released = 0;
+        for s in slots {
+            let quiet = |s: &SlotState| {
+                s.busy.load(Ordering::SeqCst) == 0 && s.last.lock().unwrap().is_none_or(|t| t.elapsed() >= idle)
+            };
+            if !quiet(&s) {
+                continue;
+            }
+            // A slot being activated or used holds its lock: not idle.
+            let Ok(mut g) = s.sb.try_lock() else { continue };
+            if g.is_some() && quiet(&s) {
+                *g = None;
+                released += 1;
+            }
+        }
+        if released > 0 {
+            self.emit(topic::PLUGINS, None, None);
+        }
+        released
     }
 
     /// D290 / D299 / D343: enabled unless its state says `enabled = false`, it has a usable

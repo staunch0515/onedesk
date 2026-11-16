@@ -274,6 +274,9 @@ pub struct TreeChildrenParams {
     pub parent: Option<String>,
     /// Start of the batch; absent = 0.
     pub offset: Option<u32>,
+    /// D367: the interface language (BCP 47, e.g. `zh-CN`). Handed to provided trees' `children`
+    /// as `ctx.locale`; manifest labels in the answer are taken in it (absent = English).
+    pub locale: Option<String>,
 }
 
 /// One batch of children. Provided trees may hold tens of thousands of entries (§5).
@@ -1470,6 +1473,20 @@ pub struct PluginDetail {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub unmet_exports: Option<Vec<String>>,
+    /// Round 9 (D365): whether the active version has a runtime now (`idle`: released after a
+    /// quiet spell, started again when used). Always present from the kernel.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub runtime: Option<PluginRuntime>,
+}
+
+/// Round 9 (D365): `PluginDetail.runtime`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum PluginRuntime {
+    Live,
+    Idle,
 }
 
 /// One entry of a plugin's `depends` (round 7, D343): met when the plugin is installed, enabled

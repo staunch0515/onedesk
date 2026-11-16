@@ -28,5 +28,5 @@ pub mod transport;
 pub mod util;
 pub mod workspace;
 
-pub use kernel::{Kernel, KernelConfig};
+pub use kernel::{Kernel, KernelConfig, DEFAULT_PLUGIN_IDLE};
 pub use sandbox::SandboxConfig;

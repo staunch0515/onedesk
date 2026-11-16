@@ -4,6 +4,7 @@ import type { PluginDependency } from "./PluginDependency";
 import type { PluginLoad } from "./PluginLoad";
 import type { PluginPermission } from "./PluginPermission";
 import type { PluginProvides } from "./PluginProvides";
+import type { PluginRuntime } from "./PluginRuntime";
 import type { PluginSetting } from "./PluginSetting";
 import type { PluginVersion } from "./PluginVersion";
 import type { SwitchFailure } from "./SwitchFailure";
@@ -48,4 +49,9 @@ dependents?: Array<string>,
  * its kinds are declared with that those plugins do not export now; such a kind cannot be
  * used. Always present from the kernel (optional only for older peers).
  */
-unmetExports?: Array<string>, };
+unmetExports?: Array<string>, 
+/**
+ * Round 9 (D365): whether the active version has a runtime now (`idle`: released after a
+ * quiet spell, started again when used). Always present from the kernel.
+ */
+runtime?: PluginRuntime, };

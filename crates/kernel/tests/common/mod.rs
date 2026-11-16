@@ -34,6 +34,7 @@ pub fn test_config() -> KernelConfig {
         // Never the real keychain in tests.
         secrets: onedesk_kernel::secrets::SecretStoreHandle::memory().0,
         builtin: vec![],
+        plugin_idle: onedesk_kernel::DEFAULT_PLUGIN_IDLE,
     }
 }
 
