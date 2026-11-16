@@ -831,7 +831,7 @@ impl Inner {
             if p.parent.is_some() {
                 return Ok(TreePage { nodes: vec![], next: None });
             }
-            let all = if p.tree == store::TREE_PLUGINS { self.plugins_tree(p.locale.as_deref())? } else { self.runs_tree()? };
+            let all = if p.tree == store::TREE_PLUGINS { self.plugins_tree(valid_locale(p.locale.as_deref()))? } else { self.runs_tree()? };
             let total = all.len();
             let nodes: Vec<TreeNode> = all.into_iter().skip(offset as usize).take(BATCH as usize).collect();
             let next = offset + BATCH;
@@ -849,7 +849,7 @@ impl Inner {
             return Ok(TreePage { next: more.then_some(offset + BATCH), nodes });
         }
         let (plugin, decl) = self.registry.tree(&p.tree).ok_or_else(|| not_found("tree"))?;
-        let ctx = json!({ "tree": p.tree, "locale": p.locale });
+        let ctx = json!({ "tree": p.tree, "locale": valid_locale(p.locale.as_deref()) });
         let out = self
             .call_plugin(&plugin.id, "trees", &decl.id, "children", json!([ctx, p.parent, offset]), client)
             .await?;
@@ -1229,6 +1229,12 @@ impl Inner {
     }
 }
 
+/// Review #7: a locale is at most 35 letters, digits and `-` (BCP 47 shape); anything else is
+/// treated as not given.
+pub fn valid_locale(l: Option<&str>) -> Option<&str> {
+    l.filter(|l| !l.is_empty() && l.len() <= 35 && l.chars().all(|c| c.is_ascii_alphanumeric() || c == '-'))
+}
+
 /// `node:<tree>/<url-encoded key>`
 pub fn node_target(tree: &str, key: &str) -> String {
     format!("node:{tree}/{}", url_encode(key))
@@ -1286,6 +1292,15 @@ fn read_js_files(dir: &Path) -> Result<HashMap<String, String>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn locales_are_checked() {
+        assert_eq!(valid_locale(Some("zh-CN")), Some("zh-CN"));
+        for bad in ["", "zh_CN", "a b", "../x", &"a".repeat(36)] {
+            assert_eq!(valid_locale(Some(bad)), None, "{bad}");
+        }
+        assert_eq!(valid_locale(None), None);
+    }
 
     #[test]
     fn url_encoding_round_trips() {
