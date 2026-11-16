@@ -1,0 +1,17 @@
+{
+  "appVersion": "0.0.0-fixture",
+  "counts": {
+    "audit": 1,
+    "blobs": 0,
+    "resources": 4,
+    "revisions": 4,
+    "runs": 0
+  },
+  "exportedAt": 1763251200000,
+  "format": "onedesk-export",
+  "version": 1,
+  "workspace": {
+    "id": "ws-fixture-evil",
+    "name": "Malicious source"
+  }
+}

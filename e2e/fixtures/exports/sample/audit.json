@@ -2,8 +2,12 @@
   {
     "actor": "user",
     "at": 1763251200000,
+    "object": "g-src",
     "op": "resource.create",
-    "summary": "fixture",
-    "target": "n-alpha"
+    "result": "ok",
+    "seq": 1,
+    "summary": {
+      "kind": "core:group"
+    }
   }
 ]

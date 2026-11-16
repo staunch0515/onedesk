@@ -3,153 +3,168 @@
     "actor": "user",
     "at": 1763251200000,
     "fields": [
-      "name",
-      "body"
+      "*"
     ],
     "op": "create",
-    "resource": "g-src",
-    "seq": 1,
+    "resourceId": "g-src",
+    "restoredFrom": null,
+    "rev": 1,
     "snapshot": {
       "body": {},
       "createdAt": 1763251200000,
+      "createdBy": "user",
+      "deletedAt": null,
       "description": "",
-      "externalKey": null,
       "id": "g-src",
       "kind": "core:group",
       "name": "Export sample",
+      "origin": "original",
+      "originRef": null,
       "parentId": null,
-      "pluginId": null,
       "pluginVersion": null,
       "pos": 0,
       "rev": 1,
       "state": "ok",
       "tags": [],
       "tree": "resources",
-      "updatedAt": 1763251200000
+      "updatedAt": 1763251200000,
+      "updatedBy": "user"
     }
   },
   {
     "actor": "user",
     "at": 1763251200000,
     "fields": [
-      "name",
-      "body"
+      "*"
     ],
     "op": "create",
-    "resource": "n-alpha",
-    "seq": 1,
+    "resourceId": "n-alpha",
+    "restoredFrom": null,
+    "rev": 1,
     "snapshot": {
       "body": {
         "text": "See [[Beta]] for details."
       },
       "createdAt": 1763251200000,
+      "createdBy": "user",
+      "deletedAt": null,
       "description": "",
-      "externalKey": null,
       "id": "n-alpha",
       "kind": "org.onedesk.note:note",
       "name": "Alpha",
+      "origin": "original",
+      "originRef": null,
       "parentId": "g-src",
-      "pluginId": "org.onedesk.note",
       "pluginVersion": "0.1.0",
       "pos": 0,
       "rev": 1,
       "state": "ok",
       "tags": [],
       "tree": "resources",
-      "updatedAt": 1763251200000
+      "updatedAt": 1763251200000,
+      "updatedBy": "user"
     }
   },
   {
     "actor": "user",
     "at": 1763251200000,
     "fields": [
-      "name",
-      "body"
+      "*"
     ],
     "op": "create",
-    "resource": "n-beta",
-    "seq": 1,
+    "resourceId": "n-beta",
+    "restoredFrom": null,
+    "rev": 1,
     "snapshot": {
       "body": {
         "text": "Back to [[Alpha]]. Missing: [[Nowhere]]."
       },
       "createdAt": 1763251200000,
+      "createdBy": "user",
+      "deletedAt": null,
       "description": "",
-      "externalKey": null,
       "id": "n-beta",
       "kind": "org.onedesk.note:note",
       "name": "Beta",
+      "origin": "original",
+      "originRef": null,
       "parentId": "g-src",
-      "pluginId": "org.onedesk.note",
       "pluginVersion": "0.1.0",
       "pos": 1,
       "rev": 1,
       "state": "ok",
       "tags": [],
       "tree": "resources",
-      "updatedAt": 1763251200000
+      "updatedAt": 1763251200000,
+      "updatedBy": "user"
     }
   },
   {
     "actor": "user",
     "at": 1763251200000,
     "fields": [
-      "name",
-      "body"
+      "*"
     ],
     "op": "create",
-    "resource": "n-ext",
-    "seq": 1,
+    "resourceId": "n-ext",
+    "restoredFrom": null,
+    "rev": 1,
     "snapshot": {
       "body": {
         "text": "Imported with an external key."
       },
       "createdAt": 1763251200000,
+      "createdBy": "user",
+      "deletedAt": null,
       "description": "",
-      "externalKey": "fixture:shared-note",
       "id": "n-ext",
       "kind": "org.onedesk.note:note",
       "name": "Shared note",
+      "origin": "original",
+      "originRef": null,
       "parentId": "g-src",
-      "pluginId": "org.onedesk.note",
       "pluginVersion": "0.1.0",
       "pos": 2,
       "rev": 1,
       "state": "ok",
       "tags": [],
       "tree": "resources",
-      "updatedAt": 1763251200000
+      "updatedAt": 1763251200000,
+      "updatedBy": "user"
     }
   },
   {
     "actor": "user",
     "at": 1763251200000,
     "fields": [
-      "name",
-      "body"
+      "*"
     ],
     "op": "create",
-    "resource": "x-missing",
-    "seq": 1,
+    "resourceId": "x-missing",
+    "restoredFrom": null,
+    "rev": 1,
     "snapshot": {
       "body": {
         "value": 42
       },
       "createdAt": 1763251200000,
+      "createdBy": "user",
+      "deletedAt": null,
       "description": "",
-      "externalKey": null,
       "id": "x-missing",
       "kind": "com.example.missing:thing",
       "name": "Orphan thing",
+      "origin": "original",
+      "originRef": null,
       "parentId": "g-src",
-      "pluginId": "com.example.missing",
       "pluginVersion": "1.0.0",
       "pos": 3,
       "rev": 1,
       "state": "ok",
       "tags": [],
       "tree": "resources",
-      "updatedAt": 1763251200000
+      "updatedAt": 1763251200000,
+      "updatedBy": "user"
     }
   }
 ]

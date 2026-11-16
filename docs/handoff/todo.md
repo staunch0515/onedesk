@@ -51,3 +51,5 @@
 - （第四轮验收）工作区配置页没有 `network.allow` 的编辑入口，只能经协议 `params.set` 设。
 - （第四轮验收）构建产物 `target/debug/onedesk-worker` 在一次 `pnpm check` 中途变成 0 字节，原因没查实。
 - （第五轮审查）导入与安装插件的指纹用 FNV-1a，不防蓄意碰撞；两处一起换成 SHA-256（需新依赖 sha2，MIT/Apache-2.0）。
+
+- [round5-tests] 外壳：假实现/测试补 `ImportPreview.grantHosts/secretNames`（typecheck 3 处）；导入预览对话框渲染这两项；删除确认的被引用数（见 round5-tests-done.md 的 fixme）；`kernel-texts` 补 `run.export` 与新原因码。
