@@ -20,3 +20,23 @@
 ## 没做 / 没验证
 - 没连真内核；第 4 项只读代码；`pages` 权限在真安装框里的样子没看过。
 - 没新增 view-page 的组件测试（只加了 real-client 与 runError 的单元测试）。
+
+## 合并后对齐（内核合并后，对着真内核走了一遍）
+**对齐**：删掉 `protocol/types.ts` 里 `PageContext.params`、`Run.error.params`、`PluginDetail.unmetExports` 的本地补充（生成类型已有）；`PageEventResult` 仍是外壳本地接口（`changes` 为宽松 JSON），字段同生成类型。`layer` 不再进文字（见下）。原因码、审计名、权限 `pages` 与内核交接文件一致，`kernel-texts` 测试通过。
+
+**实际走过**（devhost + `ONEDESK_SECRET_STORE=memory` + 临时目录 + 夹具 HTTP 服务，用临时 Playwright 脚本，已删，截图在 scratchpad 外的 `/tmp/claude-501/walk-shots`，未入库）：
+- board 的树的“新建”菜单有“Card”，也有 board-extra 的“Memo（便签）”，没有 stray；建出的便签在 board 树里，页面是 board 的 card 页：操作区 Save / Make upper case / Shout，编辑→“转为大写”（草稿改大写、标未保存）→保存→正文入库→Shout 运行，结果区是“Shout”输出页签，没有 view 页签。✓
+- `stray` 新建（协议）→ `denied` / `reason: notExported` / `params.export = com.example.board:hidden`。✓ 插件页 board-extra：“以下类型不可用 / 对方没有导出 com.example.board:hidden”。✓
+- 安装 board-extra 的确认框：“Show its content with other plugins' pages · New”+黄色说明条+`com.example.board:card`。✓ 插件页权限表 detail 列显示同一条。✓
+- 市场页：选包后不再显示“未保存”，安装弹确认框，装完选择清空、状态变“Installed 0.1.0”。✓
+- transfer：下载 3 MB 成功（“status 200, 3000000 bytes”）；慢下载时任务面板和结果区显示“N bytes”进度，取消后显示“This run was cancelled”；目标已存在 → “That file already exists (a transfer does not replace it unless asked to)…”；`process.allow=echo` 时 capture 被拒，文字写明程序：“…does not allow the program “cat”.” ✓；路径在授权外 → “That path is outside the folders granted to the plugin.”（没带路径名，见下）。
+
+**发现的缺陷（内核，我没改）**
+1. `network.allow` 拒绝（`denied/blockedByPolicy`）的 `RunError.params` 只有 `layer`，没有 `host`；`hostNotAllowed`、`outsideGrant` 也没有 `params`（`denied("hostNotAllowed")` 在 `crates/kernel/src/network.rs:265`，`policy.rs:51` 只给 `layer`）。因此“哪个主机被拒”的文字出不来，外壳已备好 `host` 的文字（有 `host` 参数就用）。复现：授权 `network.allow=example.com`，跑 transfer 的 download 到 127.0.0.1 → 文字仍是笼统的。建议内核在这几处补 `host`（以及 `outsideGrant` 补 `path`）。
+2. `blockedByPolicy` 的 `layer` 是配置/环境节点的 id（一串十六进制），不是名字；外壳不显示它（否则文字里出现 `1ac58b8b…`）。要显示层名需要内核给名字，或外壳异步按 id 取节点名。
+3. 无总量的传输（`/nolength`）进度 `fraction` 为 0，任务面板显示“… bytes (0%)”，容易误解；建议无 `total` 时内核不给 `fraction`（或外壳在 message 带字节数时不显示百分比，需要内核的约定）。
+
+**没验证**：取消/失败后目标目录里没有 `.part` 临时文件（没检查磁盘）；上传、capture 的成功文字只看了协议状态；中文界面没走；`pnpm test`/`typecheck`/`lint`/host 测试/`workbench.spec.ts` 见提交说明，最终结果以汇报为准。
+
+## 审查 #5（`PageEventResult.params` 只应用 `param: true` 字段）
+`pages/run-params.ts` 新增 `applyPageParams(字段表, 当前参数, 返回值)`：只留当前页面 `param: true` 字段的键（非字符串也丢），其余丢弃；没有可用键时返回 `null`（不更新页签）。`view-page.tsx` 的事件处理改用它，不再整体合并。单元测试在 `run-params.test.ts`（丢弃其余键、`""` 清空、非字符串、无可用键）。同时更正上文“假设”里“合并语义”：现在是“合并，但只限本页的参数字段”。
