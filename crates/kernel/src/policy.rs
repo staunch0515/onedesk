@@ -75,6 +75,7 @@ pub fn known() -> Vec<KnownParam> {
     vec![
         p(UI_LANGUAGE, ParamType::Text, PolicyMerge::Plain, &["config"]),
         p(crate::network::ALLOW_PARAM, ParamType::List, PolicyMerge::AllowList, &["config", "env"]),
+        p(crate::process::ALLOW_PARAM, ParamType::List, PolicyMerge::AllowList, &["config", "env"]),
         p(READONLY, ParamType::Boolean, PolicyMerge::Deny, &["config", "env"]),
         p(NO_EXPORT, ParamType::Boolean, PolicyMerge::Deny, &["config", "env"]),
     ]

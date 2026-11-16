@@ -668,6 +668,7 @@ async fn known_parameters_are_listed() {
         vec![
             ("ui.language".into(), "text".into(), "plain".into(), json!(["config"])),
             ("network.allow".into(), "list".into(), "allowList".into(), json!(["config", "env"])),
+            ("process.allow".into(), "list".into(), "allowList".into(), json!(["config", "env"])),
             ("protection.readonly".into(), "boolean".into(), "deny".into(), json!(["config", "env"])),
             ("protection.no_export".into(), "boolean".into(), "deny".into(), json!(["config", "env"])),
         ]

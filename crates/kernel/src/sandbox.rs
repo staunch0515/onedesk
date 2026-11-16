@@ -113,6 +113,9 @@ pub struct CallInfo {
     pub pure: bool,
     /// The resource the call is about (its saved secret references are usable, D318).
     pub resource_id: Option<String>,
+    /// Round 6 (D336): an event handler — no programs, no network; its writes raise no events
+    /// for the same plugin.
+    pub event: bool,
 }
 
 /// The only capability a plugin has. One instance per plugin version.
@@ -238,9 +241,9 @@ const BOOTSTRAP: &str = r#"
   "use strict";
   const declared = JSON.parse(declaredJson);
   const labels = JSON.parse(labelsJson);
-  const reg = { pages: {}, trees: {}, commands: {}, actions: {}, kinds: {} };
+  const reg = { pages: {}, trees: {}, commands: {}, actions: {}, kinds: {}, events: {} };
   const reg_host = {};
-  for (const kind of Object.keys(reg)) {
+  for (const kind of ["pages", "trees", "commands", "actions", "kinds"]) {
     reg_host[kind] = Object.freeze({
       handle(name, h) {
         name = String(name);
@@ -253,6 +256,19 @@ const BOOTSTRAP: &str = r#"
       },
     });
   }
+  // Round 6 (D335): only events the manifest subscribes to.
+  const events = Object.freeze({
+    on(name, h) {
+      name = String(name);
+      if (!declared.events.includes(name)) {
+        const e = new Error("undeclared event: " + name);
+        e.code = "denied";
+        throw e;
+      }
+      reg.events[name] = h;
+    },
+  });
+  reg_host.events = events;
   const call = async (callId, method, args) => {
     const r = JSON.parse(await hostCall(callId, method, JSON.stringify(args === undefined ? null : args)));
     if (r.err !== undefined) {
@@ -262,6 +278,43 @@ const BOOTSTRAP: &str = r#"
       throw e;
     }
     return r.ok;
+  };
+  let streamSeq = 0;
+  // `process.run` with `onOutput`: the run and a pump that polls the output stream go side by
+  // side; the result comes after every chunk was handed to `onOutput`.
+  const runProcess = async (callId, opts) => {
+    const o = Object.assign({}, opts || {});
+    const on = o.onOutput;
+    delete o.onOutput;
+    if (typeof on !== "function") return call(callId, "process.run", [o]);
+    const sid = "s" + (++streamSeq);
+    o.stream = sid;
+    let failure;
+    const pump = (async () => {
+      for (;;) {
+        const batch = await call(callId, "process.output", [sid]);
+        if (batch === null) return;
+        for (const chunk of batch) {
+          if (failure !== undefined) continue;
+          try {
+            await on(chunk);
+          } catch (e) {
+            failure = { e };
+            call(callId, "process.stop", [sid]).catch(() => {});
+          }
+        }
+      }
+    })();
+    let res, err;
+    try {
+      res = await call(callId, "process.run", [o]);
+    } catch (e) {
+      err = { e };
+    }
+    await pump.catch(() => {});
+    if (failure) throw failure.e;
+    if (err) throw err.e;
+    return res;
   };
   const makeHost = (callId) => {
     const c = (m) => (...a) => call(callId, m, a);
@@ -284,6 +337,8 @@ const BOOTSTRAP: &str = r#"
       util: Object.freeze({ sleep: c("util.sleep") }),
       network: Object.freeze({ request: c("network.request") }),
       secrets: Object.freeze({ get: c("secrets.get") }),
+      process: Object.freeze({ run: (opts) => runProcess(callId, opts), ready: c("process.ready") }),
+      events,
     });
   };
   const hostCodes = ["conflict", "denied", "invalid", "notFound", "invalidParams"];
@@ -293,6 +348,8 @@ const BOOTSTRAP: &str = r#"
     const f = fn === "" ? h : h && h[fn];
     // A kind without `migrate` keeps its body as it is (§7.6): answered as `null`.
     if (typeof f !== "function" && kind === "kinds") return JSON.stringify({ ok: null });
+    // An event the plugin subscribed to but registered no handler for: nothing to do.
+    if (typeof f !== "function" && kind === "events") return JSON.stringify({ ok: null });
     if (typeof f !== "function") throw new Error("no handler: " + kind + "/" + name + (fn ? "." + fn : ""));
     const args = JSON.parse(argsJson);
     const ctx = Object.assign({}, args[0], {
@@ -326,6 +383,7 @@ pub struct Declarations {
     pub commands: Vec<String>,
     pub actions: Vec<String>,
     pub kinds: Vec<String>,
+    pub events: Vec<String>,
 }
 
 pub struct Package {
@@ -458,7 +516,10 @@ impl Sandbox {
             r = tokio::time::timeout(sb.cfg.activate_timeout, watched(fut)) => match r {
                 Err(_) => Err(SandboxError::Timeout),
                 Ok(Err(msg)) => Err(classify(&sb.ctl, msg)),
-                Ok(Ok(())) => Ok(sb),
+                Ok(Ok(())) => {
+                sb.rearm().await;
+                Ok(sb)
+            }
             },
             _ = watchdog => Err(SandboxError::Timeout),
         }
@@ -518,7 +579,17 @@ impl Sandbox {
         };
         // Forgotten after any outcome: late host calls from an orphaned continuation are refused.
         self.ctl.calls.lock().unwrap().remove(&call_id);
+        self.rearm().await;
         res
+    }
+
+    /// The engine's scheduler remembers one waker: the last one that polled it. When a call that
+    /// polled it ends, wake-ups of futures still pending for *other* invocations (a timer, a
+    /// database reply) would go to that finished task and be lost. Pushing an empty job wakes
+    /// the runtime's own driver, which polls again and registers itself (found in round 6:
+    /// an event handler waiting on `util.sleep` while a page rendered never resumed).
+    async fn rearm(&self) {
+        self.ctx.with(|ctx| ctx.spawn(async {})).await;
     }
 
     /// Test helper: evaluates a script in the plugin's global scope, returning its JSON.

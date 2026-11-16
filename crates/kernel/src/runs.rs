@@ -368,6 +368,7 @@ impl Inner {
             run_id: Some(id.clone()),
             pure: false,
             resource_id: res.map(|r| r.id.clone()),
+            event: false,
         };
         let started = Instant::now();
         // Executes in the background; `run.start` answers now.
@@ -444,7 +445,19 @@ impl Inner {
         if let Err(e) = self.pipeline.execute(actor, cmd).await {
             eprintln!("onedesk: could not record the end of run {id}: {e:?}");
         }
+        self.procs.forget_run(id);
         self.run_events(id);
+        // Round 6 (D335): the plugin whose action it was hears that it ended.
+        if let Ok(Some(r)) = self.read(|c| store::run_get(c, id)) {
+            if !r.plugin.is_empty() && r.status != "running" {
+                let action = r.action.strip_prefix(&format!("{}:", r.plugin)).unwrap_or(&r.action).to_string();
+                let mut payload = json!({ "run": id, "action": action, "status": r.status });
+                if let Some(res) = &r.resource_id {
+                    payload["resource"] = json!(res);
+                }
+                self.deliver(&r.plugin, crate::events::RUN_ENDED, payload);
+            }
+        }
     }
 
     /// Throttled: at most one progress write and event per run every 100 ms.

@@ -176,7 +176,9 @@ impl Inner {
                 own: mine.is_some(),
                 inherited: inherited.as_ref().map(|(p, s)| InheritedValue { value: p.value.clone(), source_name: s.name.clone() }),
                 layers,
-                restricted: (name == crate::network::ALLOW_PARAM && mine.is_some() && self.allow_restricted(&row, &ancestors))
+                restricted: (mine.is_some()
+                    && ((name == crate::network::ALLOW_PARAM && self.allow_restricted(&row, &ancestors))
+                        || (name == crate::process::ALLOW_PARAM && self.process_allow_restricted(&row, &ancestors))))
                     .then(|| Label::Text("restrictedByUpperLayer".into())),
                 changed_upstream,
                 declared_by: vec![],
