@@ -2,6 +2,16 @@
 //! The context holds language built-ins only; modules load only from the package's own files;
 //! the only way out is `ctx.host`, whose methods end in one async Rust function that knows which
 //! invocation is calling (so a cancelled or timed-out invocation's later host calls are refused).
+//!
+//! D366 (round 9): a `ctx.host` is valid only on its own invocation's asynchronous chain. The
+//! engine has no async-context hooks, so the kernel controls every entry into plugin code instead:
+//! the synchronous start of a handler (`dispatch`) and the settling of every host call's promise
+//! (`settle`). Each entry marks the invocation it belongs to (`Ctl::current`) and runs the job
+//! queue empty before it leaves, so every promise job runs under the invocation whose entry (a
+//! start, or a host call's answer) caused it. A host call is allowed only when the object it was
+//! made with belongs to the invocation running it; otherwise `denied/staleContext`.
+//! What this cannot tell apart: code of invocation B that awaits a promise invocation A settles
+//! (a shared promise) continues as A — see round9-kernel-done.md.
 
 use std::cell::Cell;
 use std::collections::{BTreeMap, HashMap};
@@ -14,7 +24,7 @@ use std::time::{Duration, Instant};
 
 use onedesk_protocol::{ErrorCode, Label, ProtocolError};
 use rquickjs::context::intrinsic;
-use rquickjs::function::{Async, This};
+use rquickjs::function::This;
 use rquickjs::loader::{ImportAttributes, Loader, Resolver};
 use rquickjs::module::Declared;
 use rquickjs::promise::MaybePromise;
@@ -178,6 +188,20 @@ struct Ctl {
     watchdog: Notify,
     calls: Mutex<HashMap<u64, (CancelToken, Arc<CallInfo>)>>,
     next_call: AtomicU64,
+    /// D366: the invocation whose code is running now (0 = none known). Set only while the
+    /// runtime lock is held: around a handler's synchronous start and a host call's settling.
+    current: AtomicU64,
+    next_ticket: AtomicU64,
+    /// The context host-call answers are delivered through; cleared when the sandbox is dropped
+    /// (the runtime holds `Ctl`, so keeping it would be a cycle).
+    actx: Mutex<Option<AsyncContext>>,
+}
+
+impl Ctl {
+    /// Runs every pending promise job, as part of the invocation marked current.
+    fn drain(ctx: &Ctx<'_>) {
+        while ctx.execute_pending_job() {}
+    }
 }
 
 thread_local! {
@@ -207,6 +231,12 @@ fn watched<F: Future>(f: F) -> Watched<F> {
 struct Dispatch<'js>(Function<'js>);
 unsafe impl<'js> JsLifetime<'js> for Dispatch<'js> {
     type Changed<'to> = Dispatch<'to>;
+}
+
+/// The bootstrap's `settle(ticket, envelope)`: resolves one host call's promise.
+struct Settle<'js>(Function<'js>);
+unsafe impl<'js> JsLifetime<'js> for Settle<'js> {
+    type Changed<'to> = Settle<'to>;
 }
 
 /// Resolves only `./x.js` imports among the package's own files.
@@ -277,12 +307,22 @@ const BOOTSTRAP: &str = r#"
     },
   });
   reg_host.events = events;
+  // A host call returns a ticket at once; the kernel settles it later (see `settle`), entering
+  // the engine as the invocation that made the call (D366).
+  const pending = new Map();
+  const settle = (ticket, s) => {
+    const r = pending.get(ticket);
+    pending.delete(ticket);
+    if (r) r(s);
+  };
   const call = async (callId, method, args) => {
-    const r = JSON.parse(await hostCall(callId, method, JSON.stringify(args === undefined ? null : args)));
+    const ticket = hostCall(callId, method, JSON.stringify(args === undefined ? null : args));
+    const r = JSON.parse(await new Promise((res) => pending.set(ticket, res)));
     if (r.err !== undefined) {
       const e = new Error(r.err.code);
       e.code = r.err.code;
       e.params = r.err.params || {};
+      if (r.err.detail !== undefined) e.detail = r.err.detail;
       throw e;
     }
     return r.ok;
@@ -416,11 +456,14 @@ const BOOTSTRAP: &str = r#"
       return JSON.stringify({ ok: out === undefined ? null : out });
     } catch (e) {
       // A host error the handler did not catch keeps its code.
-      if (e && hostCodes.includes(e.code)) return JSON.stringify({ hostError: { code: e.code, params: e.params || {} } });
+      if (e && hostCodes.includes(e.code)) {
+        const d = typeof e.detail === "string" ? e.detail : undefined;
+        return JSON.stringify({ hostError: { code: e.code, params: e.params || {}, detail: d } });
+      }
       throw e;
     }
   };
-  return { host: Object.freeze(reg_host), dispatch };
+  return { host: Object.freeze(reg_host), dispatch, settle };
 })
 "#;
 
@@ -455,6 +498,7 @@ pub struct Sandbox {
 
 impl Drop for Sandbox {
     fn drop(&mut self) {
+        self.ctl.actx.lock().unwrap().take();
         self.drive.abort();
         // Fail whatever is still waiting on this runtime.
         for (t, _) in self.ctl.calls.lock().unwrap().values() {
@@ -486,6 +530,9 @@ impl Sandbox {
             watchdog: Notify::new(),
             calls: Mutex::new(HashMap::new()),
             next_call: AtomicU64::new(1),
+            current: AtomicU64::new(0),
+            next_ticket: AtomicU64::new(1),
+            actx: Mutex::new(None),
         });
         let ictl = ctl.clone();
         rt.set_interrupt_handler(Some(Box::new(move || {
@@ -515,6 +562,7 @@ impl Sandbox {
         .map_err(engine)?;
 
         let drive = tokio::spawn(watched(rt.drive()));
+        *ctl.actx.lock().unwrap() = Some(ctx.clone());
         let sb = Sandbox { id: pkg.id.clone(), rt, ctx, ctl, cfg, drive };
 
         let source = files.get(&pkg.main).cloned().ok_or_else(|| SandboxError::Engine("main missing".into()))?;
@@ -525,20 +573,28 @@ impl Sandbox {
         let cancel_ctl = sb.ctl.clone();
         let fut = sb.ctx.async_with(async move |ctx| -> Result<(), String> {
             let js = |ctx: &Ctx<'_>, e: rquickjs::Error| Err::<(), _>(e).catch(ctx).unwrap_err().to_string();
-            let host_call = Function::new(
-                ctx.clone(),
-                Async(move |call_id: f64, method: String, args: String| {
-                    let host = host.clone();
-                    let entry = hctl.calls.lock().unwrap().get(&(call_id as u64)).cloned();
-                    async move {
-                        let env = match host_call_inner(host, entry, method, args).await {
-                            Ok(v) => json!({ "ok": v }),
-                            Err(e) => json!({ "err": { "code": e.code, "params": e.params } }),
-                        };
-                        Ok::<String, rquickjs::Error>(env.to_string())
-                    }
-                }),
-            )
+            let host_call = Function::new(ctx.clone(), move |call_id: f64, method: String, args: String| -> f64 {
+                let call_id = call_id as u64;
+                let ticket = hctl.next_ticket.fetch_add(1, Ordering::SeqCst);
+                // D366: who is running this code, and whose `ctx.host` it used.
+                let running = hctl.current.load(Ordering::SeqCst);
+                let entry = hctl.calls.lock().unwrap().get(&call_id).cloned();
+                let (host, ctl) = (host.clone(), hctl.clone());
+                tokio::spawn(async move {
+                    let res = if running != call_id {
+                        Err(refusal("staleContext"))
+                    } else {
+                        host_call_inner(host, entry, method, args).await
+                    };
+                    let env = match res {
+                        Ok(v) => json!({ "ok": v }),
+                        // D368: the detail goes as far as `RunError.detail` (it names a host at most).
+                        Err(e) => json!({ "err": { "code": e.code, "params": e.params, "detail": e.detail } }),
+                    };
+                    settle(&ctl, running, ticket, env.to_string()).await;
+                });
+                ticket as f64
+            })
             .map_err(|e| js(&ctx, e))?;
             let cctl = cancel_ctl.clone();
             let is_cancelled = Function::new(ctx.clone(), move |call_id: f64| -> bool {
@@ -550,6 +606,8 @@ impl Sandbox {
             let host_obj: Object = obj.get("host").map_err(|e| js(&ctx, e))?;
             let dispatch: Function = obj.get("dispatch").map_err(|e| js(&ctx, e))?;
             let _ = ctx.store_userdata(Dispatch(dispatch));
+            let settle_fn: Function = obj.get("settle").map_err(|e| js(&ctx, e))?;
+            let _ = ctx.store_userdata(Settle(settle_fn));
 
             let module = Module::declare(ctx.clone(), main, source).map_err(|e| js(&ctx, e))?;
             let (module, promise) = module.eval().map_err(|e| js(&ctx, e))?;
@@ -607,13 +665,20 @@ impl Sandbox {
         self.ctl.calls.lock().unwrap().insert(call_id, (token.clone(), Arc::new(info)));
         let (kind, name, func) = (kind.to_string(), name.to_string(), func.to_string());
         let args_json = args.to_string();
+        let ctl = self.ctl.clone();
         let fut = self.ctx.async_with(async move |ctx| -> Result<String, String> {
             let js = |ctx: &Ctx<'_>, e: rquickjs::Error| Err::<(), _>(e).catch(ctx).unwrap_err().to_string();
             // A stale exception left by an interrupted pending job must not be reported as ours.
             let _ = ctx.catch();
             let dispatch = ctx.userdata::<Dispatch>().ok_or("no dispatcher")?.0.clone();
-            let ret: MaybePromise =
-                dispatch.call((call_id as f64, kind, name, func, args_json)).map_err(|e| js(&ctx, e))?;
+            // D366: the handler's synchronous start, and every job it queues, run as this call.
+            ctl.current.store(call_id, Ordering::SeqCst);
+            let ret = dispatch.call::<_, MaybePromise>((call_id as f64, kind, name, func, args_json));
+            if ret.is_ok() {
+                Ctl::drain(&ctx);
+            }
+            ctl.current.store(0, Ordering::SeqCst);
+            let ret = ret.map_err(|e| js(&ctx, e))?;
             ret.into_future::<String>().await.map_err(|e| js(&ctx, e))
         });
         let watchdog = self.ctl.watchdog.notified();
@@ -688,17 +753,34 @@ fn unwrap_envelope(s: &str) -> Result<Value, SandboxError> {
     Ok(v.get_mut("ok").map(Value::take).unwrap_or(Value::Null))
 }
 
+fn refusal(reason: &str) -> ProtocolError {
+    ProtocolError { code: ErrorCode::Denied, params: BTreeMap::from([("reason".into(), reason.to_string())]), detail: None }
+}
+
+/// Delivers a host call's answer: enters the engine as the invocation that made the call, settles
+/// its promise and runs the job queue empty (D366). Under the dead-loop watchdog like any entry.
+async fn settle(ctl: &Arc<Ctl>, running: u64, ticket: u64, envelope: String) {
+    let Some(actx) = ctl.actx.lock().unwrap().clone() else { return };
+    let c = ctl.clone();
+    watched(actx.with(move |ctx| {
+        let Some(f) = ctx.userdata::<Settle>().map(|s| s.0.clone()) else { return };
+        c.current.store(running, Ordering::SeqCst);
+        if f.call::<_, ()>((ticket as f64, envelope)).is_err() {
+            let _ = ctx.catch();
+        }
+        Ctl::drain(&ctx);
+        c.current.store(0, Ordering::SeqCst);
+    }))
+    .await;
+}
+
 async fn host_call_inner(
     host: Arc<dyn HostApi>,
     entry: Option<(CancelToken, Arc<CallInfo>)>,
     method: String,
     args: String,
 ) -> Result<Value, ProtocolError> {
-    let refused = |reason: &str| ProtocolError {
-        code: ErrorCode::Denied,
-        params: BTreeMap::from([("reason".into(), reason.to_string())]),
-        detail: None,
-    };
+    let refused = refusal;
     // No live invocation (activation-time code, or one already over): `callEnded`;
     // a cancelled or timed-out one: `cancelled` / `timeout`.
     let Some((token, info)) = entry else { return Err(refused("callEnded")) };
