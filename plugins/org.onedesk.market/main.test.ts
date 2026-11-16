@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 // @ts-ignore plain JS module, no types
-import plugin, { MAX_PACKAGES, compareVersions, statusOf } from "./main.js";
+import plugin, { MAX_DESCRIPTION, MAX_NAME, MAX_PACKAGES, MAX_PROBES, clean, compareVersions, statusOf } from "./main.js";
 import { RENDER_KEYS, TREE_NODE_KEYS, TREE_PAGE_KEYS, checkView, hostError, onlyKeys, registry } from "../_testing/view-check";
 
 const ROOT = "/Users/me/market";
@@ -41,7 +41,15 @@ const pkgFiles = (dir: string, id: string, version: string, name: string, desc: 
   ...pkgLocales(dir, name, desc, zh),
 });
 
-const ctxOf = (host: unknown, extra: Record<string, unknown> = {}) => ({ target: "node:org.onedesk.market:market/local", node: { tree: "org.onedesk.market:market", key: "local" }, locale: "en-US", host, t: tt, ...extra });
+/** In-memory `ctx.host.storage`, attached once to the fake host so that renders of one test share it. */
+const fakeStorage = () => {
+  const m = new Map<string, string>();
+  return { get: vi.fn(async (k: string) => m.get(k) ?? null), set: vi.fn(async (k: string, v: string) => void m.set(k, v)) };
+};
+const ctxOf = (host: any, extra: Record<string, unknown> = {}) => {
+  host.storage ??= fakeStorage();
+  return { target: "node:org.onedesk.market:market/local", node: { tree: "org.onedesk.market:market", key: "local" }, locale: "en-US", host, t: tt, ...extra };
+};
 const rowsOf = (out: any) => out.view.find((n: any) => n.type === "table").rows as string[][];
 
 describe("market: manifest", () => {
@@ -119,6 +127,7 @@ describe("market: scanning", () => {
     const { pages } = registry(plugin);
     const files = fakeFiles(pkgFiles(`${ROOT}/a/1.0.0`, "com.example.a", "1.0.0", "Alpha", "First", ["阿尔法", "第一个"]));
     const host = { files, plugins: { list: async () => [] } };
+    // the cache is per language, so the same host serves both
     expect(rowsOf(await pages.browse.render(ctxOf(host, { locale: "zh-CN" })))[0]!.slice(0, 3)).toEqual(["阿尔法", "1.0.0", "第一个"]);
     expect(rowsOf(await pages.browse.render(ctxOf(host, { locale: "fr-FR" })))[0]!.slice(0, 3)).toEqual(["Alpha", "1.0.0", "First"]);
   });
@@ -286,6 +295,10 @@ describe("market: install", () => {
     const denied = hostError("denied", { reason: "outsideGrant" });
     await expect(run(setup(denied))).rejects.toBe(denied);
   });
+  it("a request turned away for the cooldown says how long to wait", async () => {
+    const out = await run(setup(hostError("conflict", { reason: "cooldown", seconds: "17" })));
+    expect(out.message).toBe("The last request was not completed. Try again in 17 s.");
+  });
   it("does nothing without a selection", async () => {
     const s = setup({ outcome: "installed" });
     expect((await run(s, {})).message).toBe("Choose a package first.");
@@ -298,7 +311,7 @@ describe("market: install", () => {
   });
   it("refresh answers with a message; unknown events are rejected", async () => {
     const s = setup({});
-    expect((await s.pages.browse.onEvent(ctxOf(s.host), "refresh")).message).toBe("Refreshed.");
+    expect((await s.pages.browse.onEvent(ctxOf(s.host), "refresh")).message).toBe("Rescanned.");
     await expect(s.pages.browse.onEvent(ctxOf(s.host), "explode")).rejects.toThrow("unknown event");
   });
   it("re-rendering after an install shows the new state", async () => {
@@ -309,5 +322,111 @@ describe("market: install", () => {
     expect(rowsOf(await pages.browse.render(ctxOf(host)))[0]![3]).toBe("Not installed");
     installed = [{ id: "com.example.new", name: "New", versions: ["1.0.0"], active: "1.0.0" }];
     expect(rowsOf(await pages.browse.render(ctxOf(host)))[0]![3]).toBe("Installed 1.0.0");
+  });
+});
+
+describe("market: limits, cache and untrusted text", () => {
+  it("looks at no more than 400 directories and says the scan was cut short", async () => {
+    const { pages } = registry(plugin);
+    const all: Record<string, string> = {};
+    for (let i = 0; i < MAX_PROBES + 50; i++) all[`${ROOT}/d${String(i).padStart(4, "0")}/readme.txt`] = "x"; // folders without a manifest
+    const files = fakeFiles(all);
+    const out = await pages.browse.render(ctxOf({ files, plugins: { list: async () => [] } }));
+    const manifestReads = files.readText.mock.calls.filter((c: string[]) => c[0]!.endsWith("/manifest.json")).length;
+    expect(manifestReads).toBeLessThanOrEqual(MAX_PROBES);
+    expect(out.view.find((n: any) => n.id === "capped").text).toBe("Scan stopped: too many folders to look through (limit 400).");
+    expect(checkView(out.view)).toEqual([]);
+  });
+
+  it("counts the second level against the same limit", async () => {
+    const { pages } = registry(plugin);
+    const all: Record<string, string> = {};
+    for (let i = 0; i < 10; i++) for (let j = 0; j < 100; j++) all[`${ROOT}/p${i}/v${j}/x.txt`] = "x";
+    const files = fakeFiles(all);
+    await pages.browse.render(ctxOf({ files, plugins: { list: async () => [] } }));
+    expect(files.readText.mock.calls.length).toBeLessThanOrEqual(MAX_PROBES + 10);
+  });
+
+  it("scans once and serves later renders from the cache; Rescan scans again", async () => {
+    const { pages } = registry(plugin);
+    const files = fakeFiles(pkgFiles(`${ROOT}/a`, "com.example.a", "1.0.0", "A", "d"));
+    const host: any = { files, plugins: { list: async () => [] } };
+    await pages.browse.render(ctxOf(host));
+    const listed = files.list.mock.calls.length;
+    expect(listed).toBeGreaterThan(0);
+    await pages.browse.render(ctxOf(host));
+    await pages.browse.render(ctxOf(host, { draft: { pick: "" } }));
+    expect(files.list.mock.calls.length).toBe(listed);
+    // a new package shows up only after a rescan
+    Object.assign((files as any), {});
+    const files2 = fakeFiles({ ...pkgFiles(`${ROOT}/a`, "com.example.a", "1.0.0", "A", "d"), ...pkgFiles(`${ROOT}/b`, "com.example.b", "1.0.0", "B", "d") });
+    host.files = files2;
+    expect(rowsOf(await pages.browse.render(ctxOf(host))).map((r) => r[0])).toEqual(["A"]);
+    expect((await pages.browse.onEvent(ctxOf(host), "refresh")).message).toBe("Rescanned.");
+    expect(rowsOf(await pages.browse.render(ctxOf(host))).map((r) => r[0])).toEqual(["A", "B"]);
+  });
+
+  it("status is not cached: an install changes the row without a rescan", async () => {
+    const { pages } = registry(plugin);
+    const files = fakeFiles(pkgFiles(`${ROOT}/a`, "com.example.a", "1.0.0", "A", "d"));
+    let list: any[] = [];
+    const host = { files, plugins: { list: async () => list } };
+    expect(rowsOf(await pages.browse.render(ctxOf(host)))[0]![3]).toBe("Not installed");
+    const listed = files.list.mock.calls.length;
+    list = [{ id: "com.example.a", name: "A", versions: ["1.0.0"], active: "1.0.0" }];
+    expect(rowsOf(await pages.browse.render(ctxOf(host)))[0]![3]).toBe("Installed 1.0.0");
+    expect(files.list.mock.calls.length).toBe(listed);
+  });
+
+  it("ignores a damaged cache and scans again; a storage that fails still renders", async () => {
+    const { pages } = registry(plugin);
+    const files = fakeFiles(pkgFiles(`${ROOT}/a`, "com.example.a", "1.0.0", "A", "d"));
+    const storage = { get: async () => "{ not json", set: async () => { throw hostError("invalid"); } };
+    const out = await pages.browse.render(ctxOf({ files, storage, plugins: { list: async () => [] } }));
+    expect(rowsOf(out)[0]![0]).toBe("A");
+  });
+
+  it("clean: strings only, no control or bidi characters, cut by characters", () => {
+    expect(clean("a\u0000b\u202ec\u200fd\n e\u009f", 80)).toBe("abcd e");
+    expect(clean({ evil: 1 }, 80)).toBe("");
+    expect(clean(42, 80)).toBe("");
+    expect(clean(undefined, 80)).toBe("");
+    expect(clean("你".repeat(100), 80)).toHaveLength(80);
+    expect(Array.from(clean("😀".repeat(100), 5))).toHaveLength(5);
+  });
+
+  it("name 80 / description 300 characters, no control characters, non-strings are missing", async () => {
+    const { pages } = registry(plugin);
+    const long = "N".repeat(200);
+    const files = fakeFiles({
+      [`${ROOT}/a/manifest.json`]: JSON.stringify({ id: "com.example.a", version: "1.0.0", name: "x\u202e" + long, description: "D".repeat(500) + "\u0007" }),
+      [`${ROOT}/b/manifest.json`]: JSON.stringify({ id: "com.example.b", version: "1.0.0", name: { evil: true }, description: ["x"] }),
+      [`${ROOT}/c\u202etxt/manifest.json`]: "{ broken",
+    });
+    const out = await pages.browse.render(ctxOf({ files, plugins: { list: async () => [] } }));
+    const rows = rowsOf(out);
+    const a = rows.find((r) => r[1] === "1.0.0" && r[0]!.startsWith("x"))!;
+    expect(a[0]).toHaveLength(MAX_NAME);
+    expect(a[2]).toHaveLength(MAX_DESCRIPTION);
+    const b = rows.find((r) => r[0] === "com.example.b")!; // no usable name: the id stands in
+    expect(b[2]).toBe("");
+    expect(JSON.stringify(rows)).not.toMatch(/\[object Object\]|\\u202e|\\u0007/);
+    const c = rows.find((r) => r[3] === "Unavailable")!;
+    expect(c[0]).toBe("ctxt");
+    const options = out.view.find((n: any) => n.id === "pick").fields[0].options;
+    expect(options.every((o: any) => o.label.length <= MAX_NAME + 20)).toBe(true);
+  });
+
+  it("text from the package's language file is cleaned and cut too", async () => {
+    const { pages } = registry(plugin);
+    const files = fakeFiles({
+      [`${ROOT}/a/manifest.json`]: pkgManifest("com.example.a", "1.0.0"),
+      [`${ROOT}/a/locales/en-US.json`]: JSON.stringify({ "plugin.name": "Evil\u202e" + "x".repeat(300), "plugin.description": { nested: 1 } }),
+    });
+    const out = await pages.browse.render(ctxOf({ files, plugins: { list: async () => [] } }));
+    const row = rowsOf(out)[0]!;
+    expect(row[0]).toHaveLength(MAX_NAME);
+    expect(row[0]).not.toContain("\u202e");
+    expect(row[2]).toBe("plugin.description"); // the non-string translation is missing: the raw key stays
   });
 });

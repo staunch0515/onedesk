@@ -1,0 +1,4 @@
+{
+  "plugin.name": "Sample dependent",
+  "plugin.description": "Fixture: needs the sample plugin at 0.2.0 or newer, so undoing that upgrade must be refused."
+}

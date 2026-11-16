@@ -152,20 +152,6 @@ test("a folder outside what the market can read is refused (outsideGrant) and no
   expect(await requests(page)).toEqual([]);
 });
 
-test("a second request while one waits is turned away (pendingRequest); answering ends the first", async ({ page }) => {
-  await bare(page);
-  const first = marketInstall(page, HELLO_DIR);
-  const req = await untilRequest(page);
-  expect(req).toMatchObject({ plugin: MARKET_ID });
-  const second = await marketInstall(page, HELLO_DIR); // the market catches the conflict and answers with a message
-  expect(second.message).toBeTruthy();
-  expect((await requests(page)).length).toBe(1);
-  await call(page, "plugin.answerInstallRequest", { id: req.id, outcome: "declined" });
-  expect((await first).message).toBeTruthy();
-  expect(await requests(page)).toEqual([]);
-  expect(await installed(page, HELLO)).toBe(false);
-});
-
 /* ------------------------------------------------------------------ install through the dialog */
 
 async function pickAndInstall(page: Page, label: RegExp) {
@@ -173,18 +159,6 @@ async function pickAndInstall(page: Page, label: RegExp) {
   await page.getByRole("option", { name: label }).click();
   await page.getByRole("button", { name: "Install", exact: true }).click();
 }
-
-test("install from the market: the framework's dialog names the market; cancel installs nothing and ends the request", async ({ page }) => {
-  await openMarketPage(page);
-  await pickAndInstall(page, /Hello/);
-  const dialog = page.getByRole("dialog");
-  await expect(dialog).toContainText("Plugin market");
-  await shot(page, "market-install-dialog");
-  await dialog.getByRole("button", { name: "Cancel" }).click();
-  await expect(dialog).toHaveCount(0);
-  await expect.poll(async () => (await requests(page)).length).toBe(0);
-  expect(await installed(page, HELLO)).toBe(false);
-});
 
 test("install from the market: confirming installs it, the list says Installed, the plugin shows in the tree", async ({ page }) => {
   await openMarketPage(page);
@@ -199,6 +173,42 @@ test("install from the market: confirming installs it, the list says Installed, 
   await sideTab(page, "Plugins").click();
   await expect(page.locator("[data-tree-key]", { hasText: "Hello" }).first()).toBeVisible();
   await shot(page, "market-installed");
+});
+
+test("a second request while one waits is turned away (pendingRequest); answering ends the first", async ({ page }) => {
+  await bare(page);
+  const first = marketInstall(page, HELLO_DIR);
+  const req = await untilRequest(page);
+  expect(req).toMatchObject({ plugin: MARKET_ID });
+  const second = await marketInstall(page, HELLO_DIR); // the market catches the conflict and answers with a message
+  expect(second.message).toBeTruthy();
+  expect((await requests(page)).length).toBe(1);
+  await call(page, "plugin.answerInstallRequest", { id: req.id, outcome: "declined" });
+  expect((await first).message).toBeTruthy();
+  expect(await requests(page)).toEqual([]);
+
+  // D349: right after a declined request the same plugin may not ask again for 30 s (conflict/cooldown)
+  const again = await marketInstall(page, HELLO_DIR);
+  expect(JSON.stringify(again.message)).toContain("Try again in");
+  expect(await requests(page)).toEqual([]);
+});
+
+test("install from the market: the framework's dialog names the market; cancel installs nothing and ends the request", async ({ page }) => {
+  test.setTimeout(120_000);
+  // hello was installed above and the market was told off a moment ago: remove it, and wait the cooldown out
+  await bare(page);
+  await call(page, "app.removePlugin", { plugin: HELLO, version: "0.1.0" });
+  expect(await installed(page, HELLO)).toBe(false);
+  await page.waitForTimeout(31_000);
+  await openMarketPage(page);
+  await pickAndInstall(page, /Hello/);
+  const dialog = page.getByRole("dialog");
+  await expect(dialog).toContainText("Plugin market");
+  await shot(page, "market-install-dialog");
+  await dialog.getByRole("button", { name: "Cancel" }).click();
+  await expect(dialog).toHaveCount(0);
+  await expect.poll(async () => (await requests(page)).length).toBe(0);
+  expect(await installed(page, HELLO)).toBe(false);
 });
 
 /* ------------------------------------------------------------------ dependencies and exports */
@@ -228,6 +238,9 @@ test("note-tools: the note page gets “Count words”, the run is by note-tools
   expect(bad.status).toBe("error");
   expect(bad.error).toMatchObject({ code: "denied", reason: "foreignKind" });
   expect((await getRes(page, noteId)).body.text).toBe("hello brave world\nsecond line");
+  // the dependent's action is also in the note's right-click menu
+  const node = (await call<{ nodes: { key: string; menu: { id: string }[] }[] }>(page, "tree.children", { tree: "resources" })).nodes.find((n) => n.key === noteId)!;
+  expect(node.menu.map((m) => m.id)).toContain(`${TOOLS}:count`);
   // the refused write is audited with the dependent as operator
   const audit = await call<{ actor: string; operation: string; result: string }[]>(page, "audit.list", {});
   expect(audit.some((r) => r.actor.startsWith(`plugin:${TOOLS}@`) && r.operation === "resources.update" && r.result === "denied")).toBe(true);
@@ -286,4 +299,21 @@ test("under the read-only policy the dependent's action is refused (readonly) li
     await call(page, "params.unset", { node: cfg, name: "protection.readonly" });
   }
   expect((await runAction(page, `${TOOLS}:count`, noteId)).status).toBe("success");
+});
+
+test("undoing an upgrade that would break a dependent is refused and lists it", async ({ page }) => {
+  await bare(page);
+  const SAMPLE_ID = "org.onedesk.sample";
+  await call(page, "page.save", { target: "new:org.onedesk.sample:query", changes: { name: "Upgrade me", "body.text": "select 1" } });
+  await installPkg(page, path.join(FIX, "org.onedesk.sample/0.2.0")); // upgrades the resource: a batch
+  await installPkg(page, path.join(FIX, "com.example.sample-dep/0.1.0")); // needs sample >= 0.2.0
+  const d = await call<{ lastUpgrade?: { batch: string } }>(page, "plugin.get", { plugin: SAMPLE_ID });
+  expect(d.lastUpgrade?.batch).toBeTruthy();
+  const e = await refused(page, "plugin.undoUpgrade", { batch: d.lastUpgrade!.batch });
+  expect(e).toMatchObject({ code: "conflict", params: { reason: "dependents", plugins: "com.example.sample-dep" } });
+  expect((await detail(page, SAMPLE_ID)).versions.find((v) => v.active)?.version).toBe("0.2.0");
+  // with the dependent off, the undo goes through
+  await setEnabled(page, "com.example.sample-dep", false);
+  await call(page, "plugin.undoUpgrade", { batch: d.lastUpgrade!.batch });
+  expect((await detail(page, SAMPLE_ID)).versions.find((v) => v.active)?.version).toBe("0.1.0");
 });
