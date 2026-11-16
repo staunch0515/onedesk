@@ -720,7 +720,7 @@ impl Inner {
         }
         let mut all = mbytes;
         all.extend_from_slice(&rbytes);
-        Ok((manifest, resources, fingerprint(&all)))
+        Ok((manifest, resources, crate::util::sha256_hex(&all)))
     }
 
     /// Review #1: the tree a node goes to, by the creation rules only (never the file's word):

@@ -57,9 +57,15 @@ fn run_error(code: &str, message: impl Into<String>, detail: Option<String>) -> 
     json!({ "code": code, "message": message.into(), "detail": detail })
 }
 
-/// D318: a host refusal or failure keeps its reason code (`secretNotAllowed`, `hostNotAllowed`…).
-fn run_error_reason(code: &str, reason: Option<&String>, detail: Option<String>) -> Value {
-    json!({ "code": code, "message": "", "detail": detail, "reason": reason })
+/// D318: a host refusal or failure keeps its reason code (`secretNotAllowed`, `hostNotAllowed`…);
+/// D360: and its other params (`program`, `host`, `layer`…).
+fn run_error_reason(code: &str, params: &BTreeMap<String, String>, detail: Option<String>) -> Value {
+    let rest: BTreeMap<&String, &String> = params.iter().filter(|(k, _)| k.as_str() != "reason").collect();
+    let mut v = json!({ "code": code, "message": "", "detail": detail, "reason": params.get("reason") });
+    if !rest.is_empty() {
+        v["params"] = json!(rest);
+    }
+    v
 }
 
 /// What an action handler returns (D285).
@@ -424,7 +430,7 @@ impl Inner {
                         SandboxError::Host(pe) => {
                             let code = serde_json::to_value(pe.code).ok().and_then(|v| v.as_str().map(String::from)).unwrap_or_default();
                             let code = pe.params.get("reason").filter(|r| r.as_str() == "pluginDisabled").cloned().unwrap_or(code);
-                            run_error_reason(&code, pe.params.get("reason"), pe.detail)
+                            run_error_reason(&code, &pe.params, pe.detail)
                         }
                         other => run_error("pluginError", "", Some(other.to_string())),
                     };
@@ -610,9 +616,11 @@ impl Inner {
             changes: Option<JsonMap>,
             #[serde(default)]
             message: Option<Label>,
+            #[serde(default)]
+            params: Option<BTreeMap<String, String>>,
         }
         let cx = p.context.unwrap_or_default();
-        if json_size(&cx.draft) > MAX_INPUT_BYTES {
+        if json_size(&cx.draft) + json_size(&cx.params) > MAX_INPUT_BYTES {
             return Err(err_p(ErrorCode::InvalidParams, &[("reason", "tooLarge")]));
         }
         let (plugin, page, mut ctx) = self.page_owner(&p.target)?;
@@ -629,6 +637,7 @@ impl Inner {
         ctx["draft"] = json!(crate::pages::strip(cx.draft.clone(), &fields));
         ctx["locale"] = json!(cx.locale);
         ctx["envId"] = json!(cx.env_id);
+        ctx["params"] = crate::pages::ctx_params(&cx);
         let resource_id = ctx["resource"]["id"].as_str().map(String::from);
         let info = CallInfo { client, env_id: cx.env_id.clone(), resource_id, page_event: true, ..Default::default() };
         let out = self
@@ -648,7 +657,7 @@ impl Inner {
             }
             other => other,
         };
-        Ok(PageEventResult { changes, message: e.message })
+        Ok(PageEventResult { changes, message: e.message, params: e.params })
     }
 
     /// `body.<key>` paths of the target's kind that only a user may change (D311).

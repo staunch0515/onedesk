@@ -17,4 +17,9 @@ message: string, detail?: string, hint?: string,
  * D318: for a host refusal or failure (`code` = `denied`, `invalid`…), its reason code
  * (`secretNotAllowed`, `hostNotAllowed`, `blockedByPolicy`…).
  */
-reason?: string, };
+reason?: string, 
+/**
+ * Round 8 (D360): the refusal's or failure's other params (`program`, `layer`, `host`,
+ * `name`, `export`…), for the interface to name them in its text.
+ */
+params?: { [key in string]: string }, };

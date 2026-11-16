@@ -119,6 +119,11 @@ pub fn strip(draft: Option<JsonMap>, fields: &[String]) -> Option<JsonMap> {
     })
 }
 
+/// D358: the page parameters as `ctx.params` (an empty object when none were sent).
+pub fn ctx_params(cx: &PageContext) -> Value {
+    json!(cx.params.clone().unwrap_or_default())
+}
+
 pub fn bind_paths(view: &[ViewNode]) -> Vec<String> {
     binds(view)
 }
@@ -241,7 +246,7 @@ fn page_frame(d: &mut PageDescriptor, p: &Plugin, page: &str) {
 
 impl Inner {
     pub async fn resolve(&self, target: &str, cx: PageContext, client: Option<String>) -> KResult<PageDescriptor> {
-        if crate::runs::json_size(&cx.draft) > crate::runs::MAX_INPUT_BYTES {
+        if crate::runs::json_size(&cx.draft) + crate::runs::json_size(&cx.params) > crate::runs::MAX_INPUT_BYTES {
             return Err(err_p(ErrorCode::InvalidParams, &[("reason", "tooLarge")]));
         }
         let mut d = match parse_target(target) {
@@ -363,7 +368,7 @@ impl Inner {
         }
         let secret_fields = self.secret_fields(&r.kind, r.plugin_version.as_deref());
         let draft = strip(cx.draft.clone(), &secret_fields);
-        let ctx = json!({ "target": target, "resource": self.resource(r)?, "draft": draft, "locale": cx.locale, "envId": cx.env_id });
+        let ctx = json!({ "target": target, "resource": self.resource(r)?, "draft": draft, "locale": cx.locale, "envId": cx.env_id, "params": ctx_params(cx) });
         let out = self.render(plugin, &page, ctx, client).await?;
         d.values = binds(&out.view).into_iter().filter_map(|b| store::value_at(r, &b).map(|v| (b, v))).collect();
         // D306: for a secret field the page learns only whether a value is saved.
@@ -458,7 +463,7 @@ impl Inner {
         }
         let protocol_run = self.run_to_protocol(run.clone(), false);
         let ctx = json!({ "target": target, "resource": self.resource(&row)?, "draft": values, "run": protocol_run,
-                          "locale": cx.locale, "envId": run.env_id });
+                          "locale": cx.locale, "envId": run.env_id, "params": ctx_params(cx) });
         let out = self.render(plugin, &page, ctx, client).await?;
         page_frame(&mut d, plugin, &page);
         // D351: a dependent's run shows only the kernel's own result tabs (output, history).
@@ -513,7 +518,7 @@ impl Inner {
         };
         breadcrumb.push(Crumb { label: name.clone(), icon: Some(decl.icon.clone()), tree: None, key: None, target: None });
         let resource = self.resource(&draft_row)?;
-        let ctx = json!({ "target": target, "resource": resource, "draft": cx.draft, "locale": cx.locale, "envId": cx.env_id });
+        let ctx = json!({ "target": target, "resource": resource, "draft": cx.draft, "locale": cx.locale, "envId": cx.env_id, "params": ctx_params(cx) });
         let out = self.render(plugin, &page, ctx, client).await?;
         let values = binds(&out.view).into_iter().filter_map(|b| store::value_at(&draft_row, &b).map(|v| (b, v))).collect();
         let mut d = PageDescriptor {
@@ -547,7 +552,7 @@ impl Inner {
         if decl.source != TreeSource::Provided {
             return Ok(missing(target));
         }
-        let ctx = json!({ "target": target, "node": { "tree": tree, "key": key }, "draft": cx.draft, "locale": cx.locale, "envId": cx.env_id });
+        let ctx = json!({ "target": target, "node": { "tree": tree, "key": key }, "draft": cx.draft, "locale": cx.locale, "envId": cx.env_id, "params": ctx_params(cx) });
         let out = self.render(plugin, &page, ctx, client).await?;
         Ok(PageDescriptor {
             title: out.title.unwrap_or_else(|| key.to_string()),
@@ -663,7 +668,7 @@ impl Inner {
                     return Err(not_found("tree"));
                 }
                 let page = decl.page.clone().ok_or_else(|| not_found("page"))?;
-                let ctx = json!({ "target": p.target, "node": { "tree": tree, "key": key }, "locale": cx.locale });
+                let ctx = json!({ "target": p.target, "node": { "tree": tree, "key": key }, "locale": cx.locale, "params": ctx_params(&cx) });
                 let out = self
                     .call_plugin(&plugin.id, "pages", &page, "save", json!([ctx, p.changes, p.basis]), client.clone())
                     .await?;

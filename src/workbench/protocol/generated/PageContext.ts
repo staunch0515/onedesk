@@ -9,4 +9,9 @@ draft?: { [key in string]: JsonValue },
 /**
  * Current interface language, e.g. `zh-CN`.
  */
-locale?: string, };
+locale?: string, 
+/**
+ * Round 8 (D358): current values of the page's `param: true` fields (the same map as
+ * `RunStartParams.params`); given to `render`, `onEvent` and recompute as `ctx.params`.
+ */
+params?: { [key in string]: string }, };

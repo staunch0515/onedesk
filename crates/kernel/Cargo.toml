@@ -13,6 +13,7 @@ rquickjs.workspace = true
 tokio.workspace = true
 rusqlite.workspace = true
 semver.workspace = true
+sha2.workspace = true
 # openat/renameat for writes pinned to an already-resolved folder (review #7)
 libc = "0.2"
 # host.network (D307): system TLS only (native-tls → Security.framework), no rustls/ring.

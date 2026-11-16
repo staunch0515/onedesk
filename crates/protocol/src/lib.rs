@@ -619,6 +619,9 @@ pub struct PageContext {
     pub draft: Option<JsonMap>,
     /// Current interface language, e.g. `zh-CN`.
     pub locale: Option<String>,
+    /// Round 8 (D358): current values of the page's `param: true` fields (the same map as
+    /// `RunStartParams.params`); given to `render`, `onEvent` and recompute as `ctx.params`.
+    pub params: Option<BTreeMap<String, String>>,
 }
 
 #[skip_serializing_none]
@@ -1204,6 +1207,9 @@ pub struct RunError {
     /// D318: for a host refusal or failure (`code` = `denied`, `invalid`…), its reason code
     /// (`secretNotAllowed`, `hostNotAllowed`, `blockedByPolicy`…).
     pub reason: Option<String>,
+    /// Round 8 (D360): the refusal's or failure's other params (`program`, `layer`, `host`,
+    /// `name`, `export`…), for the interface to name them in its text.
+    pub params: Option<BTreeMap<String, String>>,
 }
 
 #[skip_serializing_none]
@@ -1318,6 +1324,9 @@ pub struct PageEventResult {
     /// Bind path → new value; applied by the interface to the draft, still unsaved.
     pub changes: Option<JsonMap>,
     pub message: Option<Label>,
+    /// Round 8 (D358): new page parameter values (`param: true` fields), applied by the
+    /// interface to the page state; not part of the draft, never “unsaved”.
+    pub params: Option<BTreeMap<String, String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]

@@ -473,9 +473,9 @@ pub fn atom_id(atom: &str) -> &str {
     atom.split(':').next().unwrap_or(atom)
 }
 
-/// The permission fingerprint shown and confirmed (D312): a hash of the atom list.
+/// The permission fingerprint shown and confirmed (D312): a hash of the atom list (SHA-256, D359).
 pub fn perm_fingerprint(atoms: &BTreeSet<String>) -> String {
-    crate::util::fingerprint(atoms_fingerprint(atoms).as_bytes())
+    crate::util::sha256_hex(atoms_fingerprint(atoms).as_bytes())
 }
 
 /// Atom list stored when a version's permissions are confirmed.
