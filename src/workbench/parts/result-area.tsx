@@ -63,6 +63,11 @@ export function useLiveLog(run: Run | null | undefined): string[] {
   return id && log.id === id ? log.lines : [];
 }
 
+/** Streamed chunks usually end with their own line break (whole lines); only add one where it is missing. */
+export function liveText(chunks: string[]): string {
+  return chunks.map((c) => (c.endsWith("\n") ? c : `${c}\n`)).join("").replace(/\n$/, "");
+}
+
 function OutputTab({ tab, run, widthKey }: { tab: TabState; run: Run | null | undefined; widthKey: string }) {
   const { client, actions } = useWorkbench();
   const { t, runError } = useI18n();
@@ -75,7 +80,7 @@ function OutputTab({ tab, run, widthKey }: { tab: TabState; run: Run | null | un
         <Progress value={run.progress?.fraction !== undefined ? run.progress.fraction * 100 : undefined} label={t("result.running")} />
         {live.length > 1 ? (
           <Pane grow scroll width="form">
-            <TextBlock variant="code" label={t("result.liveOutput")}>{live.join("\n")}</TextBlock>
+            <TextBlock variant="code" label={t("result.liveOutput")}>{liveText(live)}</TextBlock>
           </Pane>
         ) : (
           <Text size="sm" tone="muted" tabular>

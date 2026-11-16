@@ -24,6 +24,7 @@ use tokio::sync::{broadcast, oneshot, watch};
 pub mod data_dir;
 pub mod install;
 pub mod plugins;
+pub mod process_groups;
 pub mod ws;
 
 pub use data_dir::{default_data_dir, resolve_worker_bin, workspace_dir};
@@ -456,10 +457,13 @@ async fn monitor(cfg: HostConfig, shared: Arc<Shared>, first: Started, restarts:
                     let _ = started.child.kill().await;
                 }
                 let _ = std::fs::remove_file(&started.socket);
+                // A worker that was killed (by us or from outside) cannot end its programs itself (D340).
+                process_groups::cleanup_recorded(&workspace_dir(&cfg.data_dir));
                 return;
             }
         }
         let _ = std::fs::remove_file(&started.socket);
+        process_groups::cleanup_recorded(&workspace_dir(&cfg.data_dir));
         shared.current.send_replace(None);
         shared.connection_event(ConnectionState::Lost);
         quick_failures = if began.elapsed() < Duration::from_secs(10) { quick_failures + 1 } else { 0 };
