@@ -57,6 +57,7 @@ export function Frame({ tab, descriptor, meta, actions, children, panel }: Frame
     onClick: c.target ? () => wb.open(c.target!) : c.tree && c.key ? () => void wb.reveal(c.tree!, c.key!) : undefined,
   }));
 
+  const restrictions = descriptor.restrictions ?? [];
   const showInfo = descriptor.hasInfo && Boolean(descriptor.resourceId);
   const envMissing = descriptor.usesEnv && tab.envId !== null && envs.data !== undefined && !envs.data.some((e) => e.id === tab.envId);
 
@@ -106,8 +107,10 @@ export function Frame({ tab, descriptor, meta, actions, children, panel }: Frame
         />
       }
       notice={
-        envMissing || descriptor.state !== "ok" ? (
+        envMissing || descriptor.state !== "ok" || restrictions.length > 0 ? (
         <>
+          {restrictions.includes("readonly") && <Banner tone="info" title={t("restrict.readonlyShort")}>{t("restrict.readonly")}</Banner>}
+          {restrictions.includes("noExport") && <Banner tone="info" title={t("restrict.noExportShort")}>{t("restrict.noExport")}</Banner>}
           {envMissing && (
             <Banner tone="warning" title={t("page.envDeletedTitle")}>
               {t("page.envDeletedBody")}

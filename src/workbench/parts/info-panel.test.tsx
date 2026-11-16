@@ -60,3 +60,37 @@ describe("info panel history", () => {
     await screen.findByText("No changes yet");
   });
 });
+
+describe("info panel references", () => {
+  it("lists what the resource refers to and who refers to it, with the state of each", async () => {
+    const mock = createMockClient({ fresh: true, quiet: true });
+    const ref = (state: "ok" | "deleted" | "missing", text: string, id?: string) => ({ source: { id: "q-orders-today", name: "Orders" }, field: "body.text", text, ...(id ? { target: { id, name: `Name ${text}` } } : {}), state });
+    const open = vi.fn();
+    const client: ProtocolClient = {
+      ...mock,
+      refs: {
+        outgoing: async () => [ref("ok", "a", "t1"), ref("deleted", "b", "t2"), ref("missing", "c")],
+        incoming: async () => [{ source: { id: "s1", name: "Other note" }, field: "body.text", text: "Orders", target: { id: "q-orders-today", name: "Orders" }, state: "ok" }],
+      },
+    };
+    const store = createStore(null, () => undefined);
+    render(
+      <ProtocolProvider client={client}>
+        <I18nProvider locale="en-US">
+          <ToastProvider closeLabel="Close" viewportLabel="Notifications" duration={1000}>
+            <WorkbenchProvider store={store}>
+              <InfoPanelPart resourceId="q-orders-today" />
+            </WorkbenchProvider>
+          </ToastProvider>
+        </I18nProvider>
+      </ProtocolProvider>,
+    );
+    expect(await screen.findByText("Name a")).toBeTruthy();
+    expect(screen.getByText("Deleted")).toBeTruthy();
+    expect(screen.getByText("Broken")).toBeTruthy();
+    expect(screen.getByText("[[c]]")).toBeTruthy();
+    fireEvent.click(await screen.findByText("Other note"));
+    expect(store.get().tabs.some((t) => t.target === "resource:s1")).toBe(true);
+    void open;
+  });
+});

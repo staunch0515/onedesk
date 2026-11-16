@@ -8,6 +8,8 @@ export interface Transport {
   onEvent(handler: (event: EventMessage) => void): () => void;
   /** Opens the system folder dialog (desktop only). */
   pickFolder?(): Promise<string | null>;
+  /** Opens the system "save as" dialog with a suggested file name (desktop only). */
+  pickSaveFile?(name?: string): Promise<string | null>;
   close(): void;
 }
 

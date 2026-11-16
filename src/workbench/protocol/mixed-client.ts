@@ -108,7 +108,19 @@ export function createMixedClient(kernel: KernelClient, mock: ProtocolClient): P
       info: () => kernel.workspace.info(),
       // One workspace this round: the switcher lists the kernel's, and no demo tabs are opened on first start.
       list: async () => [{ ...(await kernel.workspace.info()), current: true }],
-      startTargets: async () => [], getConfig: (name) => kernel.workspace.getConfig(name), setConfig: (name, value) => kernel.workspace.setConfig(name, value) },
+      startTargets: async () => [], getConfig: (name) => kernel.workspace.getConfig(name), setConfig: (name, value) => kernel.workspace.setConfig(name, value),
+      export: (folder) => kernel.workspace.export(folder),
+      importPreview: (folder) => kernel.workspace.importPreview(folder),
+      import: (folder, fingerprint, parent) => kernel.workspace.import(folder, fingerprint, parent),
+    },
+    refs: {
+      async outgoing(id) {
+        return (await ownerOf(id)) === "kernel" ? kernel.refs.outgoing(id) : fromMock(await mock.refs.outgoing(id));
+      },
+      async incoming(id) {
+        return (await ownerOf(id)) === "kernel" ? kernel.refs.incoming(id) : fromMock(await mock.refs.incoming(id));
+      },
+    },
     params: kernel.params,
     app: kernel.app,
     secrets: kernel.secrets,
@@ -172,6 +184,7 @@ export function createMixedClient(kernel: KernelClient, mock: ProtocolClient): P
         return id;
       },
       get: (id) => runSide(id).run.get(id),
+      export: (id, path) => runSide(id).run.export(id, path),
       cancel: (id) => runSide(id).run.cancel(id),
       render: (id, tabId) => runSide(id).run.render(id, tabId),
       setKept: (id, kept) => runSide(id).run.setKept(id, kept),
@@ -208,7 +221,9 @@ export function createMixedClient(kernel: KernelClient, mock: ProtocolClient): P
       grantFolder: (plugin, path) => kernel.plugin.grantFolder(plugin, path),
       revokeFolder: (plugin, path) => kernel.plugin.revokeFolder(plugin, path),
     },
-    platform: kernel.transport.pickFolder ? { pickFolder: () => kernel.transport.pickFolder!() } : undefined,
+    platform: kernel.transport.pickFolder
+      ? { pickFolder: () => kernel.transport.pickFolder!(), pickSaveFile: kernel.transport.pickSaveFile ? (name) => kernel.transport.pickSaveFile!(name) : undefined }
+      : undefined,
     ui: kernel.ui,
     events: {
       subscribe(topic, handler) {

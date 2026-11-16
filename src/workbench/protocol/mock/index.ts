@@ -4,6 +4,7 @@
  * Replace `createMockClient()` in main.tsx with the real client; nothing else in the UI changes.
  */
 import type { ProtocolClient } from "../client";
+import { KernelError } from "../errors";
 import type {
   ActionDecl,
   AuditRow,
@@ -28,6 +29,7 @@ import type {
   ResultTabDecl,
   Run,
   RunOutput,
+  RefInfo,
   RunRequest,
   SearchHit,
   TreeInfo,
@@ -1459,12 +1461,47 @@ export function createMockClient(options: MockOptions = {}): ProtocolClient {
     };
   }
 
+  /* ---------------------------------------------------------------- round 5: references, protection, export/import (demo) */
+  /** `readonly` / `noExport` when a workspace configuration node switches the policy on (§6.3). */
+  function protections(): string[] {
+    const out: string[] = [];
+    for (const r of Object.values(db.rows)) {
+      if (r.kind !== "core:config" || !live(r)) continue;
+      const p = paramsOf(r);
+      if (p["protection.readonly"]?.value === "true" && !out.includes("readonly")) out.push("readonly");
+      if (p["protection.no_export"]?.value === "true" && !out.includes("noExport")) out.push("noExport");
+    }
+    return out;
+  }
+  function deny(reason: "readonly" | "noExport"): never {
+    const layer = Object.values(db.rows).find((r) => r.kind === "core:config" && live(r))?.id ?? "";
+    throw new KernelError("denied", { reason, layer });
+  }
+  const guardWrite = () => protections().includes("readonly") && deny("readonly");
+  const refTarget = (name: string) => {
+    const all = Object.values(db.rows).filter((r) => r.name === name && !r.kind.startsWith("core:"));
+    return all.find(live) ?? all[0];
+  };
+  /** `[[name]]` in the string fields of a body, in order. */
+  function outgoingRefs(row: Row): RefInfo[] {
+    const out: RefInfo[] = [];
+    for (const [field, value] of Object.entries(row.body)) {
+      if (typeof value !== "string") continue;
+      for (const m of value.matchAll(/\[\[([^\[\]\n]{1,200})\]\]/g)) {
+        const target = refTarget(m[1]!);
+        out.push({ source: { id: row.id, name: row.name }, field: `body.${field}`, text: m[1]!, ...(target ? { target: { id: target.id, name: target.name } } : {}), state: !target ? "missing" : target.deletedAt ? "deleted" : "ok" });
+      }
+    }
+    return out;
+  }
+
   /* ---------------------------------------------------------------- the client */
   async function updateResource(id: string, patch: ResourcePatch): Promise<Resource> {
     await wait(40);
     const row = db.rows[id];
     if (!row) throw new Error("Resource not found");
     if (stateOf(row).state === "conflict") throw new Error("This resource has a conflict and is read-only");
+    guardWrite();
     applyPatch(row, patch);
     return toResource(row);
   }
@@ -1514,6 +1551,54 @@ export function createMockClient(options: MockOptions = {}): ProtocolClient {
         await wait(2);
         const row = Object.values(db.rows).find((r) => r.kind === "core:config" && paramsOf(r)[name]);
         if (row) applyPatch(row, { [`param:${name}`]: value });
+      },
+      async export(folder) {
+        await wait(40);
+        if (protections().includes("noExport")) deny("noExport");
+        if (!folder.startsWith("/")) throw new KernelError("invalid", { reason: "notAbsolute" });
+        audit("workspace.export", folder, "mock");
+        const rows = Object.values(db.rows).filter(live).length;
+        return { folder, resources: rows, revisions: Object.keys(db.history).length, runs: db.runs.length, audit: db.audit.length, blobs: 0 };
+      },
+      async importPreview(folder) {
+        await wait(40);
+        if (folder.includes("bad")) return { valid: false, problem: { code: "invalid", params: { reason: "notExport" } }, source: "", exportedAt: 0, create: 0, update: 0, skipped: [], fingerprint: "" };
+        return {
+          valid: true,
+          source: "Personal",
+          exportedAt: Date.now() - DAY,
+          create: 4,
+          update: 1,
+          skipped: [
+            { name: "Weekly sync", kind: "org.example.sync.job", reason: "unknownKind" },
+            { name: "Old report", kind: "org.onedesk.sql.query", reason: "needsVersion" },
+          ],
+          fingerprint: "mock-fingerprint",
+        };
+      },
+      async import(folder, fingerprint) {
+        await wait(60);
+        guardWrite();
+        if (fingerprint !== "mock-fingerprint") throw new KernelError("conflict", { reason: "changedSincePreview" });
+        const group = createRow("core:group", "resources", null, uniqueName("resources", null, "Personal"), {});
+        audit("workspace.import", group.name, folder);
+        emit("tree:resources");
+        return { created: 4, updated: 1, skipped: [{ name: "Weekly sync", kind: "org.example.sync.job", reason: "unknownKind" }, { name: "Old report", kind: "org.onedesk.sql.query", reason: "needsVersion" }], group: { id: group.id, name: group.name } };
+      },
+    },
+
+    refs: {
+      async outgoing(id) {
+        await wait(4);
+        const row = db.rows[id];
+        return row ? outgoingRefs(row) : [];
+      },
+      async incoming(id) {
+        await wait(4);
+        return Object.values(db.rows)
+          .filter((r) => live(r) && r.id !== id)
+          .flatMap((r) => outgoingRefs(r))
+          .filter((r) => r.target?.id === id && r.state === "ok");
       },
     },
 
@@ -1661,6 +1746,15 @@ export function createMockClient(options: MockOptions = {}): ProtocolClient {
         if (env) applyPatch(env, { [`param:${name}`]: undefined });
         emit("env");
       },
+      async known() {
+        await wait(4);
+        return [
+          { name: "ui.language", type: "text", merge: "plain", layers: ["config"] },
+          { name: "network.allow", type: "list", merge: "allowList", layers: ["config", "env"] },
+          { name: "protection.readonly", type: "boolean", merge: "deny", layers: ["config", "env"] },
+          { name: "protection.no_export", type: "boolean", merge: "deny", layers: ["config", "env"] },
+        ];
+      },
       async acknowledge(envId, name) {
         await wait(20);
         const env = db.rows[envId];
@@ -1750,11 +1844,12 @@ export function createMockClient(options: MockOptions = {}): ProtocolClient {
         }
         if (!target.startsWith("resource:")) throw new Error("Unknown target");
         await updateResource(target.slice(9), changes);
-        return { page: clone(resolvePage(target, {})) };
+        return { page: { ...clone(resolvePage(target, {})), restrictions: protections() } };
       },
       async resolve(target, context = {}) {
         await wait(context.draft ? 20 : 10);
-        return clone(resolvePage(target, context));
+        const restrictions = protections();
+        return { ...clone(resolvePage(target, context)), ...(restrictions.length > 0 ? { restrictions } : {}) };
       },
       async event(target, event, context) {
         await wait(60);
@@ -1774,7 +1869,17 @@ export function createMockClient(options: MockOptions = {}): ProtocolClient {
     run: {
       async start(request) {
         await wait(15);
+        guardWrite();
         return startRun(request);
+      },
+      async export(id, path) {
+        await wait(30);
+        if (protections().includes("noExport")) deny("noExport");
+        const run = db.runs.find((r) => r.id === id);
+        if (!run || run.status !== "success" || run.out?.kind !== "table") throw new KernelError("invalid", { reason: "notTable" });
+        if (!path.startsWith("/")) throw new KernelError("invalid", { reason: "notAbsolute" });
+        audit("run.export", run.title, path);
+        return { path, rows: run.out.rows };
       },
       async get(id) {
         await wait(6);

@@ -5,6 +5,7 @@ import type { EnvParam, HistoryEntry, PageDescriptor } from "../protocol";
 import { useQuery, useUi, useWorkbench } from "../state/context";
 import type { TabState } from "../state/store";
 import { Frame } from "../parts/frame";
+import { AddParamDialog } from "./add-param-dialog";
 
 /** Environment page (I.4): parent chain in the breadcrumb, description, parameters with their source layer, history with restore. */
 export function EnvPage({ tab, descriptor }: { tab: TabState; descriptor: PageDescriptor }) {
@@ -19,6 +20,9 @@ export function EnvPage({ tab, descriptor }: { tab: TabState; descriptor: PageDe
   const widths = useUi((s) => s.gridWidths["env-params"]);
   const historyWidths = useUi((s) => s.gridWidths["env-history"]);
   const [filter, setFilter] = useState("");
+  const [adding, setAdding] = useState(false);
+  // The configuration page is this same page for a configuration node: it offers the "config" layer's parameters.
+  const layer = descriptor.breadcrumb[descriptor.breadcrumb.length - 1]?.tree === "config" ? "config" : "env";
 
   const items: ActionBarItem[] = descriptor.actions.map((a) => ({
     key: a.id,
@@ -298,7 +302,14 @@ export function EnvPage({ tab, descriptor }: { tab: TabState; descriptor: PageDe
             variant="plain"
             title={t("env.params")}
             description={t("env.paramsHint", { own, total: env.data.params.length })}
-            actions={<Input size="sm" icon="list-filter" placeholder={t("env.filter")} aria-label={t("env.filter")} value={filter} onChange={(e) => setFilter(e.target.value)} />}
+            actions={
+              <Pane direction="row" gap="xs" align="center">
+                <Input size="sm" icon="list-filter" placeholder={t("env.filter")} aria-label={t("env.filter")} value={filter} onChange={(e) => setFilter(e.target.value)} />
+                <Button size="sm" icon="plus" onClick={() => setAdding(true)}>
+                  {t("params.add")}
+                </Button>
+              </Pane>
+            }
           >
             <DataGrid
               label={t("env.params")}
@@ -315,6 +326,7 @@ export function EnvPage({ tab, descriptor }: { tab: TabState; descriptor: PageDe
           </Section>
         </Pane>
       )}
+      <AddParamDialog layer={layer} own={new Set(env.data?.params.filter((p) => p.own).map((p) => p.name))} open={adding} onOpenChange={setAdding} onAdd={async (name, value) => { await client.params.set(id, name, value, basis).catch((error) => { actions.fail(error); throw error; }); }} />
     </Frame>
   );
 }

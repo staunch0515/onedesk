@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Button, Dialog, FormField, Input } from "../../design";
 import { useI18n } from "../i18n";
-import { useUi, useWorkbench } from "../state/context";
+import { useQuery, useUi, useWorkbench } from "../state/context";
 
 /** Dialogs a command can ask for: pick a folder (browser mode) and confirm. */
 export function CommandDialogs() {
@@ -10,6 +10,10 @@ export function CommandDialogs() {
   const folderPrompt = useUi((s) => s.folderPrompt);
   const confirm = useUi((s) => s.confirmCommand);
   const [path, setPath] = useState("");
+  // A delete asks how many places refer to the item first (§10): the count is part of the question.
+  const subject = confirm?.danger ? (confirm.context.target?.startsWith("resource:") ? confirm.context.target.slice(9) : (confirm.context.nodeKey ?? null)) : null;
+  const incoming = useQuery((c) => (subject ? c.refs.incoming(subject).catch(() => []) : Promise.resolve([])), [subject], []);
+  const referenced = new Set((incoming.data ?? []).map((r) => r.source.id)).size;
 
   const grant = () => {
     const plugin = folderPrompt?.plugin;
@@ -54,7 +58,7 @@ export function CommandDialogs() {
         onOpenChange={(open) => !open && store.set({ confirmCommand: null })}
         size="sm"
         title={confirm ? (confirmTexts(confirm.message)?.title ?? t("confirm.title")) : t("confirm.title")}
-        description={confirm ? tx(confirm.message) : undefined}
+        description={confirm ? [tx(confirm.message), referenced > 0 ? t("delete.refs", { count: referenced }) : ""].filter(Boolean).join(" ") : undefined}
         footer={
           <>
             <Button onClick={() => store.set({ confirmCommand: null })}>{t("common.cancel")}</Button>

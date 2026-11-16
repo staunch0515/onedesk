@@ -11,7 +11,8 @@ function fakeKernel(): KernelClient {
   return {
     hello: { protocol: "1", workspace: { id: "w", name: "W" } },
     transport: { request: async () => null, onEvent: () => () => undefined, close() {} },
-    workspace: { info: async () => ({ id: "w", name: "W" }), getConfig: async (n: string) => (n === "ui.language" ? "zh-CN" : null), setConfig: async () => undefined },
+    workspace: { info: async () => ({ id: "w", name: "W" }), getConfig: async (n: string) => (n === "ui.language" ? "zh-CN" : null), setConfig: async () => undefined, export: async () => ({ folder: "/x", resources: 1, revisions: 0, runs: 0, audit: 0, blobs: 0 }), importPreview: async () => ({ valid: false, source: "", exportedAt: 0, create: 0, update: 0, skipped: [], fingerprint: "" }), import: async () => { throw new Error("unused"); } },
+    refs: { outgoing: async () => [], incoming: async () => [{ source: { id: "kernel-1", name: "k" }, field: "body.text", text: "x", state: "ok" }] },
     params: { envOptions: async () => [{ id: "e1", name: "Default", depth: 0 }] } as never,
     app: { inspectPlugin: async () => ({ valid: true }) as never, installPlugin: async () => ({ plugin: "p", version: "1" }), removePlugin: async () => undefined },
     secrets: { list: async () => [{ name: "token", updatedAt: 1, usedBy: [] }], set: async () => undefined, delete: async () => undefined },
@@ -51,6 +52,7 @@ function fakeKernel(): KernelClient {
       clearFinished: async () => undefined,
       render: async () => [],
       setKept: async () => undefined,
+      export: async (_id, path) => ({ path, rows: 2 }),
     },
     command: { palette: async () => [{ id: "k:cmd", label: "k", group: "k" }], newItems: async () => [{ id: "new:k", label: "k", icon: "file" }], execute: async () => [{ type: "reload" }] },
     plugin: { get: async (id: string) => ({ id } as never), setEnabled: async () => undefined, setSetting: async () => undefined, reload: async () => undefined, activateVersion: async () => ({ upgraded: 1, kept: 0 }), setPinned: async () => undefined, undoUpgrade: async () => ({ restored: 0, modified: [] }), confirmPermissions: async () => undefined, grants: async (plugin) => ({ plugin, folders: [] }), grantFolder: async (plugin, path) => ({ plugin, folders: [path] }), revokeFolder: async (plugin) => ({ plugin, folders: [] }) },
@@ -210,5 +212,12 @@ describe("mixed client", () => {
     expect((await client.app?.installPlugin("/x", "p", "1", "fp"))?.plugin).toBe("p");
     expect((await client.secrets?.list())?.[0]?.name).toBe("token");
     expect((await client.plugin.activateVersion("p", "2")).upgraded).toBe(1);
+  });
+
+  it("sends references, export and import to the kernel for kernel resources", async () => {
+    const client = createMixedClient(fakeKernel(), createMockClient({ fresh: true, quiet: true }));
+    expect((await client.refs.incoming("kernel-1"))[0]?.source.id).toBe("kernel-1");
+    expect((await client.workspace.export("/x")).resources).toBe(1);
+    expect((await client.workspace.importPreview("/x")).valid).toBe(false);
   });
 });

@@ -1,9 +1,10 @@
 import { useEffect, useMemo } from "react";
-import { ActivityBar, Button, CommandPalette, Dialog, Sized, Splitter, WorkbenchFrame, WorkbenchMain, useTheme, type CommandGroup } from "../design";
+import { ActivityBar, Button, CommandPalette, Dialog, Sized, Splitter, WorkbenchFrame, WorkbenchMain, useTheme, useToast, type CommandGroup } from "../design";
 import { LOCALES, useI18n } from "./i18n";
 import { loadChildren } from "./protocol";
 import { CommandDialogs } from "./parts/command-dialogs";
 import { InstallDialogs, startInstall } from "./parts/install-dialogs";
+import { startExport, startImport, TransferDialogs } from "./parts/transfer-dialogs";
 import { SECRETS_TARGET } from "./pages/secrets-page";
 import { NoTabs, PageHost } from "./parts/page-host";
 import { TreePanel } from "./parts/side-panel";
@@ -26,6 +27,7 @@ export function Workbench({ settings, onSetting: storeSetting }: WorkbenchProps)
   // A refused write shows as a toast; the shell has already read the stored value back.
   const onSetting = useMemo(() => (name: "ui.language" | "ui.theme" | "ui.density", value: string) => void storeSetting(name, value).catch(actions.fail), [storeSetting, actions]);
   const { t, tx } = useI18n();
+  const { toast } = useToast();
   const { resolvedTheme } = useTheme();
   const trees = useQuery((c) => c.tree.list(), []);
   const palette = useQuery((c) => c.command.palette(), []);
@@ -135,6 +137,8 @@ export function Workbench({ settings, onSetting: storeSetting }: WorkbenchProps)
         heading: t("palette.view"),
         items: [
           ...(client.secrets ? [{ id: "secrets", label: t("secrets.title"), icon: "key-round", onSelect: () => actions.open(SECRETS_TARGET) }] : []),
+          { id: "workspace.export", label: t("transfer.export"), icon: "folder-output", onSelect: () => void startExport(client, store, actions, (resources, folder) => toast({ tone: "success", title: t("transfer.exportDone", { resources, folder }) })) },
+          { id: "workspace.import", label: t("transfer.import"), icon: "folder-input", onSelect: () => void startImport(client, store, actions) },
           ...(client.app ? [{ id: "install", label: t("install.action"), icon: "package-plus", onSelect: () => void startInstall(client, store, actions) }] : []),
           { id: "view.side", label: t("palette.toggleSide"), icon: "panel-left", shortcut: ["⌘", "B"], onSelect: () => store.set((x) => ({ sideOpen: !x.sideOpen })) },
           { id: "view.panel", label: t("palette.togglePanel"), icon: "panel-bottom", shortcut: ["⌘", "J"], onSelect: () => store.set((x) => ({ panelOpen: !x.panelOpen })) },
@@ -238,6 +242,7 @@ export function Workbench({ settings, onSetting: storeSetting }: WorkbenchProps)
       />
       <CommandDialogs />
       <InstallDialogs />
+      <TransferDialogs />
     </WorkbenchFrame>
   );
 }

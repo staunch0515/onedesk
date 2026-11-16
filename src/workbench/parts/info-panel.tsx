@@ -1,6 +1,6 @@
 import { useState } from "react";
-import { Badge, Button, IconButton, InfoField, InfoPanel, Input, LoadingState, Pane, Text, Textarea, useToast } from "../../design";
-import type { HistoryEntry } from "../protocol";
+import { Badge, Button, IconButton, InfoField, InfoPanel, Input, LoadingState, Pane, Text, Textarea, Tooltip, useToast } from "../../design";
+import type { HistoryEntry, RefInfo } from "../protocol";
 import { useI18n } from "../i18n";
 import { useQuery, useWorkbench } from "../state/context";
 
@@ -52,6 +52,68 @@ function HistorySection({ resourceId, readOnly }: { resourceId: string; readOnly
               </Pane>
             ))
           ))}
+      </Pane>
+    </InfoField>
+  );
+}
+
+/** One reference: the other side opens on click; a deleted or broken one says so instead of disappearing (§10). */
+function RefRow({ info, side }: { info: RefInfo; side: "outgoing" | "incoming" }) {
+  const { actions } = useWorkbench();
+  const { t } = useI18n();
+  const other = side === "outgoing" ? info.target : info.source;
+  const label = other?.name ?? info.text;
+  return (
+    <Pane direction="row" gap="xs" align="center" wrap>
+      {other && info.state !== "missing" ? (
+        <Button size="sm" variant="ghost" icon="arrow-up-right" aria-label={t("refs.open", { name: label })} onClick={() => actions.open(`resource:${other.id}`)}>
+          {label}
+        </Button>
+      ) : (
+        <Text size="sm" mono>{`[[${info.text}]]`}</Text>
+      )}
+      {info.state === "deleted" && (
+        <Tooltip content={t("refs.deletedHint", { name: label })}>
+          <span tabIndex={0}>
+            <Badge tone="warning" icon="trash-2">{t("refs.deleted")}</Badge>
+          </span>
+        </Tooltip>
+      )}
+      {info.state === "missing" && (
+        <Tooltip content={t("refs.missingHint", { text: info.text })}>
+          <span tabIndex={0}>
+            <Badge tone="danger" icon="unlink">{t("refs.missing")}</Badge>
+          </span>
+        </Tooltip>
+      )}
+      <Text size="xs" tone="muted">{t("refs.field", { field: info.field })}</Text>
+    </Pane>
+  );
+}
+
+/** What this resource refers to and who refers to it (§10); refreshed by `resource:<id>` events (both sides get one). */
+function RefsSection({ resourceId }: { resourceId: string }) {
+  const { t } = useI18n();
+  const topics = [`resource:${resourceId}`];
+  const outgoing = useQuery((c) => c.refs.outgoing(resourceId), [resourceId], topics);
+  const incoming = useQuery((c) => c.refs.incoming(resourceId), [resourceId], topics);
+  const group = (title: string, rows: RefInfo[] | undefined, side: "outgoing" | "incoming") => (
+    <Pane gap="xs">
+      <Text size="xs" tone="muted" weight="medium">{title}</Text>
+      {rows === undefined ? (
+        <LoadingState layout="inline" label={t("common.loading")} />
+      ) : rows.length === 0 ? (
+        <Text size="sm" tone="subtle">{t("refs.none")}</Text>
+      ) : (
+        rows.map((r, i) => <RefRow key={`${r.source.id}-${r.field}-${i}`} info={r} side={side} />)
+      )}
+    </Pane>
+  );
+  return (
+    <InfoField label={t("refs.title")}>
+      <Pane gap="sm">
+        {group(t("refs.outgoing"), outgoing.data, "outgoing")}
+        {group(t("refs.incoming"), incoming.data, "incoming")}
       </Pane>
     </InfoField>
   );
@@ -148,6 +210,7 @@ export function InfoPanelPart({ resourceId }: { resourceId: string }) {
       <InfoField label={t("info.revision")}>
         <Text size="sm" tabular>{String(res.rev)}</Text>
       </InfoField>
+      <RefsSection resourceId={resourceId} />
       <HistorySection resourceId={resourceId} readOnly={res.readOnly} />
     </>
   );
