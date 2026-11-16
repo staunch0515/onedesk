@@ -7,6 +7,7 @@
   "icon": "sticky-note",
   "main": "main.js",
   "requires": { "files": false },
+  "exports": { "kinds": [ { "id": "note", "actions": true, "read": true } ] },
   "contributes": {
     "kinds": [
       {

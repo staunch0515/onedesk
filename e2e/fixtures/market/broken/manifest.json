@@ -1,0 +1,11 @@
+{
+  "id": "com.example.broken-pack",
+  "version": "0.1.0",
+  "apiVersion": "2",
+  "name": "plugin.name",
+  "description": "plugin.description",
+  "main": "main.js",
+  "requires": { "files": false },
+  "surprise": "unknown top-level field",
+  "contributes": { "locales": { "en-US": "locales/en-US.json" } }
+}

@@ -1,0 +1,12 @@
+{
+  "plugin.name": "Notes",
+  "plugin.description": "Plain text notes in the resource tree.",
+  "kind.note": "Note",
+  "kind.note.new": "Untitled note",
+  "action.save": "Save",
+  "command.duplicate": "Duplicate",
+  "field.text": "Content",
+  "field.placeholder": "Write the note. Use [[Name]] to link another resource.",
+  "copy.suffix": "copy",
+  "error.notFound": "The note no longer exists."
+}

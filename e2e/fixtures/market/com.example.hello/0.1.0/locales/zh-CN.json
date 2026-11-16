@@ -1,0 +1,8 @@
+{
+  "plugin.name": "你好",
+  "plugin.description": "一个很小的示例插件，只有一个“问候”类型。",
+  "kind.greeting": "问候",
+  "kind.greeting.new": "未命名问候",
+  "action.save": "保存",
+  "field.text": "文字"
+}

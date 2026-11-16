@@ -77,6 +77,12 @@ describe("note plugin", () => {
     expect(m.contributes.kinds[0].fields.text.grants).toBeUndefined();
   });
 
+  it("exports the note kind to dependents: they may add actions and read it", () => {
+    const m = JSON.parse(readFileSync(new URL("./manifest.json", import.meta.url), "utf8"));
+    expect(m.exports).toEqual({ kinds: [{ id: "note", actions: true, read: true }] });
+    expect(m.contributes.kinds.map((k: { id: string }) => k.id)).toContain("note");
+  });
+
   it("the body placeholder mentions the [[name]] syntax in both languages", () => {
     for (const [lang, token] of [["en-US", "[[Name]]"], ["zh-CN", "[[名称]]"]] as const) {
       const l = JSON.parse(readFileSync(new URL(`./locales/${lang}.json`, import.meta.url), "utf8"));

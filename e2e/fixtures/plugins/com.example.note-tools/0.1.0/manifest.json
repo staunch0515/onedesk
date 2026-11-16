@@ -1,0 +1,36 @@
+{
+  "id": "com.example.note-tools",
+  "version": "0.1.0",
+  "apiVersion": "2",
+  "name": "plugin.name",
+  "description": "plugin.description",
+  "icon": "calculator",
+  "main": "main.js",
+  "author": "OneDesk",
+  "license": "MIT",
+  "requires": { "files": false },
+  "depends": [{ "id": "org.onedesk.note", "version": ">=0.1.0" }],
+  "contributes": {
+    "actions": [
+      {
+        "id": "count",
+        "label": "action.count",
+        "icon": "text",
+        "kinds": ["org.onedesk.note:note"],
+        "output": "text",
+        "saveFirst": false,
+        "confirm": null
+      },
+      {
+        "id": "stamp",
+        "label": "action.stamp",
+        "icon": "stamp",
+        "kinds": ["org.onedesk.note:note"],
+        "output": "text",
+        "saveFirst": false,
+        "confirm": null
+      }
+    ],
+    "locales": { "en-US": "locales/en-US.json", "zh-CN": "locales/zh-CN.json" }
+  }
+}
