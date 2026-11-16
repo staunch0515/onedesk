@@ -6,12 +6,13 @@
 
 - 协调分支：`claude/onedesk-coord-2-91a88b`（旧的 `claude/week1-slice-3b4ae5` 不再使用）。第四轮已合并到 `main` 并推送（`91f3266`）。
 - 第五轮（引用、导出导入、保护策略、结果导出 CSV）已合并到 `main` 并推送（`b28dd8a`）。
-- 第六轮（外部程序 `process`、事件订阅 `events`、`process.allow`、三条小项）已做完并验收：范围 `round6-plan.md`，审查 `round6-review.md`，验收 `round6-acceptance.md`；决定到 D341。是否已合并到 main 看 `git log main`。
+- 第六轮（外部程序、事件订阅、`process.allow`）已合并到 `main` 并推送（`8971076`）。
+- 第七轮（插件请求安装、本地插件市场、依赖与导出点的前两种）已做完并验收：范围 `round7-plan.md`，审查 `round7-review.md`，验收 `round7-acceptance.md`；决定到 D351。是否已合并到 main 看 `git log main`。
 - 各轮记录在 `docs/handoff/`；遗留事项在 `docs/handoff/todo.md`。
 
 ## 2. 下一轮可选的范围
 
-`dev-plan.md` 阶段 3 还剩：宿主能力 `transfer`、`plugins`（插件请求安装）；依赖与导出点（§7.3）；本地插件市场；`param_decls`；清单缓存；空闲回收；第一版旧库升级；`ai.policy`。另有 `todo.md` 里各轮验收留下的小项（升级失败无提示、已固定标记、永久删除确认的引用数、引用面板的字段名、指纹换 SHA-256 等）。然后是阶段 4（外壳补全）、阶段 5（基础插件）。每一轮的范围由协调会话定，尽量小到一轮能验收完。
+`dev-plan.md` 阶段 3 还剩：宿主能力 `transfer`；导出点的另两种（把类型放进别人的树、用别人的页面和输出类型，§7.3）；`param_decls`；清单缓存；空闲回收；第一版旧库升级；`ai.policy`。另有 `todo.md` 里各轮验收留下的小项（升级失败无提示、已固定标记、永久删除确认的引用数、引用面板的字段名、指纹换 SHA-256 等）。然后是阶段 4（外壳补全）、阶段 5（基础插件）。每一轮的范围由协调会话定，尽量小到一轮能验收完。
 
 ## 3. 开会话时要知道的
 
