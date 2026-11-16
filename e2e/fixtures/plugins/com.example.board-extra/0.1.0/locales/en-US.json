@@ -1,0 +1,9 @@
+{
+  "plugin.name": "Board extras",
+  "plugin.description": "Adds memos to the board plugin's tree. Example plugin that uses another plugin's exported tree and page.",
+  "kind.memo": "Memo",
+  "kind.memo.new": "Untitled memo",
+  "kind.stray": "Stray note",
+  "kind.stray.new": "Untitled stray note",
+  "action.shout": "Shout"
+}

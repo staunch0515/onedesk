@@ -1,0 +1,45 @@
+{
+  "id": "com.example.board-extra",
+  "version": "0.1.0",
+  "apiVersion": "2",
+  "name": "plugin.name",
+  "description": "plugin.description",
+  "icon": "sticky-note",
+  "main": "main.js",
+  "author": "OneDesk",
+  "license": "MIT",
+  "requires": { "files": false },
+  "depends": [{ "id": "com.example.board", "version": ">=0.1.0" }],
+  "contributes": {
+    "kinds": [
+      {
+        "id": "memo",
+        "label": "kind.memo",
+        "icon": "notebook-pen",
+        "tree": "com.example.board:board",
+        "page": "com.example.board:card",
+        "newName": "kind.memo.new",
+        "defaults": { "text": "" },
+        "fields": {},
+        "draggable": true,
+        "accepts": []
+      },
+      {
+        "id": "stray",
+        "label": "kind.stray",
+        "icon": "circle-help",
+        "tree": "com.example.board:hidden",
+        "newName": "kind.stray.new",
+        "defaults": { "text": "" },
+        "fields": {},
+        "draggable": true,
+        "accepts": []
+      }
+    ],
+    "actions": [
+      { "id": "shout", "label": "action.shout", "icon": "megaphone", "kinds": ["memo"], "output": "text", "saveFirst": false, "confirm": null }
+    ],
+    "menus": { "new": ["memo", "stray"] },
+    "locales": { "en-US": "locales/en-US.json", "zh-CN": "locales/zh-CN.json" }
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "plugin.name": "看板",
+  "plugin.description": "带自己存储树的卡片看板。导出树和页面的示例插件。",
+  "tree.board": "看板",
+  "tree.hidden": "隐藏看板",
+  "kind.card": "卡片",
+  "kind.card.new": "未命名卡片",
+  "action.save": "保存",
+  "action.upper": "转为大写",
+  "field.text": "正文",
+  "message.upper": "已转为大写。"
+}

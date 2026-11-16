@@ -1,0 +1,94 @@
+{
+  "id": "com.example.board",
+  "version": "0.1.0",
+  "apiVersion": "2",
+  "name": "plugin.name",
+  "description": "plugin.description",
+  "icon": "layout-dashboard",
+  "main": "main.js",
+  "author": "OneDesk",
+  "license": "MIT",
+  "requires": {
+    "files": false
+  },
+  "exports": {
+    "trees": [
+      {
+        "id": "board"
+      }
+    ],
+    "pages": [
+      {
+        "id": "card"
+      }
+    ]
+  },
+  "contributes": {
+    "trees": [
+      {
+        "id": "board",
+        "label": "tree.board",
+        "icon": "layout-dashboard",
+        "source": "stored",
+        "page": "card"
+      },
+      {
+        "id": "hidden",
+        "label": "tree.hidden",
+        "icon": "eye-off",
+        "source": "stored",
+        "page": "card"
+      }
+    ],
+    "kinds": [
+      {
+        "id": "card",
+        "label": "kind.card",
+        "icon": "sticky-note",
+        "tree": "board",
+        "page": "card",
+        "newName": "kind.card.new",
+        "defaults": {
+          "text": ""
+        },
+        "fields": {},
+        "draggable": true,
+        "accepts": []
+      }
+    ],
+    "pages": [
+      {
+        "id": "card",
+        "recompute": false,
+        "actions": [
+          {
+            "id": "save",
+            "role": "save",
+            "label": "action.save",
+            "icon": "save",
+            "primary": true,
+            "shortcut": [
+              "Mod",
+              "S"
+            ]
+          },
+          {
+            "id": "upper",
+            "role": "event",
+            "label": "action.upper",
+            "icon": "case-upper"
+          }
+        ]
+      }
+    ],
+    "menus": {
+      "new": [
+        "card"
+      ]
+    },
+    "locales": {
+      "en-US": "locales/en-US.json",
+      "zh-CN": "locales/zh-CN.json"
+    }
+  }
+}

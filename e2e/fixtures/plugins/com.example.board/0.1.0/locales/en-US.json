@@ -1,0 +1,12 @@
+{
+  "plugin.name": "Board",
+  "plugin.description": "A board of cards with its own storage trees. Example plugin for exported trees and pages.",
+  "tree.board": "Board",
+  "tree.hidden": "Hidden board",
+  "kind.card": "Card",
+  "kind.card.new": "Untitled card",
+  "action.save": "Save",
+  "action.upper": "Make upper case",
+  "field.text": "Text",
+  "message.upper": "Changed to upper case."
+}
