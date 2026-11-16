@@ -461,6 +461,10 @@ impl Inner {
                           "locale": cx.locale, "envId": run.env_id });
         let out = self.render(plugin, &page, ctx, client).await?;
         page_frame(&mut d, plugin, &page);
+        // D351: a dependent's run shows only the kernel's own result tabs (output, history).
+        if run.plugin != plugin.id {
+            d.result_tabs.retain(|t| t.tab_type != ResultTabType::View);
+        }
         d.view = out.view;
         Ok(d)
     }

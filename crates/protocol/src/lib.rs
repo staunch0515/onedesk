@@ -1405,6 +1405,9 @@ pub struct PluginLoad {
     /// When it was last activated, and how long activation took.
     pub at: Option<i64>,
     pub ms: Option<i64>,
+    /// Round 7: details of `message`, e.g. `dependsUnmet` → `plugin`, `range`.
+    #[serde(default)]
+    pub params: Option<BTreeMap<String, String>>,
 }
 
 /// The plugin page (§9.1: drawn by the shell, read straight from the protocol).

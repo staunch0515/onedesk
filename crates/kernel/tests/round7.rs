@@ -30,7 +30,7 @@ const text = (v) => ({ output: { type: "text", text: JSON.stringify(v) } });
 const NOTE_MAIN: &str = r#"
 export default { activate(host) {
   host.commands.handle("probe", probe);
-  host.pages.handle("ed", { async render() { return { view: [] }; } });
+  host.pages.handle("ed", { async render() { return { view: [] }; }, async renderResultTab(ctx) { return [{ type: "text", id: "leak", text: JSON.stringify(ctx.run.output || null) }]; } });
   host.actions.handle("tidy", async () => text("own"));
   host.actions.handle("remember", async (ctx) => { await ctx.host.storage.set("k", 7); return text("ok"); });
 } };
@@ -39,6 +39,7 @@ export default { activate(host) {
 const TOOLS_MAIN: &str = r#"
 export default { activate(host) {
   host.commands.handle("probe", probe);
+  host.actions.handle("loose", async (ctx) => text({ got: !!ctx.resource }));
   host.actions.handle("count", async (ctx) => {
     const r = ctx.resource;
     const words = String(r.body.text || "").split(/\s+/).filter(Boolean).length;
@@ -61,7 +62,13 @@ export default { activate(host) {
   host.commands.handle("probe", probe);
   host.actions.handle("ask", async (ctx, input) => {
     let out;
-    try { out = await ctx.host.plugins.requestInstall({ folder: input.folder }); } catch (e) { out = { error: e.code, reason: (e.params || {}).reason }; }
+    try { out = await ctx.host.plugins.requestInstall({ folder: input.folder }); } catch (e) { out = { error: e.code, reason: (e.params || {}).reason, seconds: (e.params || {}).seconds }; }
+    return text(out);
+  });
+  host.actions.handle("slow", async (ctx, input) => {
+    await ctx.host.util.sleep(input.before);
+    const out = await ctx.host.plugins.requestInstall({ folder: input.folder });
+    await ctx.host.util.sleep(input.after);
     return text(out);
   });
   host.pages.handle("p", {
@@ -101,7 +108,8 @@ fn note_manifest(exports: bool) -> Value {
                   "fields": { "token": { "type": "secret" } } },
                 { "id": "other", "label": "Other", "icon": "file", "tree": "resources" }
             ],
-            "pages": [{ "id": "ed", "actions": [{ "id": "tidy", "role": "run", "label": "Tidy", "action": "tidy" }] }],
+            "pages": [{ "id": "ed", "actions": [{ "id": "tidy", "role": "run", "label": "Tidy", "action": "tidy" }],
+                        "resultTabs": [{ "id": "out", "type": "output", "label": "Out" }, { "id": "v", "type": "view", "label": "V" }] }],
             "actions": [
                 { "id": "tidy", "label": "Tidy", "output": "text", "kinds": ["note"] },
                 { "id": "remember", "label": "Remember", "output": "text" }
@@ -119,7 +127,10 @@ fn tools_manifest(range: &str) -> Value {
     json!({
         "depends": [{ "id": "t.note", "version": range }],
         "contributes": {
-            "actions": [{ "id": "count", "label": "Count words", "output": "text", "kinds": ["t.note:note"] }],
+            "actions": [
+                { "id": "count", "label": "Count words", "output": "text", "kinds": ["t.note:note"] },
+                { "id": "loose", "label": "Loose", "output": "text" }
+            ],
             "commands": [{ "id": "probe", "label": "probe" }]
         }
     })
@@ -131,7 +142,7 @@ fn market_manifest() -> Value {
         "contributes": {
             "kinds": [{ "id": "x", "label": "X", "icon": "box", "tree": "resources", "page": "p" }],
             "pages": [{ "id": "p" }],
-            "actions": [{ "id": "ask", "label": "Ask", "output": "text" }],
+            "actions": [{ "id": "ask", "label": "Ask", "output": "text" }, { "id": "slow", "label": "Slow", "output": "text" }],
             "commands": [{ "id": "probe", "label": "probe" }]
         }
     })
@@ -234,6 +245,7 @@ async fn each_unmet_reason_turns_the_dependent_off() {
     let d = detail(&w.c, "t.tools").await;
     assert_eq!((d["load"]["state"].clone(), d["load"]["message"].clone()), (json!("disabled"), json!("dependsUnmet")));
     assert_eq!(d["enabled"], true, "the user's switch stays on");
+    assert_eq!(d["load"]["params"], json!({ "plugin": "t.note", "range": ">=0.1.0" }));
     assert_eq!(d["depends"][0]["satisfied"], false);
     assert!(d["depends"][0].get("activeVersion").is_none());
     let tree = w.c.ok("tree.children", json!({ "tree": "plugins" })).await;
@@ -441,6 +453,7 @@ async fn next_request(c: &Client) -> Value {
 #[tokio::test]
 async fn install_requests_are_recorded_answered_and_audited() {
     let w = world(market_world).await;
+    w.env.kernel.set_install_request_cooldown(Duration::ZERO);
     let pkg_dir = std::fs::canonicalize(w.root.join("t.market/0.1.0")).unwrap();
     let folder = pkg_dir.display().to_string();
     // Installed.
@@ -452,9 +465,14 @@ async fn install_requests_are_recorded_answered_and_audited() {
     // Only one at a time.
     let second = wait_run(&w.c, &ask(&w.c, &folder).await).await;
     assert_eq!(out(&second), json!({ "error": "conflict", "reason": "pendingRequest" }));
-    w.c.ok("plugin.answerInstallRequest", json!({ "id": req["id"], "outcome": "installed", "plugin": "x.y", "version": "1.0.0" })).await;
+    w.c.ok("plugin.answerInstallRequest", json!({ "id": req["id"], "outcome": "installed", "plugin": "t.plain", "version": "0.1.0" })).await;
     let r = wait_run(&w.c, &run).await;
-    assert_eq!(out(&r), json!({ "outcome": "installed", "id": "x.y", "version": "1.0.0" }));
+    assert_eq!(out(&r), json!({ "outcome": "installed", "id": "t.plain", "version": "0.1.0" }));
+    // Review #12: an "installed" that the registry does not have reaches the plugin as `failed`.
+    let run = ask(&w.c, &folder).await;
+    let req = next_request(&w.c).await;
+    w.c.ok("plugin.answerInstallRequest", json!({ "id": req["id"], "outcome": "installed", "plugin": "x.y", "version": "1.0.0" })).await;
+    assert_eq!(out(&wait_run(&w.c, &run).await), json!({ "outcome": "failed", "reason": "notInstalled" }));
     assert_eq!(w.c.ok("plugin.installRequests", json!({})).await, json!([]));
     // Declined, failed.
     let run = ask(&w.c, &folder).await;
@@ -470,19 +488,20 @@ async fn install_requests_are_recorded_answered_and_audited() {
     assert_eq!(e.code, ErrorCode::NotFound);
     // Audit: the request by the plugin, the answer by the user.
     let reqs = audit(&w.env, "plugin.installRequest");
-    assert_eq!(reqs.len(), 3);
+    assert_eq!(reqs.len(), 4);
     assert!(reqs[0].0.starts_with("plugin:t.market"), "{reqs:?}");
     assert_eq!(reqs[0].1, folder);
     let answers = audit(&w.env, "plugin.installAnswer");
-    assert_eq!(answers.len(), 3);
+    assert_eq!(answers.len(), 4);
     assert_eq!(answers[0].0, "user");
-    let s: Value = serde_json::from_str(&answers[1].2).unwrap();
+    let s: Value = serde_json::from_str(&answers[2].2).unwrap();
     assert_eq!((s["outcome"].clone(), s["requester"].clone()), (json!("declined"), json!("t.market")));
 }
 
 #[tokio::test]
 async fn request_folders_stay_inside_what_the_plugin_can_read() {
     let w = world(market_world).await;
+    w.env.kernel.set_install_request_cooldown(Duration::ZERO);
     let outside = tempfile::tempdir().unwrap();
     let outside_path = std::fs::canonicalize(outside.path()).unwrap();
     let r = wait_run(&w.c, &ask(&w.c, &outside_path.display().to_string()).await).await;
@@ -545,6 +564,7 @@ async fn requests_need_the_declaration_and_a_user_action() {
 #[tokio::test]
 async fn unanswered_requests_expire_and_die_with_their_plugin() {
     let w = world(market_world).await;
+    w.env.kernel.set_install_request_cooldown(Duration::ZERO);
     let folder = std::fs::canonicalize(w.root.join("t.market/0.1.0")).unwrap().display().to_string();
     w.env.kernel.set_install_request_ttl(Duration::from_millis(300));
     let r = wait_run(&w.c, &ask(&w.c, &folder).await).await;
@@ -576,4 +596,180 @@ async fn waiting_for_the_user_does_not_count_against_the_time_budget() {
     let r = wait_run(&c, &run).await;
     assert_eq!(r["status"], "success", "{r}");
     assert_eq!(out(&r), json!({ "outcome": "declined" }));
+}
+
+/* ------------------------------------------------------------------ after the review */
+
+fn upgradable(exports: bool) -> Value {
+    let mut m = note_manifest(exports);
+    m["upgradesFrom"] = json!(">=0.1.0");
+    m
+}
+
+#[tokio::test]
+async fn undoing_an_upgrade_is_refused_while_dependents_need_the_newer_version() {
+    let w = world(|r| {
+        pkg(r, "t.note", "0.1.0", note_manifest(true), NOTE_MAIN);
+        pkg(r, "t.tools", "0.1.0", tools_manifest(">=0.2.0"), TOOLS_MAIN);
+    })
+    .await;
+    new_note(&w.c, "x").await;
+    assert_eq!(detail(&w.c, "t.tools").await["load"]["message"], "dependsUnmet");
+    pkg(&w.root, "t.note", "0.2.0", upgradable(true), NOTE_MAIN);
+    w.c.ok("plugin.rescan", json!({ "builtin": ["t.note@0.2.0"] })).await;
+    assert!(enabled(&w.c, "t.tools").await, "met after the takeover");
+    let batch = detail(&w.c, "t.note").await["lastUpgrade"]["batch"].clone();
+    let e = w.c.call("plugin.undoUpgrade", json!({ "batch": batch })).await.unwrap_err();
+    assert_eq!(reason(&e), (ErrorCode::Conflict, Some("dependents")));
+    assert_eq!(e.params["plugins"], "t.tools");
+    assert!(audit(&w.env, "plugin.undoUpgrade").iter().any(|(_, _, s, r)| s.contains("dependents") && r == "failed:conflict"));
+    assert!(enabled(&w.c, "t.tools").await);
+    set_enabled(&w.c, "t.tools", false).await.unwrap();
+    w.c.ok("plugin.undoUpgrade", json!({ "batch": batch })).await;
+}
+
+#[tokio::test]
+async fn waiting_moves_the_deadline_by_the_wait_and_no_more() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("plugins");
+    market_world(&root);
+    let env = open_with(tmp, &root, onedesk_kernel::KernelConfig { action_timeout: Duration::from_millis(1000), ..test_config() });
+    let c = Client::in_proc(env.kernel.clone());
+    c.hello().await;
+    let folder = std::fs::canonicalize(root.join("t.market/0.1.0")).unwrap().display().to_string();
+    // 600 ms before and 600 ms after the wait: over the 1 s budget although the wait does not count.
+    let run = c.ok("run.start", json!({ "action": "t.market:slow", "target": "core:none", "tabId": "t",
+                                        "input": { "folder": folder, "before": 600, "after": 600 } })).await;
+    let req = next_request(&c).await;
+    tokio::time::sleep(Duration::from_millis(800)).await;
+    c.ok("plugin.answerInstallRequest", json!({ "id": req["id"], "outcome": "declined" })).await;
+    let r = wait_run(&c, &run).await;
+    assert_eq!(r["status"], "error", "{r}");
+    assert_eq!(r["error"]["code"], "timeout", "{r}");
+}
+
+#[tokio::test]
+async fn an_unsuccessful_request_is_followed_by_a_cooldown() {
+    let w = world(market_world).await;
+    let folder = std::fs::canonicalize(w.root.join("t.market/0.1.0")).unwrap().display().to_string();
+    let run = ask(&w.c, &folder).await;
+    let req = next_request(&w.c).await;
+    w.c.ok("plugin.answerInstallRequest", json!({ "id": req["id"], "outcome": "declined" })).await;
+    wait_run(&w.c, &run).await;
+    let again = out(&wait_run(&w.c, &ask(&w.c, &folder).await).await);
+    assert_eq!((again["error"].clone(), again["reason"].clone()), (json!("conflict"), json!("cooldown")), "{again}");
+    // The seconds left are in the error's params (30 s by default).
+    let secs: u64 = again["seconds"].as_str().unwrap().parse().unwrap();
+    assert!((25..=30).contains(&secs), "{again}");
+    assert_eq!(w.c.ok("plugin.installRequests", json!({})).await, json!([]), "nothing was recorded");
+    // After it, fine again.
+    w.env.kernel.set_install_request_cooldown(Duration::from_millis(200));
+    tokio::time::sleep(Duration::from_millis(250)).await;
+    let run = ask(&w.c, &folder).await;
+    let req = next_request(&w.c).await;
+    w.c.ok("plugin.answerInstallRequest", json!({ "id": req["id"], "outcome": "declined" })).await;
+    assert_eq!(out(&wait_run(&w.c, &run).await), json!({ "outcome": "declined" }));
+}
+
+#[tokio::test]
+async fn a_dependents_run_is_not_drawn_by_the_owner_and_shows_in_the_context_menu() {
+    let w = world(|r| {
+        pkg(r, "t.note", "0.1.0", note_manifest(true), NOTE_MAIN);
+        pkg(r, "t.tools", "0.1.0", tools_manifest(">=0.1.0"), TOOLS_MAIN);
+    })
+    .await;
+    let id = new_note(&w.c, "one two").await;
+    // Context menu: after the kind's own items, before delete.
+    let nodes = w.c.ok("tree.children", json!({ "tree": "resources" })).await;
+    let node = nodes["nodes"].as_array().unwrap().iter().find(|n| n["key"] == id.as_str()).unwrap().clone();
+    let ids: Vec<&str> = node["menu"].as_array().unwrap().iter().map(|m| m["id"].as_str().unwrap()).collect();
+    let at = ids.iter().position(|i| *i == "t.tools:count").unwrap_or_else(|| panic!("{ids:?}"));
+    assert_eq!(ids[at + 1], "node.delete");
+    let fx = w.c.ok("command.execute", json!({ "id": "t.tools:count", "context": { "tree": "resources", "nodeKey": id } })).await;
+    let target = fx[0]["target"].as_str().unwrap().to_string();
+    let run_id = json!(target.strip_prefix("run:").unwrap());
+    let run = wait_run(&w.c, &run_id).await;
+    assert_eq!(out(&run)["words"], 2);
+    // Its result: no view tab of the owner, and the owner's tab code is not called.
+    let page = w.c.ok("page.resolve", json!({ "target": target })).await;
+    let tabs: Vec<&str> = page["resultTabs"].as_array().unwrap().iter().map(|t| t["id"].as_str().unwrap()).collect();
+    assert_eq!(tabs, vec!["out"], "{page}");
+    let e = w.c.call("run.render", json!({ "id": run_id, "tabId": "v" })).await.unwrap_err();
+    assert_eq!(e.code, ErrorCode::NotFound);
+    // The owner's own run still has it.
+    let own = wait_run(&w.c, &w.c.ok("run.start", json!({ "action": "tidy", "resourceId": id, "target": format!("resource:{id}"), "tabId": "t" })).await).await;
+    w.c.ok("run.render", json!({ "id": own["id"], "tabId": "v" })).await;
+    // Review #7: another action of the dependent that does not name the kind gets nothing.
+    let loose = wait_run(&w.c, &w.c.ok("run.start", json!({ "action": "t.tools:loose", "resourceId": id, "target": format!("resource:{id}"), "tabId": "t" })).await).await;
+    assert_eq!((loose["status"].clone(), loose["error"]["code"].clone()), (json!("error"), json!("invalidInput")), "{loose}");
+    // Nor can it be started from the menu.
+    let e = w.c.call("command.execute", json!({ "id": "t.tools:loose", "context": { "tree": "resources", "nodeKey": id } })).await.unwrap_err();
+    assert_eq!(e.code, ErrorCode::NotFound);
+}
+
+#[tokio::test]
+async fn read_only_exports_are_explained_on_the_dependents_page() {
+    let mut note = note_manifest(false);
+    note["exports"] = json!({ "kinds": [{ "id": "note", "read": true }] });
+    let w = world(|r| {
+        pkg(r, "t.note", "0.1.0", note, NOTE_MAIN);
+        pkg(r, "t.tools", "0.1.0", tools_manifest(">=0.1.0"), TOOLS_MAIN);
+    })
+    .await;
+    let id = new_note(&w.c, "a").await;
+    assert_eq!(detail(&w.c, "t.tools").await["load"]["message"], "notExported");
+    let page = w.c.ok("page.resolve", json!({ "target": format!("resource:{id}") })).await;
+    assert_eq!(page["actions"].as_array().unwrap().len(), 1);
+    // Reading is allowed.
+    assert_eq!(w.c.probe("t.tools", "resources.get", json!([id])).await["ok"]["id"], id.as_str());
+}
+
+const STAT_MAIN: &str = r#"export default { activate(host) { host.commands.handle("probe", probe); host.pages.handle("s", { async render() { return { view: [] }; } }); } };"#;
+
+fn stat_tools(range: &str) -> Value {
+    json!({
+        "depends": [{ "id": "t.note", "version": range }],
+        "contributes": {
+            "kinds": [{ "id": "stat", "label": "Stat", "icon": "box", "tree": "resources", "page": "s" }],
+            "pages": [{ "id": "s" }],
+            "commands": [{ "id": "probe", "label": "probe" }]
+        }
+    })
+}
+
+#[tokio::test]
+async fn a_resource_on_an_older_version_follows_that_versions_depends() {
+    let w = world(|r| {
+        pkg(r, "t.note", "0.1.0", note_manifest(true), NOTE_MAIN);
+        pkg(r, "t.tools", "0.1.0", stat_tools("<0.2.0"), STAT_MAIN);
+    })
+    .await;
+    let rid = w.c.probe("t.tools", "resources.create", json!([{ "kind": "stat", "name": "s" }])).await["ok"]["id"].clone();
+    assert_eq!(w.c.ok("resource.get", json!({ "id": rid })).await["state"], "ok");
+    pkg(&w.root, "t.tools", "0.2.0", stat_tools("*"), STAT_MAIN);
+    w.c.ok("plugin.rescan", json!({ "builtin": ["t.tools@0.2.0"] })).await;
+    pkg(&w.root, "t.note", "0.2.0", note_manifest(true), NOTE_MAIN);
+    w.c.ok("plugin.rescan", json!({ "builtin": ["t.note@0.2.0"] })).await;
+    assert!(enabled(&w.c, "t.tools").await, "the active version accepts note 0.2.0");
+    let r = w.c.ok("resource.get", json!({ "id": rid })).await;
+    assert_eq!((r["pluginVersion"].clone(), r["state"].clone()), (json!("0.1.0"), json!("disabled")), "{r}");
+    let page = w.c.ok("page.resolve", json!({ "target": format!("resource:{}", rid.as_str().unwrap()) })).await;
+    assert_eq!(page["readOnly"], true);
+}
+
+#[tokio::test]
+async fn an_automatic_switch_to_a_version_whose_depends_are_unmet_does_not_happen() {
+    let w = world(|r| {
+        pkg(r, "t.note", "0.1.0", note_manifest(true), NOTE_MAIN);
+        pkg(r, "t.tools", "0.1.0", tools_manifest("*"), TOOLS_MAIN);
+    })
+    .await;
+    pkg(&w.root, "t.tools", "0.2.0", tools_manifest(">=9.0.0"), TOOLS_MAIN);
+    w.c.ok("plugin.rescan", json!({ "builtin": ["t.tools@0.2.0"] })).await;
+    let d = detail(&w.c, "t.tools").await;
+    assert_eq!(d["switchFailure"]["reason"], "dependsUnmet", "{d}");
+    assert!(enabled(&w.c, "t.tools").await);
+    // By hand it is allowed — and then it is off.
+    w.c.ok("plugin.activateVersion", json!({ "plugin": "t.tools", "version": "0.2.0" })).await;
+    assert_eq!(detail(&w.c, "t.tools").await["load"]["message"], "dependsUnmet");
 }

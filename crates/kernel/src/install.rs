@@ -21,6 +21,8 @@ use crate::util::*;
 
 /// An unanswered request ends as `expired` after this long (D346).
 pub const REQUEST_TTL: Duration = Duration::from_secs(5 * 60);
+/// D349: after a request ends `declined`/`failed`/`expired`, the same plugin waits this long.
+pub const REQUEST_COOLDOWN: Duration = Duration::from_secs(30);
 /// `failed` reason handed to a request whose plugin was turned off meanwhile.
 pub const GONE_DISABLED: &str = "requesterDisabled";
 
@@ -34,22 +36,30 @@ pub(crate) struct Requests {
     list: Mutex<Vec<Pending>>,
     /// Test hook: overrides `REQUEST_TTL`.
     pub ttl: Mutex<Option<Duration>>,
+    /// Test hook: overrides `REQUEST_COOLDOWN`.
+    pub cooldown: Mutex<Option<Duration>>,
+    /// plugin → when its last request ended without an install (D349).
+    ended: Mutex<std::collections::HashMap<String, Instant>>,
 }
 
-/// Time an invocation spends waiting for the user (D345): it does not count against the
-/// invocation's time budget. Each waiting host call holds it; the budget starts again when the
-/// last one ends.
+/// Time an invocation spends waiting for the user (D345, D349): it does not count against the
+/// invocation's time budget, but does not reset it either — the deadline moves by exactly the
+/// time spent waiting. Each waiting host call holds it.
 #[derive(Debug, Default)]
 pub struct Hold {
     n: AtomicUsize,
-    released: Mutex<Option<Instant>>,
+    /// (total time waited so far, since when it is being held now)
+    waited: Mutex<(Duration, Option<Instant>)>,
 }
 
 pub struct HoldGuard(Arc<Hold>);
 
 impl Hold {
     pub fn enter(self: &Arc<Self>) -> HoldGuard {
-        self.n.fetch_add(1, Ordering::SeqCst);
+        let mut w = self.waited.lock().unwrap();
+        if self.n.fetch_add(1, Ordering::SeqCst) == 0 {
+            w.1 = Some(Instant::now());
+        }
         HoldGuard(self.clone())
     }
 
@@ -57,16 +67,21 @@ impl Hold {
         self.n.load(Ordering::SeqCst) > 0
     }
 
-    /// When the budget of an invocation that started at `start` ends (while not held).
+    /// When the budget of an invocation that started at `start` ends (while not held):
+    /// start + budget + the time spent waiting for the user.
     pub fn deadline(&self, start: Instant, budget: Duration) -> Instant {
-        self.released.lock().unwrap().map_or(start, |r| r.max(start)) + budget
+        start + budget + self.waited.lock().unwrap().0
     }
 }
 
 impl Drop for HoldGuard {
     fn drop(&mut self) {
-        *self.0.released.lock().unwrap() = Some(Instant::now());
-        self.0.n.fetch_sub(1, Ordering::SeqCst);
+        let mut w = self.0.waited.lock().unwrap();
+        if self.0.n.fetch_sub(1, Ordering::SeqCst) == 1 {
+            if let Some(since) = w.1.take() {
+                w.0 += since.elapsed();
+            }
+        }
     }
 }
 
@@ -164,6 +179,15 @@ impl Inner {
         }
         let raw = args.get(0).and_then(|o| o.get("folder")).and_then(Value::as_str).ok_or_else(|| invalid_params("folder"))?;
         let folder = self.request_folder(plugin, raw)?.display().to_string();
+        // D349: not again right after a refusal, failure or expiry (no loop of dialogs).
+        let cooldown = self.install_requests.cooldown.lock().unwrap().unwrap_or(REQUEST_COOLDOWN);
+        if let Some(at) = self.install_requests.ended.lock().unwrap().get(&plugin.id) {
+            let left = cooldown.saturating_sub(at.elapsed());
+            if !left.is_zero() {
+                let secs = left.as_secs() + u64::from(left.subsec_nanos() > 0);
+                return Err(err_p(ErrorCode::Conflict, &[("reason", "cooldown"), ("seconds", &secs.to_string())]));
+            }
+        }
         let (tx, rx) = oneshot::channel();
         let req = InstallRequest {
             id: new_id(),
@@ -191,6 +215,9 @@ impl Inner {
             Err(_) => json!({ "outcome": "expired" }),
         };
         drop(withdraw);
+        if out["outcome"] != "installed" {
+            self.install_requests.ended.lock().unwrap().insert(plugin.id.clone(), Instant::now());
+        }
         Ok(out)
     }
 
@@ -212,12 +239,25 @@ impl Inner {
             InstallAnswerOutcome::Failed => "failed",
         };
         let mut out = json!({ "outcome": outcome });
-        if a.outcome == InstallAnswerOutcome::Installed {
-            out["id"] = json!(a.plugin);
-            out["version"] = json!(a.version);
+        match a.outcome {
+            InstallAnswerOutcome::Installed => {
+                // Review #12: only what the registry really has; otherwise the plugin hears `failed`.
+                let found = match (&a.plugin, &a.version) {
+                    (Some(p), Some(v)) => self.registry.version(p, v).is_some(),
+                    _ => false,
+                };
+                if found {
+                    out["id"] = json!(a.plugin);
+                    out["version"] = json!(a.version);
+                } else {
+                    out = json!({ "outcome": "failed", "reason": "notInstalled" });
+                }
+            }
+            InstallAnswerOutcome::Failed => out["reason"] = json!(a.reason),
+            InstallAnswerOutcome::Declined => {}
         }
-        if a.outcome == InstallAnswerOutcome::Failed {
-            out["reason"] = json!(a.reason);
+        if out["outcome"] != "installed" {
+            self.install_requests.ended.lock().unwrap().insert(pending.req.plugin.clone(), Instant::now());
         }
         let mut summary = out.clone();
         summary["requester"] = json!(pending.req.plugin);

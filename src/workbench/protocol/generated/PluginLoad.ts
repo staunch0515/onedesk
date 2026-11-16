@@ -5,4 +5,8 @@ export type PluginLoad = { state: PluginLoadState, message?: string,
 /**
  * When it was last activated, and how long activation took.
  */
-at?: number, ms?: number, };
+at?: number, ms?: number, 
+/**
+ * Round 7: details of `message`, e.g. `dependsUnmet` → `plugin`, `range`.
+ */
+params?: { [key in string]: string }, };

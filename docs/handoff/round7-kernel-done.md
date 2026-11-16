@@ -120,3 +120,26 @@ ctx.host.plugins.list()
 - `plugin.checkRemove` 还没接到主进程（见决定 1）。
 - 依赖方停用/恢复时只发了 `plugins` 和依赖方相关树的 `tree:` 主题；没有为被依赖方已打开的页面单独发 `plugin:<id>`，页面上的“依赖方动作”要等页面重新解析才更新。
 - 没有在真应用里走（外壳和插件会话的事）。
+
+## 审查后的修改（`round7-review.md`，提交 `96d5f91`）
+
+先合并了协调分支 `claude/onedesk-coord-2-91a88b`（`5a8b9b0`）。各条都补了测试（`crates/kernel/tests/round7.rs` 现有 18 条）。
+
+| # | 改了什么 | 测试 |
+|---|---|---|
+| 2 | `plugin.undoUpgrade` 执行前按“退回后的活动版本”（批次的 `prev_active`，否则最低的来源版本；不可用时按 `refresh_active` 会选的）检查依赖方，不满足 → `conflict/dependents`，审计 `plugin.undoUpgrade` 结果 `failed:conflict` | `undoing_an_upgrade_is_refused_while_dependents_need_the_newer_version` |
+| 3 | 截止时间 = 开始 + 预算 + 累计等待用户的时长（`Hold` 记累计等待，不再从答复时刻重算） | `waiting_moves_the_deadline_by_the_wait_and_no_more`（前后各 600 ms、预算 1 s → 超时）；原来的 `waiting_for_the_user_does_not_count_against_the_time_budget` 仍过 |
+| 4 | D349：同一插件的请求以 `declined`/`failed`/`expired` 结束（含 #12 改判的 `failed`、请求方停用的 `failed`）后 30 秒内再请求 → `conflict`，`reason: cooldown`，`params.seconds`（剩余秒数，向上取整的字符串）；不登记、不发主题。测试钩子 `Kernel::set_install_request_cooldown` | `an_unsuccessful_request_is_followed_by_a_cooldown` |
+| 5 | D351：运行的插件不是页面所有者时，`run.render` → `notFound`（`what: tab`），不调所有者的 `renderResultTab`；`run:` 页面去掉 `view` 类结果页签，只留内核自带的 | `a_dependents_run_is_not_drawn_by_the_owner_and_shows_in_the_context_menu` |
+| 6 | 资源树节点右键菜单：类型自己的项之后、“删除”之前加依赖方的动作（`id` = `<依赖方>:<动作>`，第一项带分隔线）。`command.execute` 这个 id 时：节点资源须仍适用（同页面的检查），有 `confirm` 先回 `confirm` 效果（再执行时带 `args.confirmed`），然后按 `run.start` 同样的路径开始运行，回 `open` 效果打开 `run:<id>`。外壳不用改 | 同上 |
+| 7 | 依赖方运行在被依赖资源上时，要求该动作自己的 `kinds` 明确包含该类型全名；只靠同插件别的动作提到不算 → 运行 `invalidInput`，菜单 `notFound` | 同上（`loose` 动作） |
+| 8 | 被调用的版本不是活动版本时（资源绑定在旧版本上），还要它自己的 `depends` 满足：否则不调用（`pluginDisabled`），资源状态 `disabled`、页面只读；导出点判断也按被调用的版本 | `a_resource_on_an_older_version_follows_that_versions_depends` |
+| 12 | 答复 `installed` 时核对注册表里确有该 `plugin@version`，否则交还 `{ outcome: "failed", reason: "notInstalled" }`（审计摘要也是这个） | `install_requests_are_recorded_answered_and_audited` |
+| 13 | 协议只增 `PluginLoad.params?: Record<string,string>`：`dependsUnmet` 时 `{ plugin, range }`。`notExported` 按 `actions` 判断（只导出 `read` 时也提示动作不会出现） | `each_unmet_reason_turns_the_dependent_off`、`read_only_exports_are_explained_on_the_dependents_page` |
+| 15 | 自动切换：切过去后插件**自己**依赖不满足（且现在是启用着的）→ 不切，记 `switchFailure.reason = "dependsUnmet"`（错误 `conflict/dependsUnmet`，带 `plugin`、`range`）。手动切换照常允许 | `an_automatic_switch_to_a_version_whose_depends_are_unmet_does_not_happen` |
+
+新增的原因码与名字（补充上面的清单）：`conflict/cooldown`（`params.seconds`）、`conflict/dependsUnmet`（只出现在 `switchFailure`）、`requestInstall` 结果原因 `notInstalled`、`notFound/tab`（依赖方的运行）；审计沿用 `plugin.undoUpgrade` 记被拒。协议只增 `PluginLoad.params`（已 `pnpm gen:types`）。
+
+检查（本会话实际运行）：`cargo test -p onedesk-kernel -p onedesk-worker -p onedesk-protocol` 全过；clippy `-D warnings` 过；`gen-types.sh --check` 最新；`pnpm lint`、`pnpm typecheck` 过。没跑 vitest、e2e、host 测试。
+
+仍未做：多工作区下别的工作区的依赖方（#1 的附注，外壳记 todo）；上文“没做”里依赖方停用/恢复时不为被依赖方已打开的页面单独发 `plugin:<id>`。

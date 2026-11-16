@@ -326,7 +326,12 @@ impl Inner {
         }
         // #2: a resource of another plugin (or of the kernel) is never handed to this action —
         // unless it depends on that plugin, which exports the kind for actions (round 7, §7.3).
-        let foreign = res.is_some_and(|r| self.registry.kind(&r.kind).is_some_and(|(o, _)| o.id != plugin.id) && self.export_allows(plugin, &r.kind, false));
+        // Review #7: only an action whose own `kinds` name that kind.
+        let foreign = res.is_some_and(|r| {
+            self.registry.kind(&r.kind).is_some_and(|(o, _)| o.id != plugin.id)
+                && action.kinds.iter().flatten().any(|k| *k == r.kind)
+                && self.export_allows(plugin, &r.kind, false)
+        });
         if let Some(r) = res.filter(|_| !foreign) {
             if self.registry.kind(&r.kind).is_none_or(|(owner, _)| owner.id != plugin.id) {
                 self.run_end(&id, Some(plugin), "error", None, refuse("resource of another plugin"), None).await;
@@ -574,6 +579,10 @@ impl Inner {
     async fn run_render(&self, id: &str, tab: &str, locale: Option<String>, client: Option<String>) -> KResult<Vec<ViewNode>> {
         let r = self.read(|c| store::run_get(c, id))?.ok_or_else(|| not_found("run"))?;
         let (plugin, page) = self.run_page(&r).ok_or_else(|| not_found("page"))?;
+        // D351: another plugin's run (a dependent's action) is never drawn by the page owner's code.
+        if r.plugin != plugin.id {
+            return Err(not_found("tab"));
+        }
         let declared = plugin
             .page(&page)
             .and_then(|p| p.result_tabs.iter().find(|t| t.id == tab))
@@ -750,7 +759,7 @@ impl Inner {
                 settings: vec![],
                 permissions: vec![],
                 provides: PluginProvides::default(),
-                load: PluginLoad { state: PluginLoadState::Error, message: Some(rej.reason.clone()), at: None, ms: None },
+                load: PluginLoad { state: PluginLoadState::Error, message: Some(rej.reason.clone()), at: None, ms: None, params: None },
                 resource_count: 0,
                 folders: vec![],
                 last_upgrade: None,
@@ -824,6 +833,9 @@ impl Inner {
                 message: load_message,
                 at: None,
                 ms: None,
+                params: self
+                    .unmet_dependency(id)
+                    .map(|(plugin, range)| [("plugin".to_string(), plugin), ("range".to_string(), range)].into()),
             },
             resource_count,
             folders,

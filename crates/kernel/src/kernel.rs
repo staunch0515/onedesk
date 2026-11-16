@@ -221,6 +221,11 @@ impl Kernel {
         *self.inner.install_requests.ttl.lock().unwrap() = Some(ttl);
     }
 
+    /// Test hook: how long a plugin waits after an unsuccessful install request (default 30 s).
+    pub fn set_install_request_cooldown(&self, d: std::time::Duration) {
+        *self.inner.install_requests.cooldown.lock().unwrap() = Some(d);
+    }
+
     pub fn db_path(&self) -> PathBuf {
         self.inner.ws.dir.join(crate::workspace::DB_FILE)
     }
@@ -512,7 +517,7 @@ impl Inner {
                 accepts: k.accepts.iter().map(|a| p.kind_ref(a)).collect(),
                 commands: k.menu.iter().map(|c| self.plugin_menu_cmd(p, c)).collect(),
                 // D290: a disabled plugin's resources stay, greyed out.
-                state: if self.plugin_enabled(&p.id) { NodeState::Ok } else { NodeState::Disabled },
+                state: if self.plugin_enabled(&p.id) && self.version_deps_met(p) { NodeState::Ok } else { NodeState::Disabled },
                 reason: None,
                 plugin: Some(p),
             },
@@ -723,6 +728,18 @@ impl Inner {
             menu.push(kernel_cmd("node.favorite", "star"));
         }
         menu.extend(meta.commands);
+        // Review #6 (§7.3): actions of enabled dependents on this kind, after its own items.
+        for (i, a) in self.dependent_actions(&r.kind).into_iter().enumerate() {
+            menu.push(MenuCommand {
+                id: a.id,
+                label: a.label,
+                icon: a.icon,
+                danger: None,
+                disabled: None,
+                shortcut: None,
+                separator_before: (i == 0).then_some(true),
+            });
+        }
         let mut del = kernel_cmd("node.delete", "trash-2");
         del.danger = Some(true);
         del.separator_before = Some(true);
@@ -1057,7 +1074,8 @@ impl Inner {
         timeout: Option<std::time::Duration>,
     ) -> Result<Value, SandboxError> {
         let host = |e: ProtocolError| SandboxError::Host(e);
-        if !self.plugin_enabled(&p.id) {
+        // Review #8: an older version (bound resources) must have its own `depends` met too.
+        if !self.plugin_enabled(&p.id) || !self.version_deps_met(p) {
             return Err(host(err_p(ErrorCode::PluginError, &[("reason", "pluginDisabled")])));
         }
         // D315: the code of a version whose permissions are not confirmed never runs.
