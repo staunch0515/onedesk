@@ -241,8 +241,8 @@ impl Shared {
 }
 
 /// Brings `plugins/.index` up to date (D364). A failure only costs the cache: the kernel scans directly without it.
-fn refresh_index(plugin_root: &Path) {
-    if let Err(e) = index::refresh(plugin_root) {
+fn refresh_index(plugin_root: &Path, builtin: &[String]) {
+    if let Err(e) = index::refresh(plugin_root, builtin) {
         eprintln!("onedesk-host: could not refresh plugins/.index: {e}");
         // A stale index would hide changes from the kernel; without one it scans the folders itself.
         let _ = std::fs::remove_file(plugin_root.join(index::FILE_NAME));
@@ -267,7 +267,7 @@ impl Host {
         if let Some(src) = &cfg.builtin_plugins {
             builtin = plugins::install_builtin(src, &plugin_root).map_err(|e| HostError(format!("copy built-in plugins: {e}")))?.present;
         }
-        refresh_index(&plugin_root);
+        refresh_index(&plugin_root, &builtin);
         let (events, _) = broadcast::channel(1024);
         let (current, _) = watch::channel(None);
         let (shutdown, _) = watch::channel(false);
@@ -321,8 +321,8 @@ impl Host {
 
     /// `plugin.rescan` with the built-in list (D313).
     async fn rescan(&self, client: Option<&str>) -> Result<Value, ProtocolError> {
-        refresh_index(&self.data_dir.join("plugins"));
         let builtin = self.shared.builtin.lock().unwrap().clone();
+        refresh_index(&self.data_dir.join("plugins"), &builtin);
         self.forward(client, "plugin.rescan", json!({ "builtin": builtin })).await
     }
 

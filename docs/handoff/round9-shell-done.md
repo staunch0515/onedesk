@@ -49,3 +49,14 @@
 3. 夹具说明：`stash` 存下来的 `ctx.host` 放在模块变量里，运行环境空闲释放后变量就没了（`abuse` 回“没有保存句柄”）。所以 `abuse` 必须在 `stash` 之后空闲时长内点；验收脚本要注意。
 
 **检查**：`pnpm typecheck`、`pnpm lint`、`pnpm test`（41 文件 352 例）通过；假数据模式 `E2E_PORT=1433 … workbench.spec.ts`：23 过、1 跳过、0 失败（这次连偶发的拖动用例也过了），跑完已 `git checkout -- docs/screenshots`。
+
+## 审查后的修改（`round9-review.md` 中处理人含“外壳”的条目）
+
+- **#1（界面一半）**：`audit-page.tsx` 去掉本地 `ResultCode` 和 `as` 强转，直接用生成的 `AuditResult`（合并后已含 `cancelled`、`timeout`）；筛选下拉的两个新选项因此是内核认得的值。新增 `src/workbench/pages/audit-page.test.tsx`：列表里的 `cancelled`/`timeout` 显示为“Cancelled”/“Timed out”，不并进“Error”。
+- **#3（D371）**：`index::refresh(plugin_root, builtin)` 多了内置包列表（`<id>@<version>`）；列表里的包每次都重读磁盘上的清单，不沿用缓存；`Host::start` 和每次 `rescan` 前都传主进程记着的内置列表（被用户移除的版本不在其中）。测试 `builtin_manifests_are_always_read_from_disk_not_taken_from_the_cache`：缓存里两个包的清单都被改写、磁盘没动（修改时间和大小不变）；刷新后内置那个恢复成磁盘上的内容（读了 1 个），另一个按原规则沿用缓存（与直接改 `plugins/` 同等风险，D371 如此）。
+- **#8**：临时文件名改为 `.index.tmp-<进程号>-<序号>`，刷新用一把进程内的锁串行化；改名失败时只删自己的临时文件，不动 `.index`（并把错误交给调用方，调用方会删掉可能过期的 `.index` 并让内核直接扫描）。测试 `concurrent_refreshes_each_leave_a_valid_index_and_no_temporary_file`（8 个线程各刷新 5 次）；原有“残留临时文件不影响”的测试改用新名字。
+- **#9（`build.rs`，核实后的结论）**：
+  - 缺 `rerun-if-changed`：确实会让替身滞后于重新链接出来的工作进程。现在真工作进程存在时输出 `rerun-if-changed` 指向它（并显式列出 `build.rs`、`tauri.conf.json`、`capabilities`，因为一旦有了这类指令 cargo 就不再默认监视整个包）；不存在时不输出，保持默认。
+  - 会不会因此每次都重跑：不会。实测 Tauri 在内容相同时不写目标文件（修改时间不变），我们自己只在内容不同时才写替身。验证：连续两次 `cargo check -p onedesk`，第二次不再编译 `onedesk`；`touch crates/worker/src/main.rs` 后 `cargo build -p onedesk-worker` 重新链接，再 `cargo check -p onedesk` 会重跑 build.rs，`cmp` 证明替身与新工作进程字节相同；再跑一次又不重跑。
+  - 并行窗口：只剩一种——同一次 cargo 调用里，`onedesk-worker` 的链接恰好发生在 `onedesk` 的 build.rs 复制替身和 Tauri 把替身复制回去之间的几毫秒；这时旧内容会盖掉新链接的文件。无法在不让 `src-tauri` 依赖工作进程的前提下彻底消除（那样会改依赖图）；发生后下一次 `cargo build -p onedesk-worker` 不会自动修复（cargo 认为它是新的），要 `touch` 工作进程的源码或删掉 `target/debug/onedesk-worker` 重建。日常用法（先构建工作进程再检查/构建界面，或 `pnpm check` 的串行步骤）不触发。我没能构造出这个窗口来复现，所以这一条是推理加上述实测，不是复现出来的。
+  - `tauri build --debug`：`beforeBuildCommand` 先跑 `scripts/prepare-bundle.sh`，把当时的工作进程复制成侧载文件，所以打包用的不会是旧的。我没实际跑 `tauri build`。

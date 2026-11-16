@@ -14,7 +14,10 @@ use std::time::UNIX_EPOCH;
 use serde::{Deserialize, Serialize};
 
 pub const FILE_NAME: &str = ".index";
-const TMP_NAME: &str = ".index.tmp";
+const TMP_PREFIX: &str = ".index.tmp-";
+/// Refreshes run one at a time (two writers would race on the last rename), and each writes its own temporary file.
+static REFRESH: std::sync::Mutex<()> = std::sync::Mutex::new(());
+static TMP_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 const VERSION: u32 = 1;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -77,13 +80,17 @@ fn load(path: &Path) -> BTreeMap<String, Entry> {
     }
 }
 
-/// Brings `<plugin_root>/.index` up to date.
-pub fn refresh(plugin_root: &Path) -> io::Result<Refresh> {
-    refresh_with(plugin_root, &mut |p| std::fs::read(p))
+/// Brings `<plugin_root>/.index` up to date. `builtin` lists `<id>@<version>` of the built-in packages: their
+/// manifests are always read from disk, never taken from the cache (D371: the built-in version confirms the
+/// manifest's permissions by itself, so a cache rewritten by another program must not widen them).
+pub fn refresh(plugin_root: &Path, builtin: &[String]) -> io::Result<Refresh> {
+    refresh_with(plugin_root, builtin, &mut |p| std::fs::read(p))
 }
 
 /// [`refresh`] with the file reader passed in (the tests count reads through it).
-pub fn refresh_with(plugin_root: &Path, read: &mut dyn FnMut(&Path) -> io::Result<Vec<u8>>) -> io::Result<Refresh> {
+pub fn refresh_with(plugin_root: &Path, builtin: &[String], read: &mut dyn FnMut(&Path) -> io::Result<Vec<u8>>) -> io::Result<Refresh> {
+    let _one_at_a_time = REFRESH.lock().unwrap_or_else(|e| e.into_inner());
+    let always: std::collections::HashSet<String> = builtin.iter().map(|b| b.replacen('@', "/", 1)).collect();
     let index_path = plugin_root.join(FILE_NAME);
     let old_text = std::fs::read_to_string(&index_path).ok();
     let cached = load(&index_path);
@@ -95,7 +102,7 @@ pub fn refresh_with(plugin_root: &Path, read: &mut dyn FnMut(&Path) -> io::Resul
             let manifest = dir.join("manifest.json");
             let seen = stat(&manifest);
             let (mtime, size) = seen.unwrap_or((0, 0));
-            if let Some(c) = cached.get(&key) {
+            if let Some(c) = cached.get(&key).filter(|_| !always.contains(&key)) {
                 // A missing manifest stays cached as unreadable; a file that exists but failed to read is retried.
                 let same = c.mtime == mtime && c.size == size;
                 let settled = c.manifest.is_some() || seen.is_none();
@@ -125,9 +132,12 @@ pub fn refresh_with(plugin_root: &Path, read: &mut dyn FnMut(&Path) -> io::Resul
     entries.sort_by(|a, b| a.dir.cmp(&b.dir));
     let text = serde_json::to_string(&Index { version: VERSION, entries }).expect("index serializes");
     if old_text.as_deref() != Some(text.as_str()) {
-        let tmp = plugin_root.join(TMP_NAME);
-        std::fs::write(&tmp, &text)?;
-        std::fs::rename(&tmp, &index_path)?;
+        let tmp = plugin_root.join(format!("{TMP_PREFIX}{}-{}", std::process::id(), TMP_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)));
+        let written = std::fs::write(&tmp, &text).and_then(|_| std::fs::rename(&tmp, &index_path));
+        if let Err(e) = written {
+            let _ = std::fs::remove_file(&tmp); // the index itself stays as it was
+            return Err(e);
+        }
         out.written = true;
     }
     Ok(out)
@@ -146,7 +156,7 @@ mod tests {
 
     fn counted(root: &Path) -> (Refresh, usize) {
         let n = Cell::new(0usize);
-        let r = refresh_with(root, &mut |p| {
+        let r = refresh_with(root, &[], &mut |p| {
             n.set(n.get() + 1);
             std::fs::read(p)
         })
@@ -171,7 +181,6 @@ mod tests {
         assert_eq!(e.iter().map(|e| e.dir.as_str()).collect::<Vec<_>>(), ["org.a/0.2.0", "org.b/1.0.0"]);
         assert_eq!(e[1].manifest.as_deref(), Some(r#"{"id":"org.b"}"#));
         assert_eq!(e[0].manifest.as_deref(), Some("not json at all")); // the main process does not interpret it
-        assert!(!tmp.path().join(TMP_NAME).exists());
     }
 
     #[test]
@@ -255,10 +264,50 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         pkg(tmp.path(), "org.a", "1.0.0", "{}");
         // A stale temporary file from a crashed write never becomes the index and is overwritten.
-        std::fs::write(tmp.path().join(TMP_NAME), "garbage").unwrap();
+        std::fs::write(tmp.path().join(".index.tmp-1-1"), "garbage").unwrap();
         counted(tmp.path());
-        assert!(!tmp.path().join(TMP_NAME).exists());
+        // Our own temporary file is renamed away; nothing of ours is left behind.
+        let left: Vec<_> = std::fs::read_dir(tmp.path()).unwrap().filter_map(|e| e.ok()).map(|e| e.file_name().to_string_lossy().into_owned()).filter(|n| n.starts_with(TMP_PREFIX) && n != ".index.tmp-1-1").collect();
+        assert!(left.is_empty(), "{left:?}");
         assert!(serde_json::from_str::<Index>(&std::fs::read_to_string(tmp.path().join(FILE_NAME)).unwrap()).is_ok());
+    }
+
+    #[test]
+    fn builtin_manifests_are_always_read_from_disk_not_taken_from_the_cache() {
+        let tmp = tempfile::tempdir().unwrap();
+        pkg(tmp.path(), "org.builtin", "1.0.0", r#"{"permissions":["files"]}"#);
+        pkg(tmp.path(), "org.other", "1.0.0", r#"{"permissions":[]}"#);
+        counted(tmp.path());
+        // Someone rewrites both cached manifests; the files on disk (and so mtime and size) did not change.
+        let mut index: Index = serde_json::from_str(&std::fs::read_to_string(tmp.path().join(FILE_NAME)).unwrap()).unwrap();
+        for e in &mut index.entries {
+            e.manifest = Some(r#"{"permissions":["everything"]}"#.into());
+        }
+        std::fs::write(tmp.path().join(FILE_NAME), serde_json::to_string(&index).unwrap()).unwrap();
+        let n = Cell::new(0usize);
+        let r = refresh_with(tmp.path(), &["org.builtin@1.0.0".to_string()], &mut |p| {
+            n.set(n.get() + 1);
+            std::fs::read(p)
+        })
+        .unwrap();
+        assert_eq!((r.read, r.reused, n.get()), (1, 1, 1)); // the built-in one is read, the other trusted as before
+        let e = entries(tmp.path());
+        assert_eq!(e[0].manifest.as_deref(), Some(r#"{"permissions":["files"]}"#)); // restored from disk
+        assert_eq!(e[1].manifest.as_deref(), Some(r#"{"permissions":["everything"]}"#)); // not built in: same risk as editing plugins/ itself
+    }
+
+    #[test]
+    fn concurrent_refreshes_each_leave_a_valid_index_and_no_temporary_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        for i in 0..20 {
+            pkg(tmp.path(), &format!("org.p{i}"), "1.0.0", "{}");
+        }
+        let root = tmp.path().to_path_buf();
+        let threads: Vec<_> = (0..8).map(|_| { let r = root.clone(); std::thread::spawn(move || (0..5).for_each(|_| { refresh(&r, &[]).unwrap(); })) }).collect();
+        threads.into_iter().for_each(|t| t.join().unwrap());
+        assert_eq!(entries(&root).len(), 20);
+        let temps: Vec<_> = std::fs::read_dir(&root).unwrap().filter_map(|e| e.ok()).filter(|e| e.file_name().to_string_lossy().starts_with(TMP_PREFIX)).collect();
+        assert!(temps.is_empty());
     }
 
     #[test]
