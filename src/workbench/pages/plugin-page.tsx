@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Badge, Banner, Button, Checkbox, DataGrid, Dialog, FormField, Input, KeyValueList, LoadingState, Pane, Section, Select, Switch, Text, TextLink, useToast, type ActionBarItem, type DataGridColumn } from "../../design";
 import { useI18n } from "../i18n";
 import type { Label, NamedRef, PageDescriptor, PluginDependency, PluginPermission, PluginVersion } from "../protocol";
@@ -27,12 +27,17 @@ export function PluginPage({ tab, descriptor }: { tab: TabState; descriptor: Pag
   const id = tab.target.slice("plugin:".length);
   const plugin = useQuery((c) => c.plugin.get(id), [id], ["plugins"]);
   const p = plugin.data;
+  // The page is titled with the plugin's name in the interface language (the descriptor's title is fixed at resolve time).
+  const name = p ? tx(p.name) : "";
+  useEffect(() => {
+    if (name) actions.updateTab(tab.id, { title: name });
+  }, [name, tab.id, actions]);
+  const shown: PageDescriptor = name ? { ...descriptor, title: name, breadcrumb: descriptor.breadcrumb.map((c, i, all) => (i === all.length - 1 ? { ...c, label: name } : c)) } : descriptor;
   if (!p) return <Frame tab={tab} descriptor={descriptor}>{plugin.loading ? <LoadingState label={t("common.loading")} /> : null}</Frame>;
 
   // Kernel plugins have real versions (switch, pin, remove, undo an upgrade) and a main-process installer; the demo's are fake.
   const real = client.demo !== undefined && !client.demo.target(descriptor.target);
   const installed = p.load.state !== "not-installed";
-  const notYet = () => toast({ tone: "warning", title: t("common.notInPrototype") });
   const active = p.versions.find((v) => v.active);
   const hasFiles = p.permissions.some((x) => x.id === "files");
   const done = (text: string) => toast({ tone: "success", title: text });
@@ -226,7 +231,7 @@ export function PluginPage({ tab, descriptor }: { tab: TabState; descriptor: Pag
     <>
     <Frame
       tab={tab}
-      descriptor={descriptor}
+      descriptor={shown}
       actions={items}
       meta={
         <>
@@ -250,7 +255,7 @@ export function PluginPage({ tab, descriptor }: { tab: TabState; descriptor: Pag
                 { key: "id", label: t("plugin.id"), value: <Text mono size="sm">{p.id}</Text> },
                 { key: "author", label: t("plugin.author"), value: p.author },
                 { key: "license", label: t("plugin.license"), value: p.license },
-                { key: "home", label: t("plugin.homepage"), value: <TextLink href={p.homepage} external onOpen={notYet}>{p.homepage}</TextLink> },
+                { key: "home", label: t("plugin.homepage"), value: <TextLink href={p.homepage} external>{p.homepage}</TextLink> },
                 { key: "count", label: t("plugin.resources"), value: String(p.resourceCount) },
               ]}
             />
@@ -342,7 +347,7 @@ export function PluginPage({ tab, descriptor }: { tab: TabState; descriptor: Pag
           </Section>
         )}
 
-        {real && (
+        {real && hasFiles && (
           <Section title={t("plugin.folders")} description={t("plugin.foldersHint")}>
             {p.folders.length === 0 ? (
               <Text size="sm" tone="muted">

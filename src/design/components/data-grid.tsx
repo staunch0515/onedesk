@@ -1,7 +1,8 @@
-import { useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { cx } from "./cx";
 import { Icon } from "./icon";
 import { beginPointerDrag, setDragCursor } from "./pointer-drag";
+import { useVirtualWindow } from "./virtual";
 import "./data-grid.css";
 
 export type DataGridValue = string | number | boolean | null | undefined;
@@ -67,6 +68,18 @@ function compare(a: DataGridValue, b: DataGridValue): number {
   if (an || bn) return an === bn ? 0 : an ? 1 : -1; // empty values last
   if (typeof a === "number" && typeof b === "number") return a - b;
   return String(a).localeCompare(String(b), undefined, { numeric: true, sensitivity: "base" });
+}
+
+/** Empty space standing in for the rows that are not drawn. */
+function GridGap({ height, columns }: { height: number; columns: number }) {
+  return (
+    <tr className="od-grid__gap" aria-hidden="true">
+      <td
+        colSpan={columns}
+        style={{ height }} // od-allow-inline-style: height of the rows left out
+      />
+    </tr>
+  );
 }
 
 /**
@@ -147,8 +160,35 @@ export function DataGrid<Row>({
   const tableStyle = { "--od-grid-width": `${total}px` } as CSSProperties;
   const interactive = Boolean(onRowActivate || onRowSelect);
 
+  // Only the rows in (and just around) the viewport are drawn; the rest is empty space of the same height (D373).
+  // The real height of a row and of the sticky header are measured, so borders never make the space drift.
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const bodyRef = useRef<HTMLTableSectionElement>(null);
+  const [measured, setMeasured] = useState<{ row: number; header: number }>({ row: 0, header: 0 });
+  useLayoutEffect(() => {
+    const row = bodyRef.current?.querySelector<HTMLElement>("tr[data-index]")?.getBoundingClientRect().height ?? 0;
+    const header = wrapRef.current?.querySelector("thead")?.getBoundingClientRect().height ?? 0;
+    setMeasured((m) => (m.row === row && m.header === header ? m : { row, header }));
+  });
+  const win = useVirtualWindow(wrapRef, {
+    count: autoHeight ? 0 : sorted.length,
+    rowHeightVar: size === "regular" ? "--table-row-height" : "--grid-row-height",
+    rowHeight: measured.row > 0 ? measured.row : undefined,
+    header: measured.header,
+  });
+  const windowed = !autoHeight && win.rowHeight > 0 && win.end - win.start < sorted.length;
+  const first = windowed ? win.start : 0;
+  const shown = windowed ? sorted.slice(win.start, win.end) : sorted;
+  const focusRow = (index: number) => {
+    const find = () => bodyRef.current?.querySelector<HTMLElement>(`tr[data-index="${index}"]`);
+    const el = find();
+    if (el) return el.focus();
+    win.reveal(index);
+    requestAnimationFrame(() => requestAnimationFrame(() => find()?.focus()));
+  };
+
   return (
-    <div className={cx("od-grid-wrap", framed && "od-grid-wrap--framed", autoHeight && "od-grid-wrap--auto", className)}>
+    <div ref={wrapRef} className={cx("od-grid-wrap", framed && "od-grid-wrap--framed", autoHeight && "od-grid-wrap--auto", className)}>
       <table
         className={cx("od-grid", `od-grid--${size}`, rowNumbers && "od-grid--numbered", interactive && "od-grid--interactive")}
         aria-label={label}
@@ -206,12 +246,16 @@ export function DataGrid<Row>({
             <th className="od-grid__th od-grid__th--fill" aria-hidden="true" />
           </tr>
         </thead>
-        <tbody>
-          {sorted.map((row, i) => {
+        <tbody ref={bodyRef}>
+          {windowed && win.before > 0 && <GridGap height={win.before} columns={columns.length + (rowNumbers ? 2 : 1)} />}
+          {shown.map((row, shownIndex) => {
+            const i = first + shownIndex;
             const key = getRowKey(row, i);
             return (
               <tr
                 key={key}
+                data-index={i}
+                aria-rowindex={i + 1}
                 className={cx("od-grid__row", selectedKey === key && "od-grid__row--selected", isRowMuted?.(row) && "od-grid__row--muted")}
                 tabIndex={interactive ? 0 : undefined}
                 onClick={interactive ? () => (activateOnClick ? onRowActivate?.(row) : onRowSelect?.(row)) : undefined}
@@ -221,8 +265,8 @@ export function DataGrid<Row>({
                     ? (e) => {
                         if (e.target !== e.currentTarget) return;
                         if (e.key === "Enter") onRowActivate?.(row);
-                        else if (e.key === "ArrowDown") (e.currentTarget.nextElementSibling as HTMLElement | null)?.focus();
-                        else if (e.key === "ArrowUp") (e.currentTarget.previousElementSibling as HTMLElement | null)?.focus();
+                        else if (e.key === "ArrowDown" && i + 1 < sorted.length) focusRow(i + 1);
+                        else if (e.key === "ArrowUp" && i > 0) focusRow(i - 1);
                         else return;
                         e.preventDefault();
                       }
@@ -251,6 +295,7 @@ export function DataGrid<Row>({
               </tr>
             );
           })}
+          {windowed && win.after > 0 && <GridGap height={win.after} columns={columns.length + (rowNumbers ? 2 : 1)} />}
         </tbody>
       </table>
       {rows.length === 0 && empty && <div className="od-grid__empty">{empty}</div>}

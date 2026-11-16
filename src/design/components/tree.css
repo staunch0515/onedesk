@@ -200,3 +200,14 @@
   color: var(--fg-default);
   font-size: var(--text-md);
 }
+
+/* Space standing in for the rows that are not drawn (virtual scrolling). */
+.od-tree__gap {
+  flex: none;
+}
+
+/* "More is being read" placeholder at the end of a long level. */
+.od-tree__row--more {
+  color: var(--fg-subtle);
+  font-style: italic;
+}

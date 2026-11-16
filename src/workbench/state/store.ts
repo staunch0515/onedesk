@@ -4,6 +4,8 @@
  * memory only.
  */
 import { useSyncExternalStore } from "react";
+import type { MergeState, Values } from "./merge";
+import type { Notice } from "./notices";
 import type { CommandContext, ImportPreview, InstallPreview, Label } from "../protocol/types";
 
 export interface TabState {
@@ -63,9 +65,16 @@ export type TransferState = { stage: "export-path" } | { stage: "import-path" } 
 
 export interface UiState extends LayoutState {
   tasksOpen: boolean;
+  /** The list of this session's notices (D376): memory only. */
+  notices: Notice[];
+  noticesOpen: boolean;
   paletteOpen: boolean;
   /** Unsaved bound values per tab, by bind path. */
   drafts: Record<string, Record<string, unknown>>;
+  /** The page's saved values the tab's draft was started from, by bind path (to tell what changed elsewhere, D374). */
+  bases: Record<string, Values>;
+  /** Unsaved fields whose saved value changed elsewhere, and the ones the user chose to keep (D374). Per tab. */
+  merge: Record<string, MergeState>;
   selected: Record<string, string | null>;
   renaming: { tree: string; key: string } | null;
   /** Tabs waiting for the "unsaved changes" answer. */
@@ -127,8 +136,12 @@ export function createStore(saved: Partial<LayoutState> | null, save: (layout: L
     panelHeight: clamp(merged.panelHeight, LIMITS.panel.min, LIMITS.panel.max),
     tabs: Array.isArray(merged.tabs) ? merged.tabs.filter((t) => t && typeof t.id === "string" && typeof t.target === "string" && !t.target.startsWith("new:")) : [],
     tasksOpen: false,
+    notices: [],
+    noticesOpen: false,
     paletteOpen: false,
     drafts: {},
+    bases: {},
+    merge: {},
     selected: {},
     renaming: null,
     confirmClose: null,

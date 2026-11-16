@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from "react";
-import { Button, CodeEditor, Dialog, DropdownMenu, FieldStrip, FormField, IconButton, Input, Pane, Select, StripField, Switch, Textarea, useToast, type ActionBarItem } from "../../design";
+import { Banner, Button, CodeEditor, Dialog, DropdownMenu, FieldStrip, FormField, IconButton, Input, Pane, Select, StripField, Switch, Textarea, useToast, type ActionBarItem } from "../../design";
 import { useI18n } from "../i18n";
 import type { ActionDecl, PageDescriptor, RunStatus, ViewField, ViewNode } from "../protocol";
 import { applyPageParams, runParams } from "./run-params";
 import { useRunEndRefresh } from "./run-refresh";
 import { useQuery, useUi, useWorkbench } from "../state/context";
+import { mergeDraft, type MergeState } from "../state/merge";
 import type { TabState } from "../state/store";
 import { AddParamDialog } from "./add-param-dialog";
 import { Frame } from "../parts/frame";
@@ -129,6 +130,29 @@ export function ViewPage({ tab, descriptor: initial }: { tab: TabState; descript
   const isRunning = running.data?.status === "running";
 
   useEffect(() => setDescriptor(initial), [initial]);
+
+  // The saved values changed elsewhere (another client, a plugin) while this page was open (§9.3, D374): fields not typed
+  // here just show the new value; a field typed here that was changed to something else asks the user (bar below).
+  const pending: MergeState | undefined = useUi((s) => s.merge[tab.id]);
+  const valuesKey = JSON.stringify(initial.values);
+  useEffect(() => {
+    if (initial.autosave) return;
+    const st = store.get();
+    const before = st.bases[tab.id];
+    const typed = st.drafts[tab.id] ?? {};
+    if (before && Object.keys(typed).length > 0) {
+      const found = mergeDraft(before, initial.values, typed);
+      if (found.converged.length > 0) actions.clearDraft(tab.id, found.converged);
+      if (found.conflicts.length > 0) {
+        store.set((s) => {
+          const prev = s.merge[tab.id] ?? { conflicts: [], keep: [] };
+          return { merge: { ...s.merge, [tab.id]: { conflicts: [...new Set([...prev.conflicts, ...found.conflicts])], keep: prev.keep.filter((f) => !found.conflicts.includes(f)) } } };
+        });
+      }
+    }
+    store.set((s) => ({ bases: { ...s.bases, [tab.id]: initial.values } }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [valuesKey, tab.id]);
 
   // A plugin page may show what its last run left behind (e.g. a summary it stored): when a run started
   // here ends, ask for the page again. Unsaved drafts live in the store and stay.
@@ -331,10 +355,33 @@ export function ViewPage({ tab, descriptor: initial }: { tab: TabState; descript
     );
   };
 
+  const labelOf = (bind: string) => {
+    for (const n of descriptor.view) if (n.type === "form") for (const f of n.fields) if ((f.bind ?? f.name) === bind) return tx(f.label);
+    return bind;
+  };
+  const conflictBar = pending && pending.conflicts.length > 0 && (
+    <Banner
+      tone="warning"
+      title={t("merge.title")}
+      actions={
+        <>
+          <Button size="sm" onClick={() => actions.resolveMerge(tab.id, "keep")}>
+            {t("merge.keepMine")}
+          </Button>
+          <Button size="sm" onClick={() => actions.resolveMerge(tab.id, "adopt", descriptor.basis)}>
+            {t("merge.useNew")}
+          </Button>
+        </>
+      }
+    >
+      {t("merge.body", { fields: pending.conflicts.map(labelOf).join(", ") })}
+    </Banner>
+  );
   const hasFill = descriptor.view.some((n) => (n.type === "form" && n.fields.some((f) => f.fill)) || (n.type === "text" && n.mono) || n.type === "table");
   return (
     <>
     <Frame tab={tab} descriptor={descriptor} actions={items} panel={descriptor.resultTabs.length > 0 || tab.runId ? <ResultArea tab={tab} descriptor={descriptor} /> : undefined}>
+      {conflictBar}
       {descriptor.runId && <RunHeader runId={descriptor.runId} />}
       <Pane grow scroll={!hasFill}>
         {descriptor.view.map((node) => (node.type === "form" ? renderForm(node) : <ViewNodes key={node.id} nodes={[node]} />))}

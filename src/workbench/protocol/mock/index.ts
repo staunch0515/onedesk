@@ -193,6 +193,8 @@ export interface MockOptions {
   quiet?: boolean;
 }
 
+const MOCK_BATCH = 200;
+
 export function createMockClient(options: MockOptions = {}): ProtocolClient {
   const handlers = new Map<string, Set<EventHandler>>();
   const timers = new Map<string, number>();
@@ -1630,11 +1632,14 @@ export function createMockClient(options: MockOptions = {}): ProtocolClient {
         await wait(2);
         return clone(TREES);
       },
-      async children(tree, parentKey) {
+      async children(tree, parentKey, offset = 0) {
         await wait(tree === "files" && parentKey ? 120 : 8);
         const info = TREES.find((t) => t.id === tree);
         if (!info) return { nodes: [] };
-        return { nodes: clone(info.source === "stored" ? childrenOf(tree, parentKey).map(toNode) : providedChildren(tree, parentKey)) };
+        // Batches of 200 like the kernel (§5), so the interface's on-demand reading is exercised.
+        const all = info.source === "stored" ? childrenOf(tree, parentKey).map(toNode) : providedChildren(tree, parentKey);
+        const batch = all.slice(offset, offset + MOCK_BATCH);
+        return { nodes: clone(batch), ...(offset + MOCK_BATCH < all.length ? { next: offset + MOCK_BATCH } : {}) };
       },
       async path(tree, key) {
         await wait(2);

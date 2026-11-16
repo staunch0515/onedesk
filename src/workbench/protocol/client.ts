@@ -175,8 +175,11 @@ export interface ProtocolClient {
     /**
      * The only way bound fields are written (D259). `resource:<id>` and `new:<kind>` targets go to the
      * kernel; `changes` keys are bind paths. For `new:` the result's `target` is the new resource.
+     * When `basis` is behind, the kernel saves if what changed elsewhere does not touch `changes`, else answers
+     * `conflict` / `stale` with `params.fields` (comma separated bind paths) and `params.rev`; the bind paths in
+     * `overwrite` (the user chose "keep mine", D374) are not counted as conflicts.
      */
-    save(target: string, changes: Record<string, unknown>, basis?: string, context?: PageContext): Promise<PageSaveResult>;
+    save(target: string, changes: Record<string, unknown>, basis?: string, context?: PageContext, overwrite?: string[]): Promise<PageSaveResult>;
     /** A page event with the current unsaved content (§9.3). */
     event(target: string, event: string, context: PageContext): Promise<PageEventResult>;
   };

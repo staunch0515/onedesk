@@ -10,6 +10,7 @@ import { NoTabs, PageHost } from "./parts/page-host";
 import { TreePanel } from "./parts/side-panel";
 import { StatusBarPart, type Settings } from "./parts/status-bar";
 import { TabsPart } from "./parts/tabs";
+import { NoticePanel } from "./parts/notice-panel";
 import { TaskPanel } from "./parts/task-panel";
 import { TopBarPart } from "./parts/top-bar";
 import { useResize } from "./parts/hooks";
@@ -36,6 +37,7 @@ export function Workbench({ settings, onSetting: storeSetting }: WorkbenchProps)
   const sideOpen = useUi((s) => s.sideOpen);
   const sideWidth = useUi((s) => s.sideWidth);
   const tasksOpen = useUi((s) => s.tasksOpen);
+  const noticesOpen = useUi((s) => s.noticesOpen);
   const paletteOpen = useUi((s) => s.paletteOpen);
   const confirmClose = useUi((s) => s.confirmClose);
   const tabs = useUi((s) => s.tabs);
@@ -181,7 +183,7 @@ export function Workbench({ settings, onSetting: storeSetting }: WorkbenchProps)
     <WorkbenchFrame
       topbar={<TopBarPart onSettings={() => void openSettings()} />}
       statusBar={<StatusBarPart settings={settings} onSetting={onSetting} resolvedTheme={resolvedTheme} />}
-      floating={tasksOpen ? <TaskPanel /> : undefined}
+      floating={noticesOpen ? <NoticePanel /> : tasksOpen ? <TaskPanel /> : undefined}
     >
       <ActivityBar
         label={t("activity.label")}

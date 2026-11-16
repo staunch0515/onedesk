@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ThemeProvider, ToastProvider, useToast, type Density, type ThemePreference } from "../design";
+import { ThemeProvider, ToastProvider, useToast, type Density, type ThemePreference, type ToastOptions } from "../design";
 import { I18nProvider, useI18n } from "./i18n";
 import { ProtocolProvider, useClient, type Locale, type ProtocolClient } from "./protocol";
 import type { Settings } from "./parts/status-bar";
 import { WorkbenchProvider } from "./state/context";
+import { addNotice, textOf } from "./state/notices";
 import type { Store } from "./state/store";
 import { Workbench } from "./workbench";
 
@@ -16,10 +17,20 @@ export async function readSettings(client: ProtocolClient): Promise<Settings> {
   };
 }
 
-function Toasts({ children }: { children: React.ReactNode }) {
+function Toasts({ store, children }: { store: Store; children: React.ReactNode }) {
   const { t } = useI18n();
+  // Every toast is also kept for the status bar's notice list (D376).
+  const keep = useCallback(
+    (options: ToastOptions, id: number) => {
+      const text = textOf(options.title);
+      if (!text) return;
+      const notice = { id, at: Date.now(), tone: options.tone ?? "neutral", text, detail: textOf(options.description) || undefined };
+      store.set((s) => ({ notices: addNotice(s.notices, notice, s.noticesOpen) }));
+    },
+    [store],
+  );
   return (
-    <ToastProvider closeLabel={t("common.close")} viewportLabel={t("common.notifications")} duration={3500}>
+    <ToastProvider closeLabel={t("common.close")} viewportLabel={t("common.notifications")} duration={3500} onToast={keep}>
       {children}
     </ToastProvider>
   );
@@ -73,7 +84,7 @@ function Shell({ store, initial, startupError }: { store: Store; initial: Settin
   return (
     <I18nProvider locale={settings.locale}>
       <ThemeProvider theme={settings.theme} density={settings.density}>
-        <Toasts>
+        <Toasts store={store}>
           <ConnectionNotices startupError={startupError} />
           <WorkbenchProvider store={store}>
             <Workbench settings={settings} onSetting={onSetting} />

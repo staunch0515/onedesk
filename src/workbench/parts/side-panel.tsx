@@ -1,17 +1,19 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { startInstall } from "./install-dialogs";
-import { Badge, ContextMenu, EmptyState, IconButton, Input, LoadingState, SidePanel, Tree, type MenuEntry, type TreeDropPosition, type TreeRow } from "../../design";
+import { Badge, Banner, ContextMenu, EmptyState, IconButton, Input, LoadingState, SidePanel, Tree, type MenuEntry, type TreeDropPosition, type TreeRow } from "../../design";
 import { useI18n } from "../i18n";
-import { loadChildren, type MenuCommand, type TreeInfo, type TreeNode } from "../protocol";
+import { loadBatch, loadLevel, loadMore, type Level, type MenuCommand, type TreeInfo, type TreeNode } from "../protocol";
 import { useUi, useWorkbench } from "../state/context";
 
 const ROOT = "";
+/** Key prefix of the "more is being read" row at the end of a level that has more batches (never a real key). */
+export const MORE_PREFIX = "\u0000more:";
 const EMPTY: string[] = [];
-/** Safety cap for "expand all" on provided trees with many nodes. */
+/** "Expand all" and the filter read levels in full only up to this many nodes; the rest stays unread (the filter says so). */
 const LOAD_ALL_CAP = 3000;
 
 /** Children by parent key, per tree. Kept across activity switches so a tree does not flash empty. */
-const cache = new Map<string, Map<string, TreeNode[]>>();
+const cache = new Map<string, Map<string, Level>>();
 
 export function menuEntries(commands: MenuCommand[], tx: (l: MenuCommand["label"]) => string, run: (id: string) => void): MenuEntry[] {
   return commands.flatMap((c, i): MenuEntry[] => [
@@ -31,21 +33,21 @@ export function TreePanel({ tree }: { tree: TreeInfo }) {
     return node?.tree === tree.id ? node.key : null;
   });
   const activeEnv = useUi((s) => s.tabs.find((x) => x.id === s.activeTabId && x.usesEnv)?.envId ?? null);
-  const [nodes, setNodes] = useState<Map<string, TreeNode[]>>(() => cache.get(tree.id) ?? new Map());
+  const [levels, setLevels] = useState<Map<string, Level>>(() => cache.get(tree.id) ?? new Map());
   const [loading, setLoading] = useState<Set<string>>(new Set());
   const [filter, setFilter] = useState("");
   const [menu, setMenu] = useState<{ point: { x: number; y: number }; node: TreeNode | null } | null>(null);
-  const nodesRef = useRef(nodes);
-  nodesRef.current = nodes;
+  const nodesRef = useRef(levels);
+  nodesRef.current = levels;
   const pending = useRef(new Set<string>());
 
   const commit = useCallback(
-    (update: (map: Map<string, TreeNode[]>) => void) => {
+    (update: (map: Map<string, Level>) => void) => {
       const next = new Map(nodesRef.current);
       update(next);
       nodesRef.current = next;
       cache.set(tree.id, next);
-      setNodes(next);
+      setLevels(next);
     },
     [tree.id],
   );
@@ -56,8 +58,9 @@ export function TreePanel({ tree }: { tree: TreeInfo }) {
       pending.current.add(parentKey);
       setLoading((s) => new Set(s).add(parentKey));
       try {
-        const children = await loadChildren(client, tree.id, parentKey === ROOT ? null : parentKey, locale);
-        commit((map) => map.set(parentKey, children));
+        // Only the first batch: the rest is read when its end scrolls into view (D373).
+        const level = await loadBatch(client, tree.id, parentKey === ROOT ? null : parentKey, undefined, locale);
+        commit((map) => map.set(parentKey, level));
       } catch (error) {
         actions.fail(error);
       } finally {
@@ -72,21 +75,42 @@ export function TreePanel({ tree }: { tree: TreeInfo }) {
     [client, tree.id, commit, actions, locale],
   );
 
+  // The next batch of a long level, asked for by the row at its end coming into view.
+  const loadNext = useCallback(
+    async (parentKey: string) => {
+      const level = nodesRef.current.get(parentKey);
+      if (!level || level.next === undefined || pending.current.has(MORE_PREFIX + parentKey)) return;
+      pending.current.add(MORE_PREFIX + parentKey);
+      try {
+        const more = await loadMore(client, tree.id, parentKey === ROOT ? null : parentKey, level, locale);
+        // A refresh may have replaced the level meanwhile; then this batch is stale and the new level is shown as is.
+        if (nodesRef.current.get(parentKey) === level) commit((map) => map.set(parentKey, more));
+      } catch (error) {
+        actions.fail(error);
+      } finally {
+        pending.current.delete(MORE_PREFIX + parentKey);
+      }
+    },
+    [client, tree.id, commit, actions, locale],
+  );
+  const needMore = useCallback((key: string) => void loadNext(key.slice(MORE_PREFIX.length)), [loadNext]);
+
   // Root and every expanded node that is on screen get their children.
   useEffect(() => {
-    if (!nodes.has(ROOT)) void load(ROOT);
-    const known = new Set([...nodes.values()].flat().map((n) => n.key));
-    for (const key of expanded) if (known.has(key) && !nodes.has(key)) void load(key);
-  }, [nodes, expanded, load]);
+    if (!levels.has(ROOT)) void load(ROOT);
+    const known = new Set([...levels.values()].flatMap((l) => l.nodes).map((n) => n.key));
+    for (const key of expanded) if (known.has(key) && !levels.has(key)) void load(key);
+  }, [levels, expanded, load]);
 
   // The kernel says the tree changed: read every loaded level again.
   useEffect(() => {
     const refresh = () => {
       const keys = [...nodesRef.current.keys()];
-      void Promise.all(keys.map((k) => loadChildren(client, tree.id, k === ROOT ? null : k, locale).then((children) => [k, children] as const))).then((entries) => {
+      // Each level is read again as far as it had been read, so the scroll position and what is on screen stay.
+      void Promise.all(keys.map((k) => loadLevel(client, tree.id, k === ROOT ? null : k, locale, nodesRef.current.get(k)?.nodes.length ?? 0).then((level) => [k, level] as const))).then((entries) => {
         commit((map) => {
           map.clear();
-          for (const [k, children] of entries) map.set(k, children);
+          for (const [k, level] of entries) map.set(k, level);
         });
       }, actions.fail);
     };
@@ -99,9 +123,9 @@ export function TreePanel({ tree }: { tree: TreeInfo }) {
 
   const index = useMemo(() => {
     const map = new Map<string, TreeNode>();
-    for (const list of nodes.values()) for (const n of list) map.set(n.key, n);
+    for (const level of levels.values()) for (const n of level.nodes) map.set(n.key, n);
     return map;
-  }, [nodes]);
+  }, [levels]);
 
   // Follow the active tab (like VS Code): open the path to its node and highlight it.
   useEffect(() => {
@@ -126,14 +150,14 @@ export function TreePanel({ tree }: { tree: TreeInfo }) {
     let count = 0;
     while (queue.length > 0 && count < LOAD_ALL_CAP) {
       const key = queue.shift()!;
-      let children = nodesRef.current.get(key);
-      if (!children) {
-        children = await loadChildren(client, tree.id, key === ROOT ? null : key, locale);
-        const loaded = children;
-        commit((map) => map.set(key, loaded));
-      }
-      count += children.length;
-      for (const c of children) if (c.expandable) queue.push(c.key);
+      const parent = key === ROOT ? null : key;
+      let level = nodesRef.current.get(key) ?? (await loadBatch(client, tree.id, parent, undefined, locale));
+      // Read this level on while the cap allows; a level longer than that stays partly unread.
+      while (level.next !== undefined && count + level.nodes.length < LOAD_ALL_CAP) level = await loadMore(client, tree.id, parent, level, locale);
+      const loaded = level;
+      commit((map) => map.set(key, loaded));
+      count += loaded.nodes.length;
+      for (const c of loaded.nodes) if (c.expandable) queue.push(c.key);
     }
   }, [client, tree.id, commit, locale]);
 
@@ -145,14 +169,15 @@ export function TreePanel({ tree }: { tree: TreeInfo }) {
   const rows = useMemo(() => {
     const out: TreeRow[] = [];
     const open = new Set(expanded);
-    const matches = (n: TreeNode): boolean => n.label.toLowerCase().includes(needle) || (nodes.get(n.key) ?? []).some(matches);
+    const childrenOf = (key: string) => levels.get(key)?.nodes ?? [];
+    const matches = (n: TreeNode): boolean => n.label.toLowerCase().includes(needle) || childrenOf(n.key).some(matches);
     const walk = (parentKey: string, depth: number) => {
-      for (const n of nodes.get(parentKey) ?? []) {
+      for (const n of childrenOf(parentKey)) {
         if (needle && !matches(n)) continue;
-        const isOpen = n.expandable && (needle ? (nodes.get(n.key) ?? []).some(matches) : open.has(n.key));
+        const isOpen = n.expandable && (needle ? childrenOf(n.key).some(matches) : open.has(n.key));
         out.push({
           key: n.key,
-          label: n.label,
+          label: n.label || (n.state === "broken" ? t("tree.loadFailed") : n.label),
           icon: n.icon === "folder" && isOpen ? "folder-open" : n.icon,
           depth,
           expandable: n.expandable,
@@ -166,10 +191,16 @@ export function TreePanel({ tree }: { tree: TreeInfo }) {
         });
         if (isOpen) walk(n.key, depth + 1);
       }
+      // A level with more batches ends in a row that asks for the next one when it comes into view.
+      if (!needle && levels.get(parentKey)?.next !== undefined) {
+        out.push({ key: MORE_PREFIX + parentKey, label: t("tree.loadingMore"), icon: "ellipsis", depth, expandable: false, more: true });
+      }
     };
     walk(ROOT, 0);
     return out;
-  }, [nodes, expanded, needle, loading, tx, tree.id, activeEnv]);
+  }, [levels, expanded, needle, loading, tx, t, tree.id, activeEnv]);
+  /** The filter only looks at what has been read; a level too long to read in full says so. */
+  const partial = needle !== "" && [...levels.values()].some((l) => l.next !== undefined);
 
   const toggle = (key: string) => {
     if (needle) return;
@@ -204,14 +235,14 @@ export function TreePanel({ tree }: { tree: TreeInfo }) {
 
   const expandAll = () => {
     loadAll().then(() => {
-      actions.setExpanded(tree.id, [...nodesRef.current.values()].flat().filter((n) => n.expandable).map((n) => n.key));
+      actions.setExpanded(tree.id, [...nodesRef.current.values()].flatMap((l) => l.nodes).filter((n) => n.expandable).map((n) => n.key));
     }, actions.fail);
   };
 
   const commands = menu ? (menu.node ? menu.node.menu : tree.menu) : [];
   const title = tx(tree.title);
   const demo = client.demo?.tree(tree.id) ?? false;
-  const rootLoading = !nodes.has(ROOT);
+  const rootLoading = !levels.has(ROOT);
 
   return (
     <SidePanel
@@ -246,8 +277,15 @@ export function TreePanel({ tree }: { tree: TreeInfo }) {
       {rootLoading ? (
         <LoadingState layout="inline" label={t("common.loading")} />
       ) : (
+        <>
+        {partial && (
+          <Banner tone="info">
+            {t("tree.filterPartial")}
+          </Banner>
+        )}
         <Tree
           rows={rows}
+          onNeedMore={needMore}
           label={title}
           selectedKey={selected}
           onActivate={activate}
@@ -271,6 +309,7 @@ export function TreePanel({ tree }: { tree: TreeInfo }) {
           onRenameCancel={() => store.set({ renaming: null })}
           empty={<EmptyState layout="inline" message={needle ? t("tree.noMatch", { query: filter.trim() }) : t("tree.empty")} />}
         />
+        </>
       )}
       <ContextMenu
         point={menu?.point ?? null}

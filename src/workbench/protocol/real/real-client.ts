@@ -121,7 +121,7 @@ export async function createKernelClient(transport: Transport, locale?: () => st
     },
     page: {
       resolve: (target, context) => call<PageDescriptor>("page.resolve", compact({ target, context: pageContext(context, locale?.()) })),
-      save: (target, changes, basis, context) => call<PageSaveResult>("page.save", compact({ target, changes, basis, context: pageContext(context, locale?.()) })),
+      save: (target, changes, basis, context, overwrite) => call<PageSaveResult>("page.save", compact({ target, changes, basis, overwrite: overwrite && overwrite.length > 0 ? overwrite : undefined, context: pageContext(context, locale?.()) })),
       event: async (target, event, context) => call<PageEventResult>("page.event", compact({ target, event, context: pageContext(context, locale?.()) })),
     },
     run: {

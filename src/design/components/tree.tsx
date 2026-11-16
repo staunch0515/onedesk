@@ -4,6 +4,7 @@ import { DragGhost } from "./drag-ghost";
 import { Icon } from "./icon";
 import { beginPointerDrag, setDragCursor } from "./pointer-drag";
 import { Spinner } from "./spinner";
+import { useVirtualWindow } from "./virtual";
 import "./tree.css";
 
 export type TreeNodeState = "ok" | "disabled" | "missing-plugin" | "broken" | "conflict";
@@ -26,6 +27,8 @@ export interface TreeRow {
   /** Marks the node as "in use" (e.g. the environment of the active tab). */
   marked?: boolean;
   draggable?: boolean;
+  /** A placeholder at the end of a level that has more batches: when it comes into view the owner is asked for the next batch. Not selectable. */
+  more?: boolean;
 }
 
 export interface TreeProps {
@@ -36,6 +39,8 @@ export interface TreeProps {
   /** Click or Enter on a row. */
   onActivate: (key: string) => void;
   onToggle: (key: string) => void;
+  /** A `more` row came (near) into view: read the next batch of that level. */
+  onNeedMore?: (key: string) => void;
   onContextMenu?: (key: string | null, point: { x: number; y: number }) => void;
   /** Whether `dragKey` may be dropped at this place. `targetKey` null = the empty area (root). */
   canDrop?: (dragKey: string, targetKey: string | null, position: TreeDropPosition) => boolean;
@@ -102,6 +107,7 @@ export function Tree({
   selectedKey,
   onActivate,
   onToggle,
+  onNeedMore,
   onContextMenu,
   canDrop,
   onDrop,
@@ -121,6 +127,25 @@ export function Tree({
   const hoverTimer = useRef<{ key: string; id: number } | null>(null);
   const latest = useRef({ rows, canDrop, onDrop, onToggle });
   latest.current = { rows, canDrop, onDrop, onToggle };
+  // Only the rows in (and just around) the viewport exist in the page; the rest is empty space of the same height (D373).
+  const win = useVirtualWindow(rootRef, { count: rows.length, rowHeightVar: "--tree-row-height" });
+  const reveal = win.reveal;
+  const visible = rows.slice(win.start, win.end);
+
+  // The row that comes into view at the end of a level asks for the next batch.
+  const needMore = visible.find((r) => r.more)?.key;
+  useEffect(() => {
+    if (needMore) onNeedMore?.(needMore);
+  }, [needMore, onNeedMore]);
+
+  // A selection made elsewhere (following the active tab, "reveal in tree") is scrolled into view, drawn or not.
+  const selectedIndex = selectedKey ? rows.findIndex((r) => r.key === selectedKey) : -1;
+  const selectedRow = selectedKey ?? null;
+  useEffect(() => {
+    if (selectedRow && selectedIndex >= 0) reveal(selectedIndex);
+    // Only when the selection (or where it sits) changes, not on every scroll.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedRow, selectedIndex]);
 
   const clearHoverTimer = () => {
     if (hoverTimer.current) window.clearTimeout(hoverTimer.current.id);
@@ -184,7 +209,8 @@ export function Tree({
       const next = rows[Math.max(0, Math.min(rows.length - 1, i))];
       if (!next) return;
       setFocusKey(next.key);
-      rootRef.current?.querySelector(`[data-tree-key="${CSS.escape(next.key)}"]`)?.scrollIntoView({ block: "nearest" });
+      if (win.rowHeight > 0) reveal(rows.indexOf(next));
+      else rootRef.current?.querySelector(`[data-tree-key="${CSS.escape(next.key)}"]`)?.scrollIntoView?.({ block: "nearest" });
     };
     switch (e.key) {
       case "ArrowDown":
@@ -243,7 +269,14 @@ export function Tree({
       onContextMenu={(e) => contextMenu(e, null)}
     >
       {rows.length === 0 && empty}
-      {rows.map((row) => {
+      {win.before > 0 && (
+        <div
+          className="od-tree__gap"
+          style={{ height: win.before }} // od-allow-inline-style: height of the rows left out above
+          aria-hidden="true"
+        />
+      )}
+      {visible.map((row) => {
         const state = row.state ?? "ok";
         const stateIcon = STATE_ICON[state];
         const dropClass =
@@ -263,19 +296,21 @@ export function Tree({
             // A disabled item is greyed out, not blocked (D220): it still opens, e.g. to be enabled again.
             data-tree-key={row.key}
             data-state={state}
+            data-more={row.more ? "" : undefined}
             title={row.stateLabel ? `${row.label} — ${row.stateLabel}` : undefined}
             className={cx(
               "od-tree__row",
               selectedKey === row.key && "od-tree__row--selected",
               focusKey === row.key && "od-tree__row--focused",
               state !== "ok" && `od-tree__row--${state}`,
+              row.more && "od-tree__row--more",
               drag?.key === row.key && "od-tree__row--dragging",
               dropClass,
             )}
             style={style} // od-allow-inline-style: nesting depth drives the indent
             onPointerDown={(e) => startDrag(e, row)}
             onClick={() => {
-              if (suppressClick.current || editingKey === row.key) return;
+              if (row.more || suppressClick.current || editingKey === row.key) return;
               setFocusKey(row.key);
               onActivate(row.key);
             }}
@@ -319,6 +354,13 @@ export function Tree({
           </div>
         );
       })}
+      {win.after > 0 && (
+        <div
+          className="od-tree__gap"
+          style={{ height: win.after }} // od-allow-inline-style: height of the rows left out below
+          aria-hidden="true"
+        />
+      )}
       {drag && <DragGhost x={drag.x} y={drag.y} label={drag.label} icon={drag.icon} denied={!drag.ok} deniedLabel={dropDeniedLabel} />}
     </div>
   );
