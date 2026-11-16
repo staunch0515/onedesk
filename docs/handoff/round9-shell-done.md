@@ -62,3 +62,11 @@
   - `tauri build --debug`：`beforeBuildCommand` 先跑 `scripts/prepare-bundle.sh`，把当时的工作进程复制成侧载文件，所以打包用的不会是旧的。我没实际跑 `tauri build`。
 
 **这一节的检查**（删掉 `src-tauri/binaries/` 和 `target/debug/onedesk-worker` 后重来）：构建、全工作区 clippy 通过，`onedesk-worker` 仍是 34 MB 可执行文件；`cargo test -p onedesk-host` 24 单元 + 20 集成通过；`pnpm typecheck`、`lint`、`test`（42 文件 353 例）通过。没有重跑假数据 `workbench.spec.ts`（本节只动了审计页的类型和主进程）。
+
+## 客户端 `plugin.rescan` 也先刷新 `.index`（协调会话追加）
+
+- 原因：`round4.spec.ts:205`（手工拷进 `plugins/` 的包）里客户端调 `plugin.rescan`，主进程原样转发，没刷新 `.index`，内核读旧缓存，新包不出现。
+- 修改：`Host::request` 把客户端的 `plugin.rescan` 交给已有的 `Host::rescan`——同一条路：先 `refresh_index`（带内置列表，内置包重读磁盘），再带主进程记着的内置列表转给工作进程。客户端自己给的参数（包括 `builtin`）一律忽略，只有主进程知道什么是内置的。桌面主进程和 devhost 都走 `Host::request`，所以一致。
+- 检查别的路：内核里只有 `plugin.rescan`（`versions.rs:42`）会重新扫描插件目录，其余方法（安装、移除、`reload` 等）不扫描；安装和移除在主进程里本来就走 `Host::rescan`。没有别的绕过。
+- 测试：`a_client_rescan_refreshes_the_index_first_and_carries_the_builtin_list`——手工放一个包，客户端 `plugin.rescan`（参数里塞了假的 `builtin`），`.index` 多一条，转发给工作进程的参数是主进程的内置列表、不含假的。
+- 验证：`cargo test -p onedesk-host` 24 单元 + 21 集成通过；host clippy 通过；`cargo build -p onedesk-worker -p onedesk-host` 后 `E2E_PORT=1433 pnpm exec playwright test e2e/round4.spec.ts e2e/round9.spec.ts`：27 过（含 `round4.spec.ts:205`），已 `git checkout -- docs/screenshots`。

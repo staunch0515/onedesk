@@ -386,3 +386,22 @@ async fn install_succeeds_with_a_warning_when_the_rescan_reports_a_failed_switch
     assert!(calls(tmp.path()).iter().any(|l| l.starts_with("plugin.confirmPermissions")));
     host.shutdown().await;
 }
+
+#[tokio::test]
+async fn a_client_rescan_refreshes_the_index_first_and_carries_the_builtin_list() {
+    let tmp = tempfile::tempdir().unwrap();
+    let host = start(tmp.path()).await;
+    let index = tmp.path().join("data/plugins/.index");
+    let dirs = |p: &Path| -> Vec<String> { serde_json::from_str::<Value>(&std::fs::read_to_string(p).unwrap()).unwrap()["entries"].as_array().unwrap().iter().map(|e| e["dir"].as_str().unwrap().to_string()).collect() };
+    assert_eq!(dirs(&index), ["org.test.alpha/0.1.0"]);
+    // A package copied in by hand, then the client asks for a rescan (its own params say nothing about built-ins).
+    let hand = tmp.path().join("data/plugins/org.test.hand/0.5.0");
+    std::fs::create_dir_all(&hand).unwrap();
+    std::fs::write(hand.join("manifest.json"), r#"{"id":"org.test.hand","version":"0.5.0"}"#).unwrap();
+    host.request(Some("win-1"), "plugin.rescan", json!({ "builtin": ["evil@9"] })).await.unwrap();
+    assert_eq!(dirs(&index), ["org.test.alpha/0.1.0", "org.test.hand/0.5.0"]);
+    let log = calls(tmp.path());
+    let last = log.iter().rev().find(|l| l.starts_with("plugin.rescan")).unwrap();
+    assert!(last.contains("org.test.alpha@0.1.0") && !last.contains("evil"), "{last}");
+    host.shutdown().await;
+}
