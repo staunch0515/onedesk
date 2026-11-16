@@ -42,4 +42,10 @@ depends?: Array<PluginDependency>,
 /**
  * Round 7: ids of enabled plugins that depend on this one.
  */
-dependents?: Array<string>, };
+dependents?: Array<string>, 
+/**
+ * Round 8 (D356–D357): full names (`<plugin>:<tree|page>`) of other plugins' trees and pages
+ * its kinds are declared with that those plugins do not export now; such a kind cannot be
+ * used. Always present from the kernel (optional only for older peers).
+ */
+unmetExports?: Array<string>, };

@@ -9,4 +9,9 @@ export type PageEventResult = {
 /**
  * Bind path → new value; applied by the interface to the draft, still unsaved.
  */
-changes?: { [key in string]: JsonValue }, message?: Label, };
+changes?: { [key in string]: JsonValue }, message?: Label, 
+/**
+ * Round 8 (D358): new page parameter values (`param: true` fields), applied by the
+ * interface to the page state; not part of the draft, never “unsaved”.
+ */
+params?: { [key in string]: string }, };

@@ -512,12 +512,18 @@ impl Inner {
             Some((p, k)) => KindMeta {
                 label: p.label(&k.label),
                 icon: k.icon.clone(),
-                page: k.page.clone().map(|pg| (p.id.clone(), pg)),
+                // Round 8 (D357): `(page's plugin, page)`, another plugin's when borrowed.
+                page: k.page.as_deref().map(|pg| p.page_ref(pg)),
                 draggable: k.draggable,
                 accepts: k.accepts.iter().map(|a| p.kind_ref(a)).collect(),
                 commands: k.menu.iter().map(|c| self.plugin_menu_cmd(p, c)).collect(),
-                // D290: a disabled plugin's resources stay, greyed out.
-                state: if self.plugin_enabled(&p.id) && self.version_deps_met(p) { NodeState::Ok } else { NodeState::Disabled },
+                // D290: a disabled plugin's resources stay, greyed out; so do those of a kind
+                // whose borrowed tree or page is not exported (D356).
+                state: if self.plugin_enabled(&p.id) && self.version_deps_met(p) && self.kind_unmet(p, k).is_empty() {
+                    NodeState::Ok
+                } else {
+                    NodeState::Disabled
+                },
                 reason: None,
                 plugin: Some(p),
             },
@@ -977,6 +983,10 @@ impl Inner {
         for p in self.registry.plugins().iter().filter(|p| self.plugin_enabled(&p.id)) {
             for k in &p.manifest.contributes.menus.new {
                 let Some(decl) = p.kind(k) else { continue };
+                // D356: not while a tree or page it borrows is not exported.
+                if !self.kind_unmet(p, decl).is_empty() {
+                    continue;
+                }
                 let kt = decl.tree.as_deref().map(|t| p.tree_ref(t));
                 if tree.is_some_and(|t| kt.as_deref() != Some(t)) {
                     continue;

@@ -13,10 +13,15 @@ rquickjs.workspace = true
 tokio.workspace = true
 rusqlite.workspace = true
 semver.workspace = true
+sha2.workspace = true
 # openat/renameat for writes pinned to an already-resolved folder (review #7)
 libc = "0.2"
 # host.network (D307): system TLS only (native-tls → Security.framework), no rustls/ring.
 reqwest = { version = "0.12", default-features = false, features = ["native-tls"] }
+# Round 8: the file body of transfer.upload (64 KB chunks), through `reqwest::Body::wrap`. Both are
+# already part of the build (reqwest / hyper use them): no new package in Cargo.lock.
+http-body = "1"
+bytes = "1"
 # Keychain (D305): macOS native backend only.
 keyring = { version = "3", default-features = false, features = ["apple-native"] }
 

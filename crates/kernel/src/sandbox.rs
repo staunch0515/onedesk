@@ -320,6 +320,41 @@ const BOOTSTRAP: &str = r#"
     if (err) throw err.e;
     return res;
   };
+  // `transfer.*` with `onProgress`: like `onOutput`, a pump polls the progress stream; only the
+  // latest report of a batch is handed over.
+  const runTransfer = async (callId, method, opts) => {
+    const o = Object.assign({}, opts || {});
+    const on = o.onProgress;
+    delete o.onProgress;
+    delete o.progress;
+    if (typeof on !== "function") return call(callId, method, [o]);
+    const sid = "t" + (++streamSeq);
+    o.progress = sid;
+    let failure;
+    const pump = (async () => {
+      for (;;) {
+        const batch = await call(callId, "transfer.progress", [sid]);
+        if (batch === null) return;
+        if (failure !== undefined || batch.length === 0) continue;
+        try {
+          await on(batch[batch.length - 1]);
+        } catch (e) {
+          failure = { e };
+          call(callId, "transfer.stop", [sid]).catch(() => {});
+        }
+      }
+    })();
+    let res, err;
+    try {
+      res = await call(callId, method, [o]);
+    } catch (e) {
+      err = { e };
+    }
+    await pump.catch(() => {});
+    if (failure) throw failure.e;
+    if (err) throw err.e;
+    return res;
+  };
   const makeHost = (callId) => {
     const c = (m) => (...a) => call(callId, m, a);
     return Object.freeze({
@@ -343,6 +378,11 @@ const BOOTSTRAP: &str = r#"
       secrets: Object.freeze({ get: c("secrets.get") }),
       plugins: Object.freeze({ requestInstall: c("plugins.requestInstall"), list: c("plugins.list") }),
       process: Object.freeze({ run: (opts) => runProcess(callId, opts), ready: c("process.ready") }),
+      transfer: Object.freeze({
+        download: (opts) => runTransfer(callId, "transfer.download", opts),
+        upload: (opts) => runTransfer(callId, "transfer.upload", opts),
+        capture: (opts) => runTransfer(callId, "transfer.capture", opts),
+      }),
       events,
     });
   };

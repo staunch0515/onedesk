@@ -51,6 +51,12 @@ pub struct Manifest {
     /// The validated `exports.kinds`.
     #[serde(skip)]
     pub exported: Vec<ExportKind>,
+    /// Round 8 (D356): the validated `exports.trees` — short names of its own stored trees.
+    #[serde(skip)]
+    pub exported_trees: Vec<String>,
+    /// Round 8 (D357): the validated `exports.pages` — short names of its own pages.
+    #[serde(skip)]
+    pub exported_pages: Vec<String>,
 }
 
 /// One dependency (round 7): another plugin's id and a semver range of its active version.
@@ -453,7 +459,23 @@ pub fn permission_atoms(m: &Manifest) -> BTreeSet<String> {
     for k in foreign_kinds(m) {
         a.insert(format!("resources:{k}"));
     }
+    // D357: kinds shown with another plugin's page let that plugin's code read them.
+    for k in &m.contributes.kinds {
+        if let Some(pg) = k.page.as_deref().filter(|pg| is_foreign(m, pg)) {
+            a.insert(format!("pages:{pg}"));
+        }
+    }
     a
+}
+
+/// A `tree` / `page` written as another plugin's full name `<plugin>:<name>` (round 8).
+pub fn is_foreign(m: &Manifest, name: &str) -> bool {
+    Registry::split(name).is_some_and(|(pid, _)| pid != m.id)
+}
+
+/// Full names of other plugins' trees and pages a kind is declared with (round 8, D356–D357).
+pub fn foreign_refs(m: &Manifest, k: &KindDecl) -> Vec<String> {
+    [k.tree.as_deref(), k.page.as_deref()].into_iter().flatten().filter(|n| is_foreign(m, n)).map(String::from).collect()
 }
 
 /// Full names (`<plugin>:<kind>`) of other plugins' kinds this manifest's actions name (round 7):
@@ -473,9 +495,9 @@ pub fn atom_id(atom: &str) -> &str {
     atom.split(':').next().unwrap_or(atom)
 }
 
-/// The permission fingerprint shown and confirmed (D312): a hash of the atom list.
+/// The permission fingerprint shown and confirmed (D312): a hash of the atom list (SHA-256, D359).
 pub fn perm_fingerprint(atoms: &BTreeSet<String>) -> String {
-    crate::util::fingerprint(atoms_fingerprint(atoms).as_bytes())
+    crate::util::sha256_hex(atoms_fingerprint(atoms).as_bytes())
 }
 
 /// Atom list stored when a version's permissions are confirmed.
@@ -558,6 +580,15 @@ impl Plugin {
     pub fn kind(&self, short: &str) -> Option<&KindDecl> {
         self.manifest.contributes.kinds.iter().find(|k| k.id == short)
     }
+    /// The plugin and short name of the page a kind's `page` names (round 8: another plugin's,
+    /// by full name; else its own).
+    pub fn page_ref(&self, name: &str) -> (String, String) {
+        match Registry::split(name) {
+            Some((pid, short)) => (pid.to_string(), short.to_string()),
+            None => (self.id.clone(), name.to_string()),
+        }
+    }
+
     pub fn page(&self, short: &str) -> Option<&PageDecl> {
         self.manifest.contributes.pages.iter().find(|p| p.id == short)
     }
@@ -579,7 +610,8 @@ impl Plugin {
 
     /// A tree reference from the manifest: kernel trees by full name, own trees by short name.
     pub fn tree_ref(&self, name: &str) -> String {
-        if KERNEL_TREES.contains(&name) {
+        // Round 8: another plugin's exported tree, by its full name.
+        if KERNEL_TREES.contains(&name) || name.contains(':') {
             name.to_string()
         } else {
             self.full(name)
@@ -740,16 +772,39 @@ pub fn load_package_opts(dir: &Path, check_folder: bool) -> Result<Plugin, Rejec
     }
     let has_page = |p: &str| c.pages.iter().any(|x| x.id == p);
     let has_cmd = |x: &str| KERNEL_COMMANDS.contains(&x) || c.commands.iter().any(|y| y.id == x);
+    let deps = parse_depends(dir, &m)?;
+    // Round 8 (D356–D357): `tree` / `page` may name another plugin's by full name; that plugin
+    // must be in `depends` (whether it exports them is judged when used, against its active version).
+    let foreign_ok = |what: &str, k: &KindDecl, name: &str| -> Result<(), Rejection> {
+        let (pid, short) = Registry::split(name).ok_or_else(|| reject(dir, "badName", format!("kind {} {what} {name}", k.id)))?;
+        if !valid_id(pid) || !valid_short(short) {
+            return Err(reject(dir, "badName", format!("kind {} {what} {name}", k.id)));
+        }
+        if !deps.iter().any(|d| d.id == pid) {
+            return Err(reject(dir, "undeclaredDepend", format!("kind {} {what} {name}", k.id)));
+        }
+        Ok(())
+    };
     for k in &c.kinds {
         if let Some(p) = &k.page {
-            if !has_page(p) {
+            if p.contains(':') {
+                foreign_ok("page", k, p)?;
+            } else if !has_page(p) {
                 return Err(reject(dir, "unknownPage", format!("kind {} page {p}", k.id)));
             }
         }
         if let Some(t) = &k.tree {
-            let own_stored = c.trees.iter().any(|x| &x.id == t && x.source == TreeSource::Stored);
-            if !KERNEL_TREES.contains(&t.as_str()) && !own_stored {
-                return Err(reject(dir, "unknownTree", format!("kind {} tree {t}", k.id)));
+            if t.contains(':') {
+                foreign_ok("tree", k, t)?;
+                // A kind in another plugin's tree accepts only kinds of its own plugin.
+                if let Some(a) = k.accepts.iter().find(|a| *a == "*" || (a.contains(':') && !a.starts_with(&format!("{}:", m.id)))) {
+                    return Err(reject(dir, "unknownKind", format!("kind {} accepts {a}", k.id)));
+                }
+            } else {
+                let own_stored = c.trees.iter().any(|x| &x.id == t && x.source == TreeSource::Stored);
+                if !KERNEL_TREES.contains(&t.as_str()) && !own_stored {
+                    return Err(reject(dir, "unknownTree", format!("kind {} tree {t}", k.id)));
+                }
             }
         }
         for x in &k.menu {
@@ -764,8 +819,7 @@ pub fn load_package_opts(dir: &Path, check_folder: bool) -> Result<Plugin, Rejec
         }
     }
     let has_kind = |k: &str| c.kinds.iter().any(|y| y.id == k);
-    let deps = parse_depends(dir, &m)?;
-    let exported = parse_exports(dir, &m)?;
+    let (exported, exported_trees, exported_pages) = parse_exports(dir, &m)?;
     check_requires_plugins(dir, &m)?;
     for a in &c.actions {
         for k in a.kinds.iter().flatten() {
@@ -917,6 +971,8 @@ pub fn load_package_opts(dir: &Path, check_folder: bool) -> Result<Plugin, Rejec
     let mut m = m;
     m.deps = deps;
     m.exported = exported;
+    m.exported_trees = exported_trees;
+    m.exported_pages = exported_pages;
     Ok(Plugin { id: m.id.clone(), version: m.version.clone(), dir: dir.to_path_buf(), manifest_hash, manifest: m, locales })
 }
 
@@ -951,18 +1007,27 @@ fn parse_depends(dir: &Path, m: &Manifest) -> Result<Vec<Depend>, Rejection> {
     Ok(out)
 }
 
+/// What `exports` lists (round 7 kinds; round 8 trees and pages).
+type Exports = (Vec<ExportKind>, Vec<String>, Vec<String>);
+
 /// Round 7 (D342): `exports.kinds[]` names this plugin's own kinds, each once, with `actions` / `read`.
-fn parse_exports(dir: &Path, m: &Manifest) -> Result<Vec<ExportKind>, Rejection> {
+/// Round 8 (D356–D357): `exports.trees[]` its own stored trees, `exports.pages[]` its own pages,
+/// each `{ "id" }`, each once.
+fn parse_exports(dir: &Path, m: &Manifest) -> Result<Exports, Rejection> {
     let bad = |why: String| reject(dir, "badExports", why);
-    let Some(raw) = &m.exports_raw else { return Ok(vec![]) };
+    let Some(raw) = &m.exports_raw else { return Ok((vec![], vec![], vec![])) };
     let o = raw.as_object().ok_or_else(|| bad("not an object".into()))?;
-    if let Some(k) = o.keys().find(|k| *k != "kinds") {
+    if let Some(k) = o.keys().find(|k| !matches!(k.as_str(), "kinds" | "trees" | "pages")) {
         return Err(bad(format!("unknown field {k}")));
     }
-    let Some(kinds) = o.get("kinds") else { return Ok(vec![]) };
-    let kinds = kinds.as_array().ok_or_else(|| bad("kinds is not a list".into()))?;
+    let list = |name: &str| -> Result<Vec<serde_json::Value>, Rejection> {
+        match o.get(name) {
+            None => Ok(vec![]),
+            Some(v) => v.as_array().cloned().ok_or_else(|| bad(format!("{name} is not a list"))),
+        }
+    };
     let mut out: Vec<ExportKind> = Vec::new();
-    for e in kinds {
+    for e in list("kinds")? {
         let o = e.as_object().ok_or_else(|| bad("entry is not an object".into()))?;
         if let Some(k) = o.keys().find(|k| !matches!(k.as_str(), "id" | "actions" | "read")) {
             return Err(bad(format!("unknown field {k}")));
@@ -983,7 +1048,29 @@ fn parse_exports(dir: &Path, m: &Manifest) -> Result<Vec<ExportKind>, Rejection>
         }
         out.push(ExportKind { id: id.into(), actions, read });
     }
-    Ok(out)
+    let ids = |name: &str, ok: &dyn Fn(&str) -> bool| -> Result<Vec<String>, Rejection> {
+        let mut ids: Vec<String> = Vec::new();
+        for e in list(name)? {
+            let o = e.as_object().ok_or_else(|| bad(format!("{name}: entry is not an object")))?;
+            if let Some(k) = o.keys().find(|k| *k != "id") {
+                return Err(bad(format!("{name}: unknown field {k}")));
+            }
+            let id = o.get("id").and_then(serde_json::Value::as_str).ok_or_else(|| bad(format!("{name}: id missing")))?;
+            if !ok(id) {
+                return Err(bad(format!("{name}: {id} is not its own")));
+            }
+            if ids.iter().any(|x| x == id) {
+                return Err(bad(format!("{name}: {id} twice")));
+            }
+            ids.push(id.into());
+        }
+        Ok(ids)
+    };
+    let c = &m.contributes;
+    // D356: only its own stored trees (a provided tree has no resources to put a kind into).
+    let trees = ids("trees", &|id| c.trees.iter().any(|t| t.id == id && t.source == TreeSource::Stored))?;
+    let pages = ids("pages", &|id| c.pages.iter().any(|p| p.id == id))?;
+    Ok((out, trees, pages))
 }
 
 /// Round 7 (D342): `requires.plugins` is `{ "install": true|false }`.
@@ -1272,6 +1359,74 @@ mod tests {
     }
 
     #[test]
+    fn round8_exports_trees_and_pages() {
+        // An own stored tree and an own page.
+        let m = with(good(), &["contributes", "trees"], json!([
+            { "id": "disk", "label": "t", "icon": "folder", "source": "provided", "page": "editor" },
+            { "id": "board", "label": "t", "icon": "folder", "source": "stored" }
+        ]));
+        let exp = |v: Value| with(m.clone(), &["exports"], v);
+        assert_eq!(reason(exp(json!({ "trees": [{ "id": "board" }], "pages": [{ "id": "editor" }] }))), "ok");
+        let tmp = tempfile::tempdir().unwrap();
+        let p = load_package(&write(tmp.path(), "test.alpha", "0.1.0", &exp(json!({ "trees": [{ "id": "board" }], "pages": [{ "id": "editor" }] })))).unwrap();
+        assert_eq!((p.manifest.exported_trees.clone(), p.manifest.exported_pages.clone()), (vec!["board".to_string()], vec!["editor".to_string()]));
+        for bad in [
+            json!({ "trees": [{ "id": "disk" }] }),
+            json!({ "trees": [{ "id": "resources" }] }),
+            json!({ "trees": [{ "id": "nope" }] }),
+            json!({ "trees": [{ "id": "board" }, { "id": "board" }] }),
+            json!({ "trees": [{ "id": "board", "write": true }] }),
+            json!({ "trees": [{}] }),
+            json!({ "trees": { "id": "board" } }),
+            json!({ "trees": ["board"] }),
+            json!({ "pages": [{ "id": "nope" }] }),
+            json!({ "pages": [{ "id": "test.beta:editor" }] }),
+            json!({ "pages": [{ "id": "editor" }, { "id": "editor" }] }),
+            json!({ "pages": [{ "id": "editor", "x": 1 }] }),
+        ] {
+            assert_eq!(reason(exp(bad.clone())), "badExports", "{bad}");
+        }
+    }
+
+    #[test]
+    fn round8_full_name_tree_and_page() {
+        let dep = with(good(), &["depends"], json!([{ "id": "test.beta", "version": "*" }]));
+        let kind = |m: &Value, tree: Value, page: Value, accepts: Value| {
+            with(m.clone(), &["contributes", "kinds", "0"], json!({ "id": "item", "label": "kind.item", "icon": "box",
+                "tree": tree, "page": page, "accepts": accepts }))
+        };
+        // Each alone or both, when the plugin is in `depends`.
+        assert_eq!(reason(kind(&dep, json!("test.beta:board"), json!("test.beta:card"), json!([]))), "ok");
+        assert_eq!(reason(kind(&dep, json!("test.beta:board"), json!("editor"), json!(["item"]))), "ok");
+        assert_eq!(reason(kind(&dep, json!("resources"), json!("test.beta:card"), json!([]))), "ok");
+        // Not in `depends`.
+        assert_eq!(reason(kind(&good(), json!("test.beta:board"), json!("editor"), json!([]))), "undeclaredDepend");
+        assert_eq!(reason(kind(&good(), json!("resources"), json!("test.beta:card"), json!([]))), "undeclaredDepend");
+        assert_eq!(reason(kind(&dep, json!("test.gamma:board"), json!("editor"), json!([]))), "undeclaredDepend");
+        // Malformed names.
+        assert_eq!(reason(kind(&dep, json!("test.beta:"), json!("editor"), json!([]))), "badName");
+        assert_eq!(reason(kind(&dep, json!("resources"), json!("Bad Id:card"), json!([]))), "badName");
+        // In another plugin's tree it accepts only its own kinds.
+        assert_eq!(reason(kind(&dep, json!("test.beta:board"), json!("editor"), json!(["test.beta:card"]))), "unknownKind");
+        assert_eq!(reason(kind(&dep, json!("test.beta:board"), json!("editor"), json!(["*"]))), "unknownKind");
+        assert_eq!(reason(kind(&dep, json!("test.beta:board"), json!("editor"), json!(["test.alpha:item"]))), "ok");
+        // Another plugin's page is a permission (`pages`), in the fingerprint; its tree is not.
+        let tmp = tempfile::tempdir().unwrap();
+        let both = load_package(&write(tmp.path(), "test.alpha", "0.1.0", &kind(&dep, json!("test.beta:board"), json!("test.beta:card"), json!([])))).unwrap();
+        let tree_only = load_package(&write(tempfile::tempdir().unwrap().path(), "test.alpha", "0.1.0", &kind(&dep, json!("test.beta:board"), json!("editor"), json!([])))).unwrap();
+        let plain = load_package(&write(tempfile::tempdir().unwrap().path(), "test.alpha", "0.1.0", &dep)).unwrap();
+        assert!(both.permissions().contains("pages:test.beta:card"), "{:?}", both.permissions());
+        assert_eq!(tree_only.permissions(), plain.permissions());
+        assert_ne!(perm_fingerprint(&both.permissions()), perm_fingerprint(&plain.permissions()));
+        let list = both.permission_list(|_| false);
+        let pages = list.iter().find(|x| x.id == "pages").unwrap();
+        assert_eq!(pages.detail, "test.beta:card");
+        assert_eq!(both.tree_ref("test.beta:board"), "test.beta:board");
+        assert_eq!(both.page_ref("test.beta:card"), ("test.beta".to_string(), "card".to_string()));
+        assert_eq!(both.page_ref("editor"), ("test.alpha".to_string(), "editor".to_string()));
+    }
+
+    #[test]
     fn round7_depends_exports_and_requires_plugins() {
         let dep = |v: Value| with(good(), &["depends"], v);
         let ok = dep(json!([{ "id": "test.beta", "version": ">=0.1.0, <0.3.0" }]));
@@ -1295,7 +1450,7 @@ mod tests {
         assert_eq!(reason(exp(json!({ "kinds": [] }))), "ok");
         for bad in [
             json!([]),
-            json!({ "kinds": [], "trees": [] }),
+            json!({ "kinds": [], "outputs": [] }),
             json!({ "kinds": {} }),
             json!({ "kinds": [{ "id": "item", "write": true }] }),
             json!({ "kinds": [{ "id": "other", "read": true }] }),

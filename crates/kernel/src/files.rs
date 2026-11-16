@@ -263,6 +263,102 @@ pub fn write_text_with(
     Ok((p, crate::util::fingerprint(text.as_bytes())))
 }
 
+/// Round 8 (`transfer.download`, `transfer.capture`): a file written next to its target as
+/// `.<name>.part-<random>` in the pinned folder, renamed into place only by `commit`; dropped
+/// before that (failure, timeout, cancellation), the partial file is removed.
+pub struct PartFile {
+    dir: std::os::fd::OwnedFd,
+    name: std::ffi::CString,
+    tmp: std::ffi::CString,
+    /// The target, resolved (for the result and the audit).
+    pub path: PathBuf,
+    file: Option<std::fs::File>,
+    done: bool,
+}
+
+/// Checks `raw` like `writeText` (inside a grant, symlinks resolved, parent exists, not a folder)
+/// and opens the partial file. An existing target without `overwrite` → `conflict/exists`.
+pub fn part_file(grants: &[PathBuf], raw: &str, overwrite: bool) -> KResult<PartFile> {
+    use std::os::fd::{AsRawFd, FromRawFd};
+    let p = resolve(grants, raw)?;
+    if p.is_dir() {
+        return Err(invalid("notFile"));
+    }
+    let dir = p.parent().ok_or_else(|| invalid_params("no parent"))?;
+    let name = p.file_name().map(|n| n.to_string_lossy().into_owned()).ok_or_else(|| invalid_params("no name"))?;
+    let dirfd = open_dir_nofollow(dir).map_err(|_| denied("outsideGrant"))?;
+    let d = dirfd.as_raw_fd();
+    let cname = cstr(&name).map_err(internal)?;
+    // SAFETY: zeroed `stat` is a valid out-parameter; `d` and `cname` are valid.
+    let mut st: libc::stat = unsafe { std::mem::zeroed() };
+    let exists = unsafe { libc::fstatat(d, cname.as_ptr(), &mut st, libc::AT_SYMLINK_NOFOLLOW) } == 0;
+    if exists && !overwrite {
+        return Err(err_p(ErrorCode::Conflict, &[("reason", "exists")]));
+    }
+    if exists && (st.st_mode & libc::S_IFMT) == libc::S_IFDIR {
+        return Err(invalid("notFile"));
+    }
+    let tmp = cstr(&format!(".{name}.part-{}", crate::util::new_id())).map_err(internal)?;
+    // SAFETY: valid descriptor and C string; result checked.
+    let fd = unsafe {
+        libc::openat(d, tmp.as_ptr(), libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL | libc::O_NOFOLLOW | libc::O_CLOEXEC, libc::c_uint::from(0o644u16))
+    };
+    if fd < 0 {
+        return Err(internal(std::io::Error::last_os_error()));
+    }
+    // SAFETY: fresh descriptor we own.
+    let file = unsafe { std::fs::File::from_raw_fd(fd) };
+    Ok(PartFile { dir: dirfd, name: cname, tmp, path: p, file: Some(file), done: false })
+}
+
+impl PartFile {
+    /// The open partial file (taken once, to write to).
+    pub fn take_file(&mut self) -> std::fs::File {
+        self.file.take().expect("taken once")
+    }
+
+    /// Renames the partial file into place. Without `overwrite` a target that appeared meanwhile
+    /// is kept (`conflict/exists`) and the partial file removed.
+    pub fn commit(mut self, overwrite: bool) -> KResult<()> {
+        use std::os::fd::AsRawFd;
+        let d = self.dir.as_raw_fd();
+        // SAFETY: both names are relative to the same pinned folder.
+        let r = unsafe {
+            if overwrite {
+                libc::renameat(d, self.tmp.as_ptr(), d, self.name.as_ptr())
+            } else {
+                libc::renameatx_np(d, self.tmp.as_ptr(), d, self.name.as_ptr(), libc::RENAME_EXCL)
+            }
+        };
+        if r != 0 {
+            let e = std::io::Error::last_os_error();
+            return Err(if e.raw_os_error() == Some(libc::EEXIST) { err_p(ErrorCode::Conflict, &[("reason", "exists")]) } else { internal(e) });
+        }
+        self.done = true;
+        Ok(())
+    }
+}
+
+impl Drop for PartFile {
+    fn drop(&mut self) {
+        if !self.done {
+            use std::os::fd::AsRawFd;
+            // SAFETY: valid descriptor and C string.
+            unsafe { libc::unlinkat(self.dir.as_raw_fd(), self.tmp.as_ptr(), 0) };
+        }
+    }
+}
+
+/// `transfer.upload`'s source: a file inside a grant (resolved like `readText`), and its size.
+pub fn source_file(grants: &[PathBuf], raw: &str) -> KResult<(PathBuf, u64)> {
+    let p = resolve(grants, raw)?;
+    let md = std::fs::metadata(&p).map_err(|_| not_found("path"))?;
+    if !md.is_file() {
+        return Err(invalid("notFile"));
+    }
+    Ok((p, md.len()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

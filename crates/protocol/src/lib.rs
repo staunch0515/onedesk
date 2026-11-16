@@ -619,6 +619,9 @@ pub struct PageContext {
     pub draft: Option<JsonMap>,
     /// Current interface language, e.g. `zh-CN`.
     pub locale: Option<String>,
+    /// Round 8 (D358): current values of the page's `param: true` fields (the same map as
+    /// `RunStartParams.params`); given to `render`, `onEvent` and recompute as `ctx.params`.
+    pub params: Option<BTreeMap<String, String>>,
 }
 
 #[skip_serializing_none]
@@ -1204,6 +1207,9 @@ pub struct RunError {
     /// D318: for a host refusal or failure (`code` = `denied`, `invalid`…), its reason code
     /// (`secretNotAllowed`, `hostNotAllowed`, `blockedByPolicy`…).
     pub reason: Option<String>,
+    /// Round 8 (D360): the refusal's or failure's other params (`program`, `layer`, `host`,
+    /// `name`, `export`…), for the interface to name them in its text.
+    pub params: Option<BTreeMap<String, String>>,
 }
 
 #[skip_serializing_none]
@@ -1318,6 +1324,9 @@ pub struct PageEventResult {
     /// Bind path → new value; applied by the interface to the draft, still unsaved.
     pub changes: Option<JsonMap>,
     pub message: Option<Label>,
+    /// Round 8 (D358): new page parameter values (`param: true` fields), applied by the
+    /// interface to the page state; not part of the draft, never “unsaved”.
+    pub params: Option<BTreeMap<String, String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -1364,7 +1373,8 @@ pub struct PluginSetting {
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct PluginPermission {
-    /// `files`, `network`, `secrets`, `programs`, `resources`, `plugins` (§7.2 `requires`).
+    /// `files`, `network`, `secrets`, `programs`, `resources`, `plugins` (§7.2 `requires`);
+    /// round 8: `pages` (its kinds use other plugins' pages; `detail` lists `<plugin>:<page>`).
     pub id: String,
     /// What the manifest asks for, as text for display (hosts, names…); empty when a plain flag.
     pub detail: String,
@@ -1454,6 +1464,12 @@ pub struct PluginDetail {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub dependents: Option<Vec<String>>,
+    /// Round 8 (D356–D357): full names (`<plugin>:<tree|page>`) of other plugins' trees and pages
+    /// its kinds are declared with that those plugins do not export now; such a kind cannot be
+    /// used. Always present from the kernel (optional only for older peers).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub unmet_exports: Option<Vec<String>>,
 }
 
 /// One entry of a plugin's `depends` (round 7, D343): met when the plugin is installed, enabled
