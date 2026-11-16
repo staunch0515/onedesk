@@ -149,9 +149,10 @@ export async function scan(ctx, roots) {
 }
 
 // Display strings of a manifest: `name` / `description` are locale keys; the package's own locale files give the text.
+// A key without a translation is never shown: the name falls back to the package id, the description stays empty.
 async function describe(ctx, pkg) {
   const m = pkg.manifest;
-  const out = { name: clean(m.name, MAX_NAME) || clean(pkg.id, MAX_NAME), description: clean(m.description, MAX_DESCRIPTION) };
+  const out = { name: clean(pkg.id, MAX_NAME), description: "" };
   const locales = (m.contributes && m.contributes.locales) || {};
   const rel = locales[ctx.locale] || locales["en-US"];
   if (typeof rel !== "string" || rel.startsWith("/") || rel.split("/").includes("..")) return out;
@@ -163,7 +164,7 @@ async function describe(ctx, pkg) {
     if (name) out.name = name;
     if (description) out.description = description;
   } catch (e) {
-    // keep the raw strings
+    // no translation: keep the fallbacks
   }
   return out;
 }

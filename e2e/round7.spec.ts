@@ -263,7 +263,7 @@ test("disabling or removing the note plugin is refused while note-tools is on, a
   expect(r).toMatchObject({ code: "conflict", params: { reason: "dependents", plugins: TOOLS } });
 });
 
-test.fixme("removing the note version through the app is refused (waits for the shell to forward plugin.checkRemove)", async ({ page }) => {
+test("removing the note version through the app is refused and lists note-tools", async ({ page }) => {
   await bare(page);
   const e = await refused(page, "app.removePlugin", { plugin: NOTE_ID, version: "0.1.0" });
   expect(e).toMatchObject({ code: "conflict", params: { reason: "dependents", plugins: TOOLS } });

@@ -71,3 +71,13 @@
 右键菜单只看了协议里的菜单项，没在界面里点；“重新扫描”按钮只在 vitest 里测了事件，没在界面里点；冷却的 30 秒是真实等待。
 
 **外壳的缺口（不是我的文件，没改）**：`pnpm test` 里 `src/workbench/i18n/kernel-texts.test.ts`（“has words for every error reason the kernel gives”）失败，合并后的内核新增了原因码（见上，疑为 `cooldown` 等），外壳文字还没补。
+
+---
+
+# 验收后的三件收尾（V2、V3、fixme）
+
+**结果（本会话实际运行）**：`round7.spec.ts` **15 通过、0 fixme**（devhost 已用合并后的代码重编）；插件 vitest 149 通过；`pnpm lint`、`pnpm typecheck` 通过。
+
+- **V2 已做**：清单的名称键在包自己的语言文件里查不到（或没有语言文件）时，名称显示包的 id，说明留空；不再出现 `plugin.name` / `plugin.description`。`broken` 包因此显示为 `com.example.broken-pack`、说明空、状态“未安装”，仍可选（框架会拒绝）。补了 vitest（无语言文件、路径穿越、键不在语言文件里、非字符串译文）。
+- **fixme 已去掉**：“移除笔记当前版本被拒”在外壳接上 `plugin.checkRemove` 后通过（`conflict/dependents`，列出 note-tools）。
+- **V3 没做，原因**：视图树里能让下拉的值“不进草稿”的只有 `param: true` 字段（值留在标签页里）。但页面事件（`page.event`）的 `context` 只带草稿，不带标签页的参数，市场的“安装”事件就拿不到选中的包；而 `run` 角色的动作才会收到 `params`。改成“安装 = 运行一个动作”能做到不显示“未保存”，但安装请求要变成一次运行（出现运行记录和任务面板、页面不会随运行重算列表），是交互上的大改，所以没擅自改。可选的外壳/协议侧小改：(a) 事件的 `context` 里带上标签页的 `params`，市场改用 `param: true`；(b) 外壳对“没有 save 角色动作的页面”不显示“未保存”。任一个做了，市场这边只需改一行（字段加 `param: true`、读 `ctx.params`），请协调会话决定。
