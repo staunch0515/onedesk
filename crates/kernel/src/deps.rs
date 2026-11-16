@@ -8,7 +8,7 @@ use onedesk_protocol::*;
 use serde_json::Value;
 
 use crate::kernel::Inner;
-use crate::manifest::{foreign_kinds, ExportKind, Plugin, Registry};
+use crate::manifest::{foreign_kinds, is_foreign, ExportKind, KindDecl, Plugin, Registry};
 use crate::pipeline::{Actor, Command};
 use crate::util::*;
 
@@ -244,10 +244,87 @@ impl Inner {
         out
     }
 
+    /// D357: on a borrowed page, the kind's own plugin's actions whose `kinds` name the kind.
+    pub fn own_kind_actions(&self, p: &Plugin, kind: &str) -> Vec<ActionDecl> {
+        p.manifest
+            .contributes
+            .actions
+            .iter()
+            .filter(|a| a.kinds.iter().flatten().any(|k| p.kind_ref(k) == kind))
+            .map(|a| ActionDecl {
+                id: p.full(&a.id),
+                label: p.label(&a.label),
+                icon: a.icon.clone(),
+                primary: None,
+                danger: None,
+                shortcut: None,
+                role: ActionRole::Run,
+                disabled: None,
+                action: Some(p.full(&a.id)),
+                confirm: a.confirm.as_deref().map(|k| p.label(k)),
+            })
+            .collect()
+    }
+
     /// Kinds of other plugins a dependent's actions name that take no actions now (shown on its
     /// page; review #13: judged by `actions`, which is what makes them appear).
     pub fn unexported_kinds(&self, p: &Plugin) -> Vec<String> {
         foreign_kinds(&p.manifest).into_iter().filter(|k| self.export_of(k).is_none_or(|e| !e.actions)).collect()
+    }
+}
+
+impl Inner {
+    /* ---------------------------------------------------------------- trees and pages (round 8) */
+
+    /// Whether the active version of the plugin a full name belongs to exports that tree / page.
+    fn exports_ref(&self, full: &str, tree: bool) -> bool {
+        let Some((owner, short)) = Registry::split(full) else { return false };
+        self.active_of(owner, None)
+            .is_some_and(|a| if tree { &a.manifest.exported_trees } else { &a.manifest.exported_pages }.iter().any(|x| x == short))
+    }
+
+    /// D356–D357: the other plugins' trees and pages a kind is declared with that they do not
+    /// export now (full names). Not empty = the kind cannot be used.
+    pub fn kind_unmet(&self, p: &Plugin, k: &KindDecl) -> Vec<String> {
+        let mut out = Vec::new();
+        for (name, tree) in [(k.tree.as_deref(), true), (k.page.as_deref(), false)] {
+            if let Some(n) = name.filter(|n| is_foreign(&p.manifest, n)) {
+                if !self.exports_ref(n, tree) {
+                    out.push(n.to_string());
+                }
+            }
+        }
+        out
+    }
+
+    /// `PluginDetail.unmetExports` of a plugin version.
+    pub fn unmet_exports(&self, p: &Plugin) -> Vec<String> {
+        let mut out: Vec<String> = p.manifest.contributes.kinds.iter().flat_map(|k| self.kind_unmet(p, k)).collect();
+        out.sort();
+        out.dedup();
+        out
+    }
+
+    /// A kind (full name, active version) that may be used now: `denied/notExported` (with
+    /// `export`) when a tree or page it is declared with is not exported.
+    pub fn kind_usable(&self, kind: &str) -> KResult<()> {
+        match self.registry.kind(kind).and_then(|(p, k)| self.kind_unmet(p, k).into_iter().next()) {
+            Some(x) => Err(err_p(ErrorCode::Denied, &[("reason", "notExported"), ("export", &x)])),
+            None => Ok(()),
+        }
+    }
+
+    /// The plugin whose page draws a kind (round 8: another plugin's, when the kind borrows it):
+    /// that plugin's active version and the page's short name. `None`: no page, or the page's
+    /// plugin is not there.
+    pub fn page_plugin(&self, p: &'static Plugin, page: &str) -> Option<(&'static Plugin, String)> {
+        let (owner, short) = p.page_ref(page);
+        if owner == p.id {
+            return Some((p, short));
+        }
+        let o = self.active_of(&owner, None)?;
+        o.page(&short)?;
+        Some((o, short))
     }
 }
 

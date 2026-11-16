@@ -161,6 +161,8 @@ impl Inner {
                 if !self.plugin_enabled(&owner.id) {
                     return Err(denied("pluginDisabled"));
                 }
+                // D356: not while a tree or page the kind borrows is not exported.
+                self.kind_usable(kind)?;
                 let parent = match &c.node_key {
                     Some(k) => self.read(|conn| store::get(conn, k))?.filter(|r| r.kind == KIND_GROUP).map(|r| r.id),
                     None => None,

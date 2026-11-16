@@ -230,6 +230,14 @@ fn actions(p: &Plugin, page: &str) -> Vec<ActionDecl> {
         .unwrap_or_default()
 }
 
+/// D357: a page drawn for another plugin's kind: of its own items only `save` and `event` (its
+/// actions do not apply to that kind), and no `view` result tabs (D351: a dependent's run results
+/// are not handed to the page's code).
+fn borrowed_frame(d: &mut PageDescriptor) {
+    d.actions.retain(|a| matches!(a.role, ActionRole::Save | ActionRole::Event));
+    d.result_tabs.retain(|t| t.tab_type != ResultTabType::View);
+}
+
 /// Manifest page settings the frame needs (D284): actions, result tabs, recompute, environment use.
 fn page_frame(d: &mut PageDescriptor, p: &Plugin, page: &str) {
     d.actions = actions(p, page);
@@ -280,7 +288,9 @@ impl Inner {
     pub fn kind_writable(&self, kind: &str) -> KResult<()> {
         match self.registry.kind(kind) {
             Some((p, _)) if !self.plugin_enabled(&p.id) => Err(denied("pluginDisabled")),
-            _ => Ok(()),
+            // D356: a kind whose borrowed tree or page is not exported is not usable.
+            Some(_) => self.kind_usable(kind),
+            None => Ok(()),
         }
     }
 
@@ -366,10 +376,23 @@ impl Inner {
             d.read_only = true;
             return Ok(d);
         }
+        let declared = self.registry.kind_at(&r.kind, r.plugin_version.as_deref()).and_then(|(_, k)| k.page.clone()).unwrap_or(page);
+        // D357: a borrowed page is drawn by its plugin's code.
+        let Some((drawer, page)) = self.page_plugin(plugin, &declared) else {
+            d.read_only = true;
+            return Ok(d);
+        };
+        let borrowed = drawer.id != plugin.id;
         let secret_fields = self.secret_fields(&r.kind, r.plugin_version.as_deref());
         let draft = strip(cx.draft.clone(), &secret_fields);
-        let ctx = json!({ "target": target, "resource": self.resource(r)?, "draft": draft, "locale": cx.locale, "envId": cx.env_id, "params": ctx_params(cx) });
-        let out = self.render(plugin, &page, ctx, client).await?;
+        let mut resource = serde_json::to_value(self.resource(r)?).map_err(internal)?;
+        if borrowed {
+            // Read only, and never the kind's secret fields (as a dependent reading it, §7.3).
+            resource = crate::deps::without_secrets(resource, &secret_fields);
+            resource["readOnly"] = json!(true);
+        }
+        let ctx = json!({ "target": target, "resource": resource, "draft": draft, "locale": cx.locale, "envId": cx.env_id, "params": ctx_params(cx) });
+        let out = self.render(drawer, &page, ctx, client).await?;
         d.values = binds(&out.view).into_iter().filter_map(|b| store::value_at(r, &b).map(|v| (b, v))).collect();
         // D306: for a secret field the page learns only whether a value is saved.
         for f in &secret_fields {
@@ -377,7 +400,12 @@ impl Inner {
                 *v = Value::Bool(v.get("secret").and_then(Value::as_str).is_some());
             }
         }
-        page_frame(&mut d, plugin, &page);
+        page_frame(&mut d, drawer, &page);
+        if borrowed {
+            borrowed_frame(&mut d);
+            // Then the kind's own plugin's actions for this kind (they run as that plugin).
+            d.actions.extend(self.own_kind_actions(plugin, &r.kind));
+        }
         // Round 7 (§7.3): actions plugins depending on this one add to its kind, after its own.
         d.actions.extend(self.dependent_actions(&r.kind));
         d.view = out.view;
@@ -421,7 +449,11 @@ impl Inner {
             values: values.clone(),
             ..blank(target)
         };
-        let Some((plugin, page)) = run.resource_kind.as_deref().and_then(|k| self.registry.kind(k)).and_then(|(p, k)| Some((p, k.page.clone()?)))
+        let Some((plugin, page)) = run
+            .resource_kind
+            .as_deref()
+            .and_then(|k| self.registry.kind(k))
+            .and_then(|(p, k)| self.page_plugin(p, k.page.as_deref()?))
         else {
             return Ok(d);
         };
@@ -483,10 +515,13 @@ impl Inner {
         client: Option<String>,
     ) -> KResult<PageDescriptor> {
         let Some((plugin, decl)) = self.registry.kind(kind) else { return Ok(missing(target)) };
-        if !self.plugin_enabled(&plugin.id) {
+        // D356: a kind whose borrowed tree or page is not exported cannot be created.
+        if !self.plugin_enabled(&plugin.id) || self.kind_usable(kind).is_err() {
             return Ok(PageDescriptor { state: NodeState::Disabled, read_only: true, ..missing(target) });
         }
-        let Some(page) = decl.page.clone() else { return Ok(missing(target)) };
+        let Some(declared) = decl.page.clone() else { return Ok(missing(target)) };
+        let Some((drawer, page)) = self.page_plugin(plugin, &declared) else { return Ok(missing(target)) };
+        let borrowed = drawer.id != plugin.id;
         let name = decl.new_name.as_deref().map(|k| plugin.text(k, cx.locale.as_deref())).unwrap_or_default();
         let draft_row = Row {
             id: String::new(),
@@ -517,9 +552,15 @@ impl Inner {
             None => vec![],
         };
         breadcrumb.push(Crumb { label: name.clone(), icon: Some(decl.icon.clone()), tree: None, key: None, target: None });
-        let resource = self.resource(&draft_row)?;
-        let ctx = json!({ "target": target, "resource": resource, "draft": cx.draft, "locale": cx.locale, "envId": cx.env_id, "params": ctx_params(cx) });
-        let out = self.render(plugin, &page, ctx, client).await?;
+        let mut resource = serde_json::to_value(self.resource(&draft_row)?).map_err(internal)?;
+        let secret_fields = self.secret_fields(kind, Some(&plugin.version));
+        if borrowed {
+            resource = crate::deps::without_secrets(resource, &secret_fields);
+            resource["readOnly"] = json!(true);
+        }
+        let draft = if borrowed { strip(cx.draft.clone(), &secret_fields) } else { cx.draft.clone() };
+        let ctx = json!({ "target": target, "resource": resource, "draft": draft, "locale": cx.locale, "envId": cx.env_id, "params": ctx_params(cx) });
+        let out = self.render(drawer, &page, ctx, client).await?;
         let values = binds(&out.view).into_iter().filter_map(|b| store::value_at(&draft_row, &b).map(|v| (b, v))).collect();
         let mut d = PageDescriptor {
             title: name,
@@ -532,7 +573,11 @@ impl Inner {
             ..blank(target)
         };
         // K-R1: an unsaved page can run, so it has the same frame (result tabs…) as a saved one.
-        page_frame(&mut d, plugin, &page);
+        page_frame(&mut d, drawer, &page);
+        if borrowed {
+            borrowed_frame(&mut d);
+            d.actions.extend(self.own_kind_actions(plugin, kind));
+        }
         Ok(d)
     }
 

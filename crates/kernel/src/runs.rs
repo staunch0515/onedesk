@@ -579,7 +579,8 @@ impl Inner {
     /// The plugin and page that draw a run (its resource kind's page).
     fn run_page(&self, r: &RunRow) -> Option<(&Plugin, String)> {
         let (p, k) = self.registry.kind(r.resource_kind.as_deref()?)?;
-        Some((p, k.page.clone()?))
+        // D357: a borrowed page's plugin (whose code never sees another plugin's run, D351).
+        self.page_plugin(p, k.page.as_deref()?)
     }
 
     async fn run_render(&self, id: &str, tab: &str, locale: Option<String>, client: Option<String>) -> KResult<Vec<ViewNode>> {
@@ -678,13 +679,26 @@ impl Inner {
             Target::Resource(id) => {
                 let r = self.live_row(&id)?;
                 let (p, k) = self.registry.kind_at(&r.kind, r.plugin_version.as_deref()).ok_or_else(|| not_found("page"))?;
-                let page = k.page.clone().ok_or_else(|| not_found("page"))?;
-                Ok((p, page, json!({ "target": target, "resource": self.resource(&r)? })))
+                let declared = k.page.clone().ok_or_else(|| not_found("page"))?;
+                // D357: a borrowed page's events go to its plugin, which reads the resource only
+                // (without secret fields) and cannot write it.
+                let (drawer, page) = self.page_plugin(p, &declared).ok_or_else(|| not_found("page"))?;
+                let mut resource = serde_json::to_value(self.resource(&r)?).map_err(internal)?;
+                if drawer.id != p.id {
+                    self.kind_usable(&r.kind)?;
+                    resource = crate::deps::without_secrets(resource, &self.secret_fields(&r.kind, r.plugin_version.as_deref()));
+                    resource["readOnly"] = json!(true);
+                }
+                Ok((drawer, page, json!({ "target": target, "resource": resource })))
             }
             Target::New { kind, .. } => {
                 let (p, k) = self.registry.kind(&kind).ok_or_else(|| not_found("page"))?;
-                let page = k.page.clone().ok_or_else(|| not_found("page"))?;
-                Ok((p, page, json!({ "target": target })))
+                let declared = k.page.clone().ok_or_else(|| not_found("page"))?;
+                let (drawer, page) = self.page_plugin(p, &declared).ok_or_else(|| not_found("page"))?;
+                if drawer.id != p.id {
+                    self.kind_usable(&kind)?;
+                }
+                Ok((drawer, page, json!({ "target": target })))
             }
             Target::Node { tree, key } => {
                 let (p, t) = self.registry.tree(&tree).ok_or_else(|| not_found("page"))?;
@@ -776,6 +790,7 @@ impl Inner {
                 switch_failure: None,
                 depends: Some(vec![]),
                 dependents: Some(vec![]),
+                unmet_exports: Some(vec![]),
             }));
         };
         let m = &p.manifest;
@@ -853,6 +868,7 @@ impl Inner {
             switch_failure: self.switch_failure(id),
             depends: Some(self.dependency_rows(p)),
             dependents: Some(self.dependents_of(id)),
+            unmet_exports: Some(self.unmet_exports(p)),
         }))
     }
 

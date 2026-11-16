@@ -1373,7 +1373,8 @@ pub struct PluginSetting {
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct PluginPermission {
-    /// `files`, `network`, `secrets`, `programs`, `resources`, `plugins` (§7.2 `requires`).
+    /// `files`, `network`, `secrets`, `programs`, `resources`, `plugins` (§7.2 `requires`);
+    /// round 8: `pages` (its kinds use other plugins' pages; `detail` lists `<plugin>:<page>`).
     pub id: String,
     /// What the manifest asks for, as text for display (hosts, names…); empty when a plain flag.
     pub detail: String,
@@ -1463,6 +1464,12 @@ pub struct PluginDetail {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub dependents: Option<Vec<String>>,
+    /// Round 8 (D356–D357): full names (`<plugin>:<tree|page>`) of other plugins' trees and pages
+    /// its kinds are declared with that those plugins do not export now; such a kind cannot be
+    /// used. Always present from the kernel (optional only for older peers).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub unmet_exports: Option<Vec<String>>,
 }
 
 /// One entry of a plugin's `depends` (round 7, D343): met when the plugin is installed, enabled

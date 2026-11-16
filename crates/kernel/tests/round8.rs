@@ -721,3 +721,247 @@ async fn waiting_for_transfers_and_programs_does_not_use_the_budget() {
         let _ = std::fs::remove_file(t.grant.join("late.txt"));
     }
 }
+
+/* ------------------------------------------------------------------ §4 exports.trees / exports.pages (D356–D357) */
+
+const BOARD_MAIN: &str = r#"
+export default { activate(host) {
+  host.commands.handle("probe", probe);
+  host.pages.handle("card", {
+    async render(ctx) {
+      const r = ctx.resource || {};
+      let get = null, upd = null;
+      if (r.id) {
+        const g = await tryIt(() => ctx.host.resources.get(r.id));
+        get = g.ok ? Object.keys(g.ok.body).sort() : g;
+        upd = await tryIt(() => ctx.host.resources.update(r.id, { name: "by owner" }));
+      }
+      return { view: [
+        { type: "form", id: "f", layout: "stack", fields: [{ name: "text", label: "Text", kind: "text", bind: "body.text" }] },
+        { type: "text", id: "info", text: JSON.stringify({ kind: r.kind, readOnly: r.readOnly || false, keys: Object.keys(r.body || {}).sort(), get, upd }) },
+      ] };
+    },
+    async onEvent(ctx, e) {
+      const r = ctx.resource || {};
+      const upd = await tryIt(() => ctx.host.resources.update(r.id, { name: "by owner" }));
+      const del = await tryIt(() => ctx.host.resources.remove(r.id));
+      return { changes: { "body.text": "from event" }, message: JSON.stringify({ upd, del, kind: r.kind, keys: Object.keys(r.body || {}).sort() }) };
+    },
+    async renderResultTab(ctx) { return [{ type: "text", id: "v", text: "owner view" }]; },
+  });
+  host.actions.handle("go", async () => text("board go"));
+  host.actions.handle("peek", async (ctx) => text(await tryIt(() => ctx.host.resources.list({ kind: "t.extra:memo" }))));
+} };
+"#;
+
+fn board_manifest(exports: bool) -> Value {
+    let mut m = json!({
+        "contributes": {
+            "trees": [{ "id": "board", "label": "Board", "icon": "layout", "source": "stored" }],
+            "kinds": [{ "id": "card", "label": "Card", "icon": "square", "tree": "board", "page": "card", "newName": "card",
+                        "accepts": ["t.extra:memo"] }],
+            "pages": [{ "id": "card",
+                        "actions": [{ "id": "save", "role": "save", "label": "Save" }, { "id": "ev", "role": "event", "label": "Ev" },
+                                    { "id": "go", "role": "run", "label": "Go", "action": "go" }],
+                        "resultTabs": [{ "id": "out", "type": "output", "label": "Out" }, { "id": "v", "type": "view", "label": "V" }] }],
+            "actions": [{ "id": "go", "label": "Go", "output": "text", "kinds": ["card"] }, { "id": "peek", "label": "Peek", "output": "text" }],
+            "menus": { "new": ["card"] },
+            "commands": [{ "id": "probe", "label": "probe" }]
+        }
+    });
+    if exports {
+        m["exports"] = json!({ "trees": [{ "id": "board" }], "pages": [{ "id": "card" }] });
+    }
+    m
+}
+
+const EXTRA_MAIN: &str = r#"
+export default { activate(host) {
+  host.commands.handle("probe", probe);
+  host.actions.handle("tidy", async (ctx) => text({ text: ctx.resource.body.text, token: ctx.resource.body.token || null }));
+} };
+"#;
+
+fn extra_manifest() -> Value {
+    json!({
+        "depends": [{ "id": "t.board", "version": "*" }],
+        "contributes": {
+            "kinds": [{ "id": "memo", "label": "Memo", "icon": "sticky-note", "tree": "t.board:board", "page": "t.board:card",
+                        "newName": "memo", "fields": { "token": { "type": "secret" } } }],
+            "actions": [{ "id": "tidy", "label": "Tidy", "output": "text", "kinds": ["memo"] }],
+            "menus": { "new": ["memo"] },
+            "commands": [{ "id": "probe", "label": "probe" }]
+        }
+    })
+}
+
+async fn board_menu(c: &Client) -> Vec<String> {
+    let trees = c.ok("tree.list", json!({})).await;
+    let t = trees.as_array().unwrap().iter().find(|t| t["id"] == "t.board:board").unwrap_or_else(|| panic!("{trees}")).clone();
+    t["menu"].as_array().unwrap().iter().filter_map(|m| m["id"].as_str().map(String::from)).collect()
+}
+
+async fn save_new(c: &Client, target: &str, changes: Value) -> Result<String, ProtocolError> {
+    c.call("page.save", json!({ "target": target, "changes": changes }))
+        .await
+        .map(|v| v["page"]["resourceId"].as_str().unwrap_or_else(|| panic!("{v}")).to_string())
+}
+
+fn info(page: &Value) -> Value {
+    let t = page["view"].as_array().unwrap().iter().find(|n| n["id"] == "info").unwrap_or_else(|| panic!("{page}"));
+    serde_json::from_str(t["text"].as_str().unwrap()).unwrap()
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_dependents_kind_lives_in_the_owners_tree_and_uses_its_page() {
+    let w = world(|r| {
+        pkg(r, "t.board", "0.1.0", board_manifest(true), BOARD_MAIN);
+        pkg(r, "t.extra", "0.1.0", extra_manifest(), EXTRA_MAIN);
+    })
+    .await;
+    let c = &w.c;
+    // "New" of the owner's tree offers the dependent's kind.
+    let menu = board_menu(c).await;
+    assert!(menu.contains(&"new:t.board:card".to_string()) && menu.contains(&"new:t.extra:memo".to_string()), "{menu:?}");
+    let d = detail(c, "t.extra").await;
+    assert_eq!(d["unmetExports"], json!([]));
+    // Using another plugin's page is a permission; its tree is not.
+    let perms = d["permissions"].as_array().unwrap();
+    assert!(perms.iter().any(|p| p["id"] == "pages" && p["detail"] == "t.board:card"), "{perms:?}");
+    assert!(!perms.iter().any(|p| p["detail"].as_str().unwrap_or("").contains("t.board:board")), "{perms:?}");
+
+    // Created at the root and in a group of that tree; saved by the frame with the memo's fields.
+    let memo = save_new(c, "new:t.extra:memo", json!({ "body.text": "hi", "body.token": "Memo-Secret-1" })).await.unwrap();
+    let r = c.ok("resource.get", json!({ "id": memo })).await;
+    assert_eq!((r["tree"].as_str(), r["kind"].as_str()), (Some("t.board:board"), Some("t.extra:memo")), "{r}");
+    assert!(r["body"]["token"].get("secret").is_some(), "the secret field went to the key store: {r}");
+    let g = c.ok("tree.createGroup", json!({ "tree": "t.board:board", "name": "G" })).await["key"].as_str().unwrap().to_string();
+    let eff = c.ok("command.execute", json!({ "id": "new:t.extra:memo", "context": { "tree": "t.board:board", "nodeKey": g } })).await;
+    assert_eq!(eff[0]["target"], format!("new:t.extra:memo?parent={g}"));
+    let in_group = save_new(c, &format!("new:t.extra:memo?parent={g}"), json!({ "body.text": "g" })).await.unwrap();
+    assert_eq!(c.ok("resource.get", json!({ "id": in_group })).await["parentId"], g);
+    // Moving: under the owner's card (it accepts memos), not under a memo (it accepts nothing).
+    let card = save_new(c, "new:t.board:card", json!({ "body.text": "card" })).await.unwrap();
+    c.ok("tree.move", json!({ "tree": "t.board:board", "key": in_group, "target": card, "position": "inside" })).await;
+    assert_eq!(c.ok("resource.get", json!({ "id": in_group })).await["parentId"], card);
+    let e = c.call("tree.move", json!({ "tree": "t.board:board", "key": card, "target": memo, "position": "inside" })).await.unwrap_err();
+    assert_eq!(reason(&e), (ErrorCode::Invalid, Some("notAccepted")));
+    let e = c.call("tree.move", json!({ "tree": "resources", "key": memo, "position": "inside" })).await.unwrap_err();
+    assert_ne!(e.code, ErrorCode::Internal, "{e:?}");
+
+    // The owner's page draws it: read only, no secret fields; the owner may get it, not write it.
+    let p = c.ok("page.resolve", json!({ "target": format!("resource:{memo}") })).await;
+    let i = info(&p);
+    assert_eq!((i["kind"].as_str(), i["readOnly"].as_bool(), i["keys"].clone()), (Some("t.extra:memo"), Some(true), json!(["text"])), "{i}");
+    assert_eq!(i["get"], json!(["text"]), "{i}");
+    assert_eq!((i["upd"]["error"].as_str(), i["upd"]["params"]["reason"].as_str()), (Some("denied"), Some("foreignKind")), "{i}");
+    assert_eq!(p["values"]["body.text"], "hi");
+    // Frame: the page's save / event items, then the memo plugin's own actions; no run items,
+    // no `view` result tab.
+    let ids: Vec<&str> = p["actions"].as_array().unwrap().iter().map(|a| a["id"].as_str().unwrap()).collect();
+    assert_eq!(ids, ["save", "ev", "t.extra:tidy"], "{p}");
+    let tabs: Vec<&str> = p["resultTabs"].as_array().unwrap().iter().map(|t| t["id"].as_str().unwrap()).collect();
+    assert_eq!(tabs, ["out"]);
+    // The owner's own card keeps its whole frame.
+    let p = c.ok("page.resolve", json!({ "target": format!("resource:{card}") })).await;
+    let ids: Vec<&str> = p["actions"].as_array().unwrap().iter().map(|a| a["id"].as_str().unwrap()).collect();
+    assert_eq!(ids, ["save", "ev", "go"]);
+    // The new page too.
+    let p = c.ok("page.resolve", json!({ "target": "new:t.extra:memo" })).await;
+    assert_eq!(info(&p)["kind"], "t.extra:memo");
+    let ids: Vec<&str> = p["actions"].as_array().unwrap().iter().map(|a| a["id"].as_str().unwrap()).collect();
+    assert_eq!(ids, ["save", "ev", "t.extra:tidy"]);
+
+    // Page events run as the owner: it cannot write or remove the memo; changes come back unsaved.
+    let e = c.ok("page.event", json!({ "target": format!("resource:{memo}"), "event": "ev", "context": { "draft": {} } })).await;
+    let m: Value = serde_json::from_str(e["message"].as_str().unwrap()).unwrap();
+    assert_eq!((m["upd"]["params"]["reason"].as_str(), m["del"]["params"]["reason"].as_str()), (Some("foreignKind"), Some("foreignKind")), "{m}");
+    assert_eq!(m["keys"], json!(["text"]));
+    assert_eq!(e["changes"], json!({ "body.text": "from event" }));
+    // The user saves through the frame.
+    c.ok("page.save", json!({ "target": format!("resource:{memo}"), "changes": { "body.text": "edited" } })).await;
+    assert_eq!(c.ok("resource.get", json!({ "id": memo })).await["body"]["text"], "edited");
+    let memo_updates: Vec<String> = audit(&w.env, "resource.update").into_iter().filter(|a| a.1 == memo).map(|a| a.0).collect();
+    assert!(!memo_updates.is_empty() && memo_updates.iter().all(|a| a == "user"), "only the user wrote the memo: {memo_updates:?}");
+
+    // Outside its page the owner reads nothing of it.
+    let r = c.probe("t.board", "resources.get", json!([memo])).await;
+    assert_eq!(r["params"]["reason"], "foreignKind", "{r}");
+    let r = out(&run(c, "t.board:peek", json!({})).await);
+    assert_eq!(r["params"]["reason"], "foreignKind", "{r}");
+
+    // The memo plugin's action runs as itself on its resource; its run has no owner `view` tab.
+    let id = c
+        .ok("run.start", json!({ "action": "t.extra:tidy", "resourceId": memo, "target": format!("resource:{memo}"), "tabId": "t", "input": {} }))
+        .await;
+    let r = wait_run(c, &id).await;
+    assert_eq!(out(&r)["text"], "edited", "{r}");
+    assert_eq!(r["action"], "t.extra:tidy");
+    let p = c.ok("page.resolve", json!({ "target": format!("run:{}", id.as_str().unwrap()) })).await;
+    let tabs: Vec<&str> = p["resultTabs"].as_array().unwrap().iter().map(|t| t["id"].as_str().unwrap()).collect();
+    assert_eq!(tabs, ["out"], "{p}");
+    assert_eq!(info(&p)["kind"], "t.extra:memo");
+    let e = c.call("run.render", json!({ "id": id, "tabId": "v" })).await.unwrap_err();
+    assert_eq!(e.code, ErrorCode::NotFound);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn an_unexported_tree_or_page_makes_the_kind_unusable_until_it_is_exported() {
+    let w = world(|r| {
+        // The newest version (active) exports nothing; 0.1.0 exports both.
+        pkg(r, "t.board", "0.1.0", board_manifest(true), BOARD_MAIN);
+        pkg(r, "t.board", "0.2.0", board_manifest(false), BOARD_MAIN);
+        pkg(r, "t.extra", "0.1.0", extra_manifest(), EXTRA_MAIN);
+    })
+    .await;
+    let c = &w.c;
+    let d = detail(c, "t.extra").await;
+    assert_eq!(d["versions"].as_array().unwrap().len(), 1);
+    assert_eq!(detail(c, "t.board").await["versions"].as_array().unwrap().iter().find(|v| v["active"] == true).unwrap()["version"], "0.2.0");
+    // The plugin works; only the kind is unusable.
+    assert_eq!(d["load"]["state"], "loaded", "{d}");
+    assert_eq!(d["unmetExports"], json!(["t.board:board", "t.board:card"]));
+    assert!(!board_menu(c).await.contains(&"new:t.extra:memo".to_string()));
+    let e = save_new(c, "new:t.extra:memo", json!({ "body.text": "x" })).await.unwrap_err();
+    assert_eq!((reason(&e), e.params.get("export").map(String::as_str)), ((ErrorCode::Denied, Some("notExported")), Some("t.board:board")), "{e:?}");
+    let e = c.call("command.execute", json!({ "id": "new:t.extra:memo", "context": { "tree": "t.board:board" } })).await.unwrap_err();
+    assert_eq!(reason(&e), (ErrorCode::Denied, Some("notExported")));
+    let r = c.probe("t.extra", "resources.create", json!([{ "kind": "memo", "name": "x" }])).await;
+    assert_eq!((r["params"]["reason"].as_str(), r["params"]["export"].as_str()), (Some("notExported"), Some("t.board:board")), "{r}");
+    let p = c.ok("page.resolve", json!({ "target": "new:t.extra:memo" })).await;
+    assert_eq!((p["state"].as_str(), p["readOnly"].as_bool()), (Some("disabled"), Some(true)), "{p}");
+
+    // The owner switches to the version that exports them: usable again by itself.
+    c.ok("plugin.activateVersion", json!({ "plugin": "t.board", "version": "0.1.0" })).await;
+    assert_eq!(detail(c, "t.extra").await["unmetExports"], json!([]));
+    assert!(board_menu(c).await.contains(&"new:t.extra:memo".to_string()));
+    let memo = save_new(c, "new:t.extra:memo", json!({ "body.text": "kept" })).await.unwrap();
+    // And back: the existing memo is shown like a disabled plugin's resource, its data kept.
+    c.ok("plugin.activateVersion", json!({ "plugin": "t.board", "version": "0.2.0" })).await;
+    let p = c.ok("page.resolve", json!({ "target": format!("resource:{memo}") })).await;
+    assert_eq!((p["state"].as_str(), p["readOnly"].as_bool()), (Some("disabled"), Some(true)), "{p}");
+    let nodes = c.ok("tree.children", json!({ "tree": "t.board:board" })).await;
+    let node = nodes["nodes"].as_array().unwrap().iter().find(|n| n["key"] == memo.as_str()).unwrap().clone();
+    assert_eq!(node["state"], "disabled", "{node}");
+    let e = c.call("page.save", json!({ "target": format!("resource:{memo}"), "changes": { "body.text": "no" } })).await.unwrap_err();
+    assert_eq!(reason(&e), (ErrorCode::Denied, Some("notExported")));
+    let e = c.call("page.event", json!({ "target": format!("resource:{memo}"), "event": "ev" })).await.unwrap_err();
+    assert_eq!(reason(&e), (ErrorCode::Denied, Some("notExported")), "{e:?}");
+    assert_eq!(c.ok("resource.get", json!({ "id": memo })).await["body"]["text"], "kept");
+    c.ok("plugin.activateVersion", json!({ "plugin": "t.board", "version": "0.1.0" })).await;
+    let p = c.ok("page.resolve", json!({ "target": format!("resource:{memo}") })).await;
+    assert_eq!(p["state"], "ok", "{p}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_full_name_without_depends_does_not_load() {
+    let w = world(|r| {
+        pkg(r, "t.board", "0.1.0", board_manifest(true), BOARD_MAIN);
+        let mut m = extra_manifest();
+        m.as_object_mut().unwrap().remove("depends");
+        pkg(r, "t.extra", "0.1.0", m, EXTRA_MAIN);
+    })
+    .await;
+    let d = detail(&w.c, "t.extra").await;
+    assert_eq!((d["load"]["state"].as_str(), d["load"]["message"].as_str()), (Some("error"), Some("undeclaredDepend")), "{d}");
+}

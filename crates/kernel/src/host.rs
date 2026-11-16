@@ -8,7 +8,7 @@ use onedesk_protocol::*;
 use serde_json::{json, Value};
 
 use crate::kernel::Inner;
-use crate::manifest::Plugin;
+use crate::manifest::{Plugin, Registry};
 use crate::pipeline::{Changes, Command, MoveDest, NewResource};
 use crate::sandbox::{CallInfo, HostApi, HostFuture};
 use crate::store;
@@ -154,6 +154,9 @@ impl Inner {
                     Some(r) if self.own_kind(plugin, &r.kind).is_ok() => serde_json::to_value(self.resource(&r)?).map_err(internal),
                     // Round 7 (§7.3): another plugin's kind it depends on and that is exported for reading.
                     Some(r) if self.export_allows(plugin, &r.kind, true) => self.foreign_resource(&r),
+                    // Round 8 (D357): the resource its page is drawing or handling an event for,
+                    // when that resource's kind borrows its page.
+                    Some(r) if info.resource_id.as_deref() == Some(id.as_str()) && self.draws_page_of(plugin, &r) => self.foreign_resource(&r),
                     Some(_) => Err(denied("foreignKind")),
                     None => Ok(Value::Null),
                 }
@@ -185,6 +188,8 @@ impl Inner {
                 let spec = arg(args, 0);
                 let kind = spec.get("kind").and_then(Value::as_str).ok_or_else(|| invalid_params("kind"))?;
                 let kind = self.own_kind(plugin, kind)?;
+                // D356: not while a tree or page the kind borrows is not exported.
+                self.kind_usable(&kind)?;
                 let decl = self.registry.kind(&kind).map(|(_, d)| d.clone()).ok_or_else(|| not_found("kind"))?;
                 let name = spec
                     .get("name")
@@ -248,6 +253,14 @@ impl Inner {
             }
             _ => Err(err_p(ErrorCode::UnknownMethod, &[("method", &format!("resources.{op}"))])),
         }
+    }
+
+    /// Whether `plugin`'s page draws resources like `r` (another plugin's kind borrowing it, D357).
+    fn draws_page_of(&self, plugin: &Plugin, r: &store::Row) -> bool {
+        self.registry
+            .kind_at(&r.kind, r.plugin_version.as_deref())
+            .and_then(|(p, k)| Some(p.page_ref(k.page.as_deref()?)))
+            .is_some_and(|(owner, _)| owner == plugin.id && Registry::split(&r.kind).is_some_and(|(kp, _)| kp != plugin.id))
     }
 
     /// Another plugin's resource as a dependent reads it: without the kind's secret fields.
