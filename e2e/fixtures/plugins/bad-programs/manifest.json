@@ -1,0 +1,20 @@
+{
+  "id": "com.example.bad-programs",
+  "version": "0.1.0",
+  "apiVersion": "2",
+  "name": "plugin.name",
+  "description": "plugin.description",
+  "icon": "terminal",
+  "main": "main.js",
+  "author": "OneDesk",
+  "license": "MIT",
+  "requires": {
+    "files": false,
+    "programs": [
+      { "name": "echo", "source": "system", "path": "bin/echo.sh" }
+    ]
+  },
+  "contributes": {
+    "locales": { "en-US": "locales/en-US.json" }
+  }
+}

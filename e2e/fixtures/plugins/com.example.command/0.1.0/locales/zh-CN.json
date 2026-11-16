@@ -1,0 +1,22 @@
+{
+  "plugin.name": "命令",
+  "plugin.description": "运行一个外部程序并边跑边显示输出。外部程序接口的示例插件。",
+  "kind.command": "命令",
+  "kind.command.new": "未命名命令",
+  "action.run": "运行",
+  "action.save": "保存",
+  "action.saveRun": "保存并运行",
+  "tab.result": "输出",
+  "tab.history": "历史",
+  "field.program": "程序",
+  "field.args": "参数（每行一个）",
+  "field.args.placeholder": "每行一个参数",
+  "field.env": "环境（每行 名称=值）",
+  "field.env.placeholder": "名称=值；密钥写成 {{secret:名字}}",
+  "last.none": "最近一次运行：还没有",
+  "last.run": "最近一次运行：{status}，{at}",
+  "count.line": "命令数：{count}",
+  "stderr.mark": "--- 错误输出 ---",
+  "summary.exit": "退出码 {code} · {ms} 毫秒",
+  "summary.signal": "{signal} · {ms} 毫秒"
+}
