@@ -1,0 +1,20 @@
+{
+  "plugin.name": "Transfer",
+  "plugin.description": "Moves large content between a network address, a file and a program. Example plugin for the transfer interface.",
+  "kind.job": "Transfer job",
+  "kind.job.new": "Untitled transfer",
+  "action.download": "Download",
+  "action.upload": "Upload",
+  "action.capture": "Capture program output",
+  "action.save": "Save",
+  "tab.result": "Output",
+  "tab.history": "History",
+  "field.url": "Address",
+  "field.path": "File path",
+  "progress.line": "{bytes} bytes",
+  "progress.total": "{bytes} of {total} bytes",
+  "result.download": "status {status}, {bytes} bytes",
+  "result.upload": "status {status}",
+  "result.capture": "{bytes} bytes",
+  "summary.done": "done"
+}

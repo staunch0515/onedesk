@@ -263,12 +263,16 @@ describe("market: status", () => {
     const out = await pages.browse.render(ctxOf({ files, plugins }, { locale: "zh-CN" }));
     expect(rowsOf(out)[0]![3]).toBe("已安装 1.0.0");
   });
-  it("keeps the draft selection only while it is still installable", async () => {
+  it("the package drop-down is a page parameter: no bind, never part of the draft, no returned values", async () => {
     const { pages } = registry(plugin);
     const files = fakeFiles(pkgFiles(`${ROOT}/new`, "com.example.new", "1.0.0", "New", "d"));
     const host = { files, plugins: { list: async () => [] } };
-    expect((await pages.browse.render(ctxOf(host, { draft: { pick: `${ROOT}/new` } }))).values).toEqual({ pick: `${ROOT}/new` });
-    expect((await pages.browse.render(ctxOf(host, { draft: { pick: "/elsewhere" } }))).values).toEqual({ pick: "" });
+    const out = await pages.browse.render(ctxOf(host, { params: { pick: `${ROOT}/new` } }));
+    const field = out.view.find((n: any) => n.id === "pick").fields[0];
+    expect(field).toMatchObject({ name: "pick", kind: "enum", param: true });
+    expect(field.bind).toBeUndefined();
+    expect(out.values).toBeUndefined();
+    expect(checkView(out.view)).toEqual([]);
   });
 });
 
@@ -282,13 +286,13 @@ describe("market: install", () => {
     });
     return { pages, requestInstall, host: { plugins: { requestInstall, list: async () => [] }, files: fakeFiles({}) } };
   };
-  const run = (s: ReturnType<typeof setup>, draft: unknown = { pick: FOLDER }) => s.pages.browse.onEvent(ctxOf(s.host, { draft }), "install");
+  const run = (s: ReturnType<typeof setup>, params: unknown = { pick: FOLDER }) => s.pages.browse.onEvent(ctxOf(s.host, { params, draft: {} }), "install");
 
   it("asks the framework with the package folder and reports an installed result", async () => {
     const s = setup({ outcome: "installed", id: "com.example.hello", version: "0.1.0" });
     const out = await run(s);
     expect(s.requestInstall).toHaveBeenCalledWith({ folder: FOLDER });
-    expect(out).toEqual({ changes: { pick: "" }, message: "Installed com.example.hello 0.1.0." });
+    expect(out).toEqual({ params: { pick: "" }, message: "Installed com.example.hello 0.1.0." });
   });
   it("declined: nothing changes", async () => {
     const out = await run(setup({ outcome: "declined" }));
@@ -310,6 +314,11 @@ describe("market: install", () => {
     const out = await run(setup(hostError("conflict", { reason: "cooldown", seconds: "17" })));
     expect(out.message).toBe("The last request was not completed. Try again in 17 s.");
   });
+  it("a pick in the draft (the old way) is ignored: only ctx.params counts", async () => {
+    const s = setup({ outcome: "installed" });
+    expect((await s.pages.browse.onEvent(ctxOf(s.host, { draft: { pick: FOLDER } }), "install")).message).toBe("Choose a package first.");
+    expect(s.requestInstall).not.toHaveBeenCalled();
+  });
   it("does nothing without a selection", async () => {
     const s = setup({ outcome: "installed" });
     expect((await run(s, {})).message).toBe("Choose a package first.");
@@ -318,7 +327,7 @@ describe("market: install", () => {
   });
   it("messages are in the viewer's language", async () => {
     const s = setup({ outcome: "declined" });
-    expect((await s.pages.browse.onEvent(ctxOf(s.host, { draft: { pick: FOLDER }, locale: "zh-CN" }), "install")).message).toBe("已取消安装。");
+    expect((await s.pages.browse.onEvent(ctxOf(s.host, { params: { pick: FOLDER }, locale: "zh-CN" }), "install")).message).toBe("已取消安装。");
   });
   it("refresh answers with a message; unknown events are rejected", async () => {
     const s = setup({});
@@ -366,7 +375,7 @@ describe("market: limits, cache and untrusted text", () => {
     const listed = files.list.mock.calls.length;
     expect(listed).toBeGreaterThan(0);
     await pages.browse.render(ctxOf(host));
-    await pages.browse.render(ctxOf(host, { draft: { pick: "" } }));
+    await pages.browse.render(ctxOf(host, { params: { pick: "" } }));
     expect(files.list.mock.calls.length).toBe(listed);
     // a new package shows up only after a rescan
     Object.assign((files as any), {});

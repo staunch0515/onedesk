@@ -1,0 +1,9 @@
+{
+  "plugin.name": "看板扩展",
+  "plugin.description": "给看板插件的树加上便签。使用别的插件导出的树和页面的示例插件。",
+  "kind.memo": "便签",
+  "kind.memo.new": "未命名便签",
+  "kind.stray": "游离便签",
+  "kind.stray.new": "未命名游离便签",
+  "action.shout": "大声说"
+}

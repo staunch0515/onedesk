@@ -86,7 +86,7 @@ export const TREE_NODE_KEYS = ["key", "label", "icon", "expandable", "target", "
 export const ACTION_RESULT_KEYS = ["output", "summary"];
 export const SUMMARY_KEYS = ["rows", "message"];
 export const OUTPUT_KEYS: Record<string, string[]> = { table: ["type", "columns", "rows", "total"], text: ["type", "text"], link: ["type", "label", "target"], none: ["type"] };
-export const EVENT_RESULT_KEYS = ["changes", "message"];
+export const EVENT_RESULT_KEYS = ["changes", "params", "message"];
 
 export function checkActionResult(res: Record<string, any>): string[] {
   const errs = onlyKeys(res, ACTION_RESULT_KEYS);

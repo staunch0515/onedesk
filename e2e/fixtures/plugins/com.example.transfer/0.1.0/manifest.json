@@ -1,0 +1,55 @@
+{
+  "id": "com.example.transfer",
+  "version": "0.1.0",
+  "apiVersion": "2",
+  "name": "plugin.name",
+  "description": "plugin.description",
+  "icon": "arrow-down-up",
+  "main": "main.js",
+  "author": "OneDesk",
+  "license": "MIT",
+  "requires": {
+    "files": true,
+    "network": { "fromResources": true },
+    "programs": [{ "name": "cat", "source": "system" }]
+  },
+  "contributes": {
+    "kinds": [
+      {
+        "id": "job",
+        "label": "kind.job",
+        "icon": "arrow-down-up",
+        "tree": "resources",
+        "page": "editor",
+        "newName": "kind.job.new",
+        "defaults": { "url": "", "path": "" },
+        "fields": { "url": { "type": "text", "grants": "network" } },
+        "draggable": true,
+        "accepts": []
+      }
+    ],
+    "actions": [
+      { "id": "download", "label": "action.download", "icon": "download", "kinds": ["job"], "output": "text", "saveFirst": false, "confirm": null },
+      { "id": "upload", "label": "action.upload", "icon": "upload", "kinds": ["job"], "output": "text", "saveFirst": false, "confirm": null },
+      { "id": "capture", "label": "action.capture", "icon": "terminal", "kinds": ["job"], "output": "text", "saveFirst": false, "confirm": null }
+    ],
+    "pages": [
+      {
+        "id": "editor",
+        "recompute": false,
+        "actions": [
+          { "id": "download", "role": "run", "action": "download", "label": "action.download", "icon": "download", "primary": true },
+          { "id": "upload", "role": "run", "action": "upload", "label": "action.upload", "icon": "upload" },
+          { "id": "capture", "role": "run", "action": "capture", "label": "action.capture", "icon": "terminal" },
+          { "id": "save", "role": "save", "label": "action.save", "icon": "save", "shortcut": ["Mod", "S"] }
+        ],
+        "resultTabs": [
+          { "id": "result", "type": "output", "label": "tab.result", "icon": "terminal" },
+          { "id": "history", "type": "history", "label": "tab.history", "icon": "history" }
+        ]
+      }
+    ],
+    "menus": { "new": ["job"] },
+    "locales": { "en-US": "locales/en-US.json", "zh-CN": "locales/zh-CN.json" }
+  }
+}

@@ -269,7 +269,6 @@ export default {
               { type: "text", id: "empty", text: tr(ctx, "empty.title") },
               { type: "text", id: "hint", text: tr(ctx, "empty.hint"), tone: "muted" },
             ],
-            values: { pick: "" },
           };
         }
         const view = [];
@@ -294,10 +293,9 @@ export default {
           type: "form",
           id: "pick",
           layout: "strip",
-          fields: [{ name: "pick", label: ctx.t("field.pick"), kind: "enum", bind: "pick", options, placeholder: ctx.t("field.pick.placeholder") }],
+          fields: [{ name: "pick", label: ctx.t("field.pick"), kind: "enum", param: true, options, placeholder: ctx.t("field.pick.placeholder") }],
         });
-        const draft = ctx.draft && typeof ctx.draft.pick === "string" ? ctx.draft.pick : "";
-        return { ...head, view, values: { pick: options.some((o) => o.value === draft) ? draft : "" } };
+        return { ...head, view };
       },
 
       async onEvent(ctx, event) {
@@ -306,7 +304,8 @@ export default {
           return { message: tr(ctx, "message.refreshed") };
         }
         if (event !== "install") throw new Error(`unknown event ${event}`);
-        const folder = ctx.draft && typeof ctx.draft.pick === "string" ? ctx.draft.pick : "";
+        // The pick is a page parameter (never part of the draft): it comes in `ctx.params`.
+        const folder = ctx.params && typeof ctx.params.pick === "string" ? ctx.params.pick : "";
         if (!folder) return { message: tr(ctx, "message.nothing") };
         let res;
         try {
@@ -321,7 +320,7 @@ export default {
         }
         switch (res.outcome) {
           case "installed":
-            return { changes: { pick: "" }, message: tr(ctx, "message.installed", { name: res.id || "", version: res.version || "" }) };
+            return { params: { pick: "" }, message: tr(ctx, "message.installed", { name: res.id || "", version: res.version || "" }) };
           case "declined":
             return { message: tr(ctx, "message.declined") };
           case "expired":

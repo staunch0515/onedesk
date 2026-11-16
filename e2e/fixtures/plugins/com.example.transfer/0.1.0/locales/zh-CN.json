@@ -1,0 +1,20 @@
+{
+  "plugin.name": "搬运",
+  "plugin.description": "在网络地址、文件和程序之间搬运大块内容。搬运接口的示例插件。",
+  "kind.job": "搬运任务",
+  "kind.job.new": "未命名搬运",
+  "action.download": "下载",
+  "action.upload": "上传",
+  "action.capture": "保存程序输出",
+  "action.save": "保存",
+  "tab.result": "输出",
+  "tab.history": "历史",
+  "field.url": "地址",
+  "field.path": "文件路径",
+  "progress.line": "{bytes} 字节",
+  "progress.total": "{bytes} / {total} 字节",
+  "result.download": "状态码 {status}，{bytes} 字节",
+  "result.upload": "状态码 {status}",
+  "result.capture": "{bytes} 字节",
+  "summary.done": "完成"
+}
