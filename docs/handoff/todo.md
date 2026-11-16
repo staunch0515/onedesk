@@ -68,3 +68,4 @@
 - 主进程 `app.removePlugin` 应在移除前转发 `plugin.checkRemove {plugin, version}`，出错原样返回（`conflict/dependents`）。内核已提供方法，host 未接（外壳的文件）。
 - 依赖方给被依赖类型加的动作目前只在页面操作区；树节点右键菜单里没有动作这一类，要加需先定怎么从菜单发起运行。
 - `plugin.undoUpgrade` 不检查依赖方（计划没列）；是否也应被 `conflict/dependents` 拒绝，待定。
+- （第七轮审查）`plugin.checkRemove` 只问当前工作区；版本目录是全局共享的，别的工作区里的依赖方看不到。多工作区做了之后要补。
