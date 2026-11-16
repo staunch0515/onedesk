@@ -445,7 +445,7 @@ impl Inner {
                     return Err(invalid("emptyName"));
                 }
                 let changes = Changes { name: Some(p.name), ..Default::default() };
-                self.execute(Actor::User, Command::Update { id: row.id, changes, basis: None }).await?;
+                self.execute(Actor::User, Command::Update { id: row.id, changes, basis: None, overwrite: vec![] }).await?;
                 Ok(Value::Null)
             }
             M::RESOURCE_GET => {

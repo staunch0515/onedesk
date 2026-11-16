@@ -231,7 +231,7 @@ impl Inner {
                     serde_json::from_value(arg(args, 1)).map_err(|_| invalid_params("changes must be an object"))?;
                 let changes = Changes::from_bind_map(&changes)?;
                 let basis = args.get(2).and_then(|v| v.as_i64().or_else(|| v.as_str().and_then(|s| s.parse().ok())));
-                self.execute_quiet(actor, Command::Update { id: id.clone(), changes, basis }, quiet).await?;
+                self.execute_quiet(actor, Command::Update { id: id.clone(), changes, basis, overwrite: vec![] }, quiet).await?;
                 Ok(json!({ "rev": self.live_row(&id)?.rev }))
             }
             "move" => {

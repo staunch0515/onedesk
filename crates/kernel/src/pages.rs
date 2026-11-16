@@ -678,7 +678,7 @@ impl Inner {
                     None => None,
                 };
                 if !changes.is_empty() {
-                    self.execute(Actor::User, Command::Update { id: id.clone(), changes, basis }).await?;
+                    self.execute(Actor::User, Command::Update { id: id.clone(), changes, basis, overwrite: p.overwrite.clone().unwrap_or_default() }).await?;
                 }
                 self.write_secrets(pending).await?;
                 let cx = PageContext { draft: None, ..cx };
@@ -724,7 +724,7 @@ impl Inner {
                     let pending = self.take_secret_fields(&id, &secret_fields, &mut raw, None)?;
                     let changes = Changes::from_bind_map(&raw)?;
                     if !changes.is_empty() {
-                        self.execute(Actor::User, Command::Update { id: id.clone(), changes, basis: None }).await?;
+                        self.execute(Actor::User, Command::Update { id: id.clone(), changes, basis: None, overwrite: vec![] }).await?;
                     }
                     self.write_secrets(pending).await?;
                 }
