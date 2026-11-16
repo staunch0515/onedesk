@@ -151,15 +151,15 @@ pub struct Stream {
 }
 
 impl Stream {
-    fn push(&self, v: Value) {
+    pub(crate) fn push(&self, v: Value) {
         self.queue.lock().unwrap().push_back(v);
         self.notify.notify_waiters();
     }
-    fn close(&self) {
+    pub(crate) fn close(&self) {
         self.closed.store(true, Ordering::SeqCst);
         self.notify.notify_waiters();
     }
-    async fn stopped(&self) {
+    pub(crate) async fn stopped(&self) {
         loop {
             let n = self.stop_notify.notified();
             if self.stop.load(Ordering::SeqCst) {
@@ -222,7 +222,7 @@ impl Procs {
         had
     }
 
-    fn stream(&self, run: &str, sid: &str) -> Arc<Stream> {
+    pub(crate) fn stream(&self, run: &str, sid: &str) -> Arc<Stream> {
         self.streams.lock().unwrap().entry(format!("{run}\n{sid}")).or_default().clone()
     }
 
@@ -439,7 +439,7 @@ struct Spec {
     timeout: Duration,
 }
 
-fn parse_spec(o: &Value) -> KResult<Spec> {
+fn parse_spec(o: &Value, default_timeout: u64, max_timeout: u64) -> KResult<Spec> {
     let o = o.as_object().ok_or_else(|| invalid_params("options must be an object"))?;
     let program = o.get("program").and_then(Value::as_str).ok_or_else(|| invalid_params("program"))?.to_string();
     let args: Vec<String> = match o.get("args") {
@@ -478,8 +478,8 @@ fn parse_spec(o: &Value) -> KResult<Spec> {
         Some(_) => return Err(invalid_params("stdin must be a string")),
     };
     let timeout = match o.get("timeoutMs") {
-        None | Some(Value::Null) => DEFAULT_TIMEOUT_MS,
-        Some(v) => v.as_f64().ok_or_else(|| invalid_params("timeoutMs"))?.clamp(1.0, MAX_TIMEOUT_MS as f64) as u64,
+        None | Some(Value::Null) => default_timeout,
+        Some(v) => v.as_f64().ok_or_else(|| invalid_params("timeoutMs"))?.clamp(1.0, max_timeout as f64) as u64,
     };
     Ok(Spec { program, args, env, cwd, stdin, timeout: Duration::from_millis(timeout) })
 }
@@ -574,7 +574,11 @@ impl Inner {
                 // Review #8: what the plugin passed is recorded only when it is a valid name.
                 let program = o.get("program").and_then(Value::as_str).filter(|n| crate::manifest::valid_program_name(n)).unwrap_or_default().to_string();
                 let started = Instant::now();
-                let res = self.process_run(p, info, &o).await;
+                // D355: the action's time budget does not run while it waits for the program.
+        let res = {
+            let _hold = info.hold.enter();
+            self.process_run(p, info, &o, None).await
+        };
                 // One audit row per run and program, repeats counted (D309's table); refusals and
                 // failures each get their own row.
                 match &res {
@@ -598,36 +602,49 @@ impl Inner {
                 self.emit(topic2::AUDIT, None, None);
                 res
             }
-            "output" => {
-                let run = info.run_id.as_deref().ok_or_else(|| denied("notInRun"))?;
-                let sid = args.get(0).and_then(Value::as_str).ok_or_else(|| invalid_params("stream"))?;
-                let st = self.procs.stream(run, sid);
-                loop {
-                    let n = st.notify.notified();
-                    let batch: Vec<Value> = st.queue.lock().unwrap().drain(..).collect();
-                    if !batch.is_empty() {
-                        return Ok(Value::Array(batch));
-                    }
-                    if st.closed.load(Ordering::SeqCst) {
-                        self.procs.streams.lock().unwrap().remove(&format!("{run}\n{sid}"));
-                        return Ok(Value::Null);
-                    }
-                    n.await;
-                }
-            }
-            "stop" => {
-                let run = info.run_id.as_deref().ok_or_else(|| denied("notInRun"))?;
-                let sid = args.get(0).and_then(Value::as_str).ok_or_else(|| invalid_params("stream"))?;
-                let st = self.procs.stream(run, sid);
-                st.stop.store(true, Ordering::SeqCst);
-                st.stop_notify.notify_waiters();
-                Ok(Value::Null)
-            }
+            "output" => self.stream_poll(info, args).await,
+            "stop" => self.stream_stop(info, args),
             _ => Err(err_p(ErrorCode::UnknownMethod, &[("method", &format!("process.{op}"))])),
         }
     }
 
-    async fn process_run(&self, p: &'static Plugin, info: &CallInfo, o: &Value) -> KResult<Value> {
+    /// The next batch of a stream of this run (`null` once it is closed): `process.output`,
+    /// `transfer.progress`.
+    pub(crate) async fn stream_poll(&self, info: &CallInfo, args: &Value) -> KResult<Value> {
+        let run = info.run_id.as_deref().ok_or_else(|| denied("notInRun"))?;
+        let sid = args.get(0).and_then(Value::as_str).ok_or_else(|| invalid_params("stream"))?;
+        let st = self.procs.stream(run, sid);
+        loop {
+            let n = st.notify.notified();
+            let batch: Vec<Value> = st.queue.lock().unwrap().drain(..).collect();
+            if !batch.is_empty() {
+                return Ok(Value::Array(batch));
+            }
+            if st.closed.load(Ordering::SeqCst) {
+                self.procs.streams.lock().unwrap().remove(&format!("{run}\n{sid}"));
+                return Ok(Value::Null);
+            }
+            n.await;
+        }
+    }
+
+    /// The plugin's callback failed: the call the stream belongs to stops (`process.stop`, `transfer.stop`).
+    pub(crate) fn stream_stop(&self, info: &CallInfo, args: &Value) -> KResult<Value> {
+        let run = info.run_id.as_deref().ok_or_else(|| denied("notInRun"))?;
+        let sid = args.get(0).and_then(Value::as_str).ok_or_else(|| invalid_params("stream"))?;
+        let st = self.procs.stream(run, sid);
+        st.stop.store(true, Ordering::SeqCst);
+        st.stop_notify.notify_waiters();
+        Ok(Value::Null)
+    }
+
+    pub(crate) async fn process_run(
+        &self,
+        p: &'static Plugin,
+        info: &CallInfo,
+        o: &Value,
+        mut sink: Option<&mut crate::carry::Sink>,
+    ) -> KResult<Value> {
         // The stream (if any) is closed however the call ends, so the plugin's pump finishes.
         struct CloseOnDrop(Option<Arc<Stream>>);
         impl Drop for CloseOnDrop {
@@ -645,7 +662,11 @@ impl Inner {
         let _close = CloseOnDrop(stream.clone());
         // D332: only in a run (an action's execution), never in renders, migrate, events, commands.
         let Some(run) = info.run_id.clone() else { return Err(denied("notInRun")) };
-        let spec = parse_spec(o)?;
+        let spec = if sink.is_some() {
+            parse_spec(o, crate::carry::DEFAULT_TIMEOUT_MS, crate::carry::MAX_TIMEOUT_MS)?
+        } else {
+            parse_spec(o, DEFAULT_TIMEOUT_MS, MAX_TIMEOUT_MS)?
+        };
         let path = match self.check_program(p, info.env_id.as_deref(), &spec.program)? {
             Ok(path) => path,
             Err((r, layer)) => return Err(Self::not_ready_error(&spec.program, r, layer)),
@@ -759,7 +780,8 @@ impl Inner {
         let mut status: Option<std::process::ExitStatus> = None;
         let grace = tokio::time::sleep(Duration::from_secs(86_400));
         tokio::pin!(grace);
-        let stop = stream.clone();
+        // `transfer.capture`: its progress stream carries the stop of a failed `onProgress`.
+        let stop = stream.clone().or_else(|| sink.as_ref().and_then(|k| k.stop_stream()));
         let stopped = async move {
             match stop {
                 Some(s) => s.stopped().await,
@@ -775,6 +797,8 @@ impl Inner {
                 _ = &mut deadline => return Err(invalid("timeout")),
                 _ = &mut stopped => return Err(denied("cancelled")),
                 m = rx.recv(), if open > 0 => match m {
+                    // `transfer.capture`: standard output goes to the file, never into memory.
+                    Some((0, Some(b))) if sink.is_some() => sink.as_deref_mut().expect("checked").write(&b).await?,
                     Some((s, Some(b))) => out.push(s, &b),
                     Some((_, None)) => open -= 1,
                     None => open = 0,

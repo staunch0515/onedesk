@@ -43,6 +43,7 @@ fn pkg(root: &Path, id: &str, version: &str, extra: Value, main: &str) -> PathBu
 struct W {
     env: Env,
     c: Client,
+    #[allow(dead_code)]
     root: PathBuf,
 }
 
@@ -240,4 +241,483 @@ async fn import_fingerprints_are_sha256() {
     assert!(is_sha256(&p["fingerprint"]), "{p}");
     let r = c.ok("workspace.import", json!({ "folder": folder, "fingerprint": p["fingerprint"] })).await;
     assert!(r["created"].as_u64().unwrap() >= 1, "{r}");
+}
+
+/* ------------------------------------------------------------------ §3 transfer (D353–D355) */
+
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+/// Bigger than the sandbox's memory limit in tests (16 MB): content that went through the plugin
+/// would not fit.
+const BIG: usize = 24 * 1024 * 1024 + 123;
+
+fn pattern(n: usize) -> Vec<u8> {
+    (0..n).map(|i| ((i * 7 + 3) % 251) as u8).collect()
+}
+
+fn checksum(b: &[u8]) -> u64 {
+    b.iter().fold(0u64, |a, x| a.wrapping_mul(31).wrapping_add(u64::from(*x)))
+}
+
+/// `GET /big` → `BIG` bytes of `pattern`; `/missing` → 404; `/slow` → headers, then 1 KB every
+/// 200 ms for a long time; `/late` → waits 2.5 s, then "late"; `/echo` → the Authorization header
+/// in the body and in `X-Echo`; `/redirect?to=` → 302; `PUT|POST /up` → reads the body (slowly)
+/// and answers `<method> len=<n> sum=<checksum>`.
+async fn server() -> u16 {
+    let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = l.local_addr().unwrap().port();
+    tokio::spawn(async move {
+        loop {
+            let Ok((mut s, _)) = l.accept().await else { break };
+            tokio::spawn(async move {
+                let mut buf = vec![0u8; 65536];
+                let mut got = Vec::new();
+                let end = loop {
+                    if let Some(i) = got.windows(4).position(|w| w == b"\r\n\r\n") {
+                        break i + 4;
+                    }
+                    let n = s.read(&mut buf).await.unwrap_or(0);
+                    if n == 0 {
+                        return;
+                    }
+                    got.extend_from_slice(&buf[..n]);
+                };
+                let head = String::from_utf8_lossy(&got[..end]).to_string();
+                let method = head.split_whitespace().next().unwrap_or("").to_string();
+                let path = head.split_whitespace().nth(1).unwrap_or("/").to_string();
+                let header = |name: &str| {
+                    head.lines()
+                        .find(|l| l.to_ascii_lowercase().starts_with(&format!("{name}:")))
+                        .map(|l| l[name.len() + 1..].trim().to_string())
+                        .unwrap_or_default()
+                };
+                let reply = |status: &str, extra: String, body: Vec<u8>| {
+                    let mut r = format!("HTTP/1.1 {status}\r\n{extra}Content-Length: {}\r\nConnection: close\r\n\r\n", body.len()).into_bytes();
+                    r.extend_from_slice(&body);
+                    r
+                };
+                // Any body is read first (a 307 must not cut the client off while it sends).
+                let len: usize = header("content-length").parse().unwrap_or(0);
+                let mut body = got[end..].to_vec();
+                while body.len() < len {
+                    let n = s.read(&mut buf).await.unwrap_or(0);
+                    if n == 0 {
+                        break;
+                    }
+                    body.extend_from_slice(&buf[..n]);
+                    if path == "/up" {
+                        tokio::time::sleep(Duration::from_millis(1)).await;
+                    }
+                }
+                let resp = if path == "/big" {
+                    reply("200 OK", String::new(), pattern(BIG))
+                } else if path == "/missing" {
+                    reply("404 Not Found", String::new(), b"nope".to_vec())
+                } else if path == "/late" {
+                    tokio::time::sleep(Duration::from_millis(2500)).await;
+                    reply("200 OK", String::new(), b"late".to_vec())
+                } else if path == "/slow" {
+                    let _ = s.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 100000000\r\nConnection: close\r\n\r\n").await;
+                    for _ in 0..500 {
+                        if s.write_all(&[b'z'; 1024]).await.is_err() {
+                            return;
+                        }
+                        tokio::time::sleep(Duration::from_millis(200)).await;
+                    }
+                    return;
+                } else if path == "/echo" {
+                    let auth = header("authorization");
+                    reply("200 OK", format!("X-Echo: {auth}\r\n"), format!("auth={auth}").into_bytes())
+                } else if path.starts_with("/redirect") {
+                    let to = path.split_once("to=").map(|(_, t)| t.to_string()).unwrap_or_default();
+                    reply("307 Temporary Redirect", format!("Location: {to}\r\n"), vec![])
+                } else if path == "/up" {
+                    let auth = header("authorization");
+                    reply("201 Created", String::new(), format!("{method} len={} sum={} auth={auth}", body.len(), checksum(&body)).into_bytes())
+                } else {
+                    reply("200 OK", String::new(), b"hello".to_vec())
+                };
+                let _ = s.write_all(&resp).await;
+            });
+        }
+    });
+    port
+}
+
+const MOVE_MAIN: &str = r#"
+export default { activate(host) {
+  host.commands.handle("probe", probe);
+  host.pages.handle("p", {
+    async render(ctx) {
+      const r = await tryIt(() => ctx.host.transfer.download({ url: "http://127.0.0.1:9/", to: "/x" }));
+      return { view: [{ type: "text", id: "t", text: JSON.stringify(r) }] };
+    },
+  });
+  host.actions.handle("go", async (ctx, input) => {
+    const opts = Object.assign({}, input.opts);
+    const seen = [];
+    if (input.progress) opts.onProgress = (p) => {
+      seen.push(p);
+      ctx.progress(0.5);
+      if (input.throwAt !== undefined && seen.length >= input.throwAt) throw new Error("stop here");
+    };
+    const r = await tryIt(() => ctx.host.transfer[input.op](opts));
+    if (r.error && !r.error.startsWith("Error")) {} else if (r.error) r.error = "threw";
+    r.seen = seen.length;
+    r.last = seen.length ? seen[seen.length - 1] : null;
+    return text(r);
+  });
+  host.actions.handle("budget", async (ctx, input) => {
+    await ctx.host.util.sleep(input.before);
+    const r = await tryIt(() => input.op === "process" ? ctx.host.process.run(input.opts) : ctx.host.transfer[input.op](input.opts));
+    await ctx.host.util.sleep(input.after);
+    return text(r.error ? r : "ok");
+  });
+} };
+"#;
+
+fn move_manifest(port: u16, requires: Value) -> Value {
+    let _ = port;
+    json!({
+        "requires": requires,
+        "contributes": {
+            "kinds": [{ "id": "k", "label": "K", "icon": "box", "tree": "resources", "page": "p", "newName": "k" }],
+            "pages": [{ "id": "p" }],
+            "actions": [{ "id": "go", "label": "Go", "output": "text" }, { "id": "budget", "label": "B", "output": "text" }],
+            "commands": [{ "id": "probe", "label": "probe" }]
+        }
+    })
+}
+
+fn full_requires(port: u16) -> Value {
+    json!({
+        "files": true,
+        "network": { "hosts": [format!("127.0.0.1:{port}")] },
+        "secrets": { "names": ["tok"] },
+        "programs": [{ "name": "cat", "source": "system" }, { "name": "sh", "source": "system" }, { "name": "sleep", "source": "system" }]
+    })
+}
+
+struct T {
+    w: W,
+    port: u16,
+    grant: PathBuf,
+    outside: PathBuf,
+}
+
+impl T {
+    fn base(&self) -> String {
+        format!("http://127.0.0.1:{}", self.port)
+    }
+    fn at(&self, name: &str) -> String {
+        self.grant.join(name).display().to_string()
+    }
+    async fn go(&self, plugin: &str, op: &str, opts: Value) -> Value {
+        self.go_with(plugin, json!({ "op": op, "opts": opts })).await
+    }
+    async fn go_with(&self, plugin: &str, input: Value) -> Value {
+        let r = run(&self.w.c, &format!("{plugin}:go"), input).await;
+        assert_eq!(r["status"], "success", "{r}");
+        out(&r)
+    }
+    /// Names in the granted folder (partial files included).
+    fn listing(&self) -> Vec<String> {
+        let mut v: Vec<String> = std::fs::read_dir(&self.grant).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
+        v.sort();
+        v
+    }
+    fn no_partials(&self) {
+        assert!(!self.listing().iter().any(|n| n.contains(".part-")), "{:?}", self.listing());
+    }
+    async fn no_programs_left(&self) {
+        for _ in 0..200 {
+            if self.w.env.kernel.live_programs() == 0 {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+        panic!("programs still running");
+    }
+}
+
+async fn transfer_world_cfg(cfg: impl FnOnce(&mut onedesk_kernel::KernelConfig)) -> T {
+    let port = server().await;
+    let w = world_cfg(
+        |r| {
+            pkg(r, "t.move", "0.1.0", move_manifest(port, full_requires(port)), MOVE_MAIN);
+            pkg(r, "t.nofiles", "0.1.0", move_manifest(port, json!({ "network": { "hosts": [format!("127.0.0.1:{port}")] },
+                "programs": [{ "name": "cat", "source": "system" }] })), MOVE_MAIN);
+            pkg(r, "t.nonet", "0.1.0", move_manifest(port, json!({ "files": true })), MOVE_MAIN);
+        },
+        cfg,
+    )
+    .await;
+    let base = w.env.path();
+    let grant = base.join("grant");
+    let outside = base.join("outside");
+    std::fs::create_dir_all(&grant).unwrap();
+    std::fs::create_dir_all(&outside).unwrap();
+    for p in ["t.move", "t.nonet"] {
+        w.c.ok("plugin.grantFolder", json!({ "plugin": p, "path": grant.display().to_string() })).await;
+    }
+    T { w, port, grant, outside }
+}
+
+async fn transfer_world() -> T {
+    transfer_world_cfg(|c| c.action_timeout = Duration::from_secs(20)).await
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn download_moves_more_than_the_sandbox_holds_byte_for_byte() {
+    let t = transfer_world().await;
+    let r = t.go_with("t.move", json!({ "op": "download", "progress": true, "opts": { "url": format!("{}/big", t.base()), "to": t.at("big.bin") } })).await;
+    assert_eq!((r["ok"]["status"].as_u64(), r["ok"]["bytes"].as_u64()), (Some(200), Some(BIG as u64)), "{r}");
+    assert_eq!(r["ok"]["path"], t.at("big.bin"));
+    assert_eq!(std::fs::read(t.grant.join("big.bin")).unwrap(), pattern(BIG));
+    // Progress came, with the total from Content-Length.
+    assert!(r["seen"].as_u64().unwrap() >= 1, "{r}");
+    assert_eq!(r["last"]["total"].as_u64(), Some(BIG as u64));
+    t.no_partials();
+    // Audited once, by host; the summary has bytes, status, time and the file, not the address path.
+    let a = audit(&t.w.env, "transfer.download");
+    assert_eq!(a.len(), 1);
+    assert_eq!((a[0].0.as_str(), a[0].1.as_str(), a[0].3.as_str()), ("plugin:t.move@0.1.0", "127.0.0.1", "ok"), "{a:?}");
+    let s: Value = serde_json::from_str(&a[0].2).unwrap();
+    assert_eq!((s["bytes"].as_u64(), s["status"].as_u64(), s["path"].as_str()), (Some(BIG as u64), Some(200), Some(t.at("big.bin").as_str())));
+    assert!(s["ms"].is_u64() && !a[0].2.contains("http:") && s.get("url").is_none(), "{s}");
+    assert!(audit(&t.w.env, "network.request").is_empty(), "not recorded twice");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn upload_sends_a_file_bigger_than_the_sandbox() {
+    let t = transfer_world().await;
+    let data = pattern(BIG);
+    std::fs::write(t.grant.join("src.bin"), &data).unwrap();
+    let r = t.go_with("t.move", json!({ "op": "upload", "progress": true, "opts": { "from": t.at("src.bin"), "url": format!("{}/up", t.base()) } })).await;
+    assert_eq!(r["ok"]["status"].as_u64(), Some(201), "{r}");
+    assert_eq!(r["ok"]["body"], format!("PUT len={BIG} sum={} auth=", checksum(&data)));
+    assert_eq!(r["ok"]["truncated"], false);
+    assert!(r["seen"].as_u64().unwrap() >= 1, "{r}");
+    assert_eq!(r["last"]["total"].as_u64(), Some(BIG as u64));
+    // POST too; a method without a body is refused.
+    let r = t.go("t.move", "upload", json!({ "from": t.at("src.bin"), "url": format!("{}/up", t.base()), "method": "POST" })).await;
+    assert!(r["ok"]["body"].as_str().unwrap().starts_with("POST len="), "{r}");
+    let r = t.go("t.move", "upload", json!({ "from": t.at("src.bin"), "url": format!("{}/up", t.base()), "method": "GET" })).await;
+    assert_eq!((r["error"].as_str(), r["params"]["reason"].as_str()), (Some("invalid"), Some("badMethod")));
+    // A 307 sends the file again.
+    let r = t.go("t.move", "upload", json!({ "from": t.at("src.bin"), "url": format!("{}/redirect?to=/up", t.base()) })).await;
+    assert_eq!(r["ok"]["body"], format!("PUT len={BIG} sum={} auth=", checksum(&data)), "{r}");
+    let a = audit(&t.w.env, "transfer.upload");
+    assert_eq!(a.iter().map(|x| x.3.as_str()).collect::<Vec<_>>(), ["ok", "ok", "failed:invalid", "ok"], "{a:?}");
+    assert_eq!(a[0].1, "127.0.0.1");
+    let s: Value = serde_json::from_str(&a[0].2).unwrap();
+    assert_eq!((s["bytes"].as_u64(), s["status"].as_u64(), s["method"].as_str()), (Some(BIG as u64), Some(201), Some("PUT")));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn capture_writes_a_programs_output_to_a_file() {
+    let t = transfer_world().await;
+    let data = pattern(BIG);
+    std::fs::write(t.grant.join("src.bin"), &data).unwrap();
+    let r = t.go_with("t.move", json!({ "op": "capture", "progress": true, "opts": { "program": "cat", "args": [t.at("src.bin")], "to": t.at("copy.bin") } })).await;
+    assert_eq!((r["ok"]["code"].as_i64(), r["ok"]["bytes"].as_u64()), (Some(0), Some(BIG as u64)), "{r}");
+    assert_eq!(r["ok"]["path"], t.at("copy.bin"));
+    assert!(r["ok"].get("stdout").is_none());
+    assert_eq!(std::fs::read(t.grant.join("copy.bin")).unwrap(), data);
+    assert!(r["seen"].as_u64().unwrap() >= 1, "{r}");
+    // Any exit code: the file is put in place, stderr comes back.
+    let r = t.go("t.move", "capture", json!({ "program": "sh", "args": ["-c", "echo out; echo err >&2; exit 3"], "to": t.at("x.txt") })).await;
+    assert_eq!((r["ok"]["code"].as_i64(), r["ok"]["stderr"].as_str(), r["ok"]["bytes"].as_u64()), (Some(3), Some("err\n"), Some(4)), "{r}");
+    assert_eq!(std::fs::read_to_string(t.grant.join("x.txt")).unwrap(), "out\n");
+    t.no_partials();
+    let a = audit(&t.w.env, "transfer.capture");
+    assert_eq!(a.iter().map(|x| x.1.as_str()).collect::<Vec<_>>(), ["cat", "sh"]);
+    let s: Value = serde_json::from_str(&a[1].2).unwrap();
+    assert_eq!((s["code"].as_i64(), s["bytes"].as_u64(), s["args"].as_u64()), (Some(3), Some(4), Some(2)), "{s}");
+    assert!(!a[1].2.contains("echo"), "no argument content");
+    assert!(audit(&t.w.env, "process.run").is_empty(), "not recorded twice");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn each_end_refuses_by_its_own_rules() {
+    let t = transfer_world().await;
+    let c = &t.w.c;
+    let why = |v: &Value| (v["error"].as_str().unwrap_or("ok").to_string(), v["params"]["reason"].as_str().unwrap_or("").to_string());
+    let pair = |a: &str, b: &str| (a.to_string(), b.to_string());
+    // Network end: not listed; a redirect to an unlisted host; network.allow.
+    let r = t.go("t.move", "download", json!({ "url": "http://example.invalid/x", "to": t.at("a") })).await;
+    assert_eq!(why(&r), pair("denied", "hostNotAllowed"));
+    let r = t.go("t.move", "download", json!({ "url": format!("{}/redirect?to=http://localhost:{}/big", t.base(), t.port), "to": t.at("a") })).await;
+    assert_eq!(why(&r), pair("denied", "hostNotAllowed"));
+    let ws_cfg = c.ok("tree.children", json!({ "tree": "config" })).await["nodes"][0]["key"].as_str().unwrap().to_string();
+    c.ok("params.set", json!({ "node": ws_cfg, "name": "network.allow", "value": "api.example.com", "type": "list" })).await;
+    let r = t.go("t.move", "download", json!({ "url": format!("{}/big", t.base()), "to": t.at("a") })).await;
+    assert_eq!(why(&r), pair("denied", "blockedByPolicy"));
+    let r = t.go("t.move", "upload", json!({ "url": format!("{}/up", t.base()), "from": t.at("none") })).await;
+    assert_eq!(r["error"], "notFound", "{r}");
+    std::fs::write(t.grant.join("src.txt"), "abc").unwrap();
+    let r = t.go("t.move", "upload", json!({ "url": format!("{}/up", t.base()), "from": t.at("src.txt") })).await;
+    assert_eq!(why(&r), pair("denied", "blockedByPolicy"));
+    c.ok("params.set", json!({ "node": ws_cfg, "name": "network.allow", "value": format!("127.0.0.1:{}", t.port) })).await;
+    // File end: outside the grant, a symlink out of it (folder and file), relative.
+    let r = t.go("t.move", "download", json!({ "url": format!("{}/big", t.base()), "to": t.outside.join("a").display().to_string() })).await;
+    assert_eq!(why(&r), pair("denied", "outsideGrant"));
+    std::os::unix::fs::symlink(&t.outside, t.grant.join("linkdir")).unwrap();
+    std::fs::write(t.outside.join("secret.txt"), "outside").unwrap();
+    std::os::unix::fs::symlink(t.outside.join("secret.txt"), t.grant.join("link.txt")).unwrap();
+    let r = t.go("t.move", "download", json!({ "url": format!("{}/big", t.base()), "to": t.at("linkdir/a") })).await;
+    assert_eq!(why(&r), pair("denied", "outsideGrant"));
+    let r = t.go("t.move", "upload", json!({ "url": format!("{}/up", t.base()), "from": t.at("link.txt") })).await;
+    assert_eq!(why(&r), pair("denied", "outsideGrant"));
+    let r = t.go("t.move", "capture", json!({ "program": "cat", "args": [], "to": t.at("linkdir/c") })).await;
+    assert_eq!(why(&r), pair("denied", "outsideGrant"));
+    let r = t.go("t.move", "download", json!({ "url": format!("{}/big", t.base()), "to": "rel/a" })).await;
+    assert_eq!(why(&r), pair("denied", "notAbsolute"));
+    assert!(!t.outside.join("a").exists() && !t.outside.join("c").exists());
+    // Program end: undeclared; process.allow.
+    let r = t.go("t.move", "capture", json!({ "program": "ls", "to": t.at("c") })).await;
+    assert_eq!((why(&r), r["params"]["program"].as_str()), (pair("denied", "undeclaredProgram"), Some("ls")));
+    c.ok("params.set", json!({ "node": ws_cfg, "name": "process.allow", "value": "cat", "type": "list" })).await;
+    let r = t.go("t.move", "capture", json!({ "program": "sh", "args": ["-c", "echo"], "to": t.at("c") })).await;
+    assert_eq!((why(&r), r["params"]["program"].as_str()), (pair("denied", "blockedByPolicy"), Some("sh")));
+    // The manifest does not ask for the capability.
+    let r = t.go("t.nofiles", "download", json!({ "url": format!("{}/big", t.base()), "to": t.at("a") })).await;
+    assert_eq!(why(&r), pair("denied", "notRequested"));
+    let r = t.go("t.nofiles", "capture", json!({ "program": "cat", "to": t.at("a") })).await;
+    assert_eq!(why(&r), pair("denied", "notRequested"));
+    let r = t.go("t.nonet", "download", json!({ "url": format!("{}/big", t.base()), "to": t.at("a") })).await;
+    assert_eq!(why(&r), pair("denied", "notRequested"));
+    let r = t.go("t.nonet", "upload", json!({ "url": format!("{}/up", t.base()), "from": t.at("src.txt") })).await;
+    assert_eq!(why(&r), pair("denied", "notRequested"));
+    let r = t.go("t.nonet", "capture", json!({ "program": "cat", "to": t.at("a") })).await;
+    assert_eq!(why(&r), pair("denied", "undeclaredProgram"));
+    // Not in a run: a command, a page render.
+    let r = c.probe("t.move", "transfer.download", json!([{ "url": format!("{}/big", t.base()), "to": t.at("a") }])).await;
+    assert_eq!(why(&r), pair("denied", "notInRun"));
+    let r = c.probe("t.move", "transfer.capture", json!([{ "program": "cat", "to": t.at("a") }])).await;
+    assert_eq!(why(&r), pair("denied", "notInRun"));
+    let id = c.ok("page.save", json!({ "target": "new:t.move:k", "changes": { "name": "x" } })).await["page"]["resourceId"].as_str().unwrap().to_string();
+    let p = c.ok("page.resolve", json!({ "target": format!("resource:{id}") })).await;
+    let v: Value = serde_json::from_str(p["view"][0]["text"].as_str().unwrap()).unwrap();
+    assert_eq!((v["error"].as_str(), v["params"]["reason"].as_str()), (Some("denied"), Some("notInRun")));
+    // Nothing was written anywhere; every refusal is audited under its host or program.
+    assert_eq!(t.listing(), ["link.txt", "linkdir", "src.txt"]);
+    let refused: Vec<(String, String)> = audit(&t.w.env, "transfer.download").into_iter().filter(|a| a.3 != "ok").map(|a| (a.1, a.3)).collect();
+    assert!(refused.len() >= 8, "{refused:?}");
+    assert!(refused.iter().any(|(o, _)| o == "example.invalid"), "{refused:?}");
+    let caps: Vec<String> = audit(&t.w.env, "transfer.capture").into_iter().map(|a| a.1).collect();
+    assert!(caps.contains(&"ls".to_string()) && caps.contains(&"sh".to_string()), "{caps:?}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn secrets_are_substituted_and_scrubbed() {
+    let t = transfer_world().await;
+    let c = &t.w.c;
+    c.ok("secrets.set", json!({ "name": "tok", "value": "Transfer-Secret-9" })).await;
+    let r = t.go("t.move", "download", json!({ "url": format!("{}/echo", t.base()), "to": t.at("e.txt"), "headers": { "Authorization": "Bearer {{secret:tok}}" } })).await;
+    // The server got the value; what comes back to the plugin does not carry it.
+    assert_eq!(std::fs::read_to_string(t.grant.join("e.txt")).unwrap(), "auth=Bearer Transfer-Secret-9");
+    assert!(!r.to_string().contains("Transfer-Secret-9"), "{r}");
+    assert_eq!(r["ok"]["headers"]["x-echo"].as_str().map(|s| s.contains("Transfer-Secret-9")), Some(false));
+    std::fs::write(t.grant.join("s.txt"), "x").unwrap();
+    let r = t.go("t.move", "upload", json!({ "url": format!("{}/up", t.base()), "from": t.at("s.txt"), "headers": { "Authorization": "{{secret:tok}}" } })).await;
+    assert_eq!(r["ok"]["status"].as_u64(), Some(201), "{r}");
+    assert!(!r.to_string().contains("Transfer-Secret-9"), "{r}");
+    // A name the plugin may not use.
+    let r = t.go("t.move", "download", json!({ "url": format!("{}/echo", t.base()), "to": t.at("f.txt"), "headers": { "Authorization": "{{secret:other}}" } })).await;
+    assert_eq!(r["params"]["reason"], "secretNotAllowed", "{r}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn non_2xx_existing_targets_and_overwrite() {
+    let t = transfer_world().await;
+    let r = t.go("t.move", "download", json!({ "url": format!("{}/missing", t.base()), "to": t.at("m.txt") })).await;
+    assert_eq!((r["ok"]["status"].as_u64(), r["ok"]["bytes"].as_u64()), (Some(404), Some(0)), "{r}");
+    assert!(r["ok"].get("path").is_none());
+    assert!(t.listing().is_empty(), "{:?}", t.listing());
+    std::fs::write(t.grant.join("have.txt"), "old").unwrap();
+    let r = t.go("t.move", "download", json!({ "url": format!("{}/echo", t.base()), "to": t.at("have.txt") })).await;
+    assert_eq!((r["error"].as_str(), r["params"]["reason"].as_str()), (Some("conflict"), Some("exists")), "{r}");
+    let r = t.go("t.move", "capture", json!({ "program": "sh", "args": ["-c", "echo new"], "to": t.at("have.txt") })).await;
+    assert_eq!(r["params"]["reason"], "exists", "{r}");
+    assert_eq!(std::fs::read_to_string(t.grant.join("have.txt")).unwrap(), "old");
+    let r = t.go("t.move", "download", json!({ "url": format!("{}/echo", t.base()), "to": t.at("have.txt"), "overwrite": true })).await;
+    assert_eq!(r["ok"]["bytes"].as_u64(), Some(5), "{r}");
+    assert_eq!(std::fs::read_to_string(t.grant.join("have.txt")).unwrap(), "auth=");
+    let r = t.go("t.move", "capture", json!({ "program": "sh", "args": ["-c", "echo new"], "to": t.at("have.txt"), "overwrite": true })).await;
+    assert_eq!(r["ok"]["code"].as_i64(), Some(0), "{r}");
+    assert_eq!(std::fs::read_to_string(t.grant.join("have.txt")).unwrap(), "new\n");
+    // The parent must exist; a folder is no target.
+    let r = t.go("t.move", "download", json!({ "url": format!("{}/echo", t.base()), "to": t.at("no/such/x") })).await;
+    assert_eq!(r["error"], "notFound", "{r}");
+    std::fs::create_dir(t.grant.join("dir")).unwrap();
+    let r = t.go("t.move", "download", json!({ "url": format!("{}/echo", t.base()), "to": t.at("dir"), "overwrite": true })).await;
+    assert_eq!(r["params"]["reason"], "notFile", "{r}");
+    t.no_partials();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn timeouts_cancellation_and_a_failing_callback_leave_no_partial_file() {
+    let t = transfer_world().await;
+    let c = &t.w.c;
+    // Timeout (download, capture): nothing left, the program's group ended.
+    let r = t.go("t.move", "download", json!({ "url": format!("{}/slow", t.base()), "to": t.at("s.bin"), "timeoutMs": 700 })).await;
+    assert_eq!((r["error"].as_str(), r["params"]["reason"].as_str()), (Some("invalid"), Some("timeout")), "{r}");
+    t.no_partials();
+    let r = t.go("t.move", "capture", json!({ "program": "sh", "args": ["-c", "echo part; sleep 30"], "to": t.at("c.txt"), "timeoutMs": 500 })).await;
+    assert_eq!((r["error"].as_str(), r["params"]["reason"].as_str()), (Some("invalid"), Some("timeout")), "{r}");
+    t.no_partials();
+    t.no_programs_left().await;
+    assert!(t.listing().is_empty(), "{:?}", t.listing());
+    // Cancelling the run while it is writing.
+    for (op, opts) in [
+        ("download", json!({ "url": format!("{}/slow", t.base()), "to": t.at("s.bin") })),
+        ("capture", json!({ "program": "sh", "args": ["-c", "while true; do echo part; sleep 0.1; done"], "to": t.at("c.txt") })),
+    ] {
+        let id = start(c, "t.move:go", json!({ "op": op, "opts": opts })).await;
+        for _ in 0..200 {
+            if t.listing().iter().any(|n| n.contains(".part-")) {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        assert!(t.listing().iter().any(|n| n.contains(".part-")), "{op}: a partial file while it runs");
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        c.ok("run.cancel", json!({ "id": id })).await;
+        let r = wait_run(c, &id).await;
+        assert_eq!(r["status"], "cancelled", "{r}");
+        for _ in 0..100 {
+            if !t.listing().iter().any(|n| n.contains(".part-")) {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        t.no_partials();
+        assert!(t.listing().is_empty(), "{op}: {:?}", t.listing());
+    }
+    t.no_programs_left().await;
+    // A callback that throws stops the transfer; the error is the callback's.
+    let r = t.go_with("t.move", json!({ "op": "download", "progress": true, "throwAt": 1, "opts": { "url": format!("{}/slow", t.base()), "to": t.at("s.bin") } })).await;
+    assert_eq!(r["error"], "threw", "{r}");
+    t.no_partials();
+    assert!(t.listing().is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn waiting_for_transfers_and_programs_does_not_use_the_budget() {
+    // A 2 s action budget.
+    let t = transfer_world_cfg(|c| c.action_timeout = Duration::from_secs(2)).await;
+    let c = &t.w.c;
+    let late = json!({ "url": format!("{}/late", t.base()), "to": t.at("late.txt") });
+    let sleep3 = json!({ "program": "sleep", "args": ["2.5"], "timeoutMs": 10000 });
+    for (op, opts) in [("download", late.clone()), ("process", sleep3.clone())] {
+        // 1.2 s counted + 2.5 s waiting: fine.
+        let r = run(c, "t.move:budget", json!({ "op": op, "opts": opts, "before": 1200, "after": 0 })).await;
+        assert_eq!((r["status"].as_str(), out(&r)), (Some("success"), json!("ok")), "{op}: {r}");
+        let _ = std::fs::remove_file(t.grant.join("late.txt"));
+        // The budget is not reset by the wait: 1.2 s + 1.2 s counted is over 2 s.
+        let r = run(c, "t.move:budget", json!({ "op": op, "opts": opts, "before": 1200, "after": 1200 })).await;
+        assert_eq!((r["status"].as_str(), r["error"]["code"].as_str()), (Some("error"), Some("timeout")), "{op}: {r}");
+        let _ = std::fs::remove_file(t.grant.join("late.txt"));
+    }
 }

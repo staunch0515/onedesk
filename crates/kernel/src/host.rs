@@ -53,8 +53,9 @@ impl Inner {
             "resources.get", "resources.list", "files.roots", "files.list", "files.stat", "files.readText",
             "params.get", "storage.get", "storage.keys", "storage.readFrom", "settings.get", "process.ready",
         ];
-        // Review #7: `process.*` answers `notInRun` itself (and audits `run`), in `migrate` too.
-        let res = if info.pure && !PURE_OK.contains(&method) && !method.starts_with("process.") {
+        // Review #7: `process.*` answers `notInRun` itself (and audits `run`), in `migrate` too;
+        // so does `transfer.*` (round 8).
+        let res = if info.pure && !PURE_OK.contains(&method) && !method.starts_with("process.") && !method.starts_with("transfer.") {
             Err(denied("pureCall"))
         } else if !info.pure && method == "storage.readFrom" {
             Err(denied("notInMigrate"))
@@ -75,6 +76,7 @@ impl Inner {
             "network" if op == "request" && info.event => Err(denied("notInRun")),
             "network" if op == "request" => self.host_network(plugin, info, &args).await,
             "process" => self.host_process(plugin, info, op, &args).await,
+            "transfer" => self.host_transfer(plugin, info, op, &args).await,
             "secrets" if op == "get" => self.host_secret_get(plugin, info, &args).await,
             "params" => self.host_params(info, op, &args),
             "storage" => self.host_storage(plugin, op, &args).await,
@@ -100,8 +102,8 @@ impl Inner {
     /// for plugin calls (the checks come first), so nothing is recorded twice.
     async fn audit_refusal(&self, plugin: &Plugin, method: &str, args: &Value, res: &KResult<Value>) {
         if let Err(e) = res {
-            // `process.run` audits its own refusals and failures.
-            if e.code == ErrorCode::Denied && !method.starts_with("process.") {
+            // `process.run` and `transfer.*` audit their own refusals and failures.
+            if e.code == ErrorCode::Denied && !method.starts_with("process.") && !method.starts_with("transfer.") {
                 // Network calls are audited by host (never by URL, which may carry content).
                 let object = if method == "network.request" {
                     args.get(0).and_then(|o| o.get("url")).and_then(Value::as_str).and_then(crate::network::host_of).unwrap_or_default()
