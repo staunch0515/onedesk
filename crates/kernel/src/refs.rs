@@ -98,11 +98,13 @@ pub struct RefRow {
     pub seq: i64,
     pub text: String,
     pub target: Option<String>,
+    /// D330: the row has pointed at a resource (single references always count as having).
+    pub ever: bool,
 }
 
 pub fn rows_of(conn: &Connection, source: &str) -> rusqlite::Result<Vec<RefRow>> {
-    let mut st = conn.prepare_cached("SELECT field, seq, text, target_id FROM refs WHERE source_id = ?1 ORDER BY field, seq")?;
-    let v = st.query_map([source], |r| Ok(RefRow { field: r.get(0)?, seq: r.get(1)?, text: r.get(2)?, target: r.get(3)? }))?;
+    let mut st = conn.prepare_cached("SELECT field, seq, text, target_id, ever FROM refs WHERE source_id = ?1 ORDER BY field, seq")?;
+    let v = st.query_map([source], |r| Ok(RefRow { field: r.get(0)?, seq: r.get(1)?, text: r.get(2)?, target: r.get(3)?, ever: r.get(4)? }))?;
     v.collect()
 }
 
@@ -110,20 +112,20 @@ pub fn rows_of(conn: &Connection, source: &str) -> rusqlite::Result<Vec<RefRow>>
 pub fn sources_of(conn: &Connection, target: &str, all: bool) -> rusqlite::Result<Vec<(String, RefRow)>> {
     let cond = if all { "" } else { "AND r.deleted_at IS NULL" };
     let mut st = conn.prepare_cached(&format!(
-        "SELECT f.source_id, f.field, f.seq, f.text, f.target_id FROM refs f JOIN resources r ON r.id = f.source_id
+        "SELECT f.source_id, f.field, f.seq, f.text, f.target_id, f.ever FROM refs f JOIN resources r ON r.id = f.source_id
          WHERE f.target_id = ?1 {cond} ORDER BY r.name, f.source_id, f.field, f.seq"
     ))?;
     let v = st.query_map([target], |r| {
-        Ok((r.get(0)?, RefRow { field: r.get(1)?, seq: r.get(2)?, text: r.get(3)?, target: r.get(4)? }))
+        Ok((r.get(0)?, RefRow { field: r.get(1)?, seq: r.get(2)?, text: r.get(3)?, target: r.get(4)?, ever: r.get(5)? }))
     })?;
     v.collect()
 }
 
 pub fn replace(conn: &Connection, source: &str, field: &str, rows: &[RefRow]) -> rusqlite::Result<()> {
     conn.execute("DELETE FROM refs WHERE source_id = ?1 AND field = ?2", params![source, field])?;
-    let mut st = conn.prepare_cached("INSERT INTO refs (source_id, field, seq, text, target_id) VALUES (?1, ?2, ?3, ?4, ?5)")?;
+    let mut st = conn.prepare_cached("INSERT INTO refs (source_id, field, seq, text, target_id, ever) VALUES (?1, ?2, ?3, ?4, ?5, ?6)")?;
     for r in rows {
-        st.execute(params![source, field, r.seq, r.text, r.target])?;
+        st.execute(params![source, field, r.seq, r.text, r.target, r.ever || r.target.is_some()])?;
     }
     Ok(())
 }
@@ -151,6 +153,9 @@ pub fn update(conn: &Connection, rule: &KindRule, row: &Row, changed: Option<&[S
         }
         let old: Vec<RefRow> = rows_of(conn, &row.id)?.into_iter().filter(|r| r.field == field).collect();
         let mut keep: HashMap<String, String> = HashMap::new();
+        // D330: a mark whose earlier row had pointed somewhere stays "has pointed" (a purged target
+        // is not replaced by a later namesake, D323).
+        let pointed: BTreeSet<String> = old.iter().filter(|o| o.ever).map(|o| o.text.clone()).collect();
         for o in &old {
             if let Some(t) = &o.target {
                 touched.insert(t.clone());
@@ -172,7 +177,8 @@ pub fn update(conn: &Connection, rule: &KindRule, row: &Row, changed: Option<&[S
             if let Some(t) = &target {
                 touched.insert(t.clone());
             }
-            rows.push(RefRow { field: field.clone(), seq: i as i64, text: m.text, target });
+            let ever = pointed.contains(&m.text);
+            rows.push(RefRow { field: field.clone(), seq: i as i64, text: m.text, target, ever });
         }
         replace(conn, &row.id, &field, &rows)?;
     }
@@ -189,9 +195,33 @@ pub fn update(conn: &Connection, rule: &KindRule, row: &Row, changed: Option<&[S
             let target = store::get_any(conn, id)?.filter(referenceable);
             let text = target.as_ref().map(|t| t.name.clone()).unwrap_or_else(|| id.to_string());
             touched.extend(target.as_ref().map(|t| t.id.clone()));
-            rows.push(RefRow { field: field.clone(), seq: 0, text, target: target.map(|t| t.id) });
+            rows.push(RefRow { field: field.clone(), seq: 0, text, target: target.map(|t| t.id), ever: true });
         }
         replace(conn, &row.id, &field, &rows)?;
+    }
+    Ok(touched)
+}
+
+/// D330: `row` has just got its name (created, renamed, restored, imported). Rows that never pointed
+/// anywhere and wait for exactly that name are resolved now, each from its source's side (D322:
+/// same parent first, then nearest the top). Returns the sources and targets that changed.
+pub fn connect_name(conn: &Connection, row: &Row) -> rusqlite::Result<BTreeSet<String>> {
+    let mut touched = BTreeSet::new();
+    if !referenceable(row) || row.deleted_at.is_some() {
+        return Ok(touched);
+    }
+    let mut st = conn.prepare_cached("SELECT source_id, field, seq FROM refs WHERE target_id IS NULL AND ever = 0 AND text = ?1")?;
+    let waiting: Vec<(String, String, i64)> = st.query_map([&row.name], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?.collect::<Result<_, _>>()?;
+    drop(st);
+    for (source, field, seq) in waiting {
+        let Some(src) = store::get_any(conn, &source)? else { continue };
+        let Some(target) = resolve(conn, &row.name, &src)? else { continue };
+        conn.execute(
+            "UPDATE refs SET target_id = ?4, ever = 1 WHERE source_id = ?1 AND field = ?2 AND seq = ?3",
+            params![source, field, seq, target],
+        )?;
+        touched.insert(source);
+        touched.insert(target);
     }
     Ok(touched)
 }
@@ -281,7 +311,7 @@ pub fn import_rows(conn: &Connection, rule: &KindRule, row: &Row, hints: &[RefRo
                 None => resolve(conn, &m.text, row)?,
             };
             touched.extend(target.clone());
-            rows.push(RefRow { field: field.clone(), seq: i as i64, text: m.text, target });
+            rows.push(RefRow { field: field.clone(), seq: i as i64, text: m.text, target, ever: false });
         }
         replace(conn, &row.id, &field, &rows)?;
     }
@@ -292,9 +322,9 @@ pub fn import_rows(conn: &Connection, rule: &KindRule, row: &Row, hints: &[RefRo
             let target = store::get_any(conn, id)?.filter(referenceable);
             let text = target.as_ref().map(|t| t.name.clone()).unwrap_or_else(|| id.to_string());
             touched.extend(target.as_ref().map(|t| t.id.clone()));
-            rows.push(RefRow { field: field.clone(), seq: 0, text, target: target.map(|t| t.id) });
+            rows.push(RefRow { field: field.clone(), seq: 0, text, target: target.map(|t| t.id), ever: true });
         } else if let Some((_, text)) = lost.iter().find(|(f, _)| *f == field) {
-            rows.push(RefRow { field: field.clone(), seq: 0, text: text.clone(), target: None });
+            rows.push(RefRow { field: field.clone(), seq: 0, text: text.clone(), target: None, ever: true });
         }
         replace(conn, &row.id, &field, &rows)?;
     }
@@ -442,5 +472,35 @@ mod review_tests {
         update(&conn, &rule, &s, None).unwrap();
         conn.execute("UPDATE resources SET name = 'a]]b' WHERE id = 't'", []).unwrap();
         assert_eq!(display(&conn, Some(&rule), &s).unwrap().body["text"], "[[Old]]");
+    }
+}
+
+#[cfg(test)]
+mod migration_tests {
+    use rusqlite::Connection;
+
+    #[test]
+    fn migration_0010_marks_rows_that_had_a_target() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        let tx = conn.transaction().unwrap();
+        for (_, sql) in &crate::workspace::MIGRATIONS[..9] {
+            tx.execute_batch(sql).unwrap();
+        }
+        tx.execute("INSERT INTO meta (key, value) VALUES ('schema_version', '9')", []).unwrap();
+        tx.execute_batch(
+            "INSERT INTO refs (source_id, field, seq, text, target_id) VALUES ('s', 'body.text', 0, 'A', 't');
+             INSERT INTO refs (source_id, field, seq, text, target_id) VALUES ('s', 'body.text', 1, 'B', NULL);",
+        )
+        .unwrap();
+        tx.commit().unwrap();
+        crate::workspace::migrate(&mut conn).unwrap();
+        let rows: Vec<(String, Option<String>, bool)> = conn
+            .prepare("SELECT text, target_id, ever FROM refs ORDER BY seq")
+            .unwrap()
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+            .unwrap()
+            .map(|r| r.unwrap())
+            .collect();
+        assert_eq!(rows, vec![("A".into(), Some("t".into()), true), ("B".into(), None, false)]);
     }
 }

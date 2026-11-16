@@ -111,3 +111,16 @@
 不改（按审查记录）：FNV 指纹（已在 `todo.md`）、`writeFailed` 的 `detail`、插件存储被拒不记审计。
 
 运行结果（本会话）：`cargo test -p onedesk-kernel -p onedesk-worker -p onedesk-protocol` 全过；clippy `-D warnings` 无警告；`gen-types --check` 最新（已提交 `ImportPreview.ts`）；`pnpm lint` 通过。另核对了 `e2e/fixtures/exports/sample` 在新规则下不受影响（都是 `resources` 树的顶层节点）。
+
+## 验收后的修改（D330：先写引用、后建目标）
+
+先合并了协调分支。
+
+- **迁移 `0010_refs_ever.sql`**（0008、0009 未改）：`refs.ever`（是否曾指向过资源）。已有行目标非空的记 1，目标为空的记 0（无法区分，一律算“从未”）；部分索引 `refs_waiting (text) WHERE target_id IS NULL AND ever = 0`。
+- **接上的时机**（同一事务）：资源新建、改名、恢复删除（整批）、导入（新建与外部键更新的条目，全部写入之后）得到某名称时，`refs::connect_name` 把“目标为空且从未指向过”、文字等于该名称的行逐条从**来源**的角度按 D322 解析（同父分组优先，再取树上显示顺序最靠前），设目标并记 `ever = 1`；来源和目标都发 `resource:<id>`。分组、环境、配置、插件状态节点得到名称时不接。已删除的来源的等待行也会接上（恢复后即可用）。
+- **D323 不变**：曾指向过、目标被永久删除的行 `ever = 1`，不自动接；用户改了正文别处再保存，同一文字的标记保留“曾指向过”。只有改了这段文字本身（新文字）才重新按名称解析。
+- **单引用字段**（`{ref: id}`）的行一律算“曾指向过”，不按名称自动接（它们按 id，接上需要改写正文）。
+- **导入**：文件里目标未被导入的文字引用记“从未”（在本工作区没指向过），之后出现同名资源会接上。
+- 测试：`d330_a_reference_written_first_connects_when_the_name_appears`（先写后建、改名成该名、恢复删除、两端事件）、`d330_purged_targets_stay_missing_and_namesakes_are_chosen_from_the_source`（永久删除后新建同名不接、改正文别处后仍不接、不同分组的等待来源、已接上的不被新同名改接、一次导入同时出现两个同名时取树上靠前的）、`d330_imported_names_connect_waiting_references`、`refs::migration_tests::migration_0010_marks_rows_that_had_a_target`（升级测试）。原有 D323 测试继续通过。
+- 运行结果：`cargo test -p onedesk-kernel -p onedesk-worker -p onedesk-protocol` 全过；clippy `-D warnings` 无警告；`gen-types --check` 最新（协议未改）；`pnpm lint` 通过。
+- 没测：一次导入里同时出现两个同名、且等待来源与其中一个同父分组的情形（等待来源在导入之前就存在，不可能与新导入分组同父；同父优先由逐条新建的情形和 D322 原有测试覆盖）。

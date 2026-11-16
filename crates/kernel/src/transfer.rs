@@ -341,6 +341,12 @@ impl Tx<'_> {
                 self.touched.borrow_mut().extend(t);
             }
         }
+        // D330: references here that were waiting for an imported name.
+        for it in &plan.items {
+            if let Some(row) = store::get(self.tx, &it.id).map_err(sql)? {
+                self.connect_name(&row)?;
+            }
+        }
         self.audit(
             "workspace.import",
             &plan.source,
@@ -986,7 +992,7 @@ impl Inner {
             };
             let hints = file_refs
                 .iter()
-                .map(|x| RefRow { field: x.field.clone(), seq: x.seq, text: x.text.clone(), target: x.target.as_ref().and_then(|t| map.get(t).cloned()) })
+                .map(|x| RefRow { field: x.field.clone(), seq: x.seq, text: x.text.clone(), target: x.target.as_ref().and_then(|t| map.get(t).cloned()), ever: false })
                 .collect();
             let deleted_key: bool = match &r.external_key {
                 Some(k) if !update => self.read(|c| {

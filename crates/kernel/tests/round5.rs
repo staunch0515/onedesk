@@ -926,3 +926,88 @@ async fn review7_9_new_reference_fields_and_undo_under_readonly() {
     assert_eq!(r["restored"], 0);
     assert_eq!(r["modified"].as_array().unwrap().len(), 2);
 }
+
+/* ------------------------------------------------------------------ D330: written before the target existed */
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn d330_a_reference_written_first_connects_when_the_name_appears() {
+    let w = world().await;
+    let c = &w.c;
+    let s = doc(c, "S", "see [[乙]] and [[丙]]").await;
+    assert_eq!(outgoing(c, &s).await[0].1, "missing");
+    // Watch from here on: both ends are told.
+    let watch = Client::in_proc(w.env.kernel.clone());
+    watch.hello().await;
+    let yi = doc(c, "乙", "").await;
+    assert_eq!(outgoing(c, &s).await[0], ("乙".into(), "ok".into(), Some(yi.clone())));
+    assert_eq!(incoming(c, &yi).await, vec![s.clone()]);
+    let topic = format!("resource:{s}");
+    watch.event(|e| e.topic == topic).await;
+    // Renaming another resource to the waited-for name connects too.
+    let other = doc(c, "Other", "").await;
+    c.ok("tree.rename", json!({ "tree": "resources", "key": other, "name": "丙" })).await;
+    assert_eq!(outgoing(c, &s).await[1], ("丙".into(), "ok".into(), Some(other.clone())));
+    // Undeleting something with the name connects as well.
+    let t = doc(c, "S2 target", "").await;
+    c.ok("resource.delete", json!({ "id": t })).await;
+    let s2 = doc(c, "S2", "[[S2 target]]").await;
+    assert_eq!(outgoing(c, &s2).await[0].1, "missing");
+    c.ok("resource.undelete", json!({ "id": t })).await;
+    assert_eq!(outgoing(c, &s2).await[0].2.as_deref(), Some(t.as_str()));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn d330_purged_targets_stay_missing_and_namesakes_are_chosen_from_the_source() {
+    let w = world().await;
+    let c = &w.c;
+    // Pointed once, target purged: a new namesake is not connected (D323).
+    let t = doc(c, "Gone", "").await;
+    let s = doc(c, "S", "[[Gone]]").await;
+    c.ok("resource.delete", json!({ "id": t })).await;
+    c.ok("resource.purge", json!({ "id": t })).await;
+    // Editing elsewhere in the text keeps it "has pointed".
+    save_text(c, &s, "[[Gone]] edited").await.unwrap();
+    doc(c, "Gone", "").await;
+    assert_eq!(outgoing(c, &s).await[0].1, "missing");
+    // Waiting sources in different groups; the name appears in G2: each source resolves from its own
+    // side (D322) and, with one candidate, all take it.
+    let g1 = group(c, "G1").await;
+    let g2 = group(c, "G2").await;
+    let s1 = doc_in(c, Some(&g1), "S1", "[[Twin]]").await;
+    let s2 = doc_in(c, Some(&g2), "S2", "[[Twin]]").await;
+    let in2 = doc_in(c, Some(&g2), "Twin", "").await;
+    assert_eq!(outgoing(c, &s1).await[0].2.as_deref(), Some(in2.as_str()));
+    assert_eq!(outgoing(c, &s2).await[0].2.as_deref(), Some(in2.as_str()));
+    // Connected rows stay with their target (by id) when another namesake appears in G1.
+    let in1 = doc_in(c, Some(&g1), "Twin", "").await;
+    assert_eq!(outgoing(c, &s1).await[0].2.as_deref(), Some(in2.as_str()));
+    let _ = in1;
+    // Two namesakes appear at once (one import): a waiting source outside both takes the one first in
+    // tree order — inside the imported group "Box" (position 0) before the one after it.
+    let w8 = doc(c, "Waits", "[[Double]]").await;
+    let f = write_export(
+        w.out.path(),
+        "double",
+        json!([
+            { "id": "box", "kind": "core:group", "name": "Box" },
+            { "id": "d1", "kind": "test.refs:doc", "parent": "box", "name": "Double" },
+            { "id": "d2", "kind": "test.refs:doc", "name": "Double" }
+        ]),
+    );
+    let r = import(c, &f).await;
+    let top = c.ok("tree.children", json!({ "tree": "resources", "parent": r["group"]["id"] })).await;
+    let bx = top["nodes"][0]["key"].as_str().unwrap().to_string();
+    let inner = c.ok("tree.children", json!({ "tree": "resources", "parent": bx })).await["nodes"][0]["key"].as_str().unwrap().to_string();
+    assert_eq!(outgoing(c, &w8).await[0].2.as_deref(), Some(inner.as_str()));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn d330_imported_names_connect_waiting_references() {
+    let w = world().await;
+    let c = &w.c;
+    let s = doc(c, "S", "[[From elsewhere]]").await;
+    let f = write_export(w.out.path(), "names", json!([{ "id": "x", "kind": "test.refs:doc", "name": "From elsewhere" }]));
+    let r = import(c, &f).await;
+    let id = c.ok("tree.children", json!({ "tree": "resources", "parent": r["group"]["id"] })).await["nodes"][0]["key"].as_str().unwrap().to_string();
+    assert_eq!(outgoing(c, &s).await[0].2.as_deref(), Some(id.as_str()));
+}
