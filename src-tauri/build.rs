@@ -23,6 +23,14 @@ fn main() {
     let _ = std::fs::create_dir_all("binaries");
     match real {
         Some(real) => {
+            // Rerun when the worker is linked again, so the stand-in follows it and Tauri's copy never puts an
+            // older worker over a newer one. Tauri does not write the file when the content is identical, so
+            // our own copy does not make this rerun forever. (Setting any rerun-if-changed replaces cargo's
+            // default "any file of the package", so the files that matter are named too.)
+            println!("cargo:rerun-if-changed={}", real.display());
+            println!("cargo:rerun-if-changed=build.rs");
+            println!("cargo:rerun-if-changed=tauri.conf.json");
+            println!("cargo:rerun-if-changed=capabilities");
             // Keep the stand-in identical to the real worker, so the copy Tauri makes changes nothing.
             if std::fs::read(&sidecar).ok() != std::fs::read(&real).ok() {
                 let _ = std::fs::copy(&real, &sidecar);

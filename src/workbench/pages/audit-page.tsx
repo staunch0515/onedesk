@@ -8,9 +8,7 @@ import { Frame } from "../parts/frame";
 
 const ALL = "__all__";
 const HOUR = 3_600_000;
-/** The kernel also writes `cancelled` and `timeout` (round 9); the generated type may not list them yet. */
-type ResultCode = AuditRow["result"] | "cancelled" | "timeout";
-const RESULT_TONE: Record<ResultCode, Tone> = { ok: "success", denied: "warning", error: "danger", cancelled: "neutral", timeout: "warning" };
+const RESULT_TONE: Record<AuditResult, Tone> = { ok: "success", denied: "warning", error: "danger", cancelled: "neutral", timeout: "warning" };
 
 /** Audit log (I.13): table with filters by time, actor, operation, result and text. */
 export function AuditPage({ tab, descriptor }: { tab: TabState; descriptor: PageDescriptor }) {
@@ -29,7 +27,7 @@ export function AuditPage({ tab, descriptor }: { tab: TabState; descriptor: Page
     ["audit"],
   );
   const widths = useUi((s) => s.gridWidths.audit);
-  const resultName: Record<ResultCode, string> = { ok: t("audit.ok"), denied: t("audit.denied"), error: t("audit.error"), cancelled: t("audit.cancelled"), timeout: t("audit.timeout") };
+  const resultName: Record<AuditResult, string> = { ok: t("audit.ok"), denied: t("audit.denied"), error: t("audit.error"), cancelled: t("audit.cancelled"), timeout: t("audit.timeout") };
   const sourceNames: Record<string, string> = { user: t("audit.sourceUser"), plugin: t("audit.sourcePlugin"), scheduled: t("audit.sourceScheduled"), ai: t("audit.sourceAi"), system: t("audit.sourceSystem") };
 
   const columns: Array<DataGridColumn<AuditRow>> = [
@@ -38,7 +36,7 @@ export function AuditPage({ tab, descriptor }: { tab: TabState; descriptor: Page
     { key: "source", header: t("audit.source"), width: 104, muted: true, value: (a) => (sourceNames[a.source] ?? a.source) },
     { key: "operation", header: t("audit.operation"), width: 184, value: (a) => opName(a.operation) },
     { key: "target", header: t("audit.target"), width: 240, value: (a) => a.target },
-    { key: "result", header: t("audit.result"), width: 104, value: (a) => a.result, render: (a) => <Badge tone={RESULT_TONE[a.result as ResultCode]} dot>{resultName[a.result as ResultCode]}</Badge> },
+    { key: "result", header: t("audit.result"), width: 104, value: (a) => a.result, render: (a) => <Badge tone={RESULT_TONE[a.result]} dot>{resultName[a.result]}</Badge> },
     { key: "detail", header: t("audit.detail"), width: 480, mono: true, value: (a) => (a.count && a.count > 1 ? `${a.detail} ×${a.count}` : a.detail) },
   ];
 
