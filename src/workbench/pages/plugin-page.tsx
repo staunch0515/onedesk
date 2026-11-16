@@ -266,7 +266,7 @@ export function PluginPage({ tab, descriptor }: { tab: TabState; descriptor: Pag
         {p.versions.length > 0 && (
           <Section title={t("plugin.versions")} description={t("plugin.versionsHint")}>
             {switchFailure && (
-              <Banner tone="danger" title={t("plugin.switchFailure", { version: switchFailure.version, at: dateTime(switchFailure.at), reason: KERNEL_ERRORS[locale][`reason.${switchFailure.reason}`] ?? KERNEL_ERRORS["en-US"][`reason.${switchFailure.reason}`] ?? switchFailure.reason })} />
+              <Banner tone="danger" title={t("plugin.switchFailure", { version: switchFailure.version, at: dateTime(switchFailure.at), reason: (KERNEL_ERRORS[locale][`reason.${switchFailure.reason}`] ?? KERNEL_ERRORS["en-US"][`reason.${switchFailure.reason}`] ?? switchFailure.reason).replace(/[.。]$/, "") })} />
             )}
             {real && p.lastUpgrade && !p.lastUpgrade.undone && (
               <Banner tone="info" title={t("plugin.lastUpgrade", { count: p.lastUpgrade.count, from: p.lastUpgrade.from, to: p.lastUpgrade.to })} actions={<Button size="sm" onClick={() => setAsk({ kind: "undo", count: p.lastUpgrade!.count })}>{t("plugin.undoUpgrade")}</Button>} />

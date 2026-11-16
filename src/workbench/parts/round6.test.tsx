@@ -10,7 +10,7 @@ import { InfoPanelPart } from "./info-panel";
 import { PageHost } from "./page-host";
 import { InstallDialogs, inspectFolder } from "./install-dialogs";
 import { parsePrograms } from "./programs-notice";
-import { useLiveLog } from "./result-area";
+import { liveText, useLiveLog } from "./result-area";
 
 const preview: InstallPreview = {
   valid: true,
@@ -57,6 +57,13 @@ describe("live output", () => {
     await waitFor(() => expect(screen.getByTestId("log").textContent).toBe("a|b|c"));
     rerender(<Probe r={run(undefined, "success")} />);
     await waitFor(() => expect(screen.getByTestId("log").textContent).toBe(""));
+  });
+});
+
+describe("live text", () => {
+  it("does not double the line breaks of whole-line chunks", () => {
+    expect(liveText(["1\n", "2\n", "3\n"])).toBe("1\n2\n3");
+    expect(liveText(["a", "b\n"])).toBe("a\nb");
   });
 });
 
