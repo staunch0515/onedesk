@@ -282,10 +282,7 @@ test("transfer setup: install, grant the folder, allow the local address", async
 });
 
 type Audit = { operation: string; object?: string; result: string; detail: string };
-// FIXME (kernel): a download cancelled with run.cancel is audited with result "error" (detail {"ms":..}), not "cancelled" (D368).
-// The cancel path in crates/kernel/src/carry.rs returns Err(denied("cancelled")) from the select, which the normal error
-// audit turns into "error"; only the `Unfinished` drop guard writes "cancelled". Re-enable when the kernel is fixed.
-test.fixme("a cancelled download is in the audit log as transfer.download, result cancelled", async ({ page }) => {
+test("a cancelled download is in the audit log as transfer.download, result cancelled", async ({ page }) => {
   await bare(page);
   const file = path.join(grant, "cancel.bin");
   const url = `${srv.url}/slow/20`;
