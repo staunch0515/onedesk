@@ -319,13 +319,15 @@ impl Inner {
             _ => None,
         });
         if let Some(kinds) = &action.kinds {
-            if !kind.as_ref().is_some_and(|k| kinds.iter().any(|x| &plugin.full(x) == k)) {
+            if !kind.as_ref().is_some_and(|k| kinds.iter().any(|x| &plugin.kind_ref(x) == k)) {
                 self.run_end(&id, Some(plugin), "error", None, refuse("action does not apply to this resource"), None).await;
                 return Ok(());
             }
         }
-        // #2: a resource of another plugin (or of the kernel) is never handed to this action.
-        if let Some(r) = res {
+        // #2: a resource of another plugin (or of the kernel) is never handed to this action —
+        // unless it depends on that plugin, which exports the kind for actions (round 7, §7.3).
+        let foreign = res.is_some_and(|r| self.registry.kind(&r.kind).is_some_and(|(o, _)| o.id != plugin.id) && self.export_allows(plugin, &r.kind, false));
+        if let Some(r) = res.filter(|_| !foreign) {
             if self.registry.kind(&r.kind).is_none_or(|(owner, _)| owner.id != plugin.id) {
                 self.run_end(&id, Some(plugin), "error", None, refuse("resource of another plugin"), None).await;
                 return Ok(());
@@ -346,7 +348,12 @@ impl Inner {
             ActiveRun { plugin: plugin.id.clone(), token: token.clone(), last_progress: None, stopped: None, secrets: vec![] },
         );
         let resource = match res {
-            Some(r) => Some(self.resource(r)?),
+            // A dependent sees the resource without its secret fields (round 7).
+            Some(r) if foreign => Some(crate::deps::without_secrets(
+                serde_json::to_value(self.resource(r)?).map_err(internal)?,
+                &self.secret_fields(&r.kind, r.plugin_version.as_deref()),
+            )),
+            Some(r) => Some(serde_json::to_value(self.resource(r)?).map_err(internal)?),
             None => None,
         };
         let ctx = json!({ "target": p.target, "resource": resource, "envId": p.env_id, "params": p.params, "runId": id,
@@ -368,7 +375,7 @@ impl Inner {
             run_id: Some(id.clone()),
             pure: false,
             resource_id: res.map(|r| r.id.clone()),
-            event: false,
+            ..Default::default()
         };
         let started = Instant::now();
         // Executes in the background; `run.start` answers now.
@@ -614,7 +621,7 @@ impl Inner {
         ctx["locale"] = json!(cx.locale);
         ctx["envId"] = json!(cx.env_id);
         let resource_id = ctx["resource"]["id"].as_str().map(String::from);
-        let info = CallInfo { client, env_id: cx.env_id.clone(), resource_id, ..Default::default() };
+        let info = CallInfo { client, env_id: cx.env_id.clone(), resource_id, page_event: true, ..Default::default() };
         let out = self
             .call_version(plugin, "pages", &page, "onEvent", json!([ctx, p.event]), info, None, None)
             .await
@@ -678,7 +685,7 @@ impl Inner {
     }
 
     /// Trees a plugin's state shows in: its kinds' trees, its provided trees, the plugins tree.
-    fn plugin_trees(&self, p: &Plugin) -> Vec<String> {
+    pub(crate) fn plugin_trees(&self, p: &Plugin) -> Vec<String> {
         let mut trees: Vec<String> = p.manifest.contributes.kinds.iter().filter_map(|k| k.tree.as_deref().map(|t| p.tree_ref(t))).collect();
         trees.extend(p.manifest.contributes.trees.iter().map(|t| p.full(&t.id)));
         trees.push(store::TREE_PLUGINS.into());
@@ -689,12 +696,19 @@ impl Inner {
 
     pub async fn set_enabled(&self, plugin: &str, enabled: bool) -> KResult<()> {
         let p = self.registry.plugin(plugin).ok_or_else(|| not_found("plugin"))?;
+        if !enabled {
+            // D344: not while enabled plugins depend on it.
+            let w = crate::deps::WhatIf { plugin: plugin.into(), on: Some(false), ..Default::default() };
+            self.refuse_if_dependents("plugin.state", plugin, &w).await?;
+        }
         let value = (!enabled).then(|| "false".to_string());
         self.execute(Actor::User, Command::PluginState { plugin: plugin.into(), set: vec![("enabled".into(), value)] }).await?;
         if !enabled {
             self.stop_runs_of(plugin);
             self.drop_runtime(plugin).await;
+            self.drop_install_request(plugin, crate::install::GONE_DISABLED);
         }
+        self.settle_dependents().await;
         self.emit(topic::PLUGINS, None, None);
         for t in self.plugin_trees(p) {
             self.emit(format!("{}{t}", topic::TREE), None, None);
@@ -742,10 +756,21 @@ impl Inner {
                 last_upgrade: None,
                 unconfirmed: vec![],
                 switch_failure: None,
+                depends: Some(vec![]),
+                dependents: Some(vec![]),
             }));
         };
         let m = &p.manifest;
-        let enabled = self.plugin_enabled(id);
+        let working = self.plugin_enabled(id);
+        // `enabled` is the user's switch; `load` says whether it works and, if not, why (round 7).
+        let enabled = self.plugin_switched_on(id);
+        let load_message = if self.unmet_dependency(id).is_some() {
+            Some("dependsUnmet".to_string())
+        } else if working && !self.unexported_kinds(p).is_empty() {
+            Some("notExported".to_string())
+        } else {
+            None
+        };
         let settings = m
             .contributes
             .settings
@@ -795,8 +820,8 @@ impl Inner {
                 other: m.contributes.commands.iter().map(|c| p.label(&c.label)).collect(),
             },
             load: PluginLoad {
-                state: if enabled { PluginLoadState::Loaded } else { PluginLoadState::Disabled },
-                message: None,
+                state: if working { PluginLoadState::Loaded } else { PluginLoadState::Disabled },
+                message: load_message,
                 at: None,
                 ms: None,
             },
@@ -805,6 +830,8 @@ impl Inner {
             last_upgrade: self.last_upgrade(id)?,
             unconfirmed: self.registry.versions(id).into_iter().filter(|v| !self.version_confirmed(v)).map(|v| v.version.clone()).collect(),
             switch_failure: self.switch_failure(id),
+            depends: Some(self.dependency_rows(p)),
+            dependents: Some(self.dependents_of(id)),
         }))
     }
 
@@ -869,7 +896,9 @@ impl Inner {
         let mut out = Vec::new();
         for p in &self.registry.plugins() {
             let enabled = self.plugin_enabled(&p.id);
-            let toggle = if enabled { kernel_cmd("plugin.disable", "power-off") } else { kernel_cmd("plugin.enable", "power") };
+            // The switch follows the user's choice; the state says whether it works (round 7).
+            let toggle =
+                if self.plugin_switched_on(&p.id) { kernel_cmd("plugin.disable", "power-off") } else { kernel_cmd("plugin.enable", "power") };
             out.push(TreeNode {
                 key: p.id.clone(),
                 tree: store::TREE_PLUGINS.into(),
@@ -881,7 +910,9 @@ impl Inner {
                 state: if enabled { NodeState::Ok } else { NodeState::Disabled },
                 // D337: a failed automatic switch first; then a newer version waiting for the user
                 // to confirm its permissions (D299).
-                state_reason: if self.switch_failure(&p.id).is_some() {
+                state_reason: if self.unmet_dependency(&p.id).is_some() {
+                    Some(Label::Text("dependsUnmet".into()))
+                } else if self.switch_failure(&p.id).is_some() {
                     Some(Label::Text("switchFailed".into()))
                 } else {
                     self.registry.versions(&p.id).iter().any(|v| !self.version_confirmed(v)).then(|| Label::Text("unconfirmedVersion".into()))

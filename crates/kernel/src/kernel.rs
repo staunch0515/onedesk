@@ -71,6 +71,8 @@ pub(crate) struct Inner {
     pub procs: Arc<crate::process::Procs>,
     /// Round 6: one ordered delivery queue per plugin (D335).
     pub event_queues: Mutex<HashMap<String, Arc<crate::events::Queue>>>,
+    /// Round 7: unanswered install requests of plugins (D345).
+    pub(crate) install_requests: crate::install::Requests,
 }
 
 pub(crate) fn parse<T: DeserializeOwned>(v: Value) -> KResult<T> {
@@ -144,6 +146,7 @@ impl Kernel {
             rules,
             procs: Arc::new(crate::process::Procs::new(&ws_dir)),
             event_queues: Default::default(),
+            install_requests: Default::default(),
         });
         // D299 first sight, then each plugin's active version.
         inner.first_sight_blocking();
@@ -211,6 +214,11 @@ impl Kernel {
     /// External programs still running (tests).
     pub fn live_programs(&self) -> usize {
         self.inner.procs.live_count()
+    }
+
+    /// Test hook: how long an install request waits for an answer (default 5 minutes).
+    pub fn set_install_request_ttl(&self, ttl: std::time::Duration) {
+        *self.inner.install_requests.ttl.lock().unwrap() = Some(ttl);
     }
 
     pub fn db_path(&self) -> PathBuf {
@@ -403,6 +411,9 @@ impl Inner {
                 Ok(Value::Null)
             }
             _ => {
+                if crate::install::METHODS.contains(&m) {
+                    return self.handle7(m, params).await;
+                }
                 if crate::transfer::METHODS.contains(&m) {
                     return self.handle5(m, params).await.unwrap_or_else(|| Err(err_p(ErrorCode::UnknownMethod, &[("method", m)])));
                 }
@@ -1084,10 +1095,10 @@ impl Inner {
         }
     }
 
-    /// D290 / D299: enabled unless its state says `enabled = false`, and it has a usable
-    /// (installed, confirmed) active version.
+    /// D290 / D299 / D343: enabled unless its state says `enabled = false`, it has a usable
+    /// (installed, confirmed) active version, and its `depends` are met.
     pub fn plugin_enabled(&self, plugin: &str) -> bool {
-        self.plugin_param(plugin, "enabled").is_none_or(|v| v != "false") && self.registry.active_version(plugin).is_some()
+        self.plugin_state(plugin).is_ok()
     }
 
     /// A parameter of the plugin's state node (`enabled`, `settings.<name>`).

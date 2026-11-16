@@ -116,6 +116,10 @@ pub struct CallInfo {
     /// Round 6 (D336): an event handler — no programs, no network; its writes raise no events
     /// for the same plugin.
     pub event: bool,
+    /// Round 7: a page event handler (the user acted on the page) — may ask to install plugins.
+    pub page_event: bool,
+    /// Round 7 (D345): held while a host call waits for the user; that time is not counted.
+    pub hold: Arc<crate::install::Hold>,
 }
 
 /// The only capability a plugin has. One instance per plugin version.
@@ -337,6 +341,7 @@ const BOOTSTRAP: &str = r#"
       util: Object.freeze({ sleep: c("util.sleep") }),
       network: Object.freeze({ request: c("network.request") }),
       secrets: Object.freeze({ get: c("secrets.get") }),
+      plugins: Object.freeze({ requestInstall: c("plugins.requestInstall"), list: c("plugins.list") }),
       process: Object.freeze({ run: (opts) => runProcess(callId, opts), ready: c("process.ready") }),
       events,
     });
@@ -552,6 +557,7 @@ impl Sandbox {
         timeout: Duration,
     ) -> Result<Value, SandboxError> {
         let token = cancel.unwrap_or_default();
+        let hold = info.hold.clone();
         let call_id = self.ctl.next_call.fetch_add(1, Ordering::SeqCst);
         self.ctl.calls.lock().unwrap().insert(call_id, (token.clone(), Arc::new(info)));
         let (kind, name, func) = (kind.to_string(), name.to_string(), func.to_string());
@@ -566,13 +572,28 @@ impl Sandbox {
             ret.into_future::<String>().await.map_err(|e| js(&ctx, e))
         });
         let watchdog = self.ctl.watchdog.notified();
+        // The time budget; time spent waiting for the user does not count (D345).
+        let started = tokio::time::Instant::now();
+        let budget = async {
+            loop {
+                if hold.held() {
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+                    continue;
+                }
+                let until = tokio::time::Instant::from_std(hold.deadline(started.into_std(), timeout));
+                if tokio::time::Instant::now() >= until {
+                    break;
+                }
+                tokio::time::sleep_until(until).await;
+            }
+        };
         let res = tokio::select! {
-            r = tokio::time::timeout(timeout, watched(fut)) => match r {
-                Err(_) => { token.cancel_with("timeout"); Err(SandboxError::Timeout) }
-                Ok(_) if token.is_cancelled() => Err(SandboxError::Cancelled),
-                Ok(Err(msg)) => Err(classify(&self.ctl, msg)),
-                Ok(Ok(s)) => unwrap_envelope(&s),
+            r = watched(fut) => match r {
+                _ if token.is_cancelled() => Err(SandboxError::Cancelled),
+                Err(msg) => Err(classify(&self.ctl, msg)),
+                Ok(s) => unwrap_envelope(&s),
             },
+            _ = budget => { token.cancel_with("timeout"); Err(SandboxError::Timeout) }
             _ = token.cancelled() => Err(SandboxError::Cancelled),
             // We cannot tell which invocation was spinning; every in-flight call fails.
             _ = watchdog => { token.cancel_with("timeout"); Err(SandboxError::Timeout) }
