@@ -5,6 +5,7 @@
  */
 import type { ProtocolClient } from "../client";
 import { KernelError } from "../errors";
+import type { RefInfoR6 } from "../round6";
 import type {
   ActionDecl,
   AuditRow,
@@ -29,7 +30,6 @@ import type {
   ResultTabDecl,
   Run,
   RunOutput,
-  RefInfo,
   RunRequest,
   SearchHit,
   TreeInfo,
@@ -1482,14 +1482,15 @@ export function createMockClient(options: MockOptions = {}): ProtocolClient {
     const all = Object.values(db.rows).filter((r) => r.name === name && !r.kind.startsWith("core:"));
     return all.find(live) ?? all[0];
   };
+  const FIELD_LABELS_ZH: Record<string, string> = { text: "正文", note: "备注", description: "说明" };
   /** `[[name]]` in the string fields of a body, in order. */
-  function outgoingRefs(row: Row): RefInfo[] {
-    const out: RefInfo[] = [];
+  function outgoingRefs(row: Row): RefInfoR6[] {
+    const out: RefInfoR6[] = [];
     for (const [field, value] of Object.entries(row.body)) {
       if (typeof value !== "string") continue;
       for (const m of value.matchAll(/\[\[([^\[\]\n]{1,200})\]\]/g)) {
         const target = refTarget(m[1]!);
-        out.push({ source: { id: row.id, name: row.name }, field: `body.${field}`, text: m[1]!, ...(target ? { target: { id: target.id, name: target.name } } : {}), state: !target ? "missing" : target.deletedAt ? "deleted" : "ok" });
+        out.push({ source: { id: row.id, name: row.name }, field: `body.${field}`, fieldLabel: { "en-US": field.charAt(0).toUpperCase() + field.slice(1), "zh-CN": FIELD_LABELS_ZH[field] ?? field }, text: m[1]!, ...(target ? { target: { id: target.id, name: target.name } } : {}), state: !target ? "missing" : target.deletedAt ? "deleted" : "ok" });
       }
     }
     return out;

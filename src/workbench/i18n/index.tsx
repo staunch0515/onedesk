@@ -68,7 +68,8 @@ function build(locale: Locale): I18n {
     error: (error) => {
       const known = kernelErrorCode(error);
       const reason = known?.params.reason;
-      const pick = (table: Record<string, string>) => (known && reason ? (table[`${known.code}.${reason}`] ?? table[`reason.${reason}`] ?? KERNEL_LABELS[locale][reason] ?? KERNEL_LABELS["en-US"][reason]) : undefined) ?? (known ? table[known.code] : undefined);
+      const what = known?.params.what;
+      const pick = (table: Record<string, string>) => (known && reason ? (table[`${known.code}.${reason}`] ?? table[`reason.${reason}`] ?? KERNEL_LABELS[locale][reason] ?? KERNEL_LABELS["en-US"][reason]) : undefined) ?? (known && what ? table[`${known.code}.${what}`] : undefined) ?? (known ? table[known.code] : undefined);
       const text = known && (pick(KERNEL_ERRORS[locale]) ?? pick(KERNEL_ERRORS["en-US"]));
       if (known && text) return interpolate(text, known.params);
       return error instanceof Error ? error.message : String(error);

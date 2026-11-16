@@ -5,6 +5,7 @@ import type { ProtocolClient } from "../protocol";
 import type { Actions } from "../state/context";
 import { useUi, useWorkbench } from "../state/context";
 import type { Store } from "../state/store";
+import { ProgramsNotice } from "./programs-notice";
 
 /**
  * Starts installing a plugin package: the system folder dialog on the desktop, a path box in the
@@ -141,11 +142,14 @@ export function InstallDialogs() {
                   <Pane key={p.id} direction="row" gap="sm" align="center" wrap>
                     <Text size="sm" weight="medium">{permission(p.id)}</Text>
                     {added.has(p.id) && <Badge tone="warning">{t("install.newPermission")}</Badge>}
-                    {p.detail && <Text size="xs" tone="muted" mono>{p.detail}</Text>}
+                    {p.detail && p.id !== "programs" && <Text size="xs" tone="muted" mono>{p.detail}</Text>}
                   </Pane>
                 ))}
               </Pane>
             )}
+            {preview.permissions.filter((p) => p.id === "programs").map((p) => (
+              <ProgramsNotice key={p.id} detail={p.detail} />
+            ))}
           </Pane>
         )}
       </Dialog>

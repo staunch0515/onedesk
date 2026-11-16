@@ -6,6 +6,9 @@ import { useQuery, useWorkbench } from "../state/context";
 import type { TabState } from "../state/store";
 import { Frame } from "../parts/frame";
 import { SECRETS_TARGET } from "./secrets-page";
+import { switchFailureOf } from "../protocol/round6";
+import { KERNEL_ERRORS } from "../i18n/kernel-texts";
+import { ProgramsNotice } from "../parts/programs-notice";
 
 /** What the page is asking the user right now (all confirmations of the version table live here). */
 type Ask =
@@ -18,7 +21,7 @@ type Ask =
 /** Plugin page (ui-spec §4, I.6): description, versions, enable switch, settings, permissions, what it provides, load status. */
 export function PluginPage({ tab, descriptor }: { tab: TabState; descriptor: PageDescriptor }) {
   const { client, actions } = useWorkbench();
-  const { t, tx, dateTime, permission } = useI18n();
+  const { t, tx, dateTime, permission, locale } = useI18n();
   const { toast } = useToast();
   const [ask, setAsk] = useState<Ask | null>(null);
   const id = tab.target.slice("plugin:".length);
@@ -151,6 +154,7 @@ export function PluginPage({ tab, descriptor }: { tab: TabState; descriptor: Pag
         ))}
       </Pane>
     );
+  const switchFailure = switchFailureOf(p as never);
   const missingGrant = p.permissions.some((x) => x.required && !x.granted);
 
   const askDialog = (
@@ -190,8 +194,11 @@ export function PluginPage({ tab, descriptor }: { tab: TabState; descriptor: Pag
           {((p.versions.find((v) => v.version === ask.version)?.permissions ?? []) as PluginPermission[]).map((x) => (
             <Pane key={x.id} direction="row" gap="sm" align="center" wrap>
               <Text size="sm" weight="medium">{x.label ? tx(x.label) : permission(x.id)}</Text>
-              {x.detail && <Text size="xs" tone="muted" mono>{x.detail}</Text>}
+              {x.detail && x.id !== "programs" && <Text size="xs" tone="muted" mono>{x.detail}</Text>}
             </Pane>
+          ))}
+          {((p.versions.find((v) => v.version === ask.version)?.permissions ?? []) as PluginPermission[]).filter((x) => x.id === "programs").map((x) => (
+            <ProgramsNotice key={x.id} detail={x.detail} />
           ))}
         </Pane>
       )}
@@ -259,6 +266,9 @@ export function PluginPage({ tab, descriptor }: { tab: TabState; descriptor: Pag
 
         {p.versions.length > 0 && (
           <Section title={t("plugin.versions")} description={t("plugin.versionsHint")}>
+            {switchFailure && (
+              <Banner tone="danger" title={t("plugin.switchFailure", { version: switchFailure.version, at: dateTime(switchFailure.at), reason: KERNEL_ERRORS[locale][`reason.${switchFailure.reason}`] ?? KERNEL_ERRORS["en-US"][`reason.${switchFailure.reason}`] ?? switchFailure.reason })} />
+            )}
             {real && p.lastUpgrade && !p.lastUpgrade.undone && (
               <Banner tone="info" title={t("plugin.lastUpgrade", { count: p.lastUpgrade.count, from: p.lastUpgrade.from, to: p.lastUpgrade.to })} actions={<Button size="sm" onClick={() => setAsk({ kind: "undo", count: p.lastUpgrade!.count })}>{t("plugin.undoUpgrade")}</Button>} />
             )}

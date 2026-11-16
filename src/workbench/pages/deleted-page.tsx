@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Button, DataGrid, Dialog, EmptyState, Icon, LoadingState, Pane, Text, type DataGridColumn } from "../../design";
 import { useI18n } from "../i18n";
 import type { PageDescriptor, Resource } from "../protocol";
@@ -12,6 +12,17 @@ export function DeletedPage({ tab, descriptor }: { tab: TabState; descriptor: Pa
   const { t, tx, dateTime } = useI18n();
   const rows = useQuery((c) => c.resource.listDeleted(), [], ["tree:deleted"]);
   const [purge, setPurge] = useState<Resource | null>(null);
+  // How many items still refer to the one about to be purged (`refs.incoming` also answers for deleted targets).
+  const [referrers, setReferrers] = useState(0);
+  useEffect(() => {
+    setReferrers(0);
+    if (!purge) return;
+    let live = true;
+    client.refs.incoming(purge.id).then((rows) => live && setReferrers(new Set(rows.map((r) => r.source.id)).size), () => undefined);
+    return () => {
+      live = false;
+    };
+  }, [client, purge]);
 
   const columns: Array<DataGridColumn<Resource>> = [
     {
@@ -62,7 +73,7 @@ export function DeletedPage({ tab, descriptor }: { tab: TabState; descriptor: Pa
         onOpenChange={(open) => !open && setPurge(null)}
         size="sm"
         title={t("deleted.purgeTitle")}
-        description={t("deleted.purgeBody", { name: purge?.name ?? "" })}
+        description={referrers > 0 ? t("deleted.purgeBodyRefs", { name: purge?.name ?? "", count: referrers }) : t("deleted.purgeBody", { name: purge?.name ?? "" })}
         footer={
           <>
             <Button onClick={() => setPurge(null)}>{t("common.cancel")}</Button>
