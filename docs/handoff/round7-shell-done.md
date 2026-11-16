@@ -28,3 +28,28 @@
 - 没连真内核走过：请求弹框、依赖两节、被拒提示都只在单元测试和假数据里验证。
 - 没做主进程改动；没截图确认新两节的外观（只用现有组件和 token）。
 - 弹框里没有“请求方是哪个插件 id”的单独显示，只有名字（`pluginName`）。
+
+## 合并后的对齐（合并了协调分支，对着真内核走过）
+
+### 改了什么
+- 本地临时类型换成生成的：`InstallRequest`、`PluginDependency` 直接再导出，`InstallAnswer = InstallAnswerParams`。假设 1–3 的形状与方法名都对得上（`plugin.installRequests`、`plugin.answerInstallRequest`、主题 `install-requests`）；`load.message` 的 `dependsUnmet` 与外壳的推断（`disabled` + 有未满足依赖）一致。
+- **主进程接了 `plugin.checkRemove`**（`crates/host/src/lib.rs` 的 `remove_plugin`：拿到安装锁后、挪文件之前转发，出错原样返回）。测试：`remove_is_refused_untouched_when_the_kernel_says_dependents`（假工作进程回 `conflict/dependents`，文件原样、没有 rescan）；原有的移除测试改为期望日志里先 `plugin.checkRemove` 再 `plugin.rescan`。
+- 补文字：清单原因 `badPlugins`；`reason.notInteractive`、`reason.requesterDisabled`、`notFound.installRequest`；`load.message = notExported` 的说明（插件页状态区）；权限 `resources` 的显示名“自己的资源”→“资源”（明细是别的插件的类型，原名误导）。
+- 检查：`pnpm typecheck`、`lint`、`pnpm test`（289）、`cargo test -p onedesk-host`、host clippy、`workbench.spec.ts`（23 通过 1 跳过）通过。
+
+### 对着真内核走的结果（`ONEDESK_SECRET_STORE=memory`、临时数据目录、devhost + vite，内置浏览器面板；浏览器里没有系统文件夹对话框，授权和安装都用路径框）
+1. 插件市场（它是自己的活动栏入口，树里一个“Local packages”节点，不在插件树里）：页面先说“还没有授权文件夹”；用工具栏“添加文件夹”输入 `e2e/fixtures/market` 后列出三行：`plugin.name`（清单有错的那个，名称和说明显示成**原始键**，状态写“未安装”而不是“不可用 + 原因”）、你好（未安装）、笔记（已安装 0.1.0）。→ 这条是**插件的缺陷**（不归外壳）：坏包应该列为“不可用”并给原因；下拉框里坏包的名字也是 `plugin.name 0.1.0`，选了会装不了。
+2. 选“你好”点“安装”：弹出框架确认框，标题“‘插件市场’请求安装‘你好’？”，说明“只有一个‘问候’类型”、`com.example.hello@0.1.0`、“没有特殊权限”。点“安装”后列表里“你好”变“已安装 0.1.0”，右下提示“已安装 你好 0.1.0”。✔
+3. 取消：我第一次不小心在框外点击，对话框关闭，页面显示“已取消安装。”，列表里“你好”仍是未安装，什么都没发生。✔（意外走到的，不是单独设计的一步；之后“你好”已装，没有可再选的包了，没有重做。）
+4. 手动安装 `note-tools/0.1.0`：确认框列出权限“资源”（修正前显示“自己的资源”）+ 新增标记 + 明细 `org.onedesk.note:note`。装好后它的插件页：已加载，“依赖的插件”表一行 `org.onedesk.note >=0.1.0 已满足 0.1.0`，权限表里同样的明细，提供“统计字数”“盖章”两个动作。✔
+5. 新建一条笔记并保存：页面操作区在保存之后重新打开才有“统计字数”“盖章”（已打开的页面不会自己刷新，是内核交接文件里写的已知项）。点“统计字数”：运行成功，输出“4 个词，1 行”，**但笔记页没有结果区**，只在任务面板里看到“统计字数 · 4 个词 · 9 ms”。→ 笔记类型没有声明结果区页签，依赖方又不能加；若要在页面上看到字数，需要决定（内核/协议：依赖方是否可以给被依赖类型加结果区页签，或外壳在没有页签时也显示最近一次运行的输出）。**没有改**，记入 `todo.md`。
+6. 点“盖章”（试图改笔记）：运行失败，状态栏和任务面板显示“它属于另一个插件。”（`denied/foreignKind`）。✔
+7. Notes 插件页：“被这些插件依赖”一节列出 `com.example.note-tools`（按钮）。点“停用”：弹出错误“还有启用着的插件依赖它：com.example.note-tools。请先停用它们，再重试。”，插件仍启用。✔ 点版本行的“移除”→确认→同样的提示，磁盘上 `plugins/org.onedesk.note/0.1.0` 还在，也没有 `.removed`（`plugin.checkRemove` 生效）。✔
+8. 先停用 note-tools（成功），再停用 Notes（成功，`dependents` 变空）；再启用 note-tools：它的插件页状态区出现“在等它依赖的插件”横幅，写“需要 org.onedesk.note >=0.1.0（正在用：0.1.0）”，依赖表那一行“未满足”；协议上 `enabled: true`、`load: {state: disabled, message: dependsUnmet}`。重新启用 Notes 后 note-tools 自动恢复 `loaded`。✔
+   - 小问题：依赖被停用时横幅写“（正在用：0.1.0）”，读起来有点怪（版本在、但没启用）。没改。
+
+### 没验证 / 记下的
+- 浏览器里无法点“选择文件夹”系统对话框；桌面版（Tauri）没有走。
+- 没有走“同时多个请求排队”和“请求过期”的真内核路径（只有单元测试）。
+- 依赖方动作不在树的右键菜单里（内核说现在树菜单只有命令，没有任何动作）；外壳没有改。
+- 一个插件树里的显示名 “Note tools” 在中文界面下是英文，说明 `note-tools` 的清单/语言文件里没有中文（fixtures，不归外壳）。

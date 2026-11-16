@@ -377,6 +377,7 @@ export const enUS = {
   "plugin.dependents": "Depended on by",
   "plugin.dependentsHint": "Enabled plugins that need this one. Disable them before disabling, removing or switching this plugin to a version they do not accept.",
   "plugin.dependsUnmetTitle": "Waiting for plugins it depends on",
+  "plugin.notExported": "One of its actions names a type that the plugin it depends on does not offer, so that action is not shown.",
   "plugin.dependsUnmetHint": "It stays switched off and comes back by itself once they are installed, enabled and in range. Its {count} resource(s) stay visible, greyed out.",
   "plugin.dependsNeeds": "Needs {plugin} {range}",
   "plugin.dependsNeedsActive": "Needs {plugin} {range} (in use: {version})",

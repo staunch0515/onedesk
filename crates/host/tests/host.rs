@@ -338,8 +338,10 @@ async fn remove_moves_the_version_aside_rescans_and_is_not_put_back_at_the_next_
     assert!(moved[0].starts_with("0.1.0-"));
     // The rescan no longer lists the removed version as the host's own.
     let log = calls(tmp.path());
-    assert_eq!(log.len(), 1);
-    assert!(log[0].starts_with("plugin.rescan") && !log[0].contains("org.test.alpha@0.1.0"));
+    // The kernel is asked first; the files move only after it agrees.
+    assert_eq!(log.len(), 2);
+    assert!(log[0].starts_with("plugin.checkRemove") && log[0].contains("org.test.alpha"));
+    assert!(log[1].starts_with("plugin.rescan") && !log[1].contains("org.test.alpha@0.1.0"));
     let missing = host.request(None, "app.removePlugin", json!({ "plugin": "org.test.alpha", "version": "0.1.0" })).await.unwrap_err();
     assert_eq!(missing.code, ErrorCode::NotFound);
     let unsafe_name = host.request(None, "app.removePlugin", json!({ "plugin": "..", "version": "0.1.0" })).await.unwrap_err();
@@ -349,6 +351,21 @@ async fn remove_moves_the_version_aside_rescans_and_is_not_put_back_at_the_next_
     let host = start(tmp.path()).await;
     assert!(!builtin.exists());
     assert_eq!(host.request(None, "args", Value::Null).await.unwrap()["builtin"], json!([]));
+    host.shutdown().await;
+}
+
+#[tokio::test]
+async fn remove_is_refused_untouched_when_the_kernel_says_dependents() {
+    let tmp = tempfile::tempdir().unwrap();
+    let host = start(tmp.path()).await;
+    let version = tmp.path().join("data/plugins/org.test.alpha/0.1.0");
+    std::fs::write(tmp.path().join("data/workspaces/default/remove-refused"), "").unwrap();
+    let refused = host.request(None, "app.removePlugin", json!({ "plugin": "org.test.alpha", "version": "0.1.0" })).await.unwrap_err();
+    assert_eq!(refused.code, ErrorCode::Conflict);
+    assert_eq!(reason(&refused), "dependents");
+    assert_eq!(refused.params.get("plugins").map(String::as_str), Some("org.test.beta"));
+    assert!(version.is_dir(), "nothing was moved");
+    assert_eq!(rescans(tmp.path()), 0);
     host.shutdown().await;
 }
 

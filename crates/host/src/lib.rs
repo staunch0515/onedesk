@@ -386,6 +386,8 @@ impl Host {
             return Err(invalid("badTarget"));
         }
         let _one_at_a_time = self.install_lock.lock().await;
+        // The kernel refuses (`conflict/dependents`) while an enabled plugin needs this version; files move only after it agrees.
+        self.forward(client, "plugin.checkRemove", json!({ "plugin": p.plugin, "version": p.version })).await?;
         match install::remove_version(&self.data_dir.join("plugins"), &p.plugin, &p.version) {
             Ok(_) => {}
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Err(ProtocolError { code: ErrorCode::NotFound, params: [("what".to_string(), "plugin".to_string())].into(), detail: None }),
