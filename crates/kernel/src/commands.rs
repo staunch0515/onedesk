@@ -174,6 +174,11 @@ impl Inner {
             id => {
                 let (pid, name) = Registry::split(id).ok_or_else(|| not_found("command"))?;
                 let plugin = self.registry.plugin(pid).ok_or_else(|| not_found("command"))?;
+                if plugin.command(name).is_none() {
+                    if let Some(a) = plugin.action(name) {
+                        return self.menu_run(plugin, a, &c).await;
+                    }
+                }
                 plugin.command(name).ok_or_else(|| not_found("command"))?;
                 if !self.plugin_enabled(pid) {
                     return Err(denied("pluginDisabled"));
@@ -199,6 +204,34 @@ impl Inner {
                 Ok(effects)
             }
         }
+    }
+
+    /// Review #6: a dependent's action from a resource's context menu — started like from the
+    /// page (same checks in `run.start`), then its run is opened. `confirm` asks first.
+    async fn menu_run(&self, plugin: &'static crate::manifest::Plugin, a: &crate::manifest::ActionDef, c: &CommandContext) -> KResult<Vec<CommandEffect>> {
+        let id = node_resource(c)?;
+        let row = self.live_row(&id)?;
+        let applies = a.kinds.iter().flatten().any(|k| *k == row.kind) && self.export_allows(plugin, &row.kind, false);
+        if !applies {
+            return Err(not_found("command"));
+        }
+        let full = plugin.full(&a.id);
+        let confirmed = c.args.as_ref().and_then(|x| x.get("confirmed")).and_then(Value::as_bool).unwrap_or(false);
+        if let (Some(k), false) = (a.confirm.as_deref(), confirmed) {
+            return Ok(vec![CommandEffect::Confirm { message: plugin.label(k), command: full, danger: None }]);
+        }
+        let p = RunStartParams {
+            action: full,
+            resource_id: Some(id.clone()),
+            target: format!("resource:{id}"),
+            tab_id: c.tab_id.clone().unwrap_or_default(),
+            env_id: None,
+            input: JsonMap::new(),
+            params: Default::default(),
+            locale: c.locale.clone(),
+        };
+        let run = self.run_start(p, None).await?;
+        Ok(vec![CommandEffect::Open { target: format!("run:{run}"), params: None, env_id: None }])
     }
 
     pub fn grants_of(&self, plugin: &str) -> KResult<PluginGrants> {

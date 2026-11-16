@@ -94,6 +94,24 @@ impl Inner {
         }
     }
 
+    /// Review #8: a version other than the active one (resources bound to it run on it) is
+    /// judged by its own `depends`.
+    pub fn version_deps_met(&self, p: &Plugin) -> bool {
+        let mut memo = Memo::new();
+        p.manifest.deps.iter().all(|d| {
+            self.judge(&d.id, None, &mut memo, &mut vec![p.id.clone()]).is_ok()
+                && self.active_of(&d.id, None).is_some_and(|a| d.req.matches(&a.semver()))
+        })
+    }
+
+    /// Review #15: the plugin itself would not work after the change (its `depends` unmet).
+    pub fn unmet_after(&self, w: &WhatIf) -> Option<(String, String)> {
+        match self.judge(&w.plugin, Some(w), &mut Memo::new(), &mut vec![]) {
+            Err(Off::Unmet { plugin, range }) => Some((plugin, range)),
+            _ => None,
+        }
+    }
+
     /// Enabled plugins (other than the one changed) that the change would turn off (D344).
     pub fn broken_by(&self, w: &WhatIf) -> Vec<String> {
         let (mut now, mut then) = (Memo::new(), Memo::new());
@@ -197,6 +215,7 @@ impl Inner {
             && foreign_kinds(&dependent.manifest).contains(kind)
             && self.export_of(kind).is_some_and(|e| if read { e.read } else { e.actions })
             && self.plugin_enabled(&dependent.id)
+            && self.version_deps_met(dependent)
     }
 
     /// Actions of enabled dependents on a resource page of `kind` (after the kind's own, §7.3).
@@ -225,9 +244,10 @@ impl Inner {
         out
     }
 
-    /// Kinds of other plugins a dependent names that are not usable now (shown on its page).
+    /// Kinds of other plugins a dependent's actions name that take no actions now (shown on its
+    /// page; review #13: judged by `actions`, which is what makes them appear).
     pub fn unexported_kinds(&self, p: &Plugin) -> Vec<String> {
-        foreign_kinds(&p.manifest).into_iter().filter(|k| self.export_of(k).is_none_or(|e| !e.actions && !e.read)).collect()
+        foreign_kinds(&p.manifest).into_iter().filter(|k| self.export_of(k).is_none_or(|e| !e.actions)).collect()
     }
 }
 

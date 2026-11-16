@@ -294,7 +294,15 @@ impl Inner {
         let newest = self.registry.versions(plugin).into_iter().rev().find(|p| self.version_confirmed(p));
         match newest {
             Some(n) if n.semver() > active.semver() => {
-                let res = self.activate_version(plugin, &n.version.clone()).await;
+                // Review #15: not to a version that would itself not work (its `depends` unmet);
+                // a switch by hand stays allowed.
+                let w = crate::deps::WhatIf { plugin: plugin.into(), active: Some(Some(n)), on: None };
+                let res = match self.unmet_after(&w) {
+                    Some((dep, range)) if self.plugin_enabled(plugin) => {
+                        Err(err_p(ErrorCode::Conflict, &[("reason", "dependsUnmet"), ("plugin", &dep), ("range", &range)]))
+                    }
+                    _ => self.activate_version(plugin, &n.version.clone()).await,
+                };
                 if let Err(e) = &res {
                     // D337: recorded on the plugin, shown until the next success or the user's choice.
                     let reason = e.params.get("reason").cloned().unwrap_or_else(|| {
@@ -458,6 +466,29 @@ impl Inner {
     }
 
     pub async fn undo_upgrade(&self, batch: &str, also: Vec<String>) -> KResult<UndoUpgradeResult> {
+        // Review #2 (D344): the version the undo goes back to must keep enabled dependents working.
+        let info: Option<(String, String, Option<i64>, Option<String>)> = self
+            .read(|c| {
+                c.query_row("SELECT plugin, from_version, undone_at, prev_active FROM upgrade_batches WHERE id = ?1", [batch], |r| {
+                    Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))
+                })
+                .map(Some)
+                .or_else(|e| if e == rusqlite::Error::QueryReturnedNoRows { Ok(None) } else { Err(e) })
+            })?;
+        if let Some((plugin, from, None, prev_active)) = info {
+            let lowest = from.split(',').filter(|v| !v.is_empty()).min_by_key(|v| semver::Version::parse(v).unwrap_or(semver::Version::new(0, 0, 0)));
+            let back = prev_active.as_deref().or(lowest).map(String::from);
+            // As `refresh_active` will pick: that version if usable, else the newest confirmed one.
+            let next = back
+                .as_deref()
+                .and_then(|v| self.registry.version(&plugin, v))
+                .filter(|p| self.version_confirmed(p))
+                .or_else(|| self.registry.versions(&plugin).into_iter().rev().find(|p| self.version_confirmed(p)));
+            if back.is_some() {
+                let w = crate::deps::WhatIf { plugin: plugin.clone(), active: Some(next), on: None };
+                self.refuse_if_dependents("plugin.undoUpgrade", &plugin, &w).await?;
+            }
+        }
         let out = self.execute(Actor::User, Command::UndoUpgrade { batch: batch.into(), also }).await?;
         let modified: Vec<NamedRef> = out.id.as_deref().and_then(|s| serde_json::from_str(s).ok()).unwrap_or_default();
         self.refresh_active();
