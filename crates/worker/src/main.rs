@@ -90,7 +90,7 @@ fn main() -> ExitCode {
         Err(e) => return fail(format!("runtime: {e}")),
     };
     rt.block_on(async move {
-        let cfg = KernelConfig { builtin: args.builtin.clone(), ..KernelConfig::default() };
+        let cfg = KernelConfig { builtin: args.builtin.clone(), plugin_idle: plugin_idle(), ..KernelConfig::default() };
         let kernel = match Kernel::open(&args.workspace, &args.plugins, cfg) {
             Ok(k) => Arc::new(k),
             Err(e) => return fail(format!("cannot open workspace: {e}")),
@@ -121,4 +121,13 @@ fn main() -> ExitCode {
         kernel.shutdown();
         ExitCode::SUCCESS
     })
+}
+
+/// D365: `ONEDESK_PLUGIN_IDLE_MS` (tests and acceptance only; at least 1000) or the default.
+fn plugin_idle() -> std::time::Duration {
+    std::env::var("ONEDESK_PLUGIN_IDLE_MS")
+        .ok()
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        .map(|ms| std::time::Duration::from_millis(ms.max(1000)))
+        .unwrap_or(onedesk_kernel::DEFAULT_PLUGIN_IDLE)
 }

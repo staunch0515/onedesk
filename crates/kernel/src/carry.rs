@@ -107,6 +107,28 @@ impl Drop for CloseOnDrop {
     }
 }
 
+/// D368: a transfer dropped before it finished (the run was cancelled, or the worker gave up on
+/// the call) still leaves an audit row, result `cancelled`.
+struct Unfinished<'a> {
+    inner: &'a Inner,
+    actor: crate::pipeline::Actor,
+    op: String,
+    object: String,
+    started: Instant,
+    armed: bool,
+}
+
+impl Drop for Unfinished<'_> {
+    fn drop(&mut self) {
+        if self.armed {
+            let summary = json!({ "ms": self.started.elapsed().as_millis() as u64 });
+            let cmd = Command::Stopped { op: std::mem::take(&mut self.op), object: std::mem::take(&mut self.object), summary, result: "cancelled".into() };
+            self.inner.pipeline.submit(self.actor.clone(), cmd);
+            self.inner.emit(topic2::AUDIT, None, None);
+        }
+    }
+}
+
 /// A finished transfer: the answer, the audit object (host or program) and the audit summary.
 struct Done {
     out: Value,
@@ -154,6 +176,9 @@ impl Inner {
                     o.get("url").and_then(Value::as_str).and_then(crate::network::host_of).unwrap_or_default()
                 };
                 let started = Instant::now();
+                let method = format!("transfer.{op}");
+                let mut guard =
+                    Unfinished { inner: self, actor: p.actor(), op: method.clone(), object: named.clone(), started, armed: info.run_id.is_some() };
                 let res = if info.run_id.is_none() {
                     // D353: only in a run (an action's execution).
                     Err(denied("notInRun"))
@@ -166,13 +191,20 @@ impl Inner {
                         _ => self.capture(p, info, &o, stream).await,
                     }
                 };
-                let method = format!("transfer.{op}");
+                guard.armed = false;
                 let res = match res {
                     Ok(mut d) => {
                         d.summary["ms"] = json!(started.elapsed().as_millis() as u64);
                         let cmd = Command::Audit { op: method, object: d.object, summary: d.summary };
                         let _ = self.pipeline.execute(p.actor(), cmd).await;
                         Ok(d.out)
+                    }
+                    Err(e) if e.code == ErrorCode::Invalid && e.params.get("reason").map(String::as_str) == Some("timeout") => {
+                        // D368: a timed-out transfer is recorded as `timeout`, not as a refusal.
+                        let summary = json!({ "ms": started.elapsed().as_millis() as u64 });
+                        let cmd = Command::Stopped { op: method, object: named, summary, result: "timeout".into() };
+                        let _ = self.pipeline.execute(p.actor(), cmd).await;
+                        Err(e)
                     }
                     Err(e) => {
                         let cmd = Command::Refused { op: method, object: named, error: e.clone() };

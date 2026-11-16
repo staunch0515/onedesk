@@ -219,14 +219,14 @@ impl Inner {
         if !path.is_absolute() {
             return Err(invalid("notAbsolute"));
         }
-        let real = path.canonicalize().map_err(|_| denied("outsideGrant"))?;
+        let real = path.canonicalize().map_err(|_| outside_grant(raw))?;
         let mut roots: Vec<PathBuf> = vec![plugin.dir.clone(), self.plugin_data_dir(&plugin.id)?];
         if plugin.manifest.requires.files {
             roots.extend(self.folder_grants(&plugin.id)?.into_iter().map(PathBuf::from));
         }
         let inside = roots.iter().filter_map(|r| r.canonicalize().ok()).any(|r| real.starts_with(&r));
         if !inside {
-            return Err(denied("outsideGrant"));
+            return Err(outside_grant(raw));
         }
         if !real.is_dir() {
             return Err(invalid("notFolder"));

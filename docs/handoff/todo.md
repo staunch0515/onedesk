@@ -86,3 +86,9 @@
 - 路径被拒（`outsideGrant`）的错误没带路径。
 - 假数据模式的拖动用例（`workbench.spec.ts` “drag onto a group”）在整套检查的负载下偶尔失败。
 - 市场页里夹具 `com.example.broken-pack` 显示“未安装”且可选（清单读得出但装不了的包），应在安装前就标出。
+
+## 第九轮内核留下的（2026-11-16）
+
+- `ctx.host` 按调用授权（D366）的口子：调用 B 的代码 `await` 一个由调用 A 兑现的共享 promise 时，B 接下来的代码被算作 A 的（可能放行 A 的 `ctx.host`，也可能误拒 B 自己的）。引擎没有异步上下文钩子，堵上要改引擎或给插件约定“不跨调用共享 promise”。写进插件开发说明。
+- `round4.rs` 的 `network_allow_lists_redirects_loopback_limits_and_counting` 在机器高负载（load 200+）时会因 8 MB 正文经沙箱、测试同步片 300 ms 而超时失败；单独跑稳定。可考虑把该测试的同步片或正文调小。
+- 1 万个包时内核读 `.index` 的耗时没测（主进程一侧有测）。

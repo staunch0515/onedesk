@@ -8,7 +8,7 @@ use std::path::{Component, Path, PathBuf};
 use serde::Serialize;
 use serde_json::{json, Value};
 
-use crate::util::{denied, err_p, internal, invalid, invalid_params, not_found, KResult};
+use crate::util::{denied, err_p, outside_grant, internal, invalid, invalid_params, not_found, KResult};
 use onedesk_protocol::ErrorCode;
 
 pub const MAX_TEXT: u64 = 2 * 1024 * 1024;
@@ -39,9 +39,9 @@ pub fn resolve(grants: &[PathBuf], raw: &str) -> KResult<PathBuf> {
             // New file: canonicalize the parent, keep a plain final name.
             let name = match p.components().next_back() {
                 Some(Component::Normal(n)) => n.to_os_string(),
-                _ => return Err(denied("outsideGrant")),
+                _ => return Err(outside_grant(raw)),
             };
-            let parent = p.parent().ok_or_else(|| denied("outsideGrant"))?;
+            let parent = p.parent().ok_or_else(|| outside_grant(raw))?;
             let parent = std::fs::canonicalize(parent).map_err(|_| not_found("path"))?;
             parent.join(name)
         }
@@ -49,7 +49,7 @@ pub fn resolve(grants: &[PathBuf], raw: &str) -> KResult<PathBuf> {
     if grants.iter().any(|g| real.starts_with(g)) {
         Ok(real)
     } else {
-        Err(denied("outsideGrant"))
+        Err(outside_grant(raw))
     }
 }
 
@@ -205,7 +205,7 @@ pub fn write_text_with(
     }
     let dir = p.parent().ok_or_else(|| invalid_params("no parent"))?;
     let name = p.file_name().map(|n| n.to_string_lossy().into_owned()).ok_or_else(|| invalid_params("no name"))?;
-    let dirfd = open_dir_nofollow(dir).map_err(|_| denied("outsideGrant"))?;
+    let dirfd = open_dir_nofollow(dir).map_err(|_| outside_grant(raw))?;
     after_pin();
     let d = dirfd.as_raw_fd();
     let cname = cstr(&name).map_err(internal)?;
@@ -288,7 +288,7 @@ pub fn part_file(grants: &[PathBuf], raw: &str, overwrite: bool) -> KResult<Part
     }
     let dir = p.parent().ok_or_else(|| invalid_params("no parent"))?;
     let name = p.file_name().map(|n| n.to_string_lossy().into_owned()).ok_or_else(|| invalid_params("no name"))?;
-    let dirfd = open_dir_nofollow(dir).map_err(|_| denied("outsideGrant"))?;
+    let dirfd = open_dir_nofollow(dir).map_err(|_| outside_grant(raw))?;
     let d = dirfd.as_raw_fd();
     let cname = cstr(&name).map_err(internal)?;
     // SAFETY: zeroed `stat` is a valid out-parameter; `d` and `cname` are valid.
@@ -368,7 +368,7 @@ pub fn open_source(grants: &[PathBuf], raw: &str) -> KResult<(PathBuf, std::fs::
     let p = resolve(grants, raw)?;
     let dir = p.parent().ok_or_else(|| invalid("notFile"))?;
     let name = p.file_name().map(|n| n.to_string_lossy().into_owned()).ok_or_else(|| invalid("notFile"))?;
-    let dirfd = open_dir_nofollow(dir).map_err(|_| denied("outsideGrant"))?;
+    let dirfd = open_dir_nofollow(dir).map_err(|_| outside_grant(raw))?;
     let cname = cstr(&name).map_err(internal)?;
     // SAFETY: valid descriptor and C string; result checked.
     let fd = unsafe { libc::openat(dirfd.as_raw_fd(), cname.as_ptr(), libc::O_RDONLY | libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK) };
@@ -376,7 +376,7 @@ pub fn open_source(grants: &[PathBuf], raw: &str) -> KResult<(PathBuf, std::fs::
         let e = std::io::Error::last_os_error();
         return Err(match e.raw_os_error() {
             Some(libc::ENOENT) => not_found("path"),
-            Some(libc::ELOOP) => denied("outsideGrant"),
+            Some(libc::ELOOP) => outside_grant(raw),
             _ => internal(e),
         });
     }

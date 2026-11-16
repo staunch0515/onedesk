@@ -8,4 +8,9 @@ parent?: string,
 /**
  * Start of the batch; absent = 0.
  */
-offset?: number, };
+offset?: number, 
+/**
+ * D367: the interface language (BCP 47, e.g. `zh-CN`). Handed to provided trees' `children`
+ * as `ctx.locale`; manifest labels in the answer are taken in it (absent = English).
+ */
+locale?: string, };

@@ -70,6 +70,7 @@ export type * from "./PluginPermission";
 export type * from "./PluginPinParams";
 export type * from "./PluginProvides";
 export type * from "./PluginRescanParams";
+export type * from "./PluginRuntime";
 export type * from "./PluginSetEnabledParams";
 export type * from "./PluginSetSettingParams";
 export type * from "./PluginSetting";
