@@ -10,6 +10,8 @@ import { useI18n } from "../i18n";
 import type { TabState } from "../state/store";
 import { kernelLikeClient, renderInShell } from "../testing/harness";
 import { InstallDialogs } from "./install-dialogs";
+import { ResultArea } from "./result-area";
+import type { Run } from "../protocol";
 
 const preview = (id: string, over: Partial<InstallPreview> = {}): InstallPreview => ({
   valid: true,
@@ -113,5 +115,35 @@ describe("texts", () => {
     }
     renderInShell(createMockClient({ fresh: true, quiet: true }), <Probe />, "zh-CN");
     expect(screen.getByText(/依赖它：x/)).toBeTruthy();
+  });
+});
+
+describe("output of a dependent plugin's action (D351)", () => {
+  const run = (over: Partial<Run>): Run => ({ id: "r1", seq: 1, action: "com.example.note-tools:count", actionLabel: { "en-US": "Count words", "zh-CN": "统计字数" }, actor: "user", status: "success", cancellable: false, startedAt: 1, endedAt: 2, inTaskPanel: true, kept: false, params: {}, input: {}, title: "n", icon: "file", source: "manual", output: { type: "text", text: "4 words, 1 line" }, summary: { durationMs: 3 }, ...over }) as Run;
+  const page = (resultTabs: PageDescriptor["resultTabs"]) => ({ ...descriptor, resultTabs, runId: undefined }) as PageDescriptor;
+  const show = (r: Run, resultTabs: PageDescriptor["resultTabs"], resultTab?: string) => {
+    const base = kernelLikeClient(createMockClient({ fresh: true, quiet: true }), {});
+    const client = { ...base, run: { ...base.run, get: vi.fn(async () => r) } };
+    const { store } = renderInShell(client, <ResultArea tab={{ ...tab, runId: r.id, resultTab }} descriptor={page(resultTabs)} />);
+    store.set({ panelOpen: true });
+  };
+
+  it("shows a default output tab named after the action when the page has no result tabs", async () => {
+    show(run({}), []);
+    expect(await screen.findByRole("tab", { name: "Count words" })).toBeTruthy();
+    expect(await screen.findByText("4 words, 1 line")).toBeTruthy();
+  });
+
+  it("uses the default tab, not the owner's tabs, for a dependent action; the owner's tabs stay available", async () => {
+    show(run({}), [{ id: "out", label: "Output", icon: "play", type: "output" } as never, { id: "hist", label: "History", icon: "history", type: "history" } as never], "out");
+    expect(await screen.findByText("4 words, 1 line")).toBeTruthy();
+    expect(screen.getByRole("tab", { name: "Count words" })).toBeTruthy();
+    expect(screen.getByRole("tab", { name: "History" })).toBeTruthy();
+  });
+
+  it("leaves a page's own action on the page's own output tab", async () => {
+    show(run({ action: "run", actionLabel: "Run" }), [{ id: "out", label: "Output", icon: "play", type: "output" } as never], "out");
+    expect(await screen.findByText("4 words, 1 line")).toBeTruthy();
+    expect(screen.queryByRole("tab", { name: "Run" })).toBeNull();
   });
 });
