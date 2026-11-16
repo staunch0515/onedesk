@@ -4,7 +4,7 @@
   "tree.market": "Plugin market",
   "node.market": "Local packages",
   "action.install": "Install",
-  "action.refresh": "Refresh",
+  "action.refresh": "Rescan",
   "field.pick": "Package to install",
   "field.pick.placeholder": "Choose a package",
   "empty.title": "No folder authorized yet.",
@@ -29,5 +29,7 @@
   "message.expired": "The request timed out.",
   "message.pending": "Another install request is still waiting for an answer.",
   "message.nothing": "Choose a package first.",
-  "message.refreshed": "Refreshed."
+  "message.refreshed": "Rescanned.",
+  "truncated": "Scan stopped: too many folders to look through (limit {max}).",
+  "message.cooldown": "The last request was not completed. Try again in {seconds} s."
 }

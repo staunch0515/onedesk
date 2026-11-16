@@ -1,0 +1,25 @@
+{
+  "id": "com.example.sample-dep",
+  "version": "0.1.0",
+  "apiVersion": "2",
+  "name": "plugin.name",
+  "description": "plugin.description",
+  "icon": "link",
+  "main": "main.js",
+  "author": "OneDesk",
+  "license": "MIT",
+  "requires": {
+    "files": false
+  },
+  "depends": [
+    {
+      "id": "org.onedesk.sample",
+      "version": ">=0.2.0"
+    }
+  ],
+  "contributes": {
+    "locales": {
+      "en-US": "locales/en-US.json"
+    }
+  }
+}

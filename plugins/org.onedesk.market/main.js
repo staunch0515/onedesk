@@ -4,6 +4,9 @@
 // Sandbox rules: no console, timers or fetch; everything goes through ctx.host.
 
 export const MAX_PACKAGES = 200;
+export const MAX_PROBES = 400;
+export const MAX_NAME = 80;
+export const MAX_DESCRIPTION = 300;
 const PAGE_SIZE = 200;
 const MAX_LIST_PAGES = 20;
 
@@ -48,6 +51,14 @@ function isNotFound(err) {
   return !!err && err.code === "notFound";
 }
 
+// Untrusted text from a manifest or a folder name: only strings, no control or bidi-control characters, cut to `max`
+// characters (code points). Anything else counts as missing ("").
+const UNSAFE = /[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/g;
+export function clean(value, max) {
+  if (typeof value !== "string") return "";
+  return Array.from(value.replace(UNSAFE, "").trim()).slice(0, max).join("");
+}
+
 async function listDirs(ctx, path) {
   const out = [];
   let offset = 0;
@@ -64,29 +75,41 @@ async function listDirs(ctx, path) {
 // Reads `<dir>/manifest.json`. Returns { found: false } only when the file does not exist; other problems
 // make the package "unavailable" with a reason.
 async function readPackage(ctx, dir) {
+  const label = clean(dir.name, MAX_NAME);
   let file;
   try {
     file = await ctx.host.files.readText(`${dir.path}/manifest.json`);
   } catch (err) {
     if (isNotFound(err)) return { found: false };
-    return { found: true, pkg: { folder: dir.path, label: dir.name, unavailable: "reason.unreadable" } };
+    return { found: true, pkg: { folder: dir.path, label, unavailable: "reason.unreadable" } };
   }
   let m;
   try {
     m = JSON.parse(file.text);
   } catch (e) {
-    return { found: true, pkg: { folder: dir.path, label: dir.name, unavailable: "reason.invalidJson" } };
+    return { found: true, pkg: { folder: dir.path, label, unavailable: "reason.invalidJson" } };
   }
   if (!m || typeof m !== "object" || typeof m.id !== "string" || typeof m.version !== "string" || !m.id || !m.version) {
-    return { found: true, pkg: { folder: dir.path, label: dir.name, unavailable: "reason.missingFields" } };
+    return { found: true, pkg: { folder: dir.path, label, unavailable: "reason.missingFields" } };
   }
-  return { found: true, pkg: { folder: dir.path, id: m.id, version: m.version, manifest: m } };
+  return { found: true, pkg: { folder: dir.path, label, id: m.id, version: m.version, manifest: m } };
 }
 
-// Scans `<root>/*/manifest.json` and `<root>/*/*/manifest.json`; stops at MAX_PACKAGES.
+// Scans `<root>/*/manifest.json` and `<root>/*/*/manifest.json`. At most MAX_PACKAGES packages and MAX_PROBES
+// directories looked at (all roots together); `truncated` says a limit was hit.
 export async function scan(ctx, roots) {
   const packages = [];
+  let probes = 0;
+  let truncated = false;
   let capped = false;
+  const probe = () => {
+    if (probes >= MAX_PROBES) {
+      truncated = true;
+      return false;
+    }
+    probes++;
+    return true;
+  };
   const add = (pkg) => {
     if (packages.length >= MAX_PACKAGES) {
       capped = true;
@@ -103,6 +126,7 @@ export async function scan(ctx, roots) {
       continue;
     }
     for (const d of dirs) {
+      if (!probe()) break outer;
       const direct = await readPackage(ctx, d);
       if (direct.found) {
         if (!add(direct.pkg)) break outer;
@@ -115,26 +139,29 @@ export async function scan(ctx, roots) {
         continue;
       }
       for (const v of inner) {
+        if (!probe()) break outer;
         const res = await readPackage(ctx, v);
-        if (res.found && !add({ ...res.pkg, label: `${d.name}/${v.name}` })) break outer;
+        if (res.found && !add({ ...res.pkg, label: clean(`${d.name}/${v.name}`, MAX_NAME) })) break outer;
       }
     }
   }
-  return { packages, capped };
+  return { packages, truncated, capped };
 }
 
 // Display strings of a manifest: `name` / `description` are locale keys; the package's own locale files give the text.
 async function describe(ctx, pkg) {
   const m = pkg.manifest;
-  const out = { name: String(m.name || pkg.id), description: String(m.description || ""), icon: m.icon };
+  const out = { name: clean(m.name, MAX_NAME) || clean(pkg.id, MAX_NAME), description: clean(m.description, MAX_DESCRIPTION) };
   const locales = (m.contributes && m.contributes.locales) || {};
   const rel = locales[ctx.locale] || locales["en-US"];
   if (typeof rel !== "string" || rel.startsWith("/") || rel.split("/").includes("..")) return out;
   try {
     const file = await ctx.host.files.readText(`${pkg.folder}/${rel}`);
     const table = JSON.parse(file.text);
-    if (typeof table[m.name] === "string") out.name = table[m.name];
-    if (typeof table[m.description] === "string") out.description = table[m.description];
+    const name = clean(table[m.name], MAX_NAME);
+    const description = clean(table[m.description], MAX_DESCRIPTION);
+    if (name) out.name = name;
+    if (description) out.description = description;
   } catch (e) {
     // keep the raw strings
   }
@@ -147,22 +174,71 @@ function statusText(ctx, st) {
   return tr(ctx, "status.notInstalled");
 }
 
-async function load(ctx) {
-  const roots = await ctx.host.files.roots();
-  if (roots.length === 0) return { roots, packages: [], capped: false, rows: [] };
-  const installed = await ctx.host.plugins.list();
-  const { packages, capped } = await scan(ctx, roots);
-  const rows = [];
+// What the table needs of a scanned package, already cleaned (this is what is cached).
+async function entryOf(ctx, pkg) {
+  if (pkg.unavailable) return { folder: pkg.folder, name: pkg.label, description: "", unavailable: pkg.unavailable };
+  const info = await describe(ctx, pkg);
+  return { folder: pkg.folder, id: clean(pkg.id, MAX_NAME), version: clean(pkg.version, MAX_NAME), name: info.name, description: info.description };
+}
+
+const cacheKey = (ctx, root) => `scan:${ctx.locale}:${root.path}`;
+
+// The scan of each authorized folder is cached in storage; `rescan` forces a new one. The probe limit is shared by
+// all folders, so a rescan always goes over all of them together.
+async function scanAll(ctx, roots) {
+  const { packages, truncated, capped } = await scan(ctx, roots);
+  const byRoot = new Map(roots.map((r) => [r.path, []]));
   for (const pkg of packages) {
-    if (pkg.unavailable) {
-      rows.push({ pkg, name: pkg.label, description: tr(ctx, pkg.unavailable), version: "", status: tr(ctx, "status.unavailable"), installable: false });
-      continue;
-    }
-    const info = await describe(ctx, pkg);
-    const st = statusOf(pkg, installed);
-    rows.push({ pkg, name: info.name, description: info.description, version: pkg.version, status: statusText(ctx, st), installable: st.kind !== "installed" });
+    const root = roots.find((r) => pkg.folder === r.path || pkg.folder.startsWith(r.path.endsWith("/") ? r.path : `${r.path}/`));
+    if (root) byRoot.get(root.path).push(await entryOf(ctx, pkg));
   }
-  return { roots, packages, capped, rows };
+  for (const r of roots) {
+    const entries = byRoot.get(r.path);
+    try {
+      await ctx.host.storage.set(cacheKey(ctx, r), JSON.stringify({ entries, truncated, capped }));
+    } catch (e) {
+      // not cached: the next render scans again
+    }
+  }
+  return { entries: roots.flatMap((r) => byRoot.get(r.path)), truncated, capped };
+}
+
+async function cached(ctx, roots) {
+  const entries = [];
+  let truncated = false;
+  let capped = false;
+  for (const r of roots) {
+    let raw = null;
+    try {
+      raw = await ctx.host.storage.get(cacheKey(ctx, r));
+    } catch (e) {
+      return null;
+    }
+    if (!raw) return null;
+    try {
+      const v = JSON.parse(raw);
+      if (!Array.isArray(v.entries)) return null;
+      entries.push(...v.entries);
+      truncated = truncated || !!v.truncated;
+      capped = capped || !!v.capped;
+    } catch (e) {
+      return null;
+    }
+  }
+  return { entries, truncated, capped };
+}
+
+async function load(ctx, rescan) {
+  const roots = await ctx.host.files.roots();
+  if (roots.length === 0) return { roots, truncated: false, capped: false, rows: [] };
+  const installed = await ctx.host.plugins.list();
+  const found = (!rescan && (await cached(ctx, roots))) || (await scanAll(ctx, roots));
+  const rows = found.entries.map((e) => {
+    if (e.unavailable) return { folder: e.folder, name: e.name, description: tr(ctx, e.unavailable), version: "", status: tr(ctx, "status.unavailable"), installable: false };
+    const st = statusOf(e, installed);
+    return { folder: e.folder, name: e.name, description: e.description, version: e.version, status: statusText(ctx, st), installable: st.kind !== "installed" };
+  });
+  return { roots, truncated: found.truncated, rows, capped: found.capped };
 }
 
 /* ---------------------------------------------------------------- plugin */
@@ -211,8 +287,8 @@ export default {
             rows: state.rows.map((r) => [r.name, r.version, r.description, r.status]),
           });
         }
-        if (state.capped) view.push({ type: "text", id: "capped", text: tr(ctx, "capped", { max: MAX_PACKAGES }), tone: "muted" });
-        const options = state.rows.filter((r) => r.installable).map((r) => ({ value: r.pkg.folder, label: `${r.name} ${r.version}` }));
+        if (state.truncated || state.capped) view.push({ type: "text", id: "capped", text: tr(ctx, state.truncated ? "truncated" : "capped", { max: state.truncated ? MAX_PROBES : MAX_PACKAGES }), tone: "muted" });
+        const options = state.rows.filter((r) => r.installable).map((r) => ({ value: r.folder, label: `${r.name} ${r.version}` }));
         view.push({
           type: "form",
           id: "pick",
@@ -224,7 +300,10 @@ export default {
       },
 
       async onEvent(ctx, event) {
-        if (event === "refresh") return { message: tr(ctx, "message.refreshed") };
+        if (event === "refresh") {
+          await load(ctx, true);
+          return { message: tr(ctx, "message.refreshed") };
+        }
         if (event !== "install") throw new Error(`unknown event ${event}`);
         const folder = ctx.draft && typeof ctx.draft.pick === "string" ? ctx.draft.pick : "";
         if (!folder) return { message: tr(ctx, "message.nothing") };
@@ -232,7 +311,11 @@ export default {
         try {
           res = await ctx.host.plugins.requestInstall({ folder });
         } catch (err) {
-          if (err && err.code === "conflict") return { message: tr(ctx, "message.pending") };
+          if (err && err.code === "conflict") {
+            const reason = err.params && err.params.reason;
+            if (reason === "cooldown") return { message: tr(ctx, "message.cooldown", { seconds: (err.params && err.params.seconds) || "" }) };
+            return { message: tr(ctx, "message.pending") };
+          }
           throw err;
         }
         switch (res.outcome) {

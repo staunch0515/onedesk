@@ -46,3 +46,26 @@
 
 ## 没验证
 没在桌面应用（Tauri）里跑，只在 devhost + 浏览器里；右键菜单里的依赖方动作（内核说还没做）没测；5 分钟过期没测（内核测试里有）；中文界面的文字没断言。
+
+---
+
+# 审查后的修改（`round7-review.md` 的 #9、#10，及 e2e 跟上内核的审查修改）
+
+**结果（本会话实际运行）**：`E2E_PORT=1435 pnpm exec playwright test e2e/round7.spec.ts`（先重编 devhost）→ **14 通过、1 `test.fixme`**、0 失败；`pnpm test`、`pnpm lint`、`pnpm typecheck` 通过。Rust 与 `workbench.spec.ts` 没跑。
+
+## 市场插件
+- **#9**：探测的目录总数上限 `MAX_PROBES = 400`（所有授权文件夹合计，两层都算），超了页面写“扫描已截断…（上限 400）”；包数上限 200 仍单独提示。扫描结果按“语言 + 文件夹”缓存在插件 `storage`（`scan:<locale>:<path>`，只存清洗过的显示字段，状态每次用 `plugins.list()` 现算，所以安装后“已安装”立刻变）；缓存损坏或写失败就重扫。页面操作区的“重新扫描”（事件 `refresh`）强制重扫。
+- **#10**：名称截 80、说明截 300 字符（按码点），去掉控制字符（C0/C1、DEL）和双向控制符（U+061C、U+200E/F、U+202A–E、U+2066–9）；非字符串当缺失（名称退回 id，说明为空）；目录名同样处理；包自己语言文件里的译文同样清洗。
+- 请求因冷却被拒（`conflict/cooldown`）时，页面提示“上一次请求没有完成，请 N 秒后再试”，与 `pendingRequest` 的提示区分。
+- vitest 新增 9 条（共 38）：400 上限与第二层计数、缓存命中与重新扫描、状态不缓存、损坏缓存、`clean`、名称/说明截断、语言文件文字清洗、冷却提示。
+
+## e2e 调整与新增
+- 冷却（D349）使“被拒后马上再请求”不可行：先做会成功的安装，再做 pending → 取消 → 立即再请求得到冷却提示（`conflict/cooldown`，请求没登记）；之后的“界面取消”用例先移除 hello，等 31 秒再点（用例约 38 秒）。
+- 新增：依赖方动作出现在笔记的右键菜单（`tree.children` 节点的 `menu` 含 `com.example.note-tools:count`）；撤销升级会破坏依赖时被拒（新夹具 `com.example.sample-dep`，依赖 `org.onedesk.sample >=0.2.0`；`plugin.undoUpgrade` → `conflict/dependents`，停用依赖方后撤销成功）。
+- 注意：devhost 要用合并后的内核重编（旧二进制没有冷却，会在“立即再请求”处挂住）。
+
+## fixme
+同前 1 个：`app.removePlugin` 删笔记版本被拒，等外壳把 `plugin.checkRemove` 接到主进程。
+
+## 没验证
+右键菜单只看了协议里的菜单项，没在界面里点；“重新扫描”按钮只在 vitest 里测了事件，没在界面里点；冷却的 30 秒是真实等待。
