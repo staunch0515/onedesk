@@ -579,6 +579,9 @@ impl Sandbox {
         };
         // Forgotten after any outcome: late host calls from an orphaned continuation are refused.
         self.ctl.calls.lock().unwrap().remove(&call_id);
+        // Review #2: host calls the handler left running (not awaited) end with it — e.g. a
+        // `process.run` it did not wait for is dropped, which ends the program.
+        token.cancel_with("callEnded");
         self.rearm().await;
         res
     }

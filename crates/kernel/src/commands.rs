@@ -232,7 +232,13 @@ impl Inner {
         if !path.is_dir() {
             return Err(invalid("notFolder"));
         }
-        let canon = std::fs::canonicalize(path).map_err(internal)?.display().to_string();
+        let real = std::fs::canonicalize(path).map_err(internal)?;
+        // Review #5: never the data folder, inside it, or a folder that contains it (another
+        // plugin's programs live there).
+        if self.data_roots().iter().any(|d| real.starts_with(d) || d.starts_with(&real)) {
+            return Err(invalid("insideDataDir"));
+        }
+        let canon = real.display().to_string();
         self.set_grant(&p.plugin, canon, true).await?;
         self.grants_of(&p.plugin)
     }

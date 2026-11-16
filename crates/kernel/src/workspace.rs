@@ -24,6 +24,7 @@ pub const MIGRATIONS: &[(&str, &str)] = &[
     ("0008_refs", include_str!("../migrations/0008_refs.sql")),
     ("0009_resource_names", include_str!("../migrations/0009_resource_names.sql")),
     ("0010_refs_ever", include_str!("../migrations/0010_refs_ever.sql")),
+    ("0011_audit_counts_last", include_str!("../migrations/0011_audit_counts_last.sql")),
 ];
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -453,6 +454,26 @@ mod tests {
             let n: i64 = conn.query_row(&format!("SELECT count(*) FROM {t}"), [], |r| r.get(0)).unwrap();
             assert_eq!(n, 0, "{t}");
         }
+    }
+
+    #[test]
+    fn migration_0011_adds_last_summary_and_failures_to_merged_audit_rows() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        let tx = conn.transaction().unwrap();
+        for (_, sql) in &MIGRATIONS[..10] {
+            tx.execute_batch(sql).unwrap();
+        }
+        tx.execute("INSERT INTO meta (key, value) VALUES ('schema_version', '10')", []).unwrap();
+        tx.execute(
+            "INSERT INTO audit_counts (run_id, op, object, audit_seq, count, first_at, last_at) VALUES ('r', 'network.request', 'h', 1, 3, 0, 5)",
+            [],
+        )
+        .unwrap();
+        tx.commit().unwrap();
+        migrate(&mut conn).unwrap();
+        let row: (i64, Option<String>, i64) =
+            conn.query_row("SELECT count, last_summary, failures FROM audit_counts", [], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))).unwrap();
+        assert_eq!(row, (3, None, 0));
     }
 
     #[test]

@@ -187,7 +187,9 @@ async fn new_group_command_picks_unique_default_names() {
 #[tokio::test(flavor = "multi_thread")]
 async fn grants_are_written_through_the_pipeline_and_validated() {
     let (env, c) = setup().await;
-    let folder = env.path();
+    // Not the temporary root itself: it contains the workspace (round 6 review #5).
+    let folder = env.path().join("granted");
+    std::fs::create_dir_all(&folder).unwrap();
     let e = c.call("plugin.grantFolder", json!({ "plugin": "test.alpha", "path": "relative/x" })).await.unwrap_err();
     assert_eq!(e.code, ErrorCode::Invalid);
     let e = c.call("plugin.grantFolder", json!({ "plugin": "test.alpha", "path": folder.join("missing").display().to_string() })).await.unwrap_err();

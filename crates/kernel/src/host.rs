@@ -53,7 +53,8 @@ impl Inner {
             "resources.get", "resources.list", "files.roots", "files.list", "files.stat", "files.readText",
             "params.get", "storage.get", "storage.keys", "storage.readFrom", "settings.get", "process.ready",
         ];
-        let res = if info.pure && !PURE_OK.contains(&method) {
+        // Review #7: `process.*` answers `notInRun` itself (and audits `run`), in `migrate` too.
+        let res = if info.pure && !PURE_OK.contains(&method) && !method.starts_with("process.") {
             Err(denied("pureCall"))
         } else if !info.pure && method == "storage.readFrom" {
             Err(denied("notInMigrate"))
@@ -242,6 +243,14 @@ impl Inner {
             return Err(denied("notRequested"));
         }
         let grants: Vec<PathBuf> = self.folder_grants(&plugin.id)?.into_iter().map(PathBuf::from).collect();
+        // Review #5: a folder granted earlier may contain the data folder; nothing in it is reachable.
+        if let Some(raw) = args.get(0).and_then(Value::as_str).filter(|_| op != "roots") {
+            if let Ok(real) = crate::files::resolve(&grants, raw) {
+                if self.data_roots().iter().any(|d| real.starts_with(d)) {
+                    return Err(denied("insideDataDir"));
+                }
+            }
+        }
         // Disk access runs off the async workers.
         let blocking = |f: Box<dyn FnOnce() -> KResult<Value> + Send>| async move {
             tokio::task::spawn_blocking(f).await.map_err(internal)?

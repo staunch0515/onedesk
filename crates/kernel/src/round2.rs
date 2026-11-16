@@ -581,16 +581,32 @@ impl Inner {
             .map(|(seq, at, actor, op, object, summary, result)| {
                 let target = self.read(|c| store::get_any(c, &object))?.map(|r| r.name).unwrap_or(object);
                 // D309: repeated calls merged into this row.
-                let merged: Option<(i64, i64)> = self
+                let merged: Option<(i64, i64, Option<String>, i64)> = self
                     .read(|c| {
-                        c.query_row("SELECT count, last_at FROM audit_counts WHERE audit_seq = ?1", [seq], |r| Ok((r.get(0)?, r.get(1)?)))
+                        c.query_row("SELECT count, last_at, last_summary, failures FROM audit_counts WHERE audit_seq = ?1", [seq], |r| {
+                            Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))
+                        })
                             .map(Some)
                             .or_else(|e| if e == rusqlite::Error::QueryReturnedNoRows { Ok(None) } else { Err(e) })
                     })?
-                    .filter(|(n, _)| *n > 1);
+                    .filter(|(n, ..)| *n > 1);
+                // Review #9: a merged row's detail also carries the last call and the failures.
+                let summary = match &merged {
+                    Some((_, _, last, failures)) => match serde_json::from_str::<Value>(&summary) {
+                        Ok(Value::Object(mut o)) => {
+                            if let Some(l) = last.as_deref().and_then(|l| serde_json::from_str::<Value>(l).ok()) {
+                                o.insert("last".into(), l);
+                            }
+                            o.insert("failures".into(), (*failures).into());
+                            Value::Object(o).to_string()
+                        }
+                        _ => summary,
+                    },
+                    None => summary,
+                };
                 Ok(AuditRow {
-                    count: merged.map(|(n, _)| n as u64),
-                    last_at: merged.map(|(_, t)| t),
+                    count: merged.as_ref().map(|(n, ..)| *n as u64),
+                    last_at: merged.as_ref().map(|(_, t, ..)| *t),
                     id: seq.to_string(),
                     at,
                     source: actor.split(':').next().unwrap_or_default().to_string(),

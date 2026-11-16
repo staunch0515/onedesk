@@ -148,9 +148,43 @@ host.events.on(name: "resource.changed" | "run.ended", handler: (ctx, payload) =
 
 ## 没做 / 没验证的
 
-- **工作进程被强杀（SIGKILL）时，正在跑的外部程序不会结束**：它们自成进程组，不随工作进程消失。正常退出（主进程关连接）会清理。要彻底解决需要额外的看门进程或 kqueue 监视父进程，留给协调会话决定（已记 `todo.md`）。
+- ~~工作进程被强杀时外部程序不结束~~：审查 #1 已改，见下文（D340）。
 - **动作 60 秒总时长 vs `timeoutMs` 最长 600 秒**：见决定 15，需协调会话决定是否让运行外部程序时延长动作时长（已记 `todo.md`）。
 - 运行被取消（future 被丢弃）时，那一次 `process.run` **不写审计行**（运行本身有 `run.end` 审计）。
 - 抹除按块做：一个密钥值恰好被切在两个流式块之间时，那两块各自不含完整值，不会被抹（最终的 `stdout`/`stderr` 是整体抹除的）。
 - 进程组 id 复用：程序退出后对它的组发 SIGKILL 时，理论上该组 id 可能已被系统复用（极小概率）。
 - 没有在真应用里手动验证；外壳、e2e 不在本会话范围，未运行。worker 层（`crates/worker/tests`）没有为外部程序加专门测试，靠内核的 `shutting_down_ends_running_programs`。
+
+## 审查后的修改（`round6-review.md`，D338–D340）
+
+先合并了协调分支 `claude/onedesk-coord-2-91a88b`。11 条全部修了，每条有测试（`crates/kernel/tests/round6.rs` 末尾 `review*` 8 个；`crates/worker/tests/worker.rs` 新增 1 个；`workspace.rs` 迁移升级测试 1 个）。
+
+### 进程组号文件（#1，D340；外壳会话在主进程里按此清理）
+
+- **位置与文件名**：工作区目录下的 `process-groups`（即 `<工作区文件夹>/process-groups`，与 `workspace.db` 同一目录；正式布局为 `~/Library/Application Support/onedesk/workspaces/<文件夹>/process-groups`）。常量 `onedesk_kernel::process::PROCESS_GROUPS_FILE`。
+- **每行格式**：`<pgid> <start_sec> <start_usec>\n`，三个十进制整数，单个空格分隔。`pgid` 是程序（进程组组长）的 pid；`start_sec`、`start_usec` 是组长的启动时间，取自 `proc_pidinfo(pid, PROC_PIDTBSDINFO)` 的 `pbi_start_tvsec`、`pbi_start_tvusec`（Rust 里 `onedesk_kernel::process::start_time(pid)`）。
+- **写法**：每启动或结束一个进程组就整体重写（先写 `process-groups.tmp` 再 `rename`），按 pgid 升序。文件不存在或为空 = 没有要清理的。
+- **清理规则**（`onedesk_kernel::process::cleanup_recorded(workspace_dir) -> usize`，主进程可直接调用这个函数）：逐行，`pgid <= 1` 或进程组已不存在（`killpg(pgid, 0)` 返回 ESRCH）则跳过；组长不在了但组还在 → 是我们的（组还存在时这个号不会被复用），`killpg(pgid, SIGKILL)`；组长在且启动时间与记录相同 → `SIGKILL`；组长在但启动时间不同 → 号已被复用，不动。处理完删除文件。
+- **谁来清理**：工作进程启动时（`Kernel::open` 里，打开工作区之后第一件事）；工作进程收到 SIGTERM / SIGHUP 时先 `kill_all` 再正常退出（返回 0）；主线程 panic 时的 panic hook；正常关闭（`Kernel::shutdown`）。工作进程被 SIGKILL 时由下一个工作进程或主进程按文件清理。
+
+### 逐条
+
+| # | 改了什么 | 测试 |
+|---|---|---|
+| 1 | 见上。另：工作进程注册 SIGTERM、SIGHUP；主线程 panic hook 调 `cleanup_recorded` | `worker::sigterm_ends_the_programs_and_a_killed_workers_programs_end_at_the_next_start`（SIGTERM 后程序结束且文件为空；SIGKILL 后程序还在，下一个工作进程启动后结束）；`review1_recorded_groups_end_only_when_they_are_still_ours`（文件内容与格式、结束后清空、启动时间不符的不动、相符的结束） |
+| 2 | `run_end` 时对这次运行名下仍活着的进程组 SIGTERM（2 秒后 SIGKILL）；`Sandbox::call_with` 返回时取消该调用的令牌（`callEnded`），没被 `await` 的宿主调用随之中止 | `review2_a_program_not_waited_for_ends_with_its_run` |
+| 3 | 流式：抹除后保留“最长密钥长度 − 1”字节不发，与下一块拼起来再抹；结束时全部发出。最终的 `stdout`/`stderr`：原始数据多留同样长度，先抹再截到 8 MB（超出时再去掉末尾这段长度） | `review3_10_…`（值分两半、隔 0.3 秒写出；值正好落在 8 MB 截断处） |
+| 4 | 每个插件队列最多 1000 条，满了丢最旧的；下一条投递的事件对象里带 `dropped: <丢掉的条数>`。`plugin:<id>` 改为**队列排空时**发一次。同一批（两次排空之间）的 `events.failed` 合并为一行（`audit_counts` 计数，`run_id` 记作 `events:<插件id>:<批号>`） | `review4_queues_are_bounded_and_failures_merge`（一次删除 1100 条：处理的 + `dropped` = 1100 且确有丢弃；5 次失败一行、计数 5） |
+| 5 | `plugin.grantFolder` 拒绝数据目录之内或包含数据目录的路径（`invalid/insideDataDir`；数据目录 = 工作区文件夹、插件文件夹、正式布局下 `workspaces` 的上一级）。`files.*` 各项（`roots` 除外）解析出的真实路径在数据目录内时拒绝（`denied/insideDataDir`），针对以前授权过的、包含数据目录的文件夹 | `review5_the_data_folder_is_never_granted_nor_reachable`；`pipeline.rs`、`round2.rs` 里两处原先授权临时根目录（含工作区）的测试改为授权其子文件夹 |
+| 6 | D338：`env` 名字以 `DYLD_`、`LD_` 开头（不分大小写）→ `invalid/badEnv` | `review6_8_…` |
+| 7 | `migrate`（纯计算）里调 `process.*` 不再被 `pureCall` 先拒：走 `process` 自己的检查，`run` 得 `denied/notInRun` 并记审计 | `review7_migrate_gets_not_in_run_and_it_is_audited` |
+| 8 | 审计对象：符合程序名规则的照记，否则记为空字符串 | `review6_8_…` |
+| 9 | **新迁移 `0011_audit_counts_last.sql`**：`audit_counts` 加 `last_summary TEXT`、`failures INTEGER NOT NULL DEFAULT 0`（0001–0010 未改）。合并时更新最后一次的摘要、累计失败次数（`process.run`：退出码非 0 或被信号结束；`network.request`：状态 ≥ 400）。`audit.list` 中合并行的 `detail` 增加 `last`（最后一次的摘要）和 `failures` | `review9_11_…`；`workspace::tests::migration_0011_adds_last_summary_and_failures_to_merged_audit_rows`；`round5.rs` 的 0008 升级测试相应先去掉这两列 |
+| 10 | 抹除用本次调用代入的值并上本次运行已累计的全部密钥值（`ActiveRun.secrets`） | `review3_10_…`（第一次调用把值写进文件，第二次 `cat` 出来是 `***`） |
+| 11 | 读取输出的两个任务在调用结束（含超时、取消、出错）时中止 | `review9_11_…`（`set -m` 让孙进程离开进程组并占着输出，调用仍在 1 秒内结束） |
+
+内部接口变化：`Command::CountedAudit` 多了 `failed: bool`、`error: Option<ProtocolError>`（有 `error` 时该行 `result = failed:<code>`）。新增审计原因码 `invalid/insideDataDir`（`plugin.grantFolder`）、`denied/insideDataDir`（`files.*`）。D339 记入 `todo.md`，未改。
+
+运行结果（本会话）：`cargo test -p onedesk-kernel -p onedesk-worker -p onedesk-protocol` 全过；`cargo clippy … --all-targets -- -D warnings` 无警告；`sh scripts/gen-types.sh --check` 最新（协议未改）；`pnpm lint` 通过；测试后没有残留的 `sleep` 进程。
+
+没测：组长已退出、只剩组员时按文件清理的分支（逻辑见上，无单独测试）；主线程 panic hook（没有构造主线程 panic）；`plugin:<id>` 只发一次没有计数断言（事件广播通道在 1100 条 `resource:` 事件下会丢消息，不好断言）。

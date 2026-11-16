@@ -486,7 +486,7 @@ impl Inner {
 
     /// The data folder (the workspace folder, the data root above `workspaces/`, the plugins folder):
     /// nothing is exported into it (§3.5).
-    fn data_roots(&self) -> Vec<PathBuf> {
+    pub(crate) fn data_roots(&self) -> Vec<PathBuf> {
         let mut out = vec![self.ws.dir.clone(), self.registry.root().to_path_buf()];
         if let Some(parent) = self.ws.dir.parent() {
             if parent.file_name().is_some_and(|n| n == "workspaces") {

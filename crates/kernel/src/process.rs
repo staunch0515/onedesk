@@ -10,7 +10,7 @@
 //!   plugin's side polls (`process.output`), see the sandbox bootstrap.
 //! - `process.allow` narrows the names per configuration node and environment (D334).
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, VecDeque};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -71,12 +71,73 @@ impl NotReady {
     }
 }
 
+/// D340: the file in the workspace folder that lists the process groups of running programs, so
+/// whoever finds the worker gone (the next worker, the main process) can end them.
+///
+/// One line per group: `<pgid> <start_sec> <start_usec>\n` — the group leader's start time as the
+/// system reports it (`proc_pidinfo(PROC_PIDTBSDINFO)`: `pbi_start_tvsec`, `pbi_start_tvusec`).
+/// Rewritten whole (temporary file + rename) whenever a group starts or ends; missing or empty =
+/// nothing to clean. A group is ended (SIGKILL to the group) only when it still exists and either
+/// its leader is gone (a group id cannot be reused while the group exists) or the leader's start
+/// time is the recorded one (else the number was reused: left alone).
+pub const PROCESS_GROUPS_FILE: &str = "process-groups";
+
+/// The start time of a process (`None`: no such process).
+pub fn start_time(pid: i32) -> Option<(i64, i64)> {
+    let mut info: libc::proc_bsdinfo = unsafe { std::mem::zeroed() };
+    let size = std::mem::size_of::<libc::proc_bsdinfo>() as i32;
+    // SAFETY: the buffer is a properly sized, zeroed `proc_bsdinfo`.
+    let n = unsafe { libc::proc_pidinfo(pid, libc::PROC_PIDTBSDINFO, 0, &mut info as *mut _ as *mut libc::c_void, size) };
+    (n == size).then_some((info.pbi_start_tvsec as i64, info.pbi_start_tvusec as i64))
+}
+
+fn group_exists(pg: i32) -> bool {
+    // SAFETY: signal 0 only checks.
+    unsafe { libc::killpg(pg, 0) == 0 || *libc::__error() == libc::EPERM }
+}
+
+/// Ends the groups listed in a workspace's process-group file that are still ours, then empties
+/// it. Returns how many groups were ended. (The worker calls it at start-up; the main process
+/// does the same after the worker went away.)
+pub fn cleanup_recorded(workspace: &Path) -> usize {
+    let path = workspace.join(PROCESS_GROUPS_FILE);
+    let Ok(text) = std::fs::read_to_string(&path) else { return 0 };
+    let mut ended = 0;
+    for line in text.lines() {
+        let f: Vec<i64> = line.split_whitespace().filter_map(|x| x.parse().ok()).collect();
+        let [pg, sec, usec] = f[..] else { continue };
+        let pg = pg as i32;
+        if pg <= 1 || !group_exists(pg) {
+            continue;
+        }
+        let ours = match start_time(pg) {
+            None => true,
+            Some(t) => t == (sec, usec),
+        };
+        if ours {
+            // SAFETY: plain system call; checked above that the group is the recorded one.
+            unsafe { libc::killpg(pg, libc::SIGKILL) };
+            ended += 1;
+        }
+    }
+    let _ = std::fs::remove_file(&path);
+    ended
+}
+
+/// A running group: which run it belongs to, and its leader's start time (for the file).
+struct LiveGroup {
+    run: String,
+    start: (i64, i64),
+}
+
 /// Programs of one kernel: live process groups (for shutdown), counts per run, output streams.
 #[derive(Default)]
 pub struct Procs {
-    live: Mutex<HashSet<i32>>,
+    live: Mutex<HashMap<i32, LiveGroup>>,
     per_run: Mutex<HashMap<String, usize>>,
     streams: Mutex<HashMap<String, Arc<Stream>>>,
+    /// The process-group file (D340); `None` keeps nothing on disk.
+    file: Option<PathBuf>,
 }
 
 /// Output handed out while a program runs (polled by the plugin's `onOutput` pump).
@@ -109,24 +170,82 @@ impl Stream {
     }
 }
 
+/// SIGTERM now, SIGKILL after the grace period if the group is still listed.
+fn terminate(procs: &Arc<Procs>, pg: i32) {
+    // SAFETY: plain system call on a process group id we created and still list.
+    unsafe { libc::killpg(pg, libc::SIGTERM) };
+    let procs = procs.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(KILL_GRACE);
+        // Only if nobody (shutdown) took care of it meanwhile.
+        if procs.forget_group(pg) {
+            // SAFETY: as above.
+            unsafe { libc::killpg(pg, libc::SIGKILL) };
+        }
+    });
+}
+
 impl Procs {
+    pub fn new(workspace: &Path) -> Procs {
+        Procs { file: Some(workspace.join(PROCESS_GROUPS_FILE)), ..Default::default() }
+    }
+
+    /// Rewrites the process-group file from `live` (called with the lock held).
+    fn persist(&self, live: &HashMap<i32, LiveGroup>) {
+        let Some(path) = &self.file else { return };
+        let mut text = String::new();
+        let mut list: Vec<(&i32, &LiveGroup)> = live.iter().collect();
+        list.sort_by_key(|(pg, _)| **pg);
+        for (pg, g) in list {
+            text.push_str(&format!("{pg} {} {}\n", g.start.0, g.start.1));
+        }
+        let tmp = path.with_extension("tmp");
+        if std::fs::write(&tmp, text).is_ok() {
+            let _ = std::fs::rename(&tmp, path);
+        }
+    }
+
+    fn add_group(&self, pg: i32, run: &str) {
+        let start = start_time(pg).unwrap_or((0, 0));
+        let mut live = self.live.lock().unwrap();
+        live.insert(pg, LiveGroup { run: run.to_string(), start });
+        self.persist(&live);
+    }
+
+    /// Removes a group from the list; whether it was listed.
+    fn forget_group(&self, pg: i32) -> bool {
+        let mut live = self.live.lock().unwrap();
+        let had = live.remove(&pg).is_some();
+        if had {
+            self.persist(&live);
+        }
+        had
+    }
+
     fn stream(&self, run: &str, sid: &str) -> Arc<Stream> {
         self.streams.lock().unwrap().entry(format!("{run}\n{sid}")).or_default().clone()
     }
 
-    /// Forgets the streams of a run that ended.
-    pub fn forget_run(&self, run: &str) {
+    /// A run ended: its streams are forgotten and programs it left running are ended (review #2).
+    pub fn end_run(self: &Arc<Self>, run: &str) {
         let prefix = format!("{run}\n");
         self.streams.lock().unwrap().retain(|k, _| !k.starts_with(&prefix));
         self.per_run.lock().unwrap().retain(|k, n| k != run || *n > 0);
+        let groups: Vec<i32> = self.live.lock().unwrap().iter().filter(|(_, g)| g.run == run).map(|(pg, _)| *pg).collect();
+        for pg in groups {
+            terminate(self, pg);
+        }
     }
 
     /// Kills every process group still running (the worker is shutting down).
     pub fn kill_all(&self) {
-        for pg in self.live.lock().unwrap().drain() {
+        let mut live = self.live.lock().unwrap();
+        for pg in live.keys() {
             // SAFETY: plain system call on a process group id we created.
-            unsafe { libc::killpg(pg, libc::SIGKILL) };
+            unsafe { libc::killpg(*pg, libc::SIGKILL) };
         }
+        live.clear();
+        self.persist(&live);
     }
 
     /// Process groups still alive (tests).
@@ -151,22 +270,27 @@ impl Drop for Group {
         }
         let pg = self.pgid;
         if self.finished {
-            // SAFETY: plain system calls on a process group id we created.
-            unsafe { libc::killpg(pg, libc::SIGKILL) };
-            self.procs.live.lock().unwrap().remove(&pg);
-            return;
-        }
-        // SAFETY: as above.
-        unsafe { libc::killpg(pg, libc::SIGTERM) };
-        let procs = self.procs.clone();
-        std::thread::spawn(move || {
-            std::thread::sleep(KILL_GRACE);
-            // Only if nobody (shutdown) took care of it meanwhile.
-            if procs.live.lock().unwrap().remove(&pg) {
-                // SAFETY: as above.
+            if self.procs.forget_group(pg) {
+                // SAFETY: plain system call on a process group id we created.
                 unsafe { libc::killpg(pg, libc::SIGKILL) };
             }
-        });
+            return;
+        }
+        if self.procs.live.lock().unwrap().contains_key(&pg) {
+            terminate(&self.procs, pg);
+        }
+    }
+}
+
+/// Aborts the output readers however the call ends (review #11: a grandchild that left the group
+/// and holds the pipes would keep them waiting forever).
+struct Readers(Vec<tokio::task::JoinHandle<()>>);
+
+impl Drop for Readers {
+    fn drop(&mut self) {
+        for h in &self.0 {
+            h.abort();
+        }
     }
 }
 
@@ -204,64 +328,104 @@ fn signal_name(n: i32) -> String {
     name.to_string()
 }
 
+/// The largest index `<= i` on a character boundary.
+fn floor_boundary(s: &str, mut i: usize) -> usize {
+    i = i.min(s.len());
+    while !s.is_char_boundary(i) {
+        i -= 1;
+    }
+    i
+}
+
 /// What was read so far, and what is still to hand out.
 struct Out {
+    /// Raw output, kept up to `MAX_OUTPUT + hold` bytes (scrubbed before it is cut, review #3).
     buf: [Vec<u8>; 2],
-    truncated: bool,
+    received: [usize; 2],
     pending: [Vec<u8>; 2],
+    /// Scrubbed text held back from the stream: the end of a secret may come with the next chunk.
+    carry: [String; 2],
     streamed: [usize; 2],
     stream: Option<Arc<Stream>>,
     secrets: Vec<String>,
+    /// Longest secret − 1 (0 without secrets): how much text is held back.
+    hold: usize,
 }
 
 const STREAMS: [&str; 2] = ["stdout", "stderr"];
 
 impl Out {
+    fn new(stream: Option<Arc<Stream>>, secrets: Vec<String>) -> Out {
+        // `scrub` ignores values shorter than 3.
+        let hold = secrets.iter().filter(|v| v.len() >= 3).map(|v| v.len() - 1).max().unwrap_or(0);
+        Out { buf: [vec![], vec![]], received: [0, 0], pending: [vec![], vec![]], carry: [String::new(), String::new()], streamed: [0, 0], stream, secrets, hold }
+    }
+
     fn push(&mut self, s: usize, bytes: &[u8]) {
-        let room = MAX_OUTPUT - self.buf[s].len();
-        if bytes.len() > room {
-            self.buf[s].extend_from_slice(&bytes[..room]);
-            self.truncated = true;
-        } else {
-            self.buf[s].extend_from_slice(bytes);
-        }
+        self.received[s] += bytes.len();
+        let room = (MAX_OUTPUT + self.hold).saturating_sub(self.buf[s].len());
+        self.buf[s].extend_from_slice(&bytes[..bytes.len().min(room)]);
         if self.stream.is_some() {
             self.pending[s].extend_from_slice(bytes);
             if let Some(i) = self.pending[s].iter().rposition(|b| *b == b'\n') {
                 let line: Vec<u8> = self.pending[s].drain(..=i).collect();
-                self.emit(s, &line);
+                self.emit(s, &line, false);
             }
         }
     }
 
-    /// Partial lines that waited a tick (cut at a whole UTF-8 character).
+    /// Partial lines that waited a tick (cut at a whole UTF-8 character); `all` at the end.
     fn flush(&mut self, all: bool) {
         for s in 0..2 {
-            if self.pending[s].is_empty() {
-                continue;
-            }
-            let upto = match std::str::from_utf8(&self.pending[s]) {
-                Ok(_) => self.pending[s].len(),
-                Err(e) if all || e.error_len().is_some() || e.valid_up_to() == 0 && self.pending[s].len() >= 4 => self.pending[s].len(),
-                Err(e) => e.valid_up_to(),
-            };
-            if upto > 0 {
-                let part: Vec<u8> = self.pending[s].drain(..upto).collect();
-                self.emit(s, &part);
+            if !self.pending[s].is_empty() {
+                let upto = match std::str::from_utf8(&self.pending[s]) {
+                    Ok(_) => self.pending[s].len(),
+                    Err(e) if all || e.error_len().is_some() || e.valid_up_to() == 0 && self.pending[s].len() >= 4 => self.pending[s].len(),
+                    Err(e) => e.valid_up_to(),
+                };
+                if upto > 0 {
+                    let part: Vec<u8> = self.pending[s].drain(..upto).collect();
+                    self.emit(s, &part, all);
+                }
+            } else if all {
+                self.emit(s, &[], true);
             }
         }
     }
 
-    fn emit(&mut self, s: usize, bytes: &[u8]) {
-        let Some(st) = &self.stream else { return };
-        if self.streamed[s] >= MAX_OUTPUT {
+    /// Scrubs (with what was held back), keeps the last `hold` bytes back unless `last`, then
+    /// cuts at the streaming limit.
+    fn emit(&mut self, s: usize, bytes: &[u8], last: bool) {
+        let Some(st) = self.stream.clone() else { return };
+        let mut text = std::mem::take(&mut self.carry[s]);
+        text.push_str(&String::from_utf8_lossy(bytes));
+        let mut v = Value::String(text);
+        crate::secrets::scrub(&mut v, &self.secrets);
+        let Value::String(mut text) = v else { return };
+        if !last && self.hold > 0 {
+            let cut = floor_boundary(&text, text.len().saturating_sub(self.hold));
+            self.carry[s] = text.split_off(cut);
+        }
+        if text.is_empty() || self.streamed[s] >= MAX_OUTPUT {
             return;
         }
-        let take = bytes.len().min(MAX_OUTPUT - self.streamed[s]);
-        self.streamed[s] += take;
-        let mut v = json!({ "stream": STREAMS[s], "text": String::from_utf8_lossy(&bytes[..take]) });
+        text.truncate(floor_boundary(&text, MAX_OUTPUT - self.streamed[s]));
+        self.streamed[s] += text.len();
+        st.push(json!({ "stream": STREAMS[s], "text": text }));
+    }
+
+    /// The whole output of a stream: scrubbed first, then cut to the limit.
+    fn take(&mut self, s: usize) -> (String, bool) {
+        let mut v = Value::String(String::from_utf8_lossy(&std::mem::take(&mut self.buf[s])).into_owned());
         crate::secrets::scrub(&mut v, &self.secrets);
-        st.push(v);
+        let Value::String(mut text) = v else { return (String::new(), false) };
+        let over = self.received[s] > MAX_OUTPUT;
+        if over {
+            // What was kept beyond the limit may end in the first part of a secret.
+            let keep = MAX_OUTPUT.min(text.len().saturating_sub(self.hold));
+            text.truncate(floor_boundary(&text, keep));
+        }
+        (text, over)
     }
 }
 
@@ -292,7 +456,9 @@ fn parse_spec(o: &Value) -> KResult<Spec> {
             .iter()
             .map(|(k, v)| {
                 let v = v.as_str().map(String::from).ok_or_else(|| invalid_params("env values must be strings"))?;
-                if k.is_empty() || k.contains('=') || k.contains('\0') || v.contains('\0') {
+                // D338: no dynamic-loader variables (they would run any code inside an allowed program).
+                let upper = k.to_ascii_uppercase();
+                if k.is_empty() || k.contains('=') || k.contains('\0') || v.contains('\0') || upper.starts_with("DYLD_") || upper.starts_with("LD_") {
                     return Err(invalid("badEnv"));
                 }
                 Ok((k.clone(), v))
@@ -405,7 +571,8 @@ impl Inner {
             }
             "run" => {
                 let o = args.get(0).cloned().unwrap_or(Value::Null);
-                let program = o.get("program").and_then(Value::as_str).unwrap_or_default().to_string();
+                // Review #8: what the plugin passed is recorded only when it is a valid name.
+                let program = o.get("program").and_then(Value::as_str).filter(|n| crate::manifest::valid_program_name(n)).unwrap_or_default().to_string();
                 let started = Instant::now();
                 let res = self.process_run(p, info, &o).await;
                 // One audit row per run and program, repeats counted (D309's table); refusals and
@@ -419,7 +586,8 @@ impl Inner {
                         } else {
                             summary["code"] = v.get("code").cloned().unwrap_or(Value::Null);
                         }
-                        let cmd = Command::CountedAudit { run: info.run_id.clone(), op: "process.run".into(), object: program, summary };
+                        let failed = v.get("code").is_none_or(|c| c != &json!(0));
+                        let cmd = Command::CountedAudit { run: info.run_id.clone(), op: "process.run".into(), object: program, summary, failed, error: None };
                         let _ = self.pipeline.execute(p.actor(), cmd).await;
                     }
                     Err(e) => {
@@ -507,11 +675,17 @@ impl Inner {
         env.extend(fixed);
         let cwd = self.process_cwd(p, &data, spec.cwd.as_deref())?;
         // Values the program got are scrubbed from what it says, the progress and the summary.
-        if !used.is_empty() {
-            if let Some(a) = self.runs_active.lock().unwrap().get_mut(&run) {
-                a.secrets.extend(used.iter().cloned());
+        // Review #10: with every value this run read so far, not only this call's.
+        let scrub_values: Vec<String> = {
+            let mut active = self.runs_active.lock().unwrap();
+            match active.get_mut(&run) {
+                Some(a) => {
+                    a.secrets.extend(used.iter().cloned());
+                    a.secrets.clone()
+                }
+                None => used.clone(),
             }
-        }
+        };
         {
             let mut per = self.procs.per_run.lock().unwrap();
             let n = per.entry(run.clone()).or_default();
@@ -546,7 +720,7 @@ impl Inner {
             }
         };
         let pgid = child.id().unwrap_or_default() as i32;
-        self.procs.live.lock().unwrap().insert(pgid);
+        self.procs.add_group(pgid, &run);
         let mut group = Group { pgid, procs: self.procs.clone(), run: run.clone(), finished: false };
 
         if let (Some(text), Some(mut w)) = (spec.stdin, child.stdin.take()) {
@@ -555,11 +729,12 @@ impl Inner {
             });
         }
         let (tx, mut rx) = mpsc::channel::<(usize, Option<Vec<u8>>)>(16);
+        let mut readers = Readers(Vec::new());
         for (s, r) in [(0usize, child.stdout.take().map(|r| Box::new(r) as Box<dyn tokio::io::AsyncRead + Send + Unpin>)),
                        (1, child.stderr.take().map(|r| Box::new(r) as Box<dyn tokio::io::AsyncRead + Send + Unpin>))] {
             let Some(mut r) = r else { continue };
             let tx = tx.clone();
-            tokio::spawn(async move {
+            readers.0.push(tokio::spawn(async move {
                 let mut buf = vec![0u8; 64 * 1024];
                 loop {
                     match r.read(&mut buf).await {
@@ -572,10 +747,10 @@ impl Inner {
                     }
                 }
                 let _ = tx.send((s, None)).await;
-            });
+            }));
         }
         drop(tx);
-        let mut out = Out { buf: [vec![], vec![]], truncated: false, pending: [vec![], vec![]], streamed: [0, 0], stream: stream.clone(), secrets: used.clone() };
+        let mut out = Out::new(stream.clone(), scrub_values);
         let deadline = tokio::time::sleep(spec.timeout);
         tokio::pin!(deadline);
         let mut tick = tokio::time::interval(FLUSH_EVERY);
@@ -613,6 +788,7 @@ impl Inner {
             }
         }
         out.flush(true);
+        drop(readers);
         group.finished = true;
         drop(group);
         let status = status.unwrap_or_else(|| unreachable!());
@@ -622,16 +798,9 @@ impl Inner {
             (None, Some(s)) => (Value::Null, json!(signal_name(s))),
             (None, None) => (Value::Null, Value::Null),
         };
-        let [so, se] = std::mem::take(&mut out.buf);
-        let mut v = json!({
-            "code": code,
-            "signal": signal,
-            "stdout": String::from_utf8_lossy(&so),
-            "stderr": String::from_utf8_lossy(&se),
-            "truncated": out.truncated,
-        });
-        crate::secrets::scrub(&mut v, &used);
-        Ok(v)
+        let (stdout, t1) = out.take(0);
+        let (stderr, t2) = out.take(1);
+        Ok(json!({ "code": code, "signal": signal, "stdout": stdout, "stderr": stderr, "truncated": t1 || t2 }))
     }
 
     /// `cwd`: inside `plugin-data/<id>/` (relative paths are taken from there) or inside a folder

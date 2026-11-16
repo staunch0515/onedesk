@@ -225,7 +225,8 @@ pub enum Command {
     /// A secret name exists (`true`) or not; the value is the keychain's (rule 7).
     SecretName { name: String, present: bool, audit: bool },
     /// One network call: one audit row per run and host, the rest counted (D309).
-    CountedAudit { run: Option<String>, op: String, object: String, summary: Value },
+    /// `failed`: counted in `audit_counts.failures` (review #9); `error`: the row is written as failed.
+    CountedAudit { run: Option<String>, op: String, object: String, summary: Value, failed: bool, error: Option<onedesk_protocol::ProtocolError> },
     /// A plugin's key-value storage, per plugin and version (D286); not audited.
     Storage { plugin: String, version: String, key: String, value: Option<String> },
     /// Round 5 (§3.5): everything of one import, in one transaction.
@@ -482,7 +483,9 @@ impl Writer {
                     }
                     Outcome { changed: true, ..Default::default() }
                 }
-                Command::CountedAudit { run, op, object, summary } => cx.counted_audit(run.as_deref(), &op, &object, &summary)?,
+                Command::CountedAudit { run, op, object, summary, failed, error } => {
+                    cx.counted_audit(run.as_deref(), &op, &object, &summary, failed, error.as_ref())?
+                }
                 Command::Storage { plugin, version, key, value } => {
                     match value {
                         Some(v) => cx.tx.execute(
@@ -1534,26 +1537,45 @@ impl Tx<'_> {
         Ok(Outcome { id: Some(json!(modified).to_string()), changed: true, rows, ..Default::default() })
     }
 
-    fn counted_audit(&mut self, run: Option<&str>, op: &str, object: &str, summary: &Value) -> KResult<Outcome> {
+    fn counted_audit(
+        &mut self,
+        run: Option<&str>,
+        op: &str,
+        object: &str,
+        summary: &Value,
+        failed: bool,
+        error: Option<&onedesk_protocol::ProtocolError>,
+    ) -> KResult<Outcome> {
         if let Some(run) = run {
             let n = self
                 .tx
                 .execute(
-                    "UPDATE audit_counts SET count = count + 1, last_at = ?4 WHERE run_id = ?1 AND op = ?2 AND object = ?3",
-                    params![run, op, object, self.at],
+                    "UPDATE audit_counts SET count = count + 1, last_at = ?4, last_summary = ?5, failures = failures + ?6
+                     WHERE run_id = ?1 AND op = ?2 AND object = ?3",
+                    params![run, op, object, self.at, summary.to_string(), failed as i64],
                 )
                 .map_err(sql)?;
             if n > 0 {
                 return Ok(Outcome { changed: false, ..Default::default() });
             }
         }
-        self.audit(op, object, summary)?;
+        match error {
+            None => self.audit(op, object, summary)?,
+            Some(e) => {
+                self.tx
+                    .execute(
+                        "INSERT INTO audit (at, actor, op, object, summary, result) VALUES (?1,?2,?3,?4,?5,?6)",
+                        params![self.at, self.actor.as_text(), op, object, summary.to_string(), format!("failed:{}", code_text(e.code))],
+                    )
+                    .map_err(sql)?;
+            }
+        }
         if let Some(run) = run {
             let seq = self.tx.last_insert_rowid();
             self.tx
                 .execute(
-                    "INSERT INTO audit_counts (run_id, op, object, audit_seq, count, first_at, last_at) VALUES (?1, ?2, ?3, ?4, 1, ?5, ?5)",
-                    params![run, op, object, seq, self.at],
+                    "INSERT INTO audit_counts (run_id, op, object, audit_seq, count, first_at, last_at, failures) VALUES (?1, ?2, ?3, ?4, 1, ?5, ?5, ?6)",
+                    params![run, op, object, seq, self.at, failed as i64],
                 )
                 .map_err(sql)?;
         }

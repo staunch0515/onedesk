@@ -75,6 +75,16 @@ fn main() -> ExitCode {
         }
         Err(LockError::Io(e)) => return fail(format!("cannot lock {}: {e}", args.workspace.display())),
     };
+    // D340: a panic on the main thread ends the programs listed for this workspace before the
+    // process goes (panics inside tasks are caught and do not end the worker).
+    let ws_for_panic = args.workspace.clone();
+    let default_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        if std::thread::current().name() == Some("main") {
+            onedesk_kernel::process::cleanup_recorded(&ws_for_panic);
+        }
+        default_hook(info);
+    }));
     let rt = match tokio::runtime::Builder::new_multi_thread().enable_all().build() {
         Ok(rt) => rt,
         Err(e) => return fail(format!("runtime: {e}")),
@@ -98,7 +108,16 @@ fn main() -> ExitCode {
         // Exactly one peer: stop listening for others.
         drop(listener);
         let _ = std::fs::remove_file(&args.socket);
-        onedesk_kernel::transport::serve_connection(kernel.clone(), stream).await;
+        // D340: SIGTERM / SIGHUP end the programs it started before it exits.
+        use tokio::signal::unix::{signal, SignalKind};
+        let (Ok(mut term), Ok(mut hup)) = (signal(SignalKind::terminate()), signal(SignalKind::hangup())) else {
+            return fail("cannot install signal handlers");
+        };
+        tokio::select! {
+            _ = onedesk_kernel::transport::serve_connection(kernel.clone(), stream) => {}
+            _ = term.recv() => eprintln!("onedesk-worker: SIGTERM"),
+            _ = hup.recv() => eprintln!("onedesk-worker: SIGHUP"),
+        }
         kernel.shutdown();
         ExitCode::SUCCESS
     })

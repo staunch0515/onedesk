@@ -291,7 +291,7 @@ impl Inner {
         let summary = json!({ "method": method, "pathLength": url.path().len() + url.query().map_or(0, |q| q.len() + 1), "status": status });
         let _ = self
             .pipeline
-            .execute(p.actor(), Command::CountedAudit { run: info.run_id.clone(), op: "network.request".into(), object: host, summary })
+            .execute(p.actor(), Command::CountedAudit { run: info.run_id.clone(), op: "network.request".into(), object: host, summary, failed: status >= 400, error: None })
             .await;
         self.emit(onedesk_protocol::topic2::AUDIT, None, None);
         let mut out = json!({

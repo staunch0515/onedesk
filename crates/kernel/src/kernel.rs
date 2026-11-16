@@ -70,7 +70,7 @@ pub(crate) struct Inner {
     /// Round 6: external programs running for this kernel.
     pub procs: Arc<crate::process::Procs>,
     /// Round 6: one ordered delivery queue per plugin (D335).
-    pub event_queues: Mutex<HashMap<String, tokio::sync::mpsc::UnboundedSender<crate::events::Delivery>>>,
+    pub event_queues: Mutex<HashMap<String, Arc<crate::events::Queue>>>,
 }
 
 pub(crate) fn parse<T: DeserializeOwned>(v: Value) -> KResult<T> {
@@ -115,6 +115,12 @@ impl Kernel {
     /// The caller holds the workspace lock.
     pub fn open(workspace_dir: &Path, plugins_dir: &Path, cfg: KernelConfig) -> Result<Kernel, String> {
         let (ws, conn) = Workspace::open(workspace_dir)?;
+        // D340: programs a previous worker left running (it was killed) end now.
+        let ended = crate::process::cleanup_recorded(&ws.dir);
+        if ended > 0 {
+            eprintln!("onedesk: ended {ended} program group(s) left by a previous worker");
+        }
+        let ws_dir = ws.dir.clone();
         let reader = ws.open_reader()?;
         let registry = Registry::scan(plugins_dir);
         for r in &registry.rejected() {
@@ -136,7 +142,7 @@ impl Kernel {
             runs_active: Default::default(),
             secret_cache: Default::default(),
             rules,
-            procs: Default::default(),
+            procs: Arc::new(crate::process::Procs::new(&ws_dir)),
             event_queues: Default::default(),
         });
         // D299 first sight, then each plugin's active version.
@@ -169,7 +175,9 @@ impl Kernel {
     pub fn shutdown(&self) {
         // No orphans (D333): programs still running end with the worker.
         self.inner.procs.kill_all();
-        self.inner.event_queues.lock().unwrap().clear();
+        for (_, q) in self.inner.event_queues.lock().unwrap().drain() {
+            q.close();
+        }
         self.inner.slots.lock().unwrap().clear();
         self.inner.pipeline.shutdown();
     }
