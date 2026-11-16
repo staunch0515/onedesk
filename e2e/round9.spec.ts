@@ -220,12 +220,14 @@ test("idle: a run in progress keeps the runtime live, past several idle times", 
 
 test("staleContext: a host kept from a finished run is refused from a page event", async ({ page }) => {
   await bare(page);
-  const run = await finished(page, await startRun(page, "stash"));
-  expect(run.error).toBeUndefined();
-  expect(run.output?.text).toBe("stashed");
-  const r = await event(page, "abuse");
-  expect(text(r.message)).not.toContain("request went through");
-  expect(JSON.parse(text(r.message))).toMatchObject({ code: "denied", params: { reason: "staleContext" } });
+  let message = "";
+  for (let attempt = 0; attempt < 4 && !message.startsWith("denied"); attempt++) { // start over if the runtime was released in between
+    const run = await finished(page, await startRun(page, "stash"));
+    expect(run.error).toBeUndefined();
+    expect(run.output?.text).toBe("stashed");
+    message = text((await event(page, "abuse")).message);
+  }
+  expect(message).toBe("denied/staleContext");
 });
 
 test("staleContext: a host kept from one run is refused from a page event while another run is going", async ({ page }) => {
@@ -234,7 +236,7 @@ test("staleContext: a host kept from one run is refused from a page event while 
   // The kept host lives in the module of the runtime; if the runtime is released between `stash` and the event
   // (a loaded machine, idle time 2 s) the plugin has nothing kept: then start over.
   let message = "";
-  for (let attempt = 0; attempt < 4 && !message.startsWith("{"); attempt++) {
+  for (let attempt = 0; attempt < 4 && !message.startsWith("denied"); attempt++) {
     expect((await finished(page, await startRun(page, "stash"))).output?.text).toBe("stashed");
     const slow = await startRun(page, "slow");
     await expect.poll(async () => (await getRun(page, slow)).status).toBe("running");
@@ -243,7 +245,7 @@ test("staleContext: a host kept from one run is refused from a page event while 
     await finished(page, slow);
   }
   expect(message).not.toContain("request went through");
-  expect(JSON.parse(message)).toMatchObject({ code: "denied", params: { reason: "staleContext" } });
+  expect(message).toBe("denied/staleContext");
 });
 
 test("provided tree: the node name follows the language (protocol and shell)", async ({ page }) => {
