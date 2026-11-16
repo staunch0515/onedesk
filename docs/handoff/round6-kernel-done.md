@@ -12,7 +12,7 @@
 
 ## 测试结果（本会话实际运行）
 
-见文末“运行结果”。新增：`crates/kernel/tests/round6.rs`（20 个）、`manifest.rs` 单元测试 1 个（`program_and_event_declarations_and_their_rejections`）；`round5.rs` 的 `params.known` 断言加了 `process.allow` 一行。
+全部在本会话实际运行：`cargo test -p onedesk-kernel -p onedesk-worker -p onedesk-protocol` 全过（之后加的两个测试单独跑 round5、round6 也全过）；`cargo clippy … --all-targets -- -D warnings` 无警告；`sh scripts/gen-types.sh --check` 最新；`pnpm lint` 通过；测试后没有残留的 `sleep 100` 进程。没运行：`pnpm check` 全套（typecheck、vitest、e2e）。新增：`crates/kernel/tests/round6.rs`（20 个）、`manifest.rs` 单元测试 1 个（`program_and_event_declarations_and_their_rejections`）；`round5.rs` 的 `params.known` 断言加了 `process.allow` 一行。
 
 §8 要求与测试的对应：
 
