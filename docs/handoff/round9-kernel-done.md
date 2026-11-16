@@ -5,6 +5,7 @@
 ## 测试结果（全部实际跑过）
 
 - `cargo test -p onedesk-kernel -p onedesk-worker -p onedesk-protocol`：全部通过（新增 `crates/kernel/tests/round9.rs` 11 个；原有全部仍通过）。
+  - 如实记下：机器负载很高时（load average 200–290，别的会话在编译）整套跑了两次，`round4.rs` 的 `network_allow_lists_redirects_loopback_limits_and_counting` 各失败一次（`command.execute` 返回错误；该测试经沙箱搬 8 MB 正文，测试配置的同步片只有 300 ms、调用 5 s）。单独跑 20 次全过，负载降到 ~50 时整套一遍全过。判断是负载造成的超时，不是本轮改动；记 `todo.md`。
 - `cargo clippy -p onedesk-kernel -p onedesk-worker -p onedesk-protocol --all-targets -- -D warnings`：通过。
 - `sh scripts/gen-types.sh --check`：最新（生成的 TS 已提交）。
 - `pnpm lint`：通过。`cargo check -p onedesk-host --tests`：通过（主进程那边不用改）。
@@ -115,4 +116,10 @@
 
 ## 提交
 
-（见下）
+| 提交 | 内容 |
+|---|---|
+| `b3f427d` | §6：`outsideGrant` 带 `path`、`blockedByPolicy` 带 `layerName`、请求失败只留主机、搬运取消/超时写审计 |
+| `6c12b23` | §3：有 `plugins/.index` 时只读它 |
+| `94c8c90` | §4 空闲回收与 `PluginDetail.runtime`；§6 `tree.children` 的 `locale`；协议只增与生成的 TS；工作进程读 `ONEDESK_PLUGIN_IDLE_MS` |
+| `33d963f` | §5：`ctx.host` 只在自己的调用上有效（`staleContext`）；宿主错误的 `detail` 带到 `RunError.detail` |
+| `e0d4e35` | `round9.rs` 测试与本文件 |
