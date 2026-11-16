@@ -74,7 +74,8 @@ async function listDirs(ctx, path) {
 
 // Reads `<dir>/manifest.json`. Returns { found: false } only when the file does not exist; other problems
 // make the package "unavailable" with a reason.
-async function readPackage(ctx, dir) {
+// `expected` ({ id, version }) is given for packages found as `<id>/<version>`: the manifest must say the same.
+async function readPackage(ctx, dir, expected) {
   const label = clean(dir.name, MAX_NAME);
   let file;
   try {
@@ -91,6 +92,13 @@ async function readPackage(ctx, dir) {
   }
   if (!m || typeof m !== "object" || typeof m.id !== "string" || typeof m.version !== "string" || !m.id || !m.version) {
     return { found: true, pkg: { folder: dir.path, label, unavailable: "reason.missingFields" } };
+  }
+  // Required fields besides id and version (the kernel's manifest has no defaults for them): a package without them cannot be installed.
+  if (typeof m.apiVersion !== "string" || !m.apiVersion || typeof m.name !== "string" || !m.name || typeof m.icon !== "string" || !m.icon || typeof m.main !== "string" || !m.main) {
+    return { found: true, pkg: { folder: dir.path, label, unavailable: "reason.incomplete" } };
+  }
+  if (expected && (m.id !== expected.id || m.version !== expected.version)) {
+    return { found: true, pkg: { folder: dir.path, label, unavailable: "reason.mismatch" } };
   }
   return { found: true, pkg: { folder: dir.path, label, id: m.id, version: m.version, manifest: m } };
 }
@@ -140,7 +148,7 @@ export async function scan(ctx, roots) {
       }
       for (const v of inner) {
         if (!probe()) break outer;
-        const res = await readPackage(ctx, v);
+        const res = await readPackage(ctx, v, { id: d.name, version: v.name });
         if (res.found && !add({ ...res.pkg, label: clean(`${d.name}/${v.name}`, MAX_NAME) })) break outer;
       }
     }

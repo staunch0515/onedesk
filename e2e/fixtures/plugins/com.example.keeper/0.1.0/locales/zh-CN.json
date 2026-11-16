@@ -1,0 +1,22 @@
+{
+  "plugin.name": "保管员",
+  "plugin.description": "测试夹具：把草稿存进 storage，可以存下宿主句柄，也能慢速运行。用来验证空闲回收和过期上下文。",
+  "kind.box": "盒子",
+  "kind.box.new": "未命名的盒子",
+  "tree.keeper": "保管员",
+  "node.label": "保管员节点（{locale}）",
+  "action.remember": "记住草稿",
+  "action.recall": "取回草稿",
+  "action.abuse": "使用存下的句柄",
+  "action.stash": "存下句柄",
+  "action.slow": "慢速运行",
+  "action.save": "保存",
+  "tab.result": "输出",
+  "field.text": "文字",
+  "message.remembered": "已记住。",
+  "message.nothing": "没有记住的内容。",
+  "message.nothingStashed": "没有存下的句柄。",
+  "result.stashed": "stashed",
+  "result.slow": "慢速运行完成",
+  "page.tree": "保管员"
+}

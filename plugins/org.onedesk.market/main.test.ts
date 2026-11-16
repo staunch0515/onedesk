@@ -31,7 +31,7 @@ function fakeFiles(files: Record<string, string>, roots = [{ path: ROOT, name: "
 }
 
 const pkgManifest = (id: string, version: string, extra: Record<string, unknown> = {}) =>
-  JSON.stringify({ id, version, apiVersion: "2", name: "plugin.name", description: "plugin.description", main: "main.js", contributes: { locales: { "en-US": "locales/en-US.json", "zh-CN": "locales/zh-CN.json" } }, ...extra });
+  JSON.stringify({ id, version, apiVersion: "2", name: "plugin.name", description: "plugin.description", icon: "box", main: "main.js", contributes: { locales: { "en-US": "locales/en-US.json", "zh-CN": "locales/zh-CN.json" } }, ...extra });
 const pkgLocales = (dir: string, name: string, desc: string, zh?: [string, string]) => ({
   [`${dir}/locales/en-US.json`]: JSON.stringify({ "plugin.name": name, "plugin.description": desc }),
   [`${dir}/locales/zh-CN.json`]: JSON.stringify({ "plugin.name": zh?.[0] ?? name, "plugin.description": zh?.[1] ?? desc }),
@@ -69,7 +69,7 @@ describe("market: manifest", () => {
     expect(Object.keys(locale("en-US")).sort()).toEqual(Object.keys(locale("zh-CN")).sort());
     const src = readFileSync(new URL("./main.js", import.meta.url), "utf8");
     const used = [...src.matchAll(/(?:tr\(ctx, |ctx\.t\()"([a-zA-Z.]+)"/g)].map((m) => m[1]!);
-    const dynamic = ["reason.unreadable", "reason.invalidJson", "reason.missingFields"];
+    const dynamic = ["reason.unreadable", "reason.invalidJson", "reason.missingFields", "reason.incomplete", "reason.mismatch"];
     for (const k of [...used, ...dynamic, "tree.market", "action.install", "action.refresh"]) expect(locale("en-US")[k], k).toBeTruthy();
   });
 });
@@ -125,7 +125,7 @@ describe("market: scanning", () => {
 
   it("uses the package's own language file, falling back to English", async () => {
     const { pages } = registry(plugin);
-    const files = fakeFiles(pkgFiles(`${ROOT}/a/1.0.0`, "com.example.a", "1.0.0", "Alpha", "First", ["阿尔法", "第一个"]));
+    const files = fakeFiles(pkgFiles(`${ROOT}/com.example.a/1.0.0`, "com.example.a", "1.0.0", "Alpha", "First", ["阿尔法", "第一个"]));
     const host = { files, plugins: { list: async () => [] } };
     // the cache is per language, so the same host serves both
     expect(rowsOf(await pages.browse.render(ctxOf(host, { locale: "zh-CN" })))[0]!.slice(0, 3)).toEqual(["阿尔法", "1.0.0", "第一个"]);
@@ -135,13 +135,13 @@ describe("market: scanning", () => {
   it("shows the package id (never the raw key) when the language file is missing or a path escapes the package", async () => {
     const { pages } = registry(plugin);
     const files = fakeFiles({
-      [`${ROOT}/a/1.0.0/manifest.json`]: pkgManifest("com.example.a", "1.0.0"),
-      [`${ROOT}/b/1.0.0/manifest.json`]: pkgManifest("com.example.b", "1.0.0", { contributes: { locales: { "en-US": "../../x.json" } } }),
+      [`${ROOT}/com.example.a/1.0.0/manifest.json`]: pkgManifest("com.example.a", "1.0.0"),
+      [`${ROOT}/com.example.b/1.0.0/manifest.json`]: pkgManifest("com.example.b", "1.0.0", { contributes: { locales: { "en-US": "../../x.json" } } }),
     });
     const out = await pages.browse.render(ctxOf({ files, plugins: { list: async () => [] } }));
     expect(rowsOf(out).map((r) => [r[0], r[2]])).toEqual([["com.example.a", ""], ["com.example.b", ""]]);
     expect(JSON.stringify(out.view)).not.toContain("plugin.name");
-    expect(files.readText).not.toHaveBeenCalledWith(`${ROOT}/b/1.0.0/../../x.json`);
+    expect(files.readText).not.toHaveBeenCalledWith(`${ROOT}/com.example.b/1.0.0/../../x.json`);
   });
 
   it("lists packages whose manifest cannot be read as unavailable with the reason, and keeps going", async () => {
@@ -165,6 +165,24 @@ describe("market: scanning", () => {
     // unavailable packages cannot be picked
     const pick = out.view.find((n: any) => n.id === "pick").fields[0];
     expect(pick.options.map((o: any) => o.value)).toEqual([`${ROOT}/good`]);
+  });
+
+  it("marks packages with missing required fields or an id/version that differs from their folder as unavailable", async () => {
+    const { pages } = registry(plugin);
+    const files = fakeFiles({
+      ...pkgFiles(`${ROOT}/com.example.ok/1.0.0`, "com.example.ok", "1.0.0", "Ok", "fine"),
+      ...pkgFiles(`${ROOT}/com.example.a/1.0.0`, "com.example.other", "1.0.0", "Wrong id", "x"),
+      ...pkgFiles(`${ROOT}/com.example.b/1.0.0`, "com.example.b", "2.0.0", "Wrong version", "x"),
+      [`${ROOT}/com.example.c/1.0.0/manifest.json`]: JSON.stringify({ id: "com.example.c", version: "1.0.0", apiVersion: "2" }),
+    });
+    const out = await pages.browse.render(ctxOf({ files, plugins: { list: async () => [] } }));
+    const rows = rowsOf(out);
+    expect(rows.find((r) => r[0] === "Ok")?.[3]).toBe("Not installed");
+    expect(rows.find((r) => r[0] === "com.example.a/1.0.0")).toEqual(["com.example.a/1.0.0", "", "The manifest does not match its folder (id or version differs).", "Unavailable"]);
+    expect(rows.find((r) => r[0] === "com.example.b/1.0.0")?.[3]).toBe("Unavailable");
+    expect(rows.find((r) => r[0] === "com.example.c/1.0.0")).toEqual(["com.example.c/1.0.0", "", "The manifest is missing required fields.", "Unavailable"]);
+    const pick = out.view.find((n: any) => n.id === "pick").fields[0];
+    expect(pick.options.map((o: any) => o.value)).toEqual([`${ROOT}/com.example.ok/1.0.0`]);
   });
 
   it("ignores hidden and plain-file entries and folders without any manifest", async () => {
@@ -194,7 +212,7 @@ describe("market: scanning", () => {
   it("a key the language file does not know shows the id and an empty description (the strict-manifest failure case)", async () => {
     const { pages } = registry(plugin);
     const files = fakeFiles({
-      [`${ROOT}/broken/manifest.json`]: JSON.stringify({ id: "com.example.broken-pack", version: "0.1.0", name: "plugin.name", description: "plugin.description", contributes: { locales: { "en-US": "locales/en-US.json" } } }),
+      [`${ROOT}/broken/manifest.json`]: JSON.stringify({ id: "com.example.broken-pack", version: "0.1.0", apiVersion: "2", icon: "box", main: "main.js", name: "plugin.name", description: "plugin.description", contributes: { locales: { "en-US": "locales/en-US.json" } } }),
       [`${ROOT}/broken/locales/en-US.json`]: JSON.stringify({ other: "x" }),
     });
     const out = await pages.browse.render(ctxOf({ files, plugins: { list: async () => [] } }));
@@ -419,9 +437,9 @@ describe("market: limits, cache and untrusted text", () => {
     const { pages } = registry(plugin);
     const long = "N".repeat(200);
     const files = fakeFiles({
-      [`${ROOT}/a/manifest.json`]: JSON.stringify({ id: "com.example.a", version: "1.0.0", name: "n", description: "d", contributes: { locales: { "en-US": "l.json" } } }),
+      [`${ROOT}/a/manifest.json`]: JSON.stringify({ id: "com.example.a", version: "1.0.0", apiVersion: "2", icon: "box", main: "main.js", name: "n", description: "d", contributes: { locales: { "en-US": "l.json" } } }),
       [`${ROOT}/a/l.json`]: JSON.stringify({ n: "x\u202e" + long, d: "D".repeat(500) + "\u0007" }),
-      [`${ROOT}/b/manifest.json`]: JSON.stringify({ id: "com.example.b", version: "1.0.0", name: { evil: true }, description: ["x"] }),
+      [`${ROOT}/b/manifest.json`]: JSON.stringify({ id: "com.example.b", version: "1.0.0", apiVersion: "2", icon: "box", main: "main.js", name: "nokey", description: ["x"] }),
       [`${ROOT}/c\u202etxt/manifest.json`]: "{ broken",
     });
     const out = await pages.browse.render(ctxOf({ files, plugins: { list: async () => [] } }));
