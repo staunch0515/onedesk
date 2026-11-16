@@ -112,3 +112,19 @@ ctx.host.transfer.capture(opts: {
 - 被运行取消打断的 `transfer` 不写审计行（宿主调用在取消时被直接丢弃，`process.run` 原来也如此）；超时、拒绝、回调失败都有。
 - 没单独测：`transfer` 在 `migrate`、事件订阅里的拒绝（代码路径与命令/渲染相同：没有 `run_id` → `notInRun`）；`transfer` 的 `insideDataDir`；上传跨主机重定向时去掉凭据（与 `network.request` 共用代码，第四轮有测试）；安装确认框（`app.inspectPlugin`）里出现 `pages`——只测了权限清单与指纹（单元测试）和 `plugin.get` 的 `permissions`。
 - 外壳、e2e、`pnpm check` 全套没跑（只跑了 lint、typecheck 和 Rust 部分）。
+
+## 审查后的修改（`round8-review.md`，内核部分）
+
+| # | 怎么改的 | 测试 |
+|---|---|---|
+| 1 | 历史运行页（`run:` 目标）借用别人的页面时与 `resolve_resource` 同样处理：交给所有者 `render` 的 `ctx.resource` 去掉密钥字段、带 `readOnly: true`，`ctx.draft`（输入快照）也去掉密钥字段；先检查类型是否可用，不可用（或任一方停用）→ 页面 `disabled`、不调用所有者的代码；操作区只留 `save`/`event`。此外凡是运行不是页面所有者自己的（含第七轮依赖方动作），交给页面代码的 `ctx.run` 去掉 `input`、`summary`、`error`、`output`（D351）。顺带修正：这条路径造出的资源行版本号用类型所属插件的版本，不再用页面所有者的。 | `a_dependents_kind_…`（历史页只读、无密钥字段、`ctx.run` 不含这四项、无 run 项）；`an_unexported_…`（导出撤回后历史页 `disabled`、视图为空） |
+| 2 | D361：`Hold` 分两种等待——等用户（`enter`，不限）和等 `transfer.*`/`process.run`（`enter_wait`）。按时间片记账：重叠的调用只算一次，与等用户重叠的时间不重复算；后一种一次调用累计最多暂停 `SandboxConfig.max_wait_pause`（默认 1 小时，常量 `install::MAX_WAIT_PAUSE`），超过后 `held()` 为假、预算照常计时（截止时间 = 开始 + 预算 + 等用户的时间 + min(等待时间, 上限)）。 | `install::tests::waits_for_programs_count_once_and_at_most_the_cap`；`overlapping_waits_pause_the_budget_at_most_the_cap`（5 个首尾重叠的 `process.run`，上限 1 秒 → `timeout`；默认上限 → 成功） |
+| 3 | 新函数 `files::open_source`：解析并检查后，从钉住的目录描述符用 `O_NOFOLLOW` 打开，再 `fstat` 判断是普通文件；`readText` 和 `transfer.upload` 都改用它。`upload` 保存这个描述符，每一跳（含 307/308 重发）`try_clone` 后从头读，不再按路径重开。最后一段是链接 → `denied/outsideGrant`。 | `files::tests::review3_…`（检查后把路径换成指向授权外的链接，读到的仍是原文件；之后再开被拒）；上传 307 重发仍逐字节相同 |
+| 5 | `PageEventResult.params` 先按任意 JSON 收下再校验：值必须是文字，最多 64 个键，每个值最多 4 KB（4096 字节）。不合格 → 页面事件返回 `invalid`，**新原因码 `badParams`**（`detail` 写哪一项不合格）。 | `page_context_params_…`（64 键 × 4 KB 通过；65 键、4097 字节、数字值 → `invalid/badParams`；页面参数不进 `changes`、不写资源） |
+| 6 | `transfer.download`/`capture` 用 `overwrite: true` 覆盖时，临时文件按原文件权限创建并 `fchmod` 到同一权限（不受 umask 影响）；新文件仍是 0644。 | `files::tests::review6_…`；`non_2xx_existing_targets_and_overwrite`（0600 覆盖后仍 0600） |
+
+测试缺口一节补的测试：重叠调用下的预算（见 #2）；别人的页面画历史运行页（见 #1）；`notInRun` 在页面事件 `onEvent`、事件订阅、`migrate` 里（`each_end_refuses_by_its_own_rules`、`transfer_in_migrate_is_not_in_a_run`，后者同时核对审计 `failed:denied`）；`transfer` 的本机地址规则（通配主机解析到回环 → `localAddress`）；`capture` 的 `DYLD_`/`LD_` 环境变量 → `invalid/badEnv`；`PageEventResult.params` 的校验与“不进草稿”（见 #5）；依赖方资源在树之间移动的确切结果：从别的树的视角移动 → `notFound`（`what: node`），移进别的树的分组 → `invalid/otherTree`，别的树的分组移进所有者的树 → `notFound`（`what: node`），资源仍在原树。
+
+新增原因码（审查后）：`invalid` / `badParams`（页面事件返回的页面参数不合格）。`SandboxConfig` 只增字段 `max_wait_pause`（内核配置，不是协议）。
+
+检查（审查修改后实际跑过）：`cargo test -p onedesk-kernel -p onedesk-worker -p onedesk-protocol` 通过（其中一次整体运行在机器负载高时 `round3` 有 1 个失败、耗时 53 秒，没看到是哪个；单独连跑 `round3` 4 次、整体再跑 1 次都全过，判断为与本次修改无关的时序抖动，未定位）；clippy `-D warnings`、`sh scripts/gen-types.sh --check`、`pnpm lint`、`cargo check -p onedesk-host --tests` 通过。

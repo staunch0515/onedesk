@@ -107,7 +107,8 @@ pub(crate) struct Request<'a> {
 
 /// A file sent as a request body in chunks of at most `CHUNK` bytes, counting what went out.
 pub(crate) struct FileBody {
-    pub path: std::path::PathBuf,
+    /// Opened (and checked) once; every hop reads it again from the start (review #3).
+    pub file: std::fs::File,
     pub size: u64,
     pub sent: std::sync::Arc<std::sync::atomic::AtomicU64>,
 }
@@ -117,7 +118,10 @@ pub const CHUNK: usize = 64 * 1024;
 
 impl FileBody {
     async fn body(&self) -> KResult<reqwest::Body> {
-        let f = tokio::fs::File::open(&self.path).await.map_err(|_| not_found("path"))?;
+        use std::io::Seek;
+        let mut f = self.file.try_clone().map_err(internal)?;
+        f.seek(std::io::SeekFrom::Start(0)).map_err(internal)?;
+        let f = tokio::fs::File::from_std(f);
         self.sent.store(0, std::sync::atomic::Ordering::SeqCst);
         Ok(reqwest::Body::wrap(FileStream { f, sent: self.sent.clone(), buf: vec![0u8; CHUNK] }))
     }

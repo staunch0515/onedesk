@@ -5,7 +5,6 @@
 //! the sandbox reaches `plugin.answerInstallRequest` or `app.*`: a plugin cannot answer for the user.
 
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -42,45 +41,108 @@ pub(crate) struct Requests {
     ended: Mutex<std::collections::HashMap<String, Instant>>,
 }
 
-/// Time an invocation spends waiting for the user (D345, D349): it does not count against the
+/// Time an invocation spends waiting (D345, D349, D355, D361): it does not count against the
 /// invocation's time budget, but does not reset it either — the deadline moves by exactly the
-/// time spent waiting. Each waiting host call holds it.
-#[derive(Debug, Default)]
+/// time spent waiting. Two kinds of waits:
+/// - for the user (`enter`): no limit;
+/// - for `transfer.*` / `process.run` (`enter_wait`): at most `cap` in total per invocation
+///   (D361, review #2: overlapping calls would otherwise pause the budget for ever). Overlapping
+///   calls count once; time already paused for the user is not counted again.
+#[derive(Debug)]
 pub struct Hold {
-    n: AtomicUsize,
-    /// (total time waited so far, since when it is being held now)
-    waited: Mutex<(Duration, Option<Instant>)>,
+    st: Mutex<HoldState>,
 }
 
-pub struct HoldGuard(Arc<Hold>);
+#[derive(Debug)]
+struct HoldState {
+    user: usize,
+    wait: usize,
+    /// Paused for the user / for transfers and programs, up to `since`.
+    user_paused: Duration,
+    wait_paused: Duration,
+    since: Instant,
+    cap: Duration,
+}
+
+/// D361: the most an invocation's budget is paused for `transfer.*` / `process.run`.
+pub const MAX_WAIT_PAUSE: Duration = Duration::from_secs(3600);
+
+impl Default for Hold {
+    fn default() -> Self {
+        Hold {
+            st: Mutex::new(HoldState {
+                user: 0,
+                wait: 0,
+                user_paused: Duration::ZERO,
+                wait_paused: Duration::ZERO,
+                since: Instant::now(),
+                cap: MAX_WAIT_PAUSE,
+            }),
+        }
+    }
+}
+
+impl HoldState {
+    /// Books the time since the last change to the kind of pause in force (user first).
+    fn settle(&mut self) {
+        let now = Instant::now();
+        let dt = now - self.since;
+        if self.user > 0 {
+            self.user_paused += dt;
+        } else if self.wait > 0 {
+            self.wait_paused += dt;
+        }
+        self.since = now;
+    }
+}
+
+pub struct HoldGuard(Arc<Hold>, bool);
 
 impl Hold {
+    /// Waiting for the user.
     pub fn enter(self: &Arc<Self>) -> HoldGuard {
-        let mut w = self.waited.lock().unwrap();
-        if self.n.fetch_add(1, Ordering::SeqCst) == 0 {
-            w.1 = Some(Instant::now());
-        }
-        HoldGuard(self.clone())
+        let mut st = self.st.lock().unwrap();
+        st.settle();
+        st.user += 1;
+        HoldGuard(self.clone(), true)
+    }
+
+    /// Waiting for a transfer or a program (counts against the cap).
+    pub fn enter_wait(self: &Arc<Self>) -> HoldGuard {
+        let mut st = self.st.lock().unwrap();
+        st.settle();
+        st.wait += 1;
+        HoldGuard(self.clone(), false)
+    }
+
+    /// The most the budget is paused for transfers and programs (tests set it lower).
+    pub fn set_cap(&self, cap: Duration) {
+        self.st.lock().unwrap().cap = cap;
     }
 
     pub fn held(&self) -> bool {
-        self.n.load(Ordering::SeqCst) > 0
+        let mut st = self.st.lock().unwrap();
+        st.settle();
+        st.user > 0 || (st.wait > 0 && st.wait_paused < st.cap)
     }
 
     /// When the budget of an invocation that started at `start` ends (while not held):
-    /// start + budget + the time spent waiting for the user.
+    /// start + budget + the time spent waiting (for transfers and programs: at most the cap).
     pub fn deadline(&self, start: Instant, budget: Duration) -> Instant {
-        start + budget + self.waited.lock().unwrap().0
+        let mut st = self.st.lock().unwrap();
+        st.settle();
+        start + budget + st.user_paused + st.wait_paused.min(st.cap)
     }
 }
 
 impl Drop for HoldGuard {
     fn drop(&mut self) {
-        let mut w = self.0.waited.lock().unwrap();
-        if self.0.n.fetch_sub(1, Ordering::SeqCst) == 1 {
-            if let Some(since) = w.1.take() {
-                w.0 += since.elapsed();
-            }
+        let mut st = self.0.st.lock().unwrap();
+        st.settle();
+        if self.1 {
+            st.user -= 1;
+        } else {
+            st.wait -= 1;
         }
     }
 }
@@ -285,5 +347,39 @@ impl Inner {
             let _ = p.answer.send(json!({ "outcome": "failed", "reason": reason }));
         }
         self.emit(topic7::INSTALL_REQUESTS, None, None);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn waits_for_programs_count_once_and_at_most_the_cap() {
+        let h = Arc::new(Hold::default());
+        h.set_cap(Duration::from_millis(150));
+        let start = Instant::now();
+        let budget = Duration::from_secs(10);
+        {
+            // Two overlapping waits: paused once, and only up to the cap.
+            let _a = h.enter_wait();
+            let _b = h.enter_wait();
+            std::thread::sleep(Duration::from_millis(100));
+            assert!(h.held());
+            std::thread::sleep(Duration::from_millis(100));
+            assert!(!h.held(), "over the cap: the budget runs again");
+        }
+        let d = h.deadline(start, budget) - start;
+        assert!(d >= budget + Duration::from_millis(150) && d < budget + Duration::from_millis(160), "{d:?}");
+        // Waiting for the user has no cap.
+        {
+            let _u = h.enter();
+            let _w = h.enter_wait();
+            std::thread::sleep(Duration::from_millis(60));
+            assert!(h.held());
+        }
+        let d2 = h.deadline(start, budget) - start;
+        assert!(d2 >= d + Duration::from_millis(60), "{d2:?}");
+        assert!(!h.held());
     }
 }

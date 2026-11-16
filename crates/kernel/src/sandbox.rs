@@ -32,6 +32,9 @@ pub struct SandboxConfig {
     pub call_timeout: Duration,
     /// Longest synchronous stretch of JS (dead-loop watchdog).
     pub sync_slice: Duration,
+    /// D361: the most one invocation's budget is paused while it waits for `transfer.*` /
+    /// `process.run` (1 hour; tests set it lower).
+    pub max_wait_pause: Duration,
 }
 
 impl Default for SandboxConfig {
@@ -42,6 +45,7 @@ impl Default for SandboxConfig {
             activate_timeout: Duration::from_secs(10),
             call_timeout: Duration::from_secs(15),
             sync_slice: Duration::from_secs(1),
+            max_wait_pause: crate::install::MAX_WAIT_PAUSE,
         }
     }
 }
@@ -598,6 +602,7 @@ impl Sandbox {
     ) -> Result<Value, SandboxError> {
         let token = cancel.unwrap_or_default();
         let hold = info.hold.clone();
+        hold.set_cap(self.cfg.max_wait_pause);
         let call_id = self.ctl.next_call.fetch_add(1, Ordering::SeqCst);
         self.ctl.calls.lock().unwrap().insert(call_id, (token.clone(), Arc::new(info)));
         let (kind, name, func) = (kind.to_string(), name.to_string(), func.to_string());

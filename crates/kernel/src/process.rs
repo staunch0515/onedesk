@@ -576,7 +576,7 @@ impl Inner {
                 let started = Instant::now();
                 // D355: the action's time budget does not run while it waits for the program.
         let res = {
-            let _hold = info.hold.enter();
+            let _hold = info.hold.enter_wait();
             self.process_run(p, info, &o, None).await
         };
                 // One audit row per run and program, repeats counted (D309's table); refusals and

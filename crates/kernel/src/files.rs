@@ -126,15 +126,17 @@ pub fn stat(grants: &[PathBuf], raw: &str) -> KResult<Value> {
 }
 
 pub fn read_text(grants: &[PathBuf], raw: &str) -> KResult<Value> {
-    let p = resolve(grants, raw)?;
-    let md = std::fs::metadata(&p).map_err(|_| not_found("path"))?;
-    if md.is_dir() {
-        return Err(invalid("notFile"));
-    }
-    if md.len() > MAX_TEXT {
+    use std::io::Read;
+    // Review #3: checked and read through the same descriptor (no second lookup by path).
+    let (_, mut f, len) = open_source(grants, raw)?;
+    if len > MAX_TEXT {
         return Err(invalid("tooLarge"));
     }
-    let bytes = std::fs::read(&p).map_err(internal)?;
+    let mut bytes = Vec::new();
+    Read::by_ref(&mut f).take(MAX_TEXT + 1).read_to_end(&mut bytes).map_err(internal)?;
+    if bytes.len() as u64 > MAX_TEXT {
+        return Err(invalid("tooLarge"));
+    }
     let basis = crate::util::fingerprint(&bytes);
     let text = String::from_utf8(bytes).map_err(|_| invalid("notText"))?;
     Ok(json!({ "text": text, "basis": basis }))
@@ -298,17 +300,25 @@ pub fn part_file(grants: &[PathBuf], raw: &str, overwrite: bool) -> KResult<Part
     if exists && (st.st_mode & libc::S_IFMT) == libc::S_IFDIR {
         return Err(invalid("notFile"));
     }
+    // Review #6: an overwritten file keeps its permissions (like `writeText`).
+    let mode = if exists && (st.st_mode & libc::S_IFMT) == libc::S_IFREG { st.st_mode & 0o7777 } else { 0o644 };
     let tmp = cstr(&format!(".{name}.part-{}", crate::util::new_id())).map_err(internal)?;
     // SAFETY: valid descriptor and C string; result checked.
     let fd = unsafe {
-        libc::openat(d, tmp.as_ptr(), libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL | libc::O_NOFOLLOW | libc::O_CLOEXEC, libc::c_uint::from(0o644u16))
+        libc::openat(d, tmp.as_ptr(), libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL | libc::O_NOFOLLOW | libc::O_CLOEXEC, libc::c_uint::from(mode))
     };
     if fd < 0 {
         return Err(internal(std::io::Error::last_os_error()));
     }
     // SAFETY: fresh descriptor we own.
     let file = unsafe { std::fs::File::from_raw_fd(fd) };
-    Ok(PartFile { dir: dirfd, name: cname, tmp, path: p, file: Some(file), done: false })
+    let part = PartFile { dir: dirfd, name: cname, tmp, path: p, file: Some(file), done: false };
+    // Exactly that mode, whatever the process umask.
+    // SAFETY: valid descriptor we own.
+    if unsafe { libc::fchmod(part.file.as_ref().expect("just opened").as_raw_fd(), mode) } != 0 {
+        return Err(internal(std::io::Error::last_os_error()));
+    }
+    Ok(part)
 }
 
 impl PartFile {
@@ -349,14 +359,34 @@ impl Drop for PartFile {
     }
 }
 
-/// `transfer.upload`'s source: a file inside a grant (resolved like `readText`), and its size.
-pub fn source_file(grants: &[PathBuf], raw: &str) -> KResult<(PathBuf, u64)> {
+/// A file to read inside a grant (`readText`, `transfer.upload`): resolved and checked, then
+/// opened from its pinned folder without following a link (review #3: the descriptor that was
+/// checked is the one read — swapping the path for a link afterwards changes nothing).
+/// Returns the resolved path, the open file and its size.
+pub fn open_source(grants: &[PathBuf], raw: &str) -> KResult<(PathBuf, std::fs::File, u64)> {
+    use std::os::fd::{AsRawFd, FromRawFd};
     let p = resolve(grants, raw)?;
-    let md = std::fs::metadata(&p).map_err(|_| not_found("path"))?;
+    let dir = p.parent().ok_or_else(|| invalid("notFile"))?;
+    let name = p.file_name().map(|n| n.to_string_lossy().into_owned()).ok_or_else(|| invalid("notFile"))?;
+    let dirfd = open_dir_nofollow(dir).map_err(|_| denied("outsideGrant"))?;
+    let cname = cstr(&name).map_err(internal)?;
+    // SAFETY: valid descriptor and C string; result checked.
+    let fd = unsafe { libc::openat(dirfd.as_raw_fd(), cname.as_ptr(), libc::O_RDONLY | libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK) };
+    if fd < 0 {
+        let e = std::io::Error::last_os_error();
+        return Err(match e.raw_os_error() {
+            Some(libc::ENOENT) => not_found("path"),
+            Some(libc::ELOOP) => denied("outsideGrant"),
+            _ => internal(e),
+        });
+    }
+    // SAFETY: fresh descriptor we own.
+    let f = unsafe { std::fs::File::from_raw_fd(fd) };
+    let md = f.metadata().map_err(internal)?;
     if !md.is_file() {
         return Err(invalid("notFile"));
     }
-    Ok((p, md.len()))
+    Ok((p, f, md.len()))
 }
 
 #[cfg(test)]
@@ -416,6 +446,41 @@ mod tests {
         assert_eq!(code(write_text(&g, &p, "x", None)), ErrorCode::Denied);
         assert_eq!(code(list(&g, &s.outside.display().to_string(), &json!({}))), ErrorCode::Denied);
         assert_eq!(std::fs::read_to_string(s.outside.join("secret.txt")).unwrap(), "outside");
+    }
+
+    #[test]
+    fn review3_a_source_is_read_through_the_descriptor_that_was_checked() {
+        use std::io::Read;
+        let s = setup();
+        let g = vec![s.grant.clone()];
+        let p = s.grant.join("in.txt");
+        let (_, mut f, len) = open_source(&g, &p.display().to_string()).unwrap();
+        assert_eq!(len, 6);
+        // The path is swapped for a link out of the grant after the check: nothing changes.
+        std::fs::remove_file(&p).unwrap();
+        std::os::unix::fs::symlink(s.outside.join("secret.txt"), &p).unwrap();
+        let mut got = String::new();
+        f.read_to_string(&mut got).unwrap();
+        assert_eq!(got, "inside");
+        // Opened now, the link is refused; so is a folder.
+        assert_eq!(code(open_source(&g, &p.display().to_string())), ErrorCode::Denied);
+        assert_eq!(code(open_source(&g, &s.grant.display().to_string())), ErrorCode::Invalid);
+        assert_eq!(code(read_text(&g, &p.display().to_string())), ErrorCode::Denied);
+    }
+
+    #[test]
+    fn review6_an_overwritten_file_keeps_its_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+        let s = setup();
+        let g = vec![s.grant.clone()];
+        let p = s.grant.join("in.txt");
+        std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o600)).unwrap();
+        let part = part_file(&g, &p.display().to_string(), true).unwrap();
+        part.commit(true).unwrap();
+        assert_eq!(std::fs::metadata(&p).unwrap().permissions().mode() & 0o7777, 0o600);
+        let fresh = s.grant.join("fresh.bin");
+        part_file(&g, &fresh.display().to_string(), false).unwrap().commit(false).unwrap();
+        assert_eq!(std::fs::metadata(&fresh).unwrap().permissions().mode() & 0o7777, 0o644);
     }
 
     #[test]

@@ -159,7 +159,7 @@ impl Inner {
                     Err(denied("notInRun"))
                 } else {
                     // D355: the action's time budget does not run while it waits for the transfer.
-                    let _hold = info.hold.enter();
+                    let _hold = info.hold.enter_wait();
                     match op {
                         "download" => self.download(p, info, &o, stream).await,
                         "upload" => self.upload(p, info, &o, stream).await,
@@ -256,9 +256,9 @@ impl Inner {
         let from = path_arg(m, "from")?;
         let deadline = tokio::time::Instant::now() + timeout_of(m)?;
         let grants = self.transfer_grants(p, &from)?;
-        let (path, size) = crate::files::source_file(&grants, &from)?;
+        let (path, file, size) = crate::files::open_source(&grants, &from)?;
         let counter = Arc::new(AtomicU64::new(0));
-        let file = FileBody { path: path.clone(), size, sent: counter.clone() };
+        let file = FileBody { file, size, sent: counter.clone() };
         let req = Request { default_method: "PUT", methods: UPLOAD_METHODS, deadline, file: Some(file) };
         let call = async {
             let sent = self.http_open(p, info, m, req).await?;
