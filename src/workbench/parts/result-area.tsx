@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from "react";
 import { Badge, Banner, BottomPanel, Button, DataGrid, EmptyState, IconButton, LoadingState, Pane, Progress, Text, TextBlock, useToast, type DataGridColumn, type Tone } from "../../design";
 import { useI18n } from "../i18n";
 import type { OutputCell, PageDescriptor, Run, RunStatus } from "../protocol";
@@ -39,18 +40,48 @@ function OutputTable({ run, widthKey }: { run: Run; widthKey: string }) {
   );
 }
 
+/** The most progress messages kept for display while a run is going (older ones scroll away; the finished output is complete). */
+const LIVE_LOG_LINES = 2000;
+
+/**
+ * What a running action has sent through `ctx.progress`, in order (D332: output streams while the run goes). The kernel keeps only
+ * the latest message; the shell collects each new one so streamed output reads as a log, not a flicker. It resets for each run and
+ * is dropped when the run ends, because the finished run shows the plugin's complete output instead.
+ */
+export function useLiveLog(run: Run | null | undefined): string[] {
+  const [log, setLog] = useState<{ id: string; lines: string[] }>({ id: "", lines: [] });
+  const last = useRef("");
+  const running = run?.status === "running" ? run : null;
+  const message = running?.progress?.message;
+  const id = running?.id;
+  useEffect(() => {
+    if (!id) return;
+    if (message === undefined || message === last.current) return;
+    last.current = message;
+    setLog((prev) => ({ id, lines: [...(prev.id === id ? prev.lines : []), message].slice(-LIVE_LOG_LINES) }));
+  }, [id, message]);
+  return id && log.id === id ? log.lines : [];
+}
+
 function OutputTab({ tab, run, widthKey }: { tab: TabState; run: Run | null | undefined; widthKey: string }) {
   const { client, actions } = useWorkbench();
   const { t, runError } = useI18n();
+  const live = useLiveLog(run);
   if (run === undefined) return <LoadingState layout="inline" label={t("common.loading")} />;
   if (run === null) return <EmptyState layout="inline" icon="play" message={tab.target.startsWith("run:") ? t("result.gone") : t("result.empty")} />;
   if (run.status === "running") {
     return (
       <Pane grow align="center" justify="center" gap="sm" pad="lg">
         <Progress value={run.progress?.fraction !== undefined ? run.progress.fraction * 100 : undefined} label={t("result.running")} />
-        <Text size="sm" tone="muted" tabular>
-          {run.progress?.message ?? t("result.running")}
-        </Text>
+        {live.length > 1 ? (
+          <Pane grow scroll width="form">
+            <TextBlock variant="code" label={t("result.liveOutput")}>{live.join("\n")}</TextBlock>
+          </Pane>
+        ) : (
+          <Text size="sm" tone="muted" tabular>
+            {run.progress?.message ?? t("result.running")}
+          </Text>
+        )}
         {run.cancellable && (
           <Button size="sm" icon="square" onClick={() => client.run.cancel(run.id).catch(actions.fail)}>
             {t("result.cancel")}

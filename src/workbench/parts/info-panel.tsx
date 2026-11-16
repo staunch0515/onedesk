@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Badge, Button, IconButton, InfoField, InfoPanel, Input, LoadingState, Pane, Text, Textarea, Tooltip, useToast } from "../../design";
 import type { HistoryEntry, RefInfo } from "../protocol";
+import { fieldLabelOf } from "../protocol/round6";
 import { useI18n } from "../i18n";
 import { useQuery, useWorkbench } from "../state/context";
 
@@ -60,7 +61,8 @@ function HistorySection({ resourceId, readOnly }: { resourceId: string; readOnly
 /** One reference: the other side opens on click; a deleted or broken one says so instead of disappearing (§10). */
 function RefRow({ info, side }: { info: RefInfo; side: "outgoing" | "incoming" }) {
   const { actions } = useWorkbench();
-  const { t } = useI18n();
+  const { t, tx } = useI18n();
+  const fieldLabel = fieldLabelOf(info);
   const other = side === "outgoing" ? info.target : info.source;
   const label = other?.name ?? info.text;
   return (
@@ -86,7 +88,7 @@ function RefRow({ info, side }: { info: RefInfo; side: "outgoing" | "incoming" }
           </span>
         </Tooltip>
       )}
-      <Text size="xs" tone="muted">{t("refs.field", { field: info.field })}</Text>
+      {fieldLabel && <Text size="xs" tone="muted">{t("refs.field", { field: tx(fieldLabel) })}</Text>}
     </Pane>
   );
 }
