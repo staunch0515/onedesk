@@ -61,7 +61,7 @@ describe("live output", () => {
 });
 
 describe("references", () => {
-  const ref = (fieldLabel?: unknown) => ({ source: { id: "s1", name: "Source" }, field: "body.text", text: "x", state: "ok" as const, ...(fieldLabel ? { fieldLabel } : {}) });
+  const ref = (fieldLabel?: { "en-US": string }) => ({ source: { id: "s1", name: "Source" }, field: "body.text", text: "x", state: "ok" as const, ...(fieldLabel ? { fieldLabel } : {}) });
   it("shows the field label and nothing when there is none", async () => {
     const mock = createMockClient({ fresh: true, quiet: true });
     const incoming = vi.fn(async () => [ref({ "en-US": "Notes" }), { ...ref(), source: { id: "s2", name: "Other" } }]);

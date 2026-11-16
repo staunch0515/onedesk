@@ -6,7 +6,6 @@ import { useQuery, useWorkbench } from "../state/context";
 import type { TabState } from "../state/store";
 import { Frame } from "../parts/frame";
 import { SECRETS_TARGET } from "./secrets-page";
-import { switchFailureOf } from "../protocol/round6";
 import { KERNEL_ERRORS } from "../i18n/kernel-texts";
 import { ProgramsNotice } from "../parts/programs-notice";
 
@@ -154,7 +153,7 @@ export function PluginPage({ tab, descriptor }: { tab: TabState; descriptor: Pag
         ))}
       </Pane>
     );
-  const switchFailure = switchFailureOf(p as never);
+  const switchFailure = p.switchFailure;
   const missingGrant = p.permissions.some((x) => x.required && !x.granted);
 
   const askDialog = (

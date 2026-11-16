@@ -1,7 +1,6 @@
 import { useState } from "react";
 import { Badge, Button, IconButton, InfoField, InfoPanel, Input, LoadingState, Pane, Text, Textarea, Tooltip, useToast } from "../../design";
 import type { HistoryEntry, RefInfo } from "../protocol";
-import { fieldLabelOf } from "../protocol/round6";
 import { useI18n } from "../i18n";
 import { useQuery, useWorkbench } from "../state/context";
 
@@ -62,7 +61,7 @@ function HistorySection({ resourceId, readOnly }: { resourceId: string; readOnly
 function RefRow({ info, side }: { info: RefInfo; side: "outgoing" | "incoming" }) {
   const { actions } = useWorkbench();
   const { t, tx } = useI18n();
-  const fieldLabel = fieldLabelOf(info);
+  const fieldLabel = info.fieldLabel;
   const other = side === "outgoing" ? info.target : info.source;
   const label = other?.name ?? info.text;
   return (

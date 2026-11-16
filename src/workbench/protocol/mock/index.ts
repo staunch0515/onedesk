@@ -5,7 +5,6 @@
  */
 import type { ProtocolClient } from "../client";
 import { KernelError } from "../errors";
-import type { RefInfoR6 } from "../round6";
 import type {
   ActionDecl,
   AuditRow,
@@ -28,6 +27,7 @@ import type {
   Resource,
   ResourcePatch,
   ResultTabDecl,
+  RefInfo,
   Run,
   RunOutput,
   RunRequest,
@@ -1484,8 +1484,8 @@ export function createMockClient(options: MockOptions = {}): ProtocolClient {
   };
   const FIELD_LABELS_ZH: Record<string, string> = { text: "正文", note: "备注", description: "说明" };
   /** `[[name]]` in the string fields of a body, in order. */
-  function outgoingRefs(row: Row): RefInfoR6[] {
-    const out: RefInfoR6[] = [];
+  function outgoingRefs(row: Row): RefInfo[] {
+    const out: RefInfo[] = [];
     for (const [field, value] of Object.entries(row.body)) {
       if (typeof value !== "string") continue;
       for (const m of value.matchAll(/\[\[([^\[\]\n]{1,200})\]\]/g)) {
