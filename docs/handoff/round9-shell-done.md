@@ -60,3 +60,5 @@
   - 会不会因此每次都重跑：不会。实测 Tauri 在内容相同时不写目标文件（修改时间不变），我们自己只在内容不同时才写替身。验证：连续两次 `cargo check -p onedesk`，第二次不再编译 `onedesk`；`touch crates/worker/src/main.rs` 后 `cargo build -p onedesk-worker` 重新链接，再 `cargo check -p onedesk` 会重跑 build.rs，`cmp` 证明替身与新工作进程字节相同；再跑一次又不重跑。
   - 并行窗口：只剩一种——同一次 cargo 调用里，`onedesk-worker` 的链接恰好发生在 `onedesk` 的 build.rs 复制替身和 Tauri 把替身复制回去之间的几毫秒；这时旧内容会盖掉新链接的文件。无法在不让 `src-tauri` 依赖工作进程的前提下彻底消除（那样会改依赖图）；发生后下一次 `cargo build -p onedesk-worker` 不会自动修复（cargo 认为它是新的），要 `touch` 工作进程的源码或删掉 `target/debug/onedesk-worker` 重建。日常用法（先构建工作进程再检查/构建界面，或 `pnpm check` 的串行步骤）不触发。我没能构造出这个窗口来复现，所以这一条是推理加上述实测，不是复现出来的。
   - `tauri build --debug`：`beforeBuildCommand` 先跑 `scripts/prepare-bundle.sh`，把当时的工作进程复制成侧载文件，所以打包用的不会是旧的。我没实际跑 `tauri build`。
+
+**这一节的检查**（删掉 `src-tauri/binaries/` 和 `target/debug/onedesk-worker` 后重来）：构建、全工作区 clippy 通过，`onedesk-worker` 仍是 34 MB 可执行文件；`cargo test -p onedesk-host` 24 单元 + 20 集成通过；`pnpm typecheck`、`lint`、`test`（42 文件 353 例）通过。没有重跑假数据 `workbench.spec.ts`（本节只动了审计页的类型和主进程）。
