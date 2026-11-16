@@ -1056,6 +1056,10 @@ pub enum AuditResult {
     Ok,
     Denied,
     Error,
+    /// Round 9 (D369): the operation was cancelled (e.g. a transfer whose run was cancelled).
+    Cancelled,
+    /// Round 9 (D369): the operation ran out of time.
+    Timeout,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]

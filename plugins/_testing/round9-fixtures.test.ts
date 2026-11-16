@@ -61,7 +61,7 @@ describe("fixture: keeper", () => {
     expect(onlyKeys(back, EVENT_RESULT_KEYS)).toEqual([]);
     await expect(pages.editor.onEvent(ctxOf(host), "nope")).rejects.toThrow("unknown event nope");
   });
-  it("stash keeps that run's host; abuse uses it and returns the host's error text as the message", async () => {
+  it("stash keeps that run's host; abuse uses it and returns the host's error (text, code, params) as the message", async () => {
     const { pages, actions } = registry(keeper);
     expect((await pages.editor.onEvent(ctxOf({}), "abuse")).message).toBe("No handle kept.");
     const request = vi.fn(async () => {
@@ -73,7 +73,7 @@ describe("fixture: keeper", () => {
     // the event's own host is not used: only the kept one
     const out = await pages.editor.onEvent(ctxOf({ network: { request: vi.fn() } }), "abuse");
     expect(request).toHaveBeenCalledWith({ method: "GET", url: "https://example.com/" });
-    expect(out).toEqual({ message: "denied" });
+    expect(JSON.parse(out.message)).toEqual({ message: "denied", code: "denied", params: { reason: "staleContext" } });
   });
   it("slow sleeps 20 seconds through the host, in two 10 s steps (the host caps one sleep at 10 s)", async () => {
     const { actions } = registry(keeper);
