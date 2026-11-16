@@ -50,7 +50,13 @@ export interface LayoutState {
 }
 
 /** The "install a plugin" flow: asking for a folder (browser mode), then the confirmation of what was found. */
-export type InstallState = { stage: "path" } | { stage: "preview"; folder: string; preview: InstallPreview };
+/** `request` is set when a plugin asked for this install (round 7): the dialog names it and the kernel is answered at the end. */
+export interface InstallRequester {
+  id: string;
+  plugin: string;
+  name: Label;
+}
+export type InstallState = { stage: "path" } | { stage: "preview"; folder: string; preview: InstallPreview; request?: InstallRequester };
 
 /** Exporting and importing a workspace: asking for a folder (browser mode), then what an import would do. */
 export type TransferState = { stage: "export-path" } | { stage: "import-path" } | { stage: "import-preview"; folder: string; preview: ImportPreview };

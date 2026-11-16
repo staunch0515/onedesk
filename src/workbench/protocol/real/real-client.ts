@@ -1,6 +1,6 @@
 import type { ConnectionState, EventMessage, HelloResult, TreePage } from "../generated";
 import type { ProtocolClient } from "../client";
-import type { ExportResult, ImportPreview, ImportResult, KnownParam, RefInfo, RunExportResult, InstallPreview, PluginVersionParams, SecretInfo, UndoUpgradeResult, UpgradeResult, PageEventResult, PaletteCommand, PluginDetail, Run, ViewNode, AuditFacets, AuditFilter, AuditRow, EnvOption, EnvView, HistoryEntry, ResolvedParam, SearchHit, CommandContext, CommandEffect, NewItem, PageContext, PageDescriptor, PageSaveResult, PluginGrants, Resource, TreeInfo, TreeNode, WorkspaceInfo } from "../types";
+import type { ExportResult, ImportPreview, ImportResult, KnownParam, RefInfo, RunExportResult, InstallPreview, InstallRequest, PluginVersionParams, SecretInfo, UndoUpgradeResult, UpgradeResult, PageEventResult, PaletteCommand, PluginDetail, Run, ViewNode, AuditFacets, AuditFilter, AuditRow, EnvOption, EnvView, HistoryEntry, ResolvedParam, SearchHit, CommandContext, CommandEffect, NewItem, PageContext, PageDescriptor, PageSaveResult, PluginGrants, Resource, TreeInfo, TreeNode, WorkspaceInfo } from "../types";
 import { EventBus } from "./event-bus";
 import { KernelError } from "../errors";
 import type { Transport } from "./transport";
@@ -22,7 +22,7 @@ export interface KernelClient {
   page: Pick<ProtocolClient["page"], "resolve" | "save" | "event">;
   run: ProtocolClient["run"];
   command: ProtocolClient["command"];
-  plugin: Pick<ProtocolClient["plugin"], "grants" | "grantFolder" | "revokeFolder" | "get" | "setEnabled" | "setSetting" | "reload" | "activateVersion" | "setPinned" | "undoUpgrade" | "confirmPermissions">;
+  plugin: Pick<ProtocolClient["plugin"], "grants" | "grantFolder" | "revokeFolder" | "get" | "setEnabled" | "setSetting" | "reload" | "activateVersion" | "setPinned" | "undoUpgrade" | "confirmPermissions" | "installRequests" | "answerInstallRequest">;
   app: NonNullable<ProtocolClient["app"]>;
   secrets: NonNullable<ProtocolClient["secrets"]>;
   ui: ProtocolClient["ui"];
@@ -152,6 +152,8 @@ export async function createKernelClient(transport: Transport, locale?: () => st
       setPinned: async (id, version, pinned) => void (await call("plugin.setPinned", { plugin: id, version, pinned })),
       undoUpgrade: (batch, also) => call<UndoUpgradeResult>("plugin.undoUpgrade", { batch, also: also ?? [] }),
       confirmPermissions: async (id, version, fingerprint) => void (await call("plugin.confirmPermissions", { plugin: id, version, fingerprint })),
+      installRequests: () => call<InstallRequest[]>("plugin.installRequests"),
+      answerInstallRequest: async (answer) => void (await call("plugin.answerInstallRequest", compact({ ...answer }))),
     },
     ui: {
       get: async <T,>(key: string) => ((await call<T | null>("ui.get", { key })) ?? null) as T | null,

@@ -1443,6 +1443,24 @@ export function createMockClient(options: MockOptions = {}): ProtocolClient {
     emit("plugins", "tree:plugins", "tree:resources", "tree:datasources", "tree:favorites");
   }
 
+  /** Demo only (round 7): the one notification plugin declares that it needs the HTTP plugin; the real kernel derives this from `depends`. */
+  const DEMO_DEPENDS: Record<string, { id: string; range: string }> = { "com.example.slack-notify": { id: "org.onedesk.http", range: ">=0.1.0" } };
+
+  function pluginDeps(p: PluginRow): Pick<PluginDetail, "depends" | "dependents"> {
+    const need = DEMO_DEPENDS[p.id];
+    const depends = need
+      ? [(() => {
+          const target = db.plugins.find((x) => x.id === need.id);
+          const activeVersion = target?.installed && target.enabled ? target.versions.find((v) => v.active)?.version : undefined;
+          return { id: need.id, range: need.range, satisfied: activeVersion !== undefined, activeVersion };
+        })()]
+      : [];
+    const dependents = Object.entries(DEMO_DEPENDS)
+      .filter(([id, d]) => d.id === p.id && db.plugins.some((x) => x.id === id && x.installed && x.enabled))
+      .map(([id]) => id);
+    return { depends, dependents };
+  }
+
   function pluginDetail(p: PluginRow): PluginDetail {
     const broken = pluginBroken(p);
     const kinds = Object.entries(KINDS).filter(([, d]) => d.plugin === p.id).map(([k]) => k);
@@ -1458,6 +1476,7 @@ export function createMockClient(options: MockOptions = {}): ProtocolClient {
       resourceCount: Object.values(db.rows).filter((r) => live(r) && kinds.includes(r.kind)).length,
       folders: [...(demoGrants.get(p.id) ?? [])],
       unconfirmed: [],
+      ...pluginDeps(p),
     };
   }
 

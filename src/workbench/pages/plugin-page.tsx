@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Badge, Banner, Button, Checkbox, DataGrid, Dialog, FormField, Input, KeyValueList, LoadingState, Pane, Section, Select, Switch, Text, TextLink, useToast, type ActionBarItem, type DataGridColumn } from "../../design";
 import { useI18n } from "../i18n";
-import type { Label, NamedRef, PageDescriptor, PluginPermission, PluginVersion } from "../protocol";
+import type { Label, NamedRef, PageDescriptor, PluginDependency, PluginPermission, PluginVersion } from "../protocol";
 import { useQuery, useWorkbench } from "../state/context";
 import type { TabState } from "../state/store";
 import { Frame } from "../parts/frame";
@@ -154,6 +154,17 @@ export function PluginPage({ tab, descriptor }: { tab: TabState; descriptor: Pag
       </Pane>
     );
   const switchFailure = p.switchFailure;
+  const depends = p.depends ?? [];
+  const dependents = p.dependents ?? [];
+  const unmet = depends.filter((d) => !d.satisfied);
+  // An enabled plugin that waits for its dependencies is "disabled" for the kernel (D343): say why instead of the plain notice.
+  const waiting = p.enabled && p.load.state === "disabled" && unmet.length > 0;
+  const dependsColumns: Array<DataGridColumn<PluginDependency>> = [
+    { key: "id", header: t("plugin.dependsId"), width: 280, mono: true, value: (d) => d.id },
+    { key: "range", header: t("plugin.dependsRange"), width: 160, mono: true, value: (d) => d.range },
+    { key: "state", header: t("plugin.dependsState"), width: 140, value: (d) => (d.satisfied ? 1 : 0), render: (d) => <Badge tone={d.satisfied ? "success" : "warning"}>{d.satisfied ? t("plugin.dependsOk") : t("plugin.dependsMissing")}</Badge> },
+    { key: "active", header: t("plugin.dependsActive"), width: 160, mono: true, value: (d) => d.activeVersion ?? "" },
+  ];
   const missingGrant = p.permissions.some((x) => x.required && !x.granted);
 
   const askDialog = (
@@ -252,7 +263,19 @@ export function PluginPage({ tab, descriptor }: { tab: TabState; descriptor: Pag
                 {missingGrant ? t("plugin.missingGrant") : undefined}
               </Banner>
             )}
-            {p.load.state === "disabled" && <Banner tone="info" title={t("plugin.loadDisabled")}>{t("plugin.loadDisabledHint", { count: p.resourceCount })}</Banner>}
+            {waiting && (
+              <Banner tone="warning" title={t("plugin.dependsUnmetTitle")}>
+                <Pane gap="xs">
+                  <Text size="sm">{t("plugin.dependsUnmetHint", { count: p.resourceCount })}</Text>
+                  {unmet.map((d) => (
+                    <Text key={d.id} size="sm" mono>
+                      {d.activeVersion ? t("plugin.dependsNeedsActive", { plugin: d.id, range: d.range, version: d.activeVersion }) : t("plugin.dependsNeeds", { plugin: d.id, range: d.range })}
+                    </Text>
+                  ))}
+                </Pane>
+              </Banner>
+            )}
+            {p.load.state === "disabled" && !waiting && <Banner tone="info" title={t("plugin.loadDisabled")}>{t("plugin.loadDisabledHint", { count: p.resourceCount })}</Banner>}
             {p.load.state === "error" && (
               <Banner tone="danger" title={t("plugin.loadError")} actions={<Button size="sm" onClick={() => client.plugin.reload(id).catch(actions.fail)}>{t("plugin.retry")}</Button>}>
                 {p.load.message}
@@ -325,6 +348,24 @@ export function PluginPage({ tab, descriptor }: { tab: TabState; descriptor: Pag
                 ))}
               </Pane>
             )}
+          </Section>
+        )}
+
+        {depends.length > 0 && (
+          <Section title={t("plugin.dependsOn")} description={t("plugin.dependsOnHint")}>
+            <DataGrid label={t("plugin.dependsOn")} size="regular" framed autoHeight columns={dependsColumns} rows={depends} getRowKey={(d) => d.id} nullText="" />
+          </Section>
+        )}
+
+        {dependents.length > 0 && (
+          <Section title={t("plugin.dependents")} description={t("plugin.dependentsHint")}>
+            <Pane direction="row" gap="xs" wrap>
+              {dependents.map((d) => (
+                <Button key={d} size="sm" variant="ghost" onClick={() => actions.open(`plugin:${d}`)}>
+                  {d}
+                </Button>
+              ))}
+            </Pane>
           </Section>
         )}
 

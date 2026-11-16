@@ -157,8 +157,36 @@ export type RunOutput = KernelRunOutput;
 export type OutputCell = string | number | null;
 /** The kernel's permission entry plus the demo's own label (the kernel gives an id; the shell words it). */
 export type PluginPermission = KernelPluginPermission & { label?: Label };
-/** UI-side `PluginDetail`: the generated one with the permission superset above (the demo gives a label). */
-export type PluginDetail = Omit<KernelPluginDetail, "permissions"> & { permissions: PluginPermission[] };
+/** One entry of a manifest's `depends` as the plugin page shows it (round 7, D343). Not generated yet: names fixed by round7-plan §4. */
+export interface PluginDependency {
+  id: string;
+  range: string;
+  satisfied: boolean;
+  activeVersion?: string;
+}
+/**
+ * UI-side `PluginDetail`: the generated one with the permission superset above (the demo gives a label).
+ * `depends` and `dependents` are round 7's additions to the kernel type; optional until the generated type has them.
+ */
+export type PluginDetail = Omit<KernelPluginDetail, "permissions"> & { permissions: PluginPermission[]; depends?: PluginDependency[]; dependents?: string[] };
+
+/** A plugin's request to install another plugin, waiting for the user (round7-plan §5). */
+export interface InstallRequest {
+  id: string;
+  /** The requesting plugin. */
+  plugin: string;
+  pluginName: Label;
+  folder: string;
+  at: number;
+}
+/** What the shell tells the kernel when a request ends (`plugin.answerInstallRequest`). */
+export interface InstallAnswer {
+  id: string;
+  outcome: "installed" | "declined" | "failed";
+  plugin?: string;
+  version?: string;
+  reason?: string;
+}
 /** UI-side superset of the generated `Run`: `input` keeps loose JSON values. */
 export type Run = Omit<KernelRun, "input"> & { input: Record<string, unknown> };
 
