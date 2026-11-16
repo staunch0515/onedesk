@@ -386,6 +386,7 @@ export default { activate(host) {
     r.last = seen.length ? seen[seen.length - 1] : null;
     return text(r);
   });
+  host.actions.handle("net", async (ctx, input) => { await ctx.host.network.request({ url: input.url }); return text("ran"); });
   host.actions.handle("chain", async (ctx, input) => {
     const ps = [];
     for (let i = 0; i < input.n; i++) {
@@ -416,7 +417,7 @@ fn move_manifest(port: u16, requires: Value) -> Value {
             "kinds": [{ "id": "k", "label": "K", "icon": "box", "tree": "resources", "page": "p", "newName": "k" }],
             "pages": [{ "id": "p" }],
             "actions": [{ "id": "go", "label": "Go", "output": "text" }, { "id": "budget", "label": "B", "output": "text" },
-                        { "id": "chain", "label": "C", "output": "text" }],
+                        { "id": "chain", "label": "C", "output": "text" }, { "id": "net", "label": "N", "output": "text" }],
             "commands": [{ "id": "probe", "label": "probe" }],
             "events": ["resource.changed"]
         }
@@ -579,17 +580,29 @@ async fn each_end_refuses_by_its_own_rules() {
     let why = |v: &Value| (v["error"].as_str().unwrap_or("ok").to_string(), v["params"]["reason"].as_str().unwrap_or("").to_string());
     let pair = |a: &str, b: &str| (a.to_string(), b.to_string());
     // Network end: not listed; a redirect to an unlisted host; network.allow.
-    let r = t.go("t.move", "download", json!({ "url": "http://example.invalid/x", "to": t.at("a") })).await;
-    assert_eq!(why(&r), pair("denied", "hostNotAllowed"));
+    // Each network refusal names `<host>:<port>` (never the path or query).
+    let r = t.go("t.move", "download", json!({ "url": "http://example.invalid/x?q=1", "to": t.at("a") })).await;
+    assert_eq!((why(&r), r["params"]["host"].as_str()), (pair("denied", "hostNotAllowed"), Some("example.invalid:80")));
     let r = t.go("t.move", "download", json!({ "url": format!("{}/redirect?to=http://localhost:{}/big", t.base(), t.port), "to": t.at("a") })).await;
-    assert_eq!(why(&r), pair("denied", "hostNotAllowed"));
+    assert_eq!((why(&r), r["params"]["host"].as_str()), (pair("denied", "hostNotAllowed"), Some(format!("localhost:{}", t.port).as_str())));
+    let r = t.go("t.move", "upload", json!({ "url": "https://example.invalid/up", "from": t.at("none.txt") })).await;
+    assert_eq!(r["error"], "notFound", "the file end is checked first: {r}");
+    // `network.request` too, and the run's error carries it (D360).
+    let r = c.probe("t.move", "network.request", json!([{ "url": "http://example.invalid/secret/path?k=v" }])).await;
+    assert_eq!(r["params"], json!({ "reason": "hostNotAllowed", "host": "example.invalid:80" }));
+    let run_r = run(c, "t.move:net", json!({ "url": "https://example.invalid/p?q" })).await;
+    assert_eq!((run_r["error"]["reason"].as_str(), run_r["error"]["params"].clone()), (Some("hostNotAllowed"), json!({ "host": "example.invalid:443" })), "{run_r}");
     // A wildcard host that resolves to a loopback address: refused unless written out (D308).
     let r = t.go("t.move", "download", json!({ "url": format!("http://a.localhost:{}/big", t.port), "to": t.at("a") })).await;
-    assert_eq!(why(&r), pair("denied", "localAddress"));
+    assert_eq!((why(&r), r["params"]["host"].as_str()), (pair("denied", "localAddress"), Some(format!("a.localhost:{}", t.port).as_str())));
+    let r = c.probe("t.move", "network.request", json!([{ "url": format!("http://a.localhost:{}/big", t.port) }])).await;
+    assert_eq!(r["params"]["host"].as_str(), Some(format!("a.localhost:{}", t.port).as_str()));
     let ws_cfg = c.ok("tree.children", json!({ "tree": "config" })).await["nodes"][0]["key"].as_str().unwrap().to_string();
     c.ok("params.set", json!({ "node": ws_cfg, "name": "network.allow", "value": "api.example.com", "type": "list" })).await;
     let r = t.go("t.move", "download", json!({ "url": format!("{}/big", t.base()), "to": t.at("a") })).await;
-    assert_eq!(why(&r), pair("denied", "blockedByPolicy"));
+    assert_eq!((why(&r), r["params"]["host"].as_str()), (pair("denied", "blockedByPolicy"), Some(format!("127.0.0.1:{}", t.port).as_str())));
+    let r = c.probe("t.move", "network.request", json!([{ "url": format!("{}/big?x=1", t.base()) }])).await;
+    assert_eq!((r["params"]["reason"].as_str(), r["params"]["host"].as_str()), (Some("blockedByPolicy"), Some(format!("127.0.0.1:{}", t.port).as_str())));
     let r = t.go("t.move", "upload", json!({ "url": format!("{}/up", t.base()), "from": t.at("none") })).await;
     assert_eq!(r["error"], "notFound", "{r}");
     std::fs::write(t.grant.join("src.txt"), "abc").unwrap();

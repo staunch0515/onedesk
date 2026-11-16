@@ -128,3 +128,5 @@ ctx.host.transfer.capture(opts: {
 新增原因码（审查后）：`invalid` / `badParams`（页面事件返回的页面参数不合格）。`SandboxConfig` 只增字段 `max_wait_pause`（内核配置，不是协议）。
 
 检查（审查修改后实际跑过）：`cargo test -p onedesk-kernel -p onedesk-worker -p onedesk-protocol` 通过（其中一次整体运行在机器负载高时 `round3` 有 1 个失败、耗时 53 秒，没看到是哪个；单独连跑 `round3` 4 次、整体再跑 1 次都全过，判断为与本次修改无关的时序抖动，未定位）；clippy `-D warnings`、`sh scripts/gen-types.sh --check`、`pnpm lint`、`cargo check -p onedesk-host --tests` 通过。
+
+**追加（外壳发现的缺陷 1）**：网络被拒的三种 `denied/hostNotAllowed`、`denied/localAddress`、`denied/blockedByPolicy`（`network.allow`）现在都带 `params.host` = `<主机>:<端口>`（端口总是写出，如 `example.invalid:80`；不含路径、查询串），`network.request` 与 `transfer.download`/`upload` 共用这一处（`network.rs` 的 `check_hop`），经 `RunError.params.host` 到界面。测试：`each_end_refuses_by_its_own_rules`（三种 × 两条路径，及运行错误）。`outsideGrant` 补 `path`、`layer` 给名字、无总量时的进度没做（不在这次要求里）。
