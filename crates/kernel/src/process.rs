@@ -52,6 +52,9 @@ pub const EXIT_GRACE: Duration = Duration::from_millis(500);
 pub const PLUGIN_DATA: &str = "plugin-data";
 
 /// Why a program is not ready (`ready()` and the matching refusals of `run()`).
+/// A policy layer that refused: (node id, node name).
+type Layer = (String, String);
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NotReady {
     UndeclaredProgram,
@@ -510,7 +513,8 @@ impl Inner {
     }
 
     /// D334: the first `process.allow` layer that does not list `name` (an empty list lists nothing).
-    fn process_blocked(&self, env: Option<&str>, name: &str) -> KResult<Option<String>> {
+    /// Returns that layer's id and name (D368: the error names the layer).
+    fn process_blocked(&self, env: Option<&str>, name: &str) -> KResult<Option<Layer>> {
         let mut layers: Vec<store::Row> = self.read(|c| store::of_kind(c, store::KIND_CONFIG))?;
         layers.sort_by_key(|r| r.parent_id.is_some());
         if let Some(e) = env.and_then(|e| self.read(|c| store::get(c, e)).ok().flatten()).filter(|r| r.kind == store::KIND_ENV) {
@@ -521,7 +525,7 @@ impl Inner {
         for r in layers {
             if let Some(p) = crate::params::get(&r, ALLOW_PARAM) {
                 if !crate::network::allow_list(&p.value).iter().any(|n| n == name) {
-                    return Ok(Some(r.id.clone()));
+                    return Ok(Some((r.id.clone(), r.name.clone())));
                 }
             }
         }
@@ -538,7 +542,7 @@ impl Inner {
         crate::network::allow_list(&own.value).iter().any(|n| lists.iter().any(|l| !l.contains(n)))
     }
 
-    fn check_program(&self, p: &Plugin, env: Option<&str>, name: &str) -> KResult<Result<PathBuf, (NotReady, Option<String>)>> {
+    fn check_program(&self, p: &Plugin, env: Option<&str>, name: &str) -> KResult<Result<PathBuf, (NotReady, Option<Layer>)>> {
         if p.program(name).is_none() {
             return Ok(Err((NotReady::UndeclaredProgram, None)));
         }
@@ -548,11 +552,12 @@ impl Inner {
         Ok(self.locate(p, name).map_err(|r| (r, None)))
     }
 
-    fn not_ready_error(name: &str, r: NotReady, layer: Option<String>) -> ProtocolError {
+    fn not_ready_error(name: &str, r: NotReady, layer: Option<Layer>) -> ProtocolError {
         match r {
             NotReady::UndeclaredProgram => err_p(ErrorCode::Denied, &[("reason", "undeclaredProgram"), ("program", name)]),
             NotReady::BlockedByPolicy => {
-                err_p(ErrorCode::Denied, &[("reason", "blockedByPolicy"), ("program", name), ("layer", layer.as_deref().unwrap_or_default())])
+                let (id, lname) = layer.unwrap_or_default();
+                err_p(ErrorCode::Denied, &[("reason", "blockedByPolicy"), ("program", name), ("layer", &id), ("layerName", &lname)])
             }
             NotReady::NotFound => err_p(ErrorCode::NotFound, &[("what", "program"), ("program", name)]),
             NotReady::NotExecutable => err_p(ErrorCode::Invalid, &[("reason", "notExecutable"), ("program", name)]),
@@ -837,7 +842,7 @@ impl Inner {
             Err(_) => {
                 // Says nothing about places it may not look at.
                 let inside_lexically = want.starts_with(data) && !c.split('/').any(|s| s == "..");
-                return Err(if inside_lexically { err_p(ErrorCode::NotFound, &[("what", "folder")]) } else { denied("outsideGrant") });
+                return Err(if inside_lexically { err_p(ErrorCode::NotFound, &[("what", "folder")]) } else { outside_grant(c) });
             }
         };
         let mut roots = vec![data.canonicalize().map_err(internal)?];
@@ -845,7 +850,7 @@ impl Inner {
             roots.extend(self.folder_grants(&p.id)?.into_iter().filter_map(|g| Path::new(&g).canonicalize().ok()));
         }
         if !roots.iter().any(|r| real.starts_with(r)) {
-            return Err(denied("outsideGrant"));
+            return Err(outside_grant(c));
         }
         if !real.is_dir() {
             return Err(err_p(ErrorCode::NotFound, &[("what", "folder")]));

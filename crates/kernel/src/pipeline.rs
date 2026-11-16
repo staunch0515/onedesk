@@ -190,6 +190,9 @@ pub enum Command {
     Delete { id: String },
     /// Record-only audit entry for writes outside the database (e.g. a plugin writing a file).
     Audit { op: String, object: String, summary: Value },
+    /// D368: an audit row whose result is not `ok`: a host call that was cancelled or timed out
+    /// (`result` = `cancelled` / `timeout`).
+    Stopped { op: String, object: String, summary: Value, result: String },
     /// A call refused before it reached the database (e.g. a plugin's out-of-bounds host call):
     /// writes only the failure audit row (§4.3) and returns `error`.
     Refused { op: String, object: String, error: onedesk_protocol::ProtocolError },
@@ -329,6 +332,14 @@ impl Pipeline {
         rx.await.map_err(|_| internal("writer thread gone"))?
     }
 
+    /// Queues a command without waiting for it (from code that cannot wait: a `Drop`).
+    pub fn submit(&self, actor: Actor, cmd: Command) {
+        let (reply, _rx) = oneshot::channel();
+        if let Some(tx) = self.tx.lock().unwrap().clone() {
+            let _ = tx.send((actor, cmd, Reply::Async(reply)));
+        }
+    }
+
     /// The same, waiting on the calling thread (start-up code that is not async).
     pub fn execute_blocking(&self, actor: Actor, cmd: Command) -> KResult<Outcome> {
         let (reply, rx) = mpsc::channel();
@@ -428,6 +439,15 @@ impl Writer {
                 Command::Delete { id } => cx.delete(&id)?,
                 Command::Audit { op, object, summary } => {
                     cx.audit(&op, &object, &summary)?;
+                    Outcome { changed: true, ..Default::default() }
+                }
+                Command::Stopped { op, object, summary, result } => {
+                    cx.tx
+                        .execute(
+                            "INSERT INTO audit (at, actor, op, object, summary, result) VALUES (?1,?2,?3,?4,?5,?6)",
+                            params![cx.at, cx.actor.as_text(), op, object, summary.to_string(), result],
+                        )
+                        .map_err(sql)?;
                     Outcome { changed: true, ..Default::default() }
                 }
                 Command::Refused { error, .. } => return Err(error),
@@ -535,6 +555,7 @@ fn describe(cmd: &Command) -> (String, String) {
         Command::Delete { id } => ("resource.delete".into(), id.clone()),
         Command::Audit { op, object, .. } => (op.clone(), object.clone()),
         Command::Refused { op, object, .. } => (op.clone(), object.clone()),
+        Command::Stopped { op, object, .. } => (op.clone(), object.clone()),
         Command::Grant { plugin, .. } => ("plugin.grant".into(), plugin.clone()),
         Command::UiSet { key, .. } => ("ui.set".into(), key.clone()),
         Command::Restore { id, .. } => ("resource.restore".into(), id.clone()),

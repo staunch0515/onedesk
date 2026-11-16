@@ -181,7 +181,26 @@ impl Sent {
 
 /// An error while reading a response body: the client's own time limit is `invalid/timeout` too.
 pub(crate) fn read_error(e: reqwest::Error) -> ProtocolError {
-    if e.is_timeout() { err_p(ErrorCode::Invalid, &[("reason", "timeout")]) } else { err_d(ErrorCode::Invalid, e.to_string()) }
+    http_error(e, None)
+}
+
+/// D368: a failed request's detail names the host at most — never the URL (path, query).
+pub(crate) fn http_error(e: reqwest::Error, host: Option<&str>) -> ProtocolError {
+    if e.is_timeout() {
+        return err_p(ErrorCode::Invalid, &[("reason", "timeout")]);
+    }
+    let e = e.without_url();
+    let mut text = e.to_string();
+    let mut src = std::error::Error::source(&e);
+    while let Some(s) = src {
+        text.push_str(": ");
+        text.push_str(&s.to_string());
+        src = s.source();
+    }
+    err_d(ErrorCode::Invalid, match host {
+        Some(h) => format!("{h}: {text}"),
+        None => text,
+    })
 }
 
 /// A refused address (round 8): `denied` with `host` = `<host>:<port>` — never the path or query.
@@ -243,11 +262,12 @@ impl Inner {
     }
 
     /// The `network.allow` layers in force: configuration nodes, then the call's environment chain.
-    fn allow_layers(&self, env: Option<&str>) -> KResult<Vec<Vec<String>>> {
+    /// Each is (node id, node name, list) — D368: a refusal names the layer.
+    fn allow_layers(&self, env: Option<&str>) -> KResult<Vec<(String, String, Vec<String>)>> {
         let mut layers = Vec::new();
         for r in self.read(|c| store::of_kind(c, store::KIND_CONFIG))? {
             if let Some(p) = crate::params::get(&r, ALLOW_PARAM) {
-                layers.push(allow_list(&p.value));
+                layers.push((r.id.clone(), r.name.clone(), allow_list(&p.value)));
             }
         }
         if let Some(e) = env.and_then(|e| self.read(|c| store::get(c, e)).ok().flatten()).filter(|r| r.kind == store::KIND_ENV) {
@@ -255,7 +275,7 @@ impl Inner {
             chain.push(e);
             for r in chain {
                 if let Some(p) = crate::params::get(&r, ALLOW_PARAM) {
-                    layers.push(allow_list(&p.value));
+                    layers.push((r.id.clone(), r.name.clone(), allow_list(&p.value)));
                 }
             }
         }
@@ -263,7 +283,7 @@ impl Inner {
     }
 
     /// One hop's checks; returns the address to connect to (pinned: no second DNS answer).
-    async fn check_hop(&self, granted: &[String], layers: &[Vec<String>], url: &reqwest::Url) -> KResult<(String, SocketAddr)> {
+    async fn check_hop(&self, granted: &[String], layers: &[(String, String, Vec<String>)], url: &reqwest::Url) -> KResult<(String, SocketAddr)> {
         if !matches!(url.scheme(), "http" | "https") {
             return Err(invalid("badScheme"));
         }
@@ -274,9 +294,12 @@ impl Inner {
             return Err(refused_host("hostNotAllowed", &host, port));
         }
         // §6.3: every layer that defines a list must contain the host; an empty list allows nothing.
-        for l in layers {
+        for (id, name, l) in layers {
             if !match_list(l, &host, port).0 {
-                return Err(refused_host("blockedByPolicy", &host, port));
+                let mut e = refused_host("blockedByPolicy", &host, port);
+                e.params.insert("layer".into(), id.clone());
+                e.params.insert("layerName".into(), name.clone());
+                return Err(e);
             }
         }
         let addrs: Vec<SocketAddr> = tokio::net::lookup_host((host.as_str(), port))
@@ -390,9 +413,7 @@ impl Inner {
                 // Opened again for every hop (a 307/308 sends the content again).
                 req = req.header(reqwest::header::CONTENT_LENGTH, f.size).body(f.body().await?);
             }
-            let resp = req.send().await.map_err(|e| {
-                if e.is_timeout() { err_p(ErrorCode::Invalid, &[("reason", "timeout")]) } else { err_d(ErrorCode::Invalid, e.to_string()) }
-            })?;
+            let resp = req.send().await.map_err(|e| http_error(e, Some(&host)))?;
             let status = resp.status();
             let location = resp.headers().get(reqwest::header::LOCATION).and_then(|l| l.to_str().ok()).map(String::from);
             match location {

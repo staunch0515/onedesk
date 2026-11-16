@@ -43,6 +43,12 @@ pub fn denied(reason: &str) -> ProtocolError {
     err_p(ErrorCode::Denied, &[("reason", reason)])
 }
 
+/// D368: `denied/outsideGrant` names the path the call gave (as given, at most 200 characters).
+pub fn outside_grant(path: &str) -> ProtocolError {
+    let shown: String = path.chars().take(200).collect();
+    err_p(ErrorCode::Denied, &[("reason", "outsideGrant"), ("path", &shown)])
+}
+
 /// Milliseconds since the epoch.
 pub fn now_ms() -> i64 {
     std::time::SystemTime::now()
