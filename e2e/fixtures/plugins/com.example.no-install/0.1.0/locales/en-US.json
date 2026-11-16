@@ -1,0 +1,7 @@
+{
+  "plugin.name": "No install",
+  "plugin.description": "Fixture: calls plugins.requestInstall without declaring it (must be refused).",
+  "kind.thing": "Thing",
+  "kind.thing.new": "Untitled thing",
+  "action.try": "Try to install"
+}

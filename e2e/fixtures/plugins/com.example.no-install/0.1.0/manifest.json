@@ -1,0 +1,34 @@
+{
+  "id": "com.example.no-install",
+  "version": "0.1.0",
+  "apiVersion": "2",
+  "name": "plugin.name",
+  "description": "plugin.description",
+  "icon": "ban",
+  "main": "main.js",
+  "author": "OneDesk",
+  "license": "MIT",
+  "requires": { "files": false },
+  "contributes": {
+    "kinds": [
+      {
+        "id": "thing",
+        "label": "kind.thing",
+        "icon": "box",
+        "tree": "resources",
+        "page": "editor",
+        "newName": "kind.thing.new",
+        "defaults": { "text": "" },
+        "draggable": true,
+        "accepts": []
+      }
+    ],
+    "actions": [
+      { "id": "try", "label": "action.try", "icon": "play", "kinds": ["thing"], "output": "text", "saveFirst": false, "confirm": null }
+    ],
+    "pages": [
+      { "id": "editor", "actions": [{ "id": "try", "role": "run", "action": "try", "label": "action.try", "icon": "play", "primary": true }] }
+    ],
+    "locales": { "en-US": "locales/en-US.json" }
+  }
+}
