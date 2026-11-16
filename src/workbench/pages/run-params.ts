@@ -15,3 +15,13 @@ export function runParams(fields: ViewField[], entered: Record<string, string>, 
   }
   return out;
 }
+
+/**
+ * `PageEventResult.params` (D358) may only set the page's own parameter fields (`param: true`): the kernel passes the
+ * plugin's keys through unfiltered, so any other key is dropped here. Returns the merged params, or `null` when nothing applies.
+ */
+export function applyPageParams(fields: ViewField[], current: Record<string, string>, returned: Record<string, string> | undefined): Record<string, string> | null {
+  const allowed = new Set(fields.map((f) => f.name));
+  const picked = Object.entries(returned ?? {}).filter(([name, value]) => allowed.has(name) && typeof value === "string");
+  return picked.length > 0 ? { ...current, ...Object.fromEntries(picked) } : null;
+}

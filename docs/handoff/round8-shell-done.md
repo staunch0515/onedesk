@@ -37,3 +37,6 @@
 3. 无总量的传输（`/nolength`）进度 `fraction` 为 0，任务面板显示“… bytes (0%)”，容易误解；建议无 `total` 时内核不给 `fraction`（或外壳在 message 带字节数时不显示百分比，需要内核的约定）。
 
 **没验证**：取消/失败后目标目录里没有 `.part` 临时文件（没检查磁盘）；上传、capture 的成功文字只看了协议状态；中文界面没走；`pnpm test`/`typecheck`/`lint`/host 测试/`workbench.spec.ts` 见提交说明，最终结果以汇报为准。
+
+## 审查 #5（`PageEventResult.params` 只应用 `param: true` 字段）
+`pages/run-params.ts` 新增 `applyPageParams(字段表, 当前参数, 返回值)`：只留当前页面 `param: true` 字段的键（非字符串也丢），其余丢弃；没有可用键时返回 `null`（不更新页签）。`view-page.tsx` 的事件处理改用它，不再整体合并。单元测试在 `run-params.test.ts`（丢弃其余键、`""` 清空、非字符串、无可用键）。同时更正上文“假设”里“合并语义”：现在是“合并，但只限本页的参数字段”。

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Button, CodeEditor, Dialog, DropdownMenu, FieldStrip, FormField, IconButton, Input, Pane, Select, StripField, Switch, Textarea, useToast, type ActionBarItem } from "../../design";
 import { useI18n } from "../i18n";
 import type { ActionDecl, PageDescriptor, RunStatus, ViewField, ViewNode } from "../protocol";
-import { runParams } from "./run-params";
+import { applyPageParams, runParams } from "./run-params";
 import { useRunEndRefresh } from "./run-refresh";
 import { useQuery, useUi, useWorkbench } from "../state/context";
 import type { TabState } from "../state/store";
@@ -228,10 +228,8 @@ export function ViewPage({ tab, descriptor: initial }: { tab: TabState; descript
       } else if (action.role === "event") {
         const result = await client.page.event(tab.target, action.id, context);
         for (const [bind, value] of Object.entries(result.changes ?? {})) actions.setDraft(tab.id, bind, value, now.descriptor.values[bind]);
-        if (result.params && Object.keys(result.params).length > 0) {
-          const current = store.get().tabs.find((x) => x.id === tab.id)?.params ?? now.tab.params;
-          actions.updateTab(tab.id, { params: { ...current, ...result.params } });
-        }
+        const merged = applyPageParams(now.descriptor.view.flatMap((n) => (n.type === "form" ? n.fields.filter((f) => f.param) : [])), store.get().tabs.find((x) => x.id === tab.id)?.params ?? now.tab.params, result.params);
+        if (merged) actions.updateTab(tab.id, { params: merged });
         if (result.message) toast({ tone: "neutral", title: tx(result.message) });
       } else if (action.role === "command") {
         await actions.command(action.id, { target: tab.target, tabId: tab.id });
