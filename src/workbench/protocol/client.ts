@@ -1,6 +1,8 @@
 import type {
   ProtocolError,
+  InstallAnswer,
   InstallPreview,
+  InstallRequest,
   PluginVersionParams,
   SecretInfo,
   UndoUpgradeResult,
@@ -161,6 +163,10 @@ export interface ProtocolClient {
     /** The user confirmed this version's permissions. */
     confirmPermissions(id: string, version: string, fingerprint: string): Promise<void>;
     reload(id: string): Promise<void>;
+    /** Plugins' requests to install a package, oldest first (round 7). Absent in demo mode. */
+    installRequests?(): Promise<InstallRequest[]>;
+    /** Tells the kernel how a request ended; it hands the result back to the waiting plugin. */
+    answerInstallRequest?(answer: InstallAnswer): Promise<void>;
   };
 
   page: {

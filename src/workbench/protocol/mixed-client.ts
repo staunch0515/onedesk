@@ -220,6 +220,8 @@ export function createMixedClient(kernel: KernelClient, mock: ProtocolClient): P
       grants: (plugin) => kernel.plugin.grants(plugin),
       grantFolder: (plugin, path) => kernel.plugin.grantFolder(plugin, path),
       revokeFolder: (plugin, path) => kernel.plugin.revokeFolder(plugin, path),
+      installRequests: kernel.plugin.installRequests ? () => kernel.plugin.installRequests!() : undefined,
+      answerInstallRequest: kernel.plugin.answerInstallRequest ? (answer) => kernel.plugin.answerInstallRequest!(answer) : undefined,
     },
     platform: kernel.transport.pickFolder
       ? { pickFolder: () => kernel.transport.pickFolder!(), pickSaveFile: kernel.transport.pickSaveFile ? (name) => kernel.transport.pickSaveFile!(name) : undefined }
