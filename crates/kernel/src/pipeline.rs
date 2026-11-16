@@ -596,6 +596,13 @@ impl Tx<'_> {
         Ok(())
     }
 
+    /// D330: references waiting for the name `row` now has.
+    pub fn connect_name(&self, row: &Row) -> KResult<()> {
+        let t = crate::refs::connect_name(self.tx, row).map_err(sql)?;
+        self.touched.borrow_mut().extend(t);
+        Ok(())
+    }
+
     /// Both ends of `id`'s references change how they look (rename, delete, restore, purge).
     pub fn touch_ends(&self, id: &str) -> KResult<()> {
         let mut t = self.touched.borrow_mut();
@@ -811,6 +818,7 @@ impl Tx<'_> {
         };
         self.insert(&row)?;
         self.refs_after(&row, None)?;
+        self.connect_name(&row)?;
         let fields: Vec<String> = vec!["*".into()];
         self.revision(&row, "create", &fields)?;
         // No names or content in audit rows: they outlive a permanent deletion (§3.4).
@@ -872,6 +880,7 @@ impl Tx<'_> {
         self.refs_after(&row, Some(&changed))?;
         if changed.iter().any(|f| f == "name") {
             self.touch_ends(&row.id)?;
+            self.connect_name(&row)?;
         }
         self.revision_from(&row, op, &changed, restored_from)?;
         self.audit(audit_op, &row.id, &audit_fields(&changed))?;
@@ -1153,6 +1162,9 @@ impl Tx<'_> {
             self.tx.execute("UPDATE resources SET delete_batch = NULL WHERE id = ?1", [&r.id]).map_err(sql)?;
             self.revision(r, "undelete", &fields)?;
             self.touch_ends(&r.id)?;
+        }
+        for r in &batch {
+            self.connect_name(r)?;
         }
         for r in batch.iter().filter(|r| r.kind == KIND_CONFIG) {
             self.check_config_node(r)?;
