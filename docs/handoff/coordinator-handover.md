@@ -10,6 +10,7 @@
 - 第七轮（插件请求安装、本地插件市场、依赖与导出点的前两种）已做完并验收：范围 `round7-plan.md`，审查 `round7-review.md`，验收 `round7-acceptance.md`；决定到 D351。是否已合并到 main 看 `git log main`。
 - 第七轮已合并到 `main` 并推送（`4df30bb`）。协调分支换成 `claude/onedesk-coord-3-f0c048`（`coord-2` 不再使用）。
 - 第八轮（`transfer`、导出点的另两种中的树与页面、页面参数、SHA-256 指纹、`RunError.params`）：范围 `round8-plan.md`，任务书 `round8-kernel.md`、`round8-shell.md`、`round8-tests.md`，决定 D352–D360。已做完并验收（审查 `round8-review.md`，验收 `round8-acceptance.md`，决定到 D362）；是否已合并到 main 看 `git log main`。
+- 第八轮已合并到 `main` 并推送（`8123a08`）。第九轮（清单缓存、空闲回收、宿主接口按上下文授权、小修）：范围 `round9-plan.md`，任务书 `round9-kernel.md`、`round9-shell.md`、`round9-tests.md`，决定 D363–D368；进行到哪一步看有没有 `round9-*-done.md`、`round9-review.md`、`round9-acceptance.md`。
 - 新工作树里跑完整 `pnpm check` 之前先跑一次 `sh scripts/prepare-bundle.sh`，否则工作进程会被空占位文件盖掉（见 `todo.md`）。
 - 各轮记录在 `docs/handoff/`；遗留事项在 `docs/handoff/todo.md`。
 
