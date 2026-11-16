@@ -1170,6 +1170,25 @@ fn index_dir(root: &Path, rel: &str) -> Option<PathBuf> {
     (parts.len() == 2 && parts.iter().all(plain)).then(|| root.join(parts[0]).join(parts[1]))
 }
 
+/// Round 9 (start-up with many packages): validates packages on several threads, keeping order.
+fn in_parallel<T: Send, R: Send>(items: Vec<T>, f: impl Fn(T) -> R + Sync) -> Vec<R> {
+    let threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1).min(8);
+    if threads < 2 || items.len() < 64 {
+        return items.into_iter().map(f).collect();
+    }
+    let per = items.len().div_ceil(threads);
+    let mut chunks: Vec<Vec<T>> = Vec::new();
+    let mut it = items.into_iter().peekable();
+    while it.peek().is_some() {
+        chunks.push(it.by_ref().take(per).collect());
+    }
+    let f = &f;
+    std::thread::scope(|s| {
+        let handles: Vec<_> = chunks.into_iter().map(|c| s.spawn(move || c.into_iter().map(f).collect::<Vec<R>>())).collect();
+        handles.into_iter().flat_map(|h| h.join().expect("package check thread")).collect()
+    })
+}
+
 fn read_root(root: &Path, old: &BTreeMap<String, Vec<&'static Plugin>>) -> (BTreeMap<String, Vec<&'static Plugin>>, Vec<Rejection>) {
     let mut all: BTreeMap<String, Vec<&'static Plugin>> = BTreeMap::new();
     let mut rejected = Vec::new();
@@ -1188,6 +1207,7 @@ fn read_root(root: &Path, old: &BTreeMap<String, Vec<&'static Plugin>>) -> (BTre
         // D364: with a cache, no folder is listed and no `manifest.json` opened; the manifests
         // are validated here exactly as if read from the folders.
         let mut seen = HashSet::new();
+        let mut jobs: Vec<(PathBuf, Option<String>, Option<String>)> = Vec::new();
         for e in entries {
             let Some(vdir) = index_dir(root, &e.dir) else {
                 eprintln!("onedesk: {} entry {:?} is not <id>/<version>; ignored", INDEX_FILE, e.dir);
@@ -1196,10 +1216,13 @@ fn read_root(root: &Path, old: &BTreeMap<String, Vec<&'static Plugin>>) -> (BTre
             if !seen.insert(vdir.clone()) {
                 continue;
             }
-            add(match e.manifest {
-                Some(text) => parse_package(&vdir, text.as_bytes(), true),
-                None => Err(reject(&vdir, "noManifest", e.error.unwrap_or_else(|| "unreadable".into()))),
-            });
+            jobs.push((vdir, e.manifest, e.error));
+        }
+        for res in in_parallel(jobs, |(vdir, manifest, error)| match manifest {
+            Some(text) => parse_package(&vdir, text.as_bytes(), true),
+            None => Err(reject(&vdir, "noManifest", error.unwrap_or_else(|| "unreadable".into()))),
+        }) {
+            add(res);
         }
     } else {
         let dirs = |p: &Path| -> Vec<PathBuf> {
@@ -1213,6 +1236,7 @@ fn read_root(root: &Path, old: &BTreeMap<String, Vec<&'static Plugin>>) -> (BTre
             v.sort();
             v
         };
+        let mut vdirs = Vec::new();
         for id_dir in dirs(root) {
             // `.removed`, `.index` and other dot folders belong to the main process.
             if id_dir.file_name().is_some_and(|n| n.to_string_lossy().starts_with('.')) {
@@ -1223,8 +1247,11 @@ fn read_root(root: &Path, old: &BTreeMap<String, Vec<&'static Plugin>>) -> (BTre
                 if vdir.file_name().is_some_and(|n| n.to_string_lossy().starts_with('.')) {
                     continue;
                 }
-                add(load_package(&vdir));
+                vdirs.push(vdir);
             }
+        }
+        for res in in_parallel(vdirs, |vdir| load_package(&vdir)) {
+            add(res);
         }
     }
     for vs in all.values_mut() {

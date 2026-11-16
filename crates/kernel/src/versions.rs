@@ -84,7 +84,7 @@ impl Inner {
 
     /// Permission sets the user confirmed for this plugin (one per confirmed version).
     fn confirmed_sets(&self, plugin: &str) -> Vec<BTreeSet<String>> {
-        let Some(row) = self.read(|c| store::plugin_state(c, plugin)).ok().flatten() else { return vec![] };
+        let Some(row) = self.plugin_state_row(plugin) else { return vec![] };
         crate::params::params_of(&row)
             .into_iter()
             .filter(|(k, _)| k.starts_with("confirmed."))
@@ -113,8 +113,10 @@ impl Inner {
     /// D313: only the built-in packages the main process names are confirmed without asking
     /// (they ship with the application). Every other version is "installed, not confirmed".
     /// The first time a workspace sees a plugin, its newest usable version becomes active.
+    /// All changes are written in one transaction (one per plugin was too slow with thousands).
     pub fn first_sight_blocking(&self) {
         let builtin = self.cfg.builtin.clone();
+        let mut batch = Vec::new();
         for id in self.registry.ids() {
             let mut set = self.builtin_confirmations(&id, &builtin);
             if self.plugin_param(&id, "seen").is_none() {
@@ -126,12 +128,15 @@ impl Inner {
                     set.push(("active".to_string(), Some(v.version.clone())));
                 }
             }
-            if set.is_empty() {
-                continue;
+            if !set.is_empty() {
+                batch.push((id, set));
             }
-            if let Err(e) = self.pipeline.execute_blocking(Actor::Core, Command::PluginState { plugin: id.clone(), set }) {
-                eprintln!("onedesk: could not record plugin {id}: {e:?}");
-            }
+        }
+        if batch.is_empty() {
+            return;
+        }
+        if let Err(e) = self.pipeline.execute_blocking(Actor::Core, Command::PluginStates(batch)) {
+            eprintln!("onedesk: could not record plugins: {e:?}");
         }
     }
 
