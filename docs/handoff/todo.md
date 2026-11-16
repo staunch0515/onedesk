@@ -76,3 +76,13 @@
 - （第八轮内核）`workspace.import` 不检查“借用的树/页面未导出”的类型（D356），会照常建出（之后显示为停用）；要不要跳过并给新的跳过原因码，由协调会话定。
 - （第八轮内核）`transfer` 写进文件的内容（下载正文、`capture` 的标准输出）不抹除代入过的密钥值；被运行取消打断的 `transfer` 不写审计行（`process.run` 同）。
 - （第八轮审查 #7）网络失败时 `RunError.detail` 是 HTTP 库的错误文字，含完整 URL（路径和查询串）；应只留主机。
+
+## 第八轮验收留下的（2026-11-16）
+
+- `target/debug/onedesk-worker` 变成 0 字节的原因：`src-tauri/build.rs` 在没有侧载文件时写一个空占位，Tauri 构建把它复制成 `target/debug/onedesk-worker`，盖掉真的工作进程；新工作树里跑 `pnpm check` 必然中招。临时做法：先跑 `sh scripts/prepare-bundle.sh`。要改（外壳的文件）：让 devhost 和界面检查不从会被覆盖的位置取工作进程，或占位不存在时不让 Tauri 复制。
+- 被取消的 `transfer.download` 在审计里没有一行（成功和被拒都有）。
+- 没有总量的搬运进度显示“… bytes (0%)”：没有 `total` 时不应给百分比（夹具插件或进度约定）。
+- `blockedByPolicy` 的 `layer` 是节点 id 不是名字，外壳没法显示是哪一层。
+- 路径被拒（`outsideGrant`）的错误没带路径。
+- 假数据模式的拖动用例（`workbench.spec.ts` “drag onto a group”）在整套检查的负载下偶尔失败。
+- 市场页里夹具 `com.example.broken-pack` 显示“未安装”且可选（清单读得出但装不了的包），应在安装前就标出。
