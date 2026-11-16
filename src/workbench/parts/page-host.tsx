@@ -72,7 +72,7 @@ function ShellSecrets({ tab }: { tab: TabState }) {
 function ResolvedPage({ tab }: { tab: TabState }) {
   const { store, actions } = useWorkbench();
   const { t, tx } = useI18n();
-  const page = useQuery((c) => c.page.resolve(tab.target, { envId: tab.envId, draft: store.get().drafts[tab.id] }), [tab.target, tab.envId, tab.reload], topicsFor(tab.target));
+  const page = useQuery((c) => c.page.resolve(tab.target, { envId: tab.envId, draft: store.get().drafts[tab.id], params: Object.fromEntries(Object.entries(tab.params ?? {}).filter(([, v]) => v !== "")) }), [tab.target, tab.envId, tab.reload], topicsFor(tab.target));
   const d = page.data;
   usePluginTopics(tab, d, page.reload);
 

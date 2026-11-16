@@ -48,6 +48,15 @@ describe("kernel client", () => {
     expect(calls[1]?.params).toEqual({ target: "resource:1", context: { draft: { name: "x" }, locale: "zh-CN" } });
   });
 
+  it("sends the page parameters with page.resolve and page.event (D358)", async () => {
+    const { transport, calls } = fakeTransport({ hello, "page.resolve": () => ({}), "page.event": () => ({}) });
+    const client = await createKernelClient(transport);
+    await client.page.resolve("plugin:x", { params: { pkg: "/a" } });
+    await client.page.event("plugin:x", "go", { params: { pkg: "/a" } });
+    expect(calls[1]?.params).toEqual({ target: "plugin:x", context: { params: { pkg: "/a" } } });
+    expect(calls[2]?.params).toEqual({ target: "plugin:x", event: "go", context: { params: { pkg: "/a" } } });
+  });
+
   it("passes kernel errors through with their code", async () => {
     const { transport } = fakeTransport({ hello, "page.save": () => new KernelError("conflict", { field: "name" }) });
     const client = await createKernelClient(transport);

@@ -7,6 +7,7 @@ import type { TabState } from "../state/store";
 import { Frame } from "../parts/frame";
 import { SECRETS_TARGET } from "./secrets-page";
 import { KERNEL_ERRORS } from "../i18n/kernel-texts";
+import { PagesNotice } from "../parts/pages-notice";
 import { ProgramsNotice } from "../parts/programs-notice";
 
 /** What the page is asking the user right now (all confirmations of the version table live here). */
@@ -204,11 +205,14 @@ export function PluginPage({ tab, descriptor }: { tab: TabState; descriptor: Pag
           {((p.versions.find((v) => v.version === ask.version)?.permissions ?? []) as PluginPermission[]).map((x) => (
             <Pane key={x.id} direction="row" gap="sm" align="center" wrap>
               <Text size="sm" weight="medium">{x.label ? tx(x.label) : permission(x.id)}</Text>
-              {x.detail && x.id !== "programs" && <Text size="xs" tone="muted" mono>{x.detail}</Text>}
+              {x.detail && x.id !== "programs" && x.id !== "pages" && <Text size="xs" tone="muted" mono>{x.detail}</Text>}
             </Pane>
           ))}
           {((p.versions.find((v) => v.version === ask.version)?.permissions ?? []) as PluginPermission[]).filter((x) => x.id === "programs").map((x) => (
             <ProgramsNotice key={x.id} detail={x.detail} />
+          ))}
+          {((p.versions.find((v) => v.version === ask.version)?.permissions ?? []) as PluginPermission[]).filter((x) => x.id === "pages").map((x) => (
+            <PagesNotice key={x.id} detail={x.detail} />
           ))}
         </Pane>
       )}
@@ -272,6 +276,15 @@ export function PluginPage({ tab, descriptor }: { tab: TabState; descriptor: Pag
                     <Text key={d.id} size="sm" mono>
                       {d.activeVersion ? t("plugin.dependsNeedsActive", { plugin: d.id, range: d.range, version: d.activeVersion }) : t("plugin.dependsNeeds", { plugin: d.id, range: d.range })}
                     </Text>
+                  ))}
+                </Pane>
+              </Banner>
+            )}
+            {(p.unmetExports ?? []).length > 0 && (
+              <Banner tone="warning" title={t("plugin.unmetExportsTitle")}>
+                <Pane gap="xs">
+                  {(p.unmetExports ?? []).map((name) => (
+                    <Text key={name} size="sm" mono>{t("plugin.unmetExport", { name })}</Text>
                   ))}
                 </Pane>
               </Banner>
