@@ -5,7 +5,7 @@
 //! events. The interface reaches it through the Tauri window shell or `onedesk-devhost`.
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -22,6 +22,7 @@ use tokio::net::UnixStream;
 use tokio::sync::{broadcast, oneshot, watch};
 
 pub mod data_dir;
+pub mod index;
 pub mod install;
 pub mod plugins;
 pub mod process_groups;
@@ -239,6 +240,15 @@ impl Shared {
     }
 }
 
+/// Brings `plugins/.index` up to date (D364). A failure only costs the cache: the kernel scans directly without it.
+fn refresh_index(plugin_root: &Path) {
+    if let Err(e) = index::refresh(plugin_root) {
+        eprintln!("onedesk-host: could not refresh plugins/.index: {e}");
+        // A stale index would hide changes from the kernel; without one it scans the folders itself.
+        let _ = std::fs::remove_file(plugin_root.join(index::FILE_NAME));
+    }
+}
+
 pub struct Host {
     data_dir: PathBuf,
     install_lock: tokio::sync::Mutex<()>,
@@ -257,6 +267,7 @@ impl Host {
         if let Some(src) = &cfg.builtin_plugins {
             builtin = plugins::install_builtin(src, &plugin_root).map_err(|e| HostError(format!("copy built-in plugins: {e}")))?.present;
         }
+        refresh_index(&plugin_root);
         let (events, _) = broadcast::channel(1024);
         let (current, _) = watch::channel(None);
         let (shutdown, _) = watch::channel(false);
@@ -310,6 +321,7 @@ impl Host {
 
     /// `plugin.rescan` with the built-in list (D313).
     async fn rescan(&self, client: Option<&str>) -> Result<Value, ProtocolError> {
+        refresh_index(&self.data_dir.join("plugins"));
         let builtin = self.shared.builtin.lock().unwrap().clone();
         self.forward(client, "plugin.rescan", json!({ "builtin": builtin })).await
     }
