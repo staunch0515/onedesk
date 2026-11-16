@@ -1,0 +1,118 @@
+# 第九轮：内核交付（分支 `claude/r9-kernel-bd47e8`）
+
+按任务书 `round9-kernel.md` 的先后做完四项：§6 小修 → §3 清单缓存（内核一半）→ §4 空闲回收 → §5 宿主接口按调用上下文授权。提交见文末。
+
+## 测试结果（全部实际跑过）
+
+- `cargo test -p onedesk-kernel -p onedesk-worker -p onedesk-protocol`：全部通过（新增 `crates/kernel/tests/round9.rs` 11 个；原有全部仍通过）。
+- `cargo clippy -p onedesk-kernel -p onedesk-worker -p onedesk-protocol --all-targets -- -D warnings`：通过。
+- `sh scripts/gen-types.sh --check`：最新（生成的 TS 已提交）。
+- `pnpm lint`：通过。`cargo check -p onedesk-host --tests`：通过（主进程那边不用改）。
+- 测试只用临时目录、本机临时 HTTP 服务（`127.0.0.1:0`；连不上的用 `127.0.0.1:1`）、内存密钥库。
+
+`round9.rs` 覆盖（对照计划 §8）：
+
+| 计划要求 | 测试 |
+|---|---|
+| 有 `.index` 时不列目录、不开清单，结果与直接扫描逐项相同 | `with_an_index_the_scan_reads_only_it_and_finds_the_same`：同一批包复制到另一个目录但**删掉所有 `manifest.json`**，只放 `.index`；另放一个带清单、不在 `.index` 里的包 `t.extra`。结果（id、版本、清单指纹、语言表、各个问题的路径与原因）与原目录直接扫描逐项相同，`t.extra` 不出现 |
+| 坏条目各自成为插件问题、不影响别的 | 同上：`unreadable` → `noManifest`，不是 JSON → `badJson`，不合法 → `schema`，与目录不符 → `versionMismatch`；`dir` 不是 `<id>/<版本>` 的条目被忽略 |
+| 没有 `.index` 时照旧 | `without_a_usable_index_the_folder_is_scanned`（不存在、坏 JSON、版本 2、`.index` 是文件夹 → 都直接扫描，结果相同） |
+| 重扫读 `.index` | 同第一个测试末尾：主进程刷新 `.index` 后 `rescan` 报出新增的版本 |
+| `main.js`、语言文件仍从包里读 | `a_kernel_started_on_an_index_runs_plugins_from_their_folders`（没有任何清单文件的插件目录，插件照常回答；插件树名字按 `zh-CN`/英语） |
+| 空闲到时释放、`runtime` 字段与主题、不是停用、没有审计 | `a_quiet_runtime_is_released_and_every_use_brings_it_back` |
+| 释放后各种用到方式都能重新激活、`storage` 仍在、事件订阅仍投递 | 同上：运行、渲染、页面事件、提供的树展开、命令、事件投递，每种之前都先等到释放；激活次数相应增加 |
+| 每个不回收条件 | `nothing_in_flight_is_released`：运行在等宿主调用、渲染进行中、页面事件进行中、安装请求等用户答复——各自超过空闲时长 3 倍仍在 |
+| 运行的 `ctx.host` 存起来后从页面事件、渲染、事件处理里用被拒 | `a_kept_ctx_host_works_only_for_its_own_invocation`：渲染、页面事件、命令、事件处理里用，**同步段和 `await` 之后**都 `staleContext`（含 `network`、`process`、`transfer`）；它们自己的 `ctx.host` 照常 |
+| 结束后用被拒 | 同上：运行结束后从渲染里用 → `staleContext`；运行自己留下的异步链在运行结束后用 → `callEnded`（原有码，见决定 4） |
+| 合法用法不受影响 | 同上：运行在 `await` 之后、`process.run` 的 `onOutput` 回调里用自己的 `ctx.host` 都成功 |
+| 并发两个运行互不串 | 同上：运行 B 用运行 A 的 `ctx.host` 被拒、自己的照常；`two_runs_at_once_keep_their_own_progress_and_writes`：两个运行同时跑，各自的回调、写入、进度都成功且不串 |
+| §6 搬运被取消/超时写审计 | `cancelled_and_timed_out_transfers_are_audited`（超时 → `timeout`；下载、capture 被取消 → `cancelled`） |
+| §6 `outsideGrant` 带 `path`、`blockedByPolicy` 带 `layerName` | `refusals_name_the_path_and_the_layer`（宿主调用、`RunError.params`、`transfer`；路径截到 200 字符；网络和程序两种策略层） |
+| §6 `RunError.detail` 只留主机 | `a_failed_request_names_the_host_not_the_address` |
+| §6 `tree.children` 的 `locale`、进度 `fraction` 可空 | `provided_trees_get_the_locale_and_progress_may_have_no_fraction` 和上面的插件树测试 |
+
+## 协议（只增）
+
+| 类型 | 新增 | 说明 |
+|---|---|---|
+| `TreeChildrenParams` | `locale?: string` | 界面语言（BCP 47）。内核作为 `ctx.locale` 交给提供树的 `children`；插件树（`plugins`）的节点名按它取（缺失回退英语） |
+| `PluginDetail` | `runtime?: PluginRuntime` | 内核总是给：当前活动版本有运行环境 → `live`，否则 `idle`（装不上的包也是 `idle`） |
+| `PluginRuntime`（新类型） | `"live" \| "idle"` | |
+
+`RunProgress.fraction` 本来就是可选的（`fraction?: number`），保持不变：插件 `ctx.progress(null, …)` 或 `ctx.progress(undefined, …)` → 进度里**没有** `fraction` 字段，只有 `message`。外壳按“没有 `fraction` 不显示百分比”即可。
+
+## 清单缓存（内核一半，D364）
+
+- 文件：`<插件目录>/.index`，格式按计划 §3（`version: 1`，`entries[].dir/mtime/size/manifest/error`）。内核**只读**，不写不删。
+- 存在且可读、是 JSON、`version` 为 1 → 只读它：不列 `plugins/` 下的任何目录、不打开任何 `manifest.json`；每条的 `manifest` 原文照直接扫描时完全相同的规则校验（同一个函数 `manifest::parse_package`）；语言文件和 `main.js` 仍从包目录读。`mtime`、`size` 内核不看。
+- 条目的问题：没有 `manifest`（`"error": "unreadable"` 或干脆缺）→ 该包 `noManifest`（`detail` 是 `error` 的值）；原文不是 JSON → `badJson`；不合法 → 相应的原因码（`schema`、`idMismatch`…）。`dir` 不是“两段、都不以 `.` 开头”的条目忽略并写一行日志；同一 `dir` 出现两次只取第一条。
+- `.index` 不存在 → 照旧直接扫描。**存在但读不了、不是 JSON、`version` 不认识 → 也直接扫描**（写一行日志）：缓存只是省事，文件夹才是事实（见决定 1）。
+- `plugin.rescan` 同样先看 `.index`（主进程在 `rescan` 之前刷新它）。
+- 内核里新增的公开名字：`manifest::INDEX_FILE`（`".index"`）、`manifest::INDEX_VERSION`（1）、`manifest::parse_package(dir, bytes, check_folder)`。
+
+## 空闲回收（D365）
+
+- `KernelConfig.plugin_idle`（默认 `DEFAULT_PLUGIN_IDLE` = 10 分钟）。工作进程读 `ONEDESK_PLUGIN_IDLE_MS`（整数毫秒，小于 1000 按 1000，读不出用默认）传进来；内核不读环境变量。
+- 每个插件版本的槽记“进行中的调用数”和“最近一次调用开始/结束的时间”。凡是进入插件代码的都经 `call_version`（运行、渲染、页面事件、事件投递、`migrate`、树处理函数、命令），从激活前到调用结束都算进行中；宿主调用、等待安装答复都发生在调用之内，所以被它覆盖。
+- 回收任务每 `plugin_idle / 4`（夹在 50 ms–30 s 之间）看一遍：进行中为 0、距最近一次 ≥ `plugin_idle`、且槽没有被别人锁着（正在激活）→ 释放运行环境，发一次 `plugins` 主题。新建运行环境时也发一次 `plugins` 主题（`runtime` 变成 `live`）。
+- 释放不改插件状态、不写审计；下次用到时与首次一样自动激活（激活失败的处理不变）。卡死/超内存的照旧整个丢弃（不变）。
+- `Kernel::active_plugins()`（测试用）照旧；新增 `Inner::runtime_live(id)`、`Inner::release_idle()`。
+
+## 宿主接口按调用上下文授权（D366）
+
+做法（`sandbox.rs` 文件头有说明）：引擎（QuickJS）没有异步上下文的钩子，所以由内核掌握**每一个进入插件代码的入口**，并在每个入口里把任务队列跑空：
+
+1. 处理函数的同步开头（`dispatch`）：标记“当前调用 = 这次调用”，调用后把它排出的所有 promise 任务跑完，再清除标记。
+2. 每个宿主调用的答复：宿主调用不再用引擎自带的异步函数，而是立刻返回一个票号；答复在 tokio 任务里算好后，进入引擎、标记“当前调用 = 发出这个宿主调用时正在运行的那次调用”、兑现 promise、把任务队列跑空、清除标记。
+
+因为没有计时器（D287），插件代码的每一段异步继续都源于这两种入口之一，于是每段代码都知道自己属于哪次调用。发出宿主调用时：所用的 `ctx.host` 属于调用 X、当前运行的是调用 Y：
+
+- Y ≠ X（包括 Y 未知）→ `denied`，`reason: staleContext`，不进入宿主方法。
+- Y = X 但 X 已结束 → `denied/callEnded`（原有行为）；X 被取消/超时 → `cancelled`/`timeout`（原有行为）。
+
+**做到了**：别的调用的代码拿存下来的 `ctx.host` 用，不论在同步段还是任意次 `await` 之后，都按“正在执行的是谁”判断并被拒——页面、事件、渲染、命令、另一个运行都一样；两个并发运行互不串。
+**剩下的口子**：调用 B 的代码 `await` 一个由调用 A 的代码兑现的 promise（共享 promise）时，B 接下来的代码被算作 A 的。于是：
+- 页面代码等一个运行兑现的 promise，之后可以用运行的 `ctx.host`（需要插件自己的运行代码配合，等于运行替页面做事，仍在运行的生命周期里）；
+- 反过来也可能误拒：缓存了“第一次加载”的 promise 被两个调用共用时，后来的那个在 `await` 之后用自己的 `ctx.host` 会得 `staleContext`。插件应为每次调用各自加载，或只缓存结果而不缓存 promise。
+
+宿主调用被 `staleContext` 拒绝时不写审计（和原来的 `callEnded` 一样，在进入宿主方法之前就拒了）。
+
+## 小修（§6，D367–D368）
+
+- 搬运被取消（运行取消、调用结束时宿主调用被丢弃）→ 审计一行，结果 `cancelled`；超时（`invalid/timeout`）→ 结果 `timeout`。两者的对象同被拒行（插件给的主机/程序名），摘要 `{ ms }`。被拒和失败照旧 `failed:<code>`。
+- `denied/outsideGrant` 的 `params.path`：调用给的路径原样（最多 200 个字符），`files.*`、`transfer.*` 的文件端、`process.run` 的 `cwd`、`plugins.requestInstall` 的 `folder` 全部带上。
+- `denied/blockedByPolicy` 只增 `layerName`（那一层节点的名称）。程序端原来就有 `layer`（节点 id）；网络端原来没有，现在 `layer` 和 `layerName` 都有。
+- 网络失败：错误 `detail` 是“`<主机>: <错误文字及其原因链>`”，HTTP 库的文字去掉了 URL（`reqwest::Error::without_url`）；读正文时失败只有错误文字。并且宿主错误的 `detail` 现在经过插件一直带到 `RunError.detail`（原来在沙箱的信封里丢了，`RunError.detail` 一直是空的；见决定 5）。
+- `tree.children` 的 `locale`：见“协议”。只有提供的树（`source: provided`）有插件处理函数；“自供子节点”在现在的内核里没有单独的路径（存储树的节点由内核出），所以只做了提供的树和插件树。
+- 进度的 `fraction` 可空：见“协议”，不用改。
+
+## 新增的错误原因码与审计（列全）
+
+| 码 | 何时 |
+|---|---|
+| `denied` / `reason: staleContext` | 用的 `ctx.host` 不属于正在执行的调用 |
+| 参数 `path`（`outsideGrant`） | 见上 |
+| 参数 `layerName`（`blockedByPolicy`）；网络端新增 `layer` | 见上 |
+| 清单问题 `noManifest` 的新来源 | `.index` 条目没有 `manifest` |
+
+审计操作名没有新的；`transfer.download`/`upload`/`capture` 多了两种结果 `cancelled`、`timeout`（写审计的新命令 `Command::Stopped`，内部用）。
+
+## 我做的决定
+
+1. `.index` 坏了（读不了、不是 JSON、版本不认识）时内核直接扫描，而不是当作空：内核拿到空列表会以为一个插件都没有；主进程一侧的“当作空缓存全部重读”是它重建缓存的方式，两者不矛盾。
+2. 空闲时长从“最近一次调用开始或结束”算起；进行中的调用数是唯一的“忙”判断（计划列的四个条件都发生在调用之内）。
+3. 新建运行环境也发 `plugins` 主题（`runtime` 从 `idle` 变 `live`）。界面第一次打开某插件页面时会多收到一次 `plugins` 主题。
+4. 运行结束后自己留下的代码再用 `ctx.host` 仍是 `callEnded`（计划允许“保留已有码”）；别的调用用它是 `staleContext`。
+5. 宿主错误的 `detail` 交给插件（`e.detail`）并带到 `RunError.detail`：网络失败时界面/日志能看到是哪台主机连不上；其它宿主错误的 `detail` 本来就只是给开发者看的文字（会经过运行结束时的密钥抹除）。
+6. 宿主调用改成“票号 + 内核兑现”后不再用引擎的异步函数（`rquickjs::function::Async`）；行为上对插件不可见。`rearm` 照旧保留。
+
+## 没做 / 没验证
+
+- 1 万个包的实测耗时属于主进程一侧（`crates/host`），这里没测；内核读 `.index` 只做了正确性测试。
+- 外壳、e2e、`pnpm check` 全套没跑（只跑了 lint、Rust 部分和 `cargo check -p onedesk-host --tests`）。
+- `migrate` 里拿别的调用的 `ctx.host`：代码路径与命令/渲染相同，没单独写测试。
+- “共享 promise”的口子见上，没有堵。
+
+## 提交
+
+（见下）
