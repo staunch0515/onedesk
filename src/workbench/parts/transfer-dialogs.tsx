@@ -3,7 +3,7 @@ import { Badge, Banner, Button, Dialog, FormField, Input, Pane, Text, useToast }
 import { useI18n } from "../i18n";
 import type { ProtocolClient } from "../protocol";
 import type { Actions } from "../state/context";
-import { useUi, useWorkbench } from "../state/context";
+import { useQuery, useUi, useWorkbench } from "../state/context";
 import type { Store } from "../state/store";
 
 type Fail = Pick<Actions, "fail">;
@@ -78,6 +78,8 @@ export function TransferDialogs() {
   };
   const absolute = path.trim().startsWith("/");
 
+  const present = useQuery((c) => (c.secrets ? c.secrets.list() : Promise.resolve([])), [transfer?.stage === "import-preview"], ["secrets"]);
+  const have = new Set((present.data ?? []).map((s) => s.name));
   const preview = transfer?.stage === "import-preview" ? transfer.preview : null;
   const importable = preview?.valid && preview.create + preview.update > 0;
 
@@ -165,6 +167,27 @@ export function TransferDialogs() {
               <Text size="sm" tone="muted">{t("transfer.exportedAt", { at: dateTime(preview.exportedAt) })}</Text>
             </Pane>
             <Text size="sm">{t("transfer.intoNewGroup")}</Text>
+            {preview.grantHosts.length > 0 && (
+              <Pane gap="xs">
+                <Text weight="semibold">{t("transfer.grantHosts")}</Text>
+                <Pane direction="row" gap="xs" wrap>
+                  {preview.grantHosts.map((h) => (
+                    <Badge key={h} tone="warning" icon="globe">{h}</Badge>
+                  ))}
+                </Pane>
+              </Pane>
+            )}
+            {preview.secretNames.length > 0 && (
+              <Pane gap="xs">
+                <Text weight="semibold">{t("transfer.secretNames")}</Text>
+                {preview.secretNames.map((n) => (
+                  <Pane key={n} direction="row" gap="sm" align="center" wrap>
+                    <Text size="sm" mono>{n}</Text>
+                    <Badge tone={have.has(n) ? "success" : "neutral"} icon="key-round">{have.has(n) ? t("transfer.secretPresent") : t("transfer.secretAbsent")}</Badge>
+                  </Pane>
+                ))}
+              </Pane>
+            )}
             {preview.skipped.length > 0 && (
               <Pane gap="xs">
                 <Text weight="semibold">{t("transfer.skipped")}</Text>
@@ -187,6 +210,7 @@ export function TransferDialogs() {
 function skipText(t: ReturnType<typeof useI18n>["t"], reason: string): string {
   if (reason === "unknownKind") return t("transfer.skip.unknownKind");
   if (reason === "needsVersion") return t("transfer.skip.needsVersion");
+  if (reason === "config") return t("transfer.skip.config");
   if (reason === "invalid") return t("transfer.skip.invalid");
   return reason;
 }
