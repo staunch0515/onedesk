@@ -121,6 +121,14 @@ export default {
       };
     });
 
+    // Starts the program and returns at once without waiting for it: the kernel must end it with the run.
+    host.actions.handle("fire", async (ctx, input) => {
+      const program = String((input && input["body.program"]) || "sleep");
+      const args = parseArgs(input && input["body.args"]);
+      void ctx.host.process.run({ program, args }).catch(() => {});
+      return { output: { type: "text", text: "started" }, summary: { message: "started" } };
+    });
+
     host.events.on("run.ended", async (ctx, event) => {
       await ctx.host.storage.set(LAST_RUN_KEY, JSON.stringify({ status: event.status, at: new Date().toISOString() }));
     });

@@ -18,5 +18,6 @@
   "count.line": "命令数：{count}",
   "stderr.mark": "--- 错误输出 ---",
   "summary.exit": "退出码 {code} · {ms} 毫秒",
-  "summary.signal": "{signal} · {ms} 毫秒"
+  "summary.signal": "{signal} · {ms} 毫秒",
+  "action.fire": "启动但不等待"
 }

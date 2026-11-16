@@ -1,0 +1,23 @@
+{
+  "plugin.name": "Command",
+  "plugin.description": "Runs an external program and streams its output. Example plugin for the external-programs interface.",
+  "kind.command": "Command",
+  "kind.command.new": "Untitled command",
+  "action.run": "Run",
+  "action.save": "Save",
+  "action.saveRun": "Save & run",
+  "tab.result": "Output",
+  "tab.history": "History",
+  "field.program": "Program",
+  "field.args": "Arguments (one per line)",
+  "field.args.placeholder": "One argument per line",
+  "field.env": "Environment (NAME=value per line)",
+  "field.env.placeholder": "NAME=value; secrets as {{secret:name}}",
+  "last.none": "Last run: none yet",
+  "last.run": "Last run: {status} at {at}",
+  "count.line": "Commands: {count}",
+  "stderr.mark": "--- stderr ---",
+  "summary.exit": "exit {code} · {ms} ms",
+  "summary.signal": "{signal} · {ms} ms",
+  "action.fire": "Start without waiting"
+}
