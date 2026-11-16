@@ -724,13 +724,19 @@ pub fn load_package(dir: &Path) -> Result<Plugin, Rejection> {
 
 /// `check_folder = false` for a package the user picked to install (any folder name).
 pub fn load_package_opts(dir: &Path, check_folder: bool) -> Result<Plugin, Rejection> {
-    let folder_version = dir.file_name().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
-    let folder_id = dir.parent().and_then(|p| p.file_name()).map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
     let mpath = dir.join("manifest.json");
     let bytes = std::fs::read(&mpath).map_err(|e| reject(dir, "noManifest", e.to_string()))?;
-    let raw: serde_json::Value = serde_json::from_slice(&bytes).map_err(|e| reject(dir, "badJson", e.to_string()))?;
+    parse_package(dir, &bytes, check_folder)
+}
+
+/// Validates a package from its manifest's text (read from the folder, or from `plugins/.index`).
+/// Language files are still read from the package.
+pub fn parse_package(dir: &Path, bytes: &[u8], check_folder: bool) -> Result<Plugin, Rejection> {
+    let folder_version = dir.file_name().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+    let folder_id = dir.parent().and_then(|p| p.file_name()).map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+    let raw: serde_json::Value = serde_json::from_slice(bytes).map_err(|e| reject(dir, "badJson", e.to_string()))?;
     let m: Manifest = serde_json::from_value(raw).map_err(|e| reject(dir, "schema", e.to_string()))?;
-    let manifest_hash = crate::util::fingerprint(&bytes);
+    let manifest_hash = crate::util::fingerprint(bytes);
 
     if m.api_version != "2" {
         return Err(reject(dir, "apiVersion", m.api_version.clone()));
@@ -1108,36 +1114,112 @@ pub struct RescanDiff {
     pub removed: Vec<(String, String)>,
 }
 
+/// D364: the manifest cache the main process keeps at `<plugins>/.index` (the kernel only reads it).
+pub const INDEX_FILE: &str = ".index";
+/// The only cache format the kernel knows.
+pub const INDEX_VERSION: u64 = 1;
+
+#[derive(Deserialize)]
+struct IndexFile {
+    version: u64,
+    #[serde(default)]
+    entries: Vec<IndexEntry>,
+}
+
+/// One package in `.index`. `mtime` and `size` are the main process's business.
+#[derive(Deserialize)]
+struct IndexEntry {
+    dir: String,
+    #[serde(default)]
+    manifest: Option<String>,
+    #[serde(default)]
+    error: Option<String>,
+}
+
+/// `<plugins>/.index`, when it is there and readable as version 1. Missing → `None` (scan the
+/// folder); present but unreadable, not JSON or another version → also `None`, with a log line:
+/// the folder is the truth, the cache only saves reading it.
+fn read_index(root: &Path) -> Option<Vec<IndexEntry>> {
+    let path = root.join(INDEX_FILE);
+    let bytes = match std::fs::read(&path) {
+        Ok(b) => b,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return None,
+        Err(e) => {
+            eprintln!("onedesk: {} unreadable ({e}); scanning the plugins folder", path.display());
+            return None;
+        }
+    };
+    match serde_json::from_slice::<IndexFile>(&bytes) {
+        Ok(f) if f.version == INDEX_VERSION => Some(f.entries),
+        Ok(f) => {
+            eprintln!("onedesk: {} has version {}; scanning the plugins folder", path.display(), f.version);
+            None
+        }
+        Err(e) => {
+            eprintln!("onedesk: {} is not a valid cache ({e}); scanning the plugins folder", path.display());
+            None
+        }
+    }
+}
+
+/// `<id>/<version>` of an index entry as a folder under `root`: exactly two plain parts, neither
+/// hidden (anything else is not a package the kernel loads).
+fn index_dir(root: &Path, rel: &str) -> Option<PathBuf> {
+    let parts: Vec<&str> = rel.split('/').collect();
+    let plain = |p: &&str| !p.is_empty() && !p.starts_with('.') && *p != ".." && !p.contains('\\');
+    (parts.len() == 2 && parts.iter().all(plain)).then(|| root.join(parts[0]).join(parts[1]))
+}
+
 fn read_root(root: &Path, old: &BTreeMap<String, Vec<&'static Plugin>>) -> (BTreeMap<String, Vec<&'static Plugin>>, Vec<Rejection>) {
     let mut all: BTreeMap<String, Vec<&'static Plugin>> = BTreeMap::new();
     let mut rejected = Vec::new();
-    let dirs = |p: &Path| -> Vec<PathBuf> {
-        let mut v: Vec<PathBuf> = std::fs::read_dir(p)
-            .map(|rd| rd.filter_map(|e| e.ok()).map(|e| e.path()).filter(|p| p.is_dir()).collect())
-            .unwrap_or_default();
-        v.sort();
-        v
-    };
-    for id_dir in dirs(root) {
-        // `.removed`, `.index` and other dot folders belong to the main process.
-        if id_dir.file_name().is_some_and(|n| n.to_string_lossy().starts_with('.')) {
-            continue;
+    let mut add = |res: Result<Plugin, Rejection>| match res {
+        Ok(p) => {
+            let reuse = old
+                .get(&p.id)
+                .and_then(|vs| vs.iter().find(|o| o.version == p.version && o.manifest_hash == p.manifest_hash))
+                .copied();
+            let leaked: &'static Plugin = reuse.unwrap_or_else(|| Box::leak(Box::new(p)));
+            all.entry(leaked.id.clone()).or_default().push(leaked);
         }
-        for vdir in dirs(&id_dir) {
-            // Temporary or hidden folders (`.tmp`, `.removed`…) are the main process's (#13).
-            if vdir.file_name().is_some_and(|n| n.to_string_lossy().starts_with('.')) {
+        Err(r) => rejected.push(r),
+    };
+    if let Some(entries) = read_index(root) {
+        // D364: with a cache, no folder is listed and no `manifest.json` opened; the manifests
+        // are validated here exactly as if read from the folders.
+        let mut seen = HashSet::new();
+        for e in entries {
+            let Some(vdir) = index_dir(root, &e.dir) else {
+                eprintln!("onedesk: {} entry {:?} is not <id>/<version>; ignored", INDEX_FILE, e.dir);
+                continue;
+            };
+            if !seen.insert(vdir.clone()) {
                 continue;
             }
-            match load_package(&vdir) {
-                Ok(p) => {
-                    let reuse = old
-                        .get(&p.id)
-                        .and_then(|vs| vs.iter().find(|o| o.version == p.version && o.manifest_hash == p.manifest_hash))
-                        .copied();
-                    let leaked: &'static Plugin = reuse.unwrap_or_else(|| Box::leak(Box::new(p)));
-                    all.entry(leaked.id.clone()).or_default().push(leaked);
+            add(match e.manifest {
+                Some(text) => parse_package(&vdir, text.as_bytes(), true),
+                None => Err(reject(&vdir, "noManifest", e.error.unwrap_or_else(|| "unreadable".into()))),
+            });
+        }
+    } else {
+        let dirs = |p: &Path| -> Vec<PathBuf> {
+            let mut v: Vec<PathBuf> = std::fs::read_dir(p)
+                .map(|rd| rd.filter_map(|e| e.ok()).map(|e| e.path()).filter(|p| p.is_dir()).collect())
+                .unwrap_or_default();
+            v.sort();
+            v
+        };
+        for id_dir in dirs(root) {
+            // `.removed`, `.index` and other dot folders belong to the main process.
+            if id_dir.file_name().is_some_and(|n| n.to_string_lossy().starts_with('.')) {
+                continue;
+            }
+            for vdir in dirs(&id_dir) {
+                // Temporary or hidden folders (`.tmp`, `.removed`…) are the main process's (#13).
+                if vdir.file_name().is_some_and(|n| n.to_string_lossy().starts_with('.')) {
+                    continue;
                 }
-                Err(r) => rejected.push(r),
+                add(load_package(&vdir));
             }
         }
     }
