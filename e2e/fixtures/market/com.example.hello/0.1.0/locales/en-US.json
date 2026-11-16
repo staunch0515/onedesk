@@ -1,0 +1,8 @@
+{
+  "plugin.name": "Hello",
+  "plugin.description": "A tiny example plugin with one greeting type.",
+  "kind.greeting": "Greeting",
+  "kind.greeting.new": "Untitled greeting",
+  "action.save": "Save",
+  "field.text": "Text"
+}

@@ -1,0 +1,33 @@
+{
+  "id": "org.onedesk.market",
+  "version": "0.1.0",
+  "apiVersion": "2",
+  "name": "plugin.name",
+  "description": "plugin.description",
+  "icon": "store",
+  "main": "main.js",
+  "requires": { "files": true, "plugins": { "install": true } },
+  "contributes": {
+    "pages": [
+      {
+        "id": "browse",
+        "recompute": true,
+        "actions": [
+          { "id": "install", "role": "event", "label": "action.install", "icon": "download", "primary": true },
+          { "id": "refresh", "role": "event", "label": "action.refresh", "icon": "refresh-cw" }
+        ]
+      }
+    ],
+    "trees": [
+      {
+        "id": "market",
+        "label": "tree.market",
+        "icon": "store",
+        "source": "provided",
+        "page": "browse",
+        "toolbar": ["plugin.grantFolder"]
+      }
+    ],
+    "locales": { "en-US": "locales/en-US.json", "zh-CN": "locales/zh-CN.json" }
+  }
+}

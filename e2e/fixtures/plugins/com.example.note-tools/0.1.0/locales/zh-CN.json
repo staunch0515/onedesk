@@ -1,0 +1,9 @@
+{
+  "plugin.name": "笔记工具",
+  "plugin.description": "给笔记加动作：统计字数和行数。依赖另一个插件的示例。",
+  "action.count": "统计字数",
+  "action.stamp": "盖章",
+  "count.line": "{words} 个词，{lines} 行",
+  "count.summary": "{words} 个词",
+  "stamp.done": "已盖章"
+}

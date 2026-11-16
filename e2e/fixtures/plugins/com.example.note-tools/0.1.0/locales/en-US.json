@@ -1,0 +1,9 @@
+{
+  "plugin.name": "Note tools",
+  "plugin.description": "Adds actions to notes: count words and lines. Example of a plugin that depends on another.",
+  "action.count": "Count words",
+  "action.stamp": "Stamp note",
+  "count.line": "{words} words, {lines} lines",
+  "count.summary": "{words} words",
+  "stamp.done": "Stamped"
+}
