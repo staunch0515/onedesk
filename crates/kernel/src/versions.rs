@@ -157,7 +157,9 @@ impl Inner {
         ];
         self.execute(Actor::User, Command::PluginState { plugin: plugin.into(), set }).await?;
         self.refresh_active();
-        self.auto_switch(plugin).await?;
+        let switched = self.auto_switch(plugin).await;
+        self.settle_dependents().await;
+        switched?;
         self.plugins_changed(plugin);
         Ok(())
     }
@@ -268,6 +270,12 @@ impl Inner {
                 eprintln!("onedesk: automatic switch of {id} failed: {e:?}");
             }
         }
+        for (id, _) in &diff.removed {
+            if self.registry.active_version(id).is_none() {
+                self.drop_install_request(id, crate::install::GONE_DISABLED);
+            }
+        }
+        self.settle_dependents().await;
         for id in diff.added.iter().chain(diff.removed.iter()).map(|(i, _)| i.clone()).collect::<BTreeSet<_>>() {
             self.plugins_changed(&id);
         }
@@ -394,6 +402,10 @@ impl Inner {
         if !self.version_confirmed(to) {
             return Err(denied("notConfirmed"));
         }
+        // D344: not to a version that enabled dependents do not accept (an automatic switch
+        // records this as its failure).
+        let w = crate::deps::WhatIf { plugin: plugin.into(), active: Some(Some(to)), on: None };
+        self.refuse_if_dependents("plugin.upgrade", plugin, &w).await?;
         let mut take = Vec::new();
         let mut kept = 0u32;
         for k in to.manifest.contributes.kinds.iter().map(|k| to.full(&k.id)).collect::<BTreeSet<_>>() {
@@ -440,6 +452,7 @@ impl Inner {
         }
         self.registry.set_active(plugin, Some(version));
         self.clear_switch_failure(plugin).await;
+        self.settle_dependents().await;
         self.plugins_changed(plugin);
         Ok(UpgradeResult { batch: out.id, upgraded, kept })
     }
@@ -448,6 +461,7 @@ impl Inner {
         let out = self.execute(Actor::User, Command::UndoUpgrade { batch: batch.into(), also }).await?;
         let modified: Vec<NamedRef> = out.id.as_deref().and_then(|s| serde_json::from_str(s).ok()).unwrap_or_default();
         self.refresh_active();
+        self.settle_dependents().await;
         let plugin: Option<String> =
             self.read(|c| c.query_row("SELECT plugin FROM upgrade_batches WHERE id = ?1", [batch], |r| r.get(0))).ok();
         if let Some(p) = plugin {

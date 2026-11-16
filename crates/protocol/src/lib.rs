@@ -1442,6 +1442,30 @@ pub struct PluginDetail {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub switch_failure: Option<SwitchFailure>,
+    /// Round 7 (D343): what the active version's manifest `depends` on, and whether each is met.
+    /// Always present from the kernel (optional only for older peers).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub depends: Option<Vec<PluginDependency>>,
+    /// Round 7: ids of enabled plugins that depend on this one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub dependents: Option<Vec<String>>,
+}
+
+/// One entry of a plugin's `depends` (round 7, D343): met when the plugin is installed, enabled
+/// here, and its active (confirmed) version is in `range`.
+#[skip_serializing_none]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, optional_fields)]
+pub struct PluginDependency {
+    pub id: String,
+    /// Semver range as written in the manifest.
+    pub range: String,
+    pub satisfied: bool,
+    /// The depended-on plugin's active version, when it has one.
+    pub active_version: Option<String>,
 }
 
 /// An automatic version switch that failed (round 6, D337).
@@ -1854,6 +1878,61 @@ pub struct RunExportParams {
 pub struct RunExportResult {
     pub path: String,
     pub rows: u32,
+}
+
+/// Methods of round 7 (D345): install requests made by plugins, answered by the interface.
+/// `plugin.checkRemove` (`PluginVersionParams`) lets the main process ask before removing a
+/// version: `conflict/dependents` when enabled plugins depend on it (D344).
+pub mod method7 {
+    pub const PLUGIN_INSTALL_REQUESTS: &str = "plugin.installRequests";
+    pub const PLUGIN_ANSWER_INSTALL_REQUEST: &str = "plugin.answerInstallRequest";
+    pub const PLUGIN_CHECK_REMOVE: &str = "plugin.checkRemove";
+}
+
+/// Topic of round 7: an install request was made or ended (payload-less; fetch the list again).
+pub mod topic7 {
+    pub const INSTALL_REQUESTS: &str = "install-requests";
+}
+
+/// A plugin asked to install the package in `folder` (round 7, D345). The interface checks and
+/// confirms it exactly like a manual install, then answers with `plugin.answerInstallRequest`.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct InstallRequest {
+    pub id: String,
+    /// The requesting plugin's id.
+    pub plugin: String,
+    pub plugin_name: Label,
+    /// Absolute path of the package folder.
+    pub folder: String,
+    /// Milliseconds since the epoch.
+    pub at: i64,
+}
+
+/// How the user's side ended an install request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum InstallAnswerOutcome {
+    Installed,
+    Declined,
+    Failed,
+}
+
+/// `plugin.answerInstallRequest`.
+#[skip_serializing_none]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, optional_fields)]
+pub struct InstallAnswerParams {
+    pub id: String,
+    pub outcome: InstallAnswerOutcome,
+    /// `installed`: what was installed.
+    pub plugin: Option<String>,
+    pub version: Option<String>,
+    /// `failed`: the reason code.
+    pub reason: Option<String>,
 }
 
 #[cfg(test)]

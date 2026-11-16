@@ -62,3 +62,9 @@
 
 - （第六轮外壳）运行失败的文字对外部程序太笼统：`blockedByPolicy` 不说是哪个程序、哪一层、`notFound` 不说缺哪个程序、`undeclaredProgram` 不说名字。内核的 `params` 里有 `program`/`layer`，但 `RunError` 只带 `reason`。需要内核在 `RunError` 加可选 `params`（只增），外壳再把名字写进文字。
 - （第六轮外壳）`libc` 作为 `onedesk-host` 的新依赖，尚未记入 `docs/decisions.md`。
+
+## 第七轮内核会话留下的（2026-11-16）
+
+- 主进程 `app.removePlugin` 应在移除前转发 `plugin.checkRemove {plugin, version}`，出错原样返回（`conflict/dependents`）。内核已提供方法，host 未接（外壳的文件）。
+- 依赖方给被依赖类型加的动作目前只在页面操作区；树节点右键菜单里没有动作这一类，要加需先定怎么从菜单发起运行。
+- `plugin.undoUpgrade` 不检查依赖方（计划没列）；是否也应被 `conflict/dependents` 拒绝，待定。

@@ -39,7 +39,41 @@ pub struct Manifest {
     /// Versions whose data this one can take over (semver range, §7.6).
     #[serde(default)]
     pub upgrades_from: Option<String>,
+    /// Round 7 (D342): `[{ "id", "version" }]`, checked by hand (`badDepends`); see `deps`.
+    #[serde(default, rename = "depends")]
+    pub depends_raw: Option<serde_json::Value>,
+    /// Round 7 (D342): `{ "kinds": [{ "id", "actions", "read" }] }` (`badExports`); see `exported`.
+    #[serde(default, rename = "exports")]
+    pub exports_raw: Option<serde_json::Value>,
+    /// The validated `depends`.
+    #[serde(skip)]
+    pub deps: Vec<Depend>,
+    /// The validated `exports.kinds`.
+    #[serde(skip)]
+    pub exported: Vec<ExportKind>,
 }
+
+/// One dependency (round 7): another plugin's id and a semver range of its active version.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Depend {
+    pub id: String,
+    pub range: String,
+    pub req: semver::VersionReq,
+}
+
+/// One exported kind (round 7, D342): what plugins depending on this one may do with it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExportKind {
+    /// Short name of one of this plugin's kinds.
+    pub id: String,
+    /// Dependents may add actions to it.
+    pub actions: bool,
+    /// Dependents may read its resources.
+    pub read: bool,
+}
+
+/// Most dependencies one manifest may list.
+pub const MAX_DEPENDS: usize = 32;
 
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -57,8 +91,17 @@ pub struct Requires {
     pub programs: Vec<ProgramDecl>,
     #[serde(default)]
     pub resources: bool,
+    /// Round 7 (D342): `{ "install": true }` — may ask the user to install other plugins.
+    /// Checked by hand (`badPlugins`).
     #[serde(default)]
-    pub plugins: bool,
+    pub plugins: Option<serde_json::Value>,
+}
+
+impl Requires {
+    /// `requires.plugins.install: true`.
+    pub fn plugins_install(&self) -> bool {
+        self.plugins.as_ref().and_then(|v| v.get("install")).and_then(serde_json::Value::as_bool) == Some(true)
+    }
 }
 
 /// One declared external program (D331): `system` (found in the fixed system folders) or
@@ -403,10 +446,26 @@ pub fn permission_atoms(m: &Manifest) -> BTreeSet<String> {
     if r.resources {
         a.insert("resources".to_string());
     }
-    if r.plugins {
+    if r.plugins_install() {
         a.insert("plugins".to_string());
     }
+    // D347: kinds of other plugins it reads through their exports are a permission.
+    for k in foreign_kinds(m) {
+        a.insert(format!("resources:{k}"));
+    }
     a
+}
+
+/// Full names (`<plugin>:<kind>`) of other plugins' kinds this manifest's actions name (round 7):
+/// the kinds it may add actions to and read, when the other plugin exports them.
+pub fn foreign_kinds(m: &Manifest) -> BTreeSet<String> {
+    m.contributes
+        .actions
+        .iter()
+        .flat_map(|a| a.kinds.iter().flatten())
+        .filter(|k| k.contains(':') && Registry::split(k).is_some_and(|(pid, _)| pid != m.id))
+        .cloned()
+        .collect()
 }
 
 /// The permission id an atom belongs to (`network:x` → `network`).
@@ -705,8 +764,18 @@ pub fn load_package_opts(dir: &Path, check_folder: bool) -> Result<Plugin, Rejec
         }
     }
     let has_kind = |k: &str| c.kinds.iter().any(|y| y.id == k);
+    let deps = parse_depends(dir, &m)?;
+    let exported = parse_exports(dir, &m)?;
+    check_requires_plugins(dir, &m)?;
     for a in &c.actions {
         for k in a.kinds.iter().flatten() {
+            // Round 7: `<dependency>:<kind>` names a kind of a plugin this one depends on.
+            if let Some((pid, short)) = Registry::split(k) {
+                if pid == m.id || !deps.iter().any(|d| d.id == pid) || !valid_short(short) {
+                    return Err(reject(dir, "unknownKind", format!("action {} kind {k}", a.id)));
+                }
+                continue;
+            }
             if !has_kind(k) {
                 return Err(reject(dir, "unknownKind", format!("action {} kind {k}", a.id)));
             }
@@ -845,7 +914,87 @@ pub fn load_package_opts(dir: &Path, check_folder: bool) -> Result<Plugin, Rejec
         locales.insert(loc.clone(), table);
     }
 
+    let mut m = m;
+    m.deps = deps;
+    m.exported = exported;
     Ok(Plugin { id: m.id.clone(), version: m.version.clone(), dir: dir.to_path_buf(), manifest_hash, manifest: m, locales })
+}
+
+/// Round 7 (D342): `depends` is a list of `{ "id", "version" }`; not itself, no repeats, a valid range.
+fn parse_depends(dir: &Path, m: &Manifest) -> Result<Vec<Depend>, Rejection> {
+    let bad = |why: String| reject(dir, "badDepends", why);
+    let Some(raw) = &m.depends_raw else { return Ok(vec![]) };
+    let list = raw.as_array().ok_or_else(|| bad("not a list".into()))?;
+    if list.len() > MAX_DEPENDS {
+        return Err(bad("too many".into()));
+    }
+    let mut out: Vec<Depend> = Vec::new();
+    for e in list {
+        let o = e.as_object().ok_or_else(|| bad("entry is not an object".into()))?;
+        if let Some(k) = o.keys().find(|k| *k != "id" && *k != "version") {
+            return Err(bad(format!("unknown field {k}")));
+        }
+        let id = o.get("id").and_then(serde_json::Value::as_str).ok_or_else(|| bad("id missing".into()))?;
+        let range = o.get("version").and_then(serde_json::Value::as_str).ok_or_else(|| bad(format!("{id}: version missing")))?;
+        if !valid_id(id) {
+            return Err(bad(format!("bad id {id}")));
+        }
+        if id == m.id {
+            return Err(bad("depends on itself".into()));
+        }
+        if out.iter().any(|d| d.id == id) {
+            return Err(bad(format!("{id} twice")));
+        }
+        let req = semver::VersionReq::parse(range).map_err(|_| bad(format!("{id}: range {range}")))?;
+        out.push(Depend { id: id.into(), range: range.into(), req });
+    }
+    Ok(out)
+}
+
+/// Round 7 (D342): `exports.kinds[]` names this plugin's own kinds, each once, with `actions` / `read`.
+fn parse_exports(dir: &Path, m: &Manifest) -> Result<Vec<ExportKind>, Rejection> {
+    let bad = |why: String| reject(dir, "badExports", why);
+    let Some(raw) = &m.exports_raw else { return Ok(vec![]) };
+    let o = raw.as_object().ok_or_else(|| bad("not an object".into()))?;
+    if let Some(k) = o.keys().find(|k| *k != "kinds") {
+        return Err(bad(format!("unknown field {k}")));
+    }
+    let Some(kinds) = o.get("kinds") else { return Ok(vec![]) };
+    let kinds = kinds.as_array().ok_or_else(|| bad("kinds is not a list".into()))?;
+    let mut out: Vec<ExportKind> = Vec::new();
+    for e in kinds {
+        let o = e.as_object().ok_or_else(|| bad("entry is not an object".into()))?;
+        if let Some(k) = o.keys().find(|k| !matches!(k.as_str(), "id" | "actions" | "read")) {
+            return Err(bad(format!("unknown field {k}")));
+        }
+        let id = o.get("id").and_then(serde_json::Value::as_str).ok_or_else(|| bad("id missing".into()))?;
+        let flag = |name: &str| -> Result<bool, Rejection> {
+            match o.get(name) {
+                None => Ok(false),
+                Some(v) => v.as_bool().ok_or_else(|| bad(format!("{id}: {name} is not true/false"))),
+            }
+        };
+        let (actions, read) = (flag("actions")?, flag("read")?);
+        if !m.contributes.kinds.iter().any(|k| k.id == id) {
+            return Err(bad(format!("{id} is not its own kind")));
+        }
+        if out.iter().any(|x| x.id == id) {
+            return Err(bad(format!("{id} twice")));
+        }
+        out.push(ExportKind { id: id.into(), actions, read });
+    }
+    Ok(out)
+}
+
+/// Round 7 (D342): `requires.plugins` is `{ "install": true|false }`.
+fn check_requires_plugins(dir: &Path, m: &Manifest) -> Result<(), Rejection> {
+    let Some(raw) = &m.requires.plugins else { return Ok(()) };
+    let ok = raw.as_object().is_some_and(|o| o.keys().all(|k| k == "install") && o.get("install").is_none_or(serde_json::Value::is_boolean));
+    if ok {
+        Ok(())
+    } else {
+        Err(reject(dir, "badPlugins", raw.to_string()))
+    }
 }
 
 #[derive(Default)]
@@ -1120,6 +1269,68 @@ mod tests {
         let p = load_package(&dir).unwrap();
         assert_eq!(p.label("kind.item"), Label::Localized(BTreeMap::from([("en-US".into(), "Item".into())])));
         assert_eq!(p.label("missing.key"), Label::Text("missing.key".into()));
+    }
+
+    #[test]
+    fn round7_depends_exports_and_requires_plugins() {
+        let dep = |v: Value| with(good(), &["depends"], v);
+        let ok = dep(json!([{ "id": "test.beta", "version": ">=0.1.0, <0.3.0" }]));
+        assert_eq!(reason(ok.clone()), "ok");
+        for bad in [
+            json!({ "id": "test.beta" }),
+            json!(["test.beta"]),
+            json!([{ "id": "test.beta" }]),
+            json!([{ "version": "1" }]),
+            json!([{ "id": "test.beta", "version": "1", "optional": true }]),
+            json!([{ "id": "Bad Id", "version": "1" }]),
+            json!([{ "id": "test.alpha", "version": "1" }]),
+            json!([{ "id": "test.beta", "version": "1" }, { "id": "test.beta", "version": "2" }]),
+            json!([{ "id": "test.beta", "version": "not a range" }]),
+            json!([{ "id": "test.beta", "version": 1 }]),
+        ] {
+            assert_eq!(reason(dep(bad.clone())), "badDepends", "{bad}");
+        }
+        let exp = |v: Value| with(good(), &["exports"], v);
+        assert_eq!(reason(exp(json!({ "kinds": [{ "id": "item", "actions": true, "read": true }] }))), "ok");
+        assert_eq!(reason(exp(json!({ "kinds": [] }))), "ok");
+        for bad in [
+            json!([]),
+            json!({ "kinds": [], "trees": [] }),
+            json!({ "kinds": {} }),
+            json!({ "kinds": [{ "id": "item", "write": true }] }),
+            json!({ "kinds": [{ "id": "other", "read": true }] }),
+            json!({ "kinds": [{ "id": "test.beta:item", "read": true }] }),
+            json!({ "kinds": [{ "id": "item" }, { "id": "item" }] }),
+            json!({ "kinds": [{ "id": "item", "read": "yes" }] }),
+            json!({ "kinds": [{ "actions": true }] }),
+        ] {
+            assert_eq!(reason(exp(bad.clone())), "badExports", "{bad}");
+        }
+        let req = |v: Value| with(good(), &["requires", "plugins"], v);
+        assert_eq!(reason(req(json!({ "install": true }))), "ok");
+        assert_eq!(reason(req(json!({}))), "ok");
+        for bad in [json!(true), json!({ "install": "yes" }), json!({ "install": true, "remove": true }), json!([])] {
+            assert_eq!(reason(req(bad.clone())), "badPlugins", "{bad}");
+        }
+        // An action may name a kind of a plugin it depends on, by full name; nothing else.
+        let action = |kinds: Value| {
+            with(ok.clone(), &["contributes", "actions"], json!([{ "id": "count", "label": "a", "output": "text", "kinds": kinds }]))
+        };
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = write(tmp.path(), "test.alpha", "0.1.0", &action(json!(["test.beta:note", "item"])));
+        let p = load_package(&dir).unwrap();
+        assert_eq!(p.manifest.deps.len(), 1);
+        assert!(p.permissions().contains("resources:test.beta:note"), "{:?}", p.permissions());
+        assert_eq!(reason(action(json!(["test.gamma:note"]))), "unknownKind");
+        assert_eq!(reason(action(json!(["test.alpha:item"]))), "unknownKind");
+        // `read` enters the fingerprint; `depends` alone does not.
+        let plain = load_package(&write(tempfile::tempdir().unwrap().path(), "test.alpha", "0.1.0", &good())).unwrap();
+        let with_dep = load_package(&write(tempfile::tempdir().unwrap().path(), "test.alpha", "0.1.0", &ok)).unwrap();
+        assert_eq!(perm_fingerprint(&plain.permissions()), perm_fingerprint(&with_dep.permissions()));
+        assert_ne!(perm_fingerprint(&plain.permissions()), perm_fingerprint(&p.permissions()));
+        let inst = load_package(&write(tempfile::tempdir().unwrap().path(), "test.alpha", "0.1.0", &req(json!({ "install": true })))).unwrap();
+        assert!(inst.permissions().contains("plugins"));
+        assert!(inst.manifest.requires.plugins_install());
     }
 
     #[test]

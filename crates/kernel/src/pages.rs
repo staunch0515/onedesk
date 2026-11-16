@@ -373,6 +373,8 @@ impl Inner {
             }
         }
         page_frame(&mut d, plugin, &page);
+        // Round 7 (§7.3): actions plugins depending on this one add to its kind, after its own.
+        d.actions.extend(self.dependent_actions(&r.kind));
         d.view = out.view;
         Ok(d)
     }

@@ -79,6 +79,7 @@ impl Inner {
             "params" => self.host_params(info, op, &args),
             "storage" => self.host_storage(plugin, op, &args).await,
             "settings" => self.host_settings(plugin, op, &args),
+            "plugins" => self.host_plugins(plugin, info, op, &args).await,
             "util" if op == "sleep" => {
                 // D287: the engine has no timers. Cancellation ends the wait (host_call_inner).
                 let ms = args.get(0).and_then(Value::as_f64).unwrap_or(0.0).clamp(0.0, MAX_SLEEP_MS as f64) as u64;
@@ -106,7 +107,11 @@ impl Inner {
                     args.get(0).and_then(|o| o.get("url")).and_then(Value::as_str).and_then(crate::network::host_of).unwrap_or_default()
                 } else {
                     args.get(0)
-                        .and_then(|a| a.as_str().map(String::from).or_else(|| a.get("kind").and_then(Value::as_str).map(String::from)))
+                        .and_then(|a| {
+                            a.as_str()
+                                .map(String::from)
+                                .or_else(|| a.get("kind").or_else(|| a.get("folder")).and_then(Value::as_str).map(String::from))
+                        })
                         .unwrap_or_default()
                 };
                 let _ = self
@@ -143,21 +148,36 @@ impl Inner {
         match op {
             "get" => {
                 let id = arg_str(args, 0, "id")?;
-                match self.own_row(plugin, &id)? {
-                    Some(r) => serde_json::to_value(self.resource(&r)?).map_err(internal),
+                match self.read(|c| store::get(c, &id))? {
+                    Some(r) if self.own_kind(plugin, &r.kind).is_ok() => serde_json::to_value(self.resource(&r)?).map_err(internal),
+                    // Round 7 (§7.3): another plugin's kind it depends on and that is exported for reading.
+                    Some(r) if self.export_allows(plugin, &r.kind, true) => self.foreign_resource(&r),
+                    Some(_) => Err(denied("foreignKind")),
                     None => Ok(Value::Null),
                 }
             }
             "list" => {
                 let opts = arg(args, 0);
+                let mut foreign = false;
                 let kinds: Vec<String> = match opts.get("kind").and_then(Value::as_str) {
-                    Some(k) => vec![self.own_kind(plugin, k)?],
+                    Some(k) => match self.own_kind(plugin, k) {
+                        Ok(full) => vec![full],
+                        Err(_) if self.export_allows(plugin, k, true) => {
+                            foreign = true;
+                            vec![k.to_string()]
+                        }
+                        Err(e) => return Err(e),
+                    },
                     None => plugin.manifest.contributes.kinds.iter().map(|k| plugin.full(&k.id)).collect(),
                 };
                 let parent = opts.get("parent").map(|v| v.as_str().map(String::from));
                 let rows = self.read(|c| store::list(c, &kinds, parent.as_ref().map(|p| p.as_deref())))?;
-                let list = rows.iter().map(|r| self.resource(r)).collect::<KResult<Vec<_>>>()?;
-                serde_json::to_value(list).map_err(internal)
+                let list = if foreign {
+                    rows.iter().map(|r| self.foreign_resource(r)).collect::<KResult<Vec<_>>>()?
+                } else {
+                    rows.iter().map(|r| serde_json::to_value(self.resource(r)?).map_err(internal)).collect::<KResult<Vec<_>>>()?
+                };
+                Ok(Value::Array(list))
             }
             "create" => {
                 let spec = arg(args, 0);
@@ -226,6 +246,12 @@ impl Inner {
             }
             _ => Err(err_p(ErrorCode::UnknownMethod, &[("method", &format!("resources.{op}"))])),
         }
+    }
+
+    /// Another plugin's resource as a dependent reads it: without the kind's secret fields.
+    fn foreign_resource(&self, r: &store::Row) -> KResult<Value> {
+        let v = serde_json::to_value(self.resource(r)?).map_err(internal)?;
+        Ok(crate::deps::without_secrets(v, &self.secret_fields(&r.kind, r.plugin_version.as_deref())))
     }
 
     /* ---------------------------------------------------------------- files */
