@@ -1,0 +1,4 @@
+{
+  "plugin.name": "Bad programs",
+  "plugin.description": "Fixture: a system program that also names a path."
+}
