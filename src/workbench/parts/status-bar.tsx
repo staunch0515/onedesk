@@ -51,7 +51,7 @@ export function StatusBarPart({ settings, onSetting, resolvedTheme }: { settings
         r ? (
           r.status === "running" ? (
             <StatusItem icon="loader" busy tone="accent">
-              {`${r.title} — ${r.progress?.message ?? t("result.running")}${r.progress?.fraction !== undefined ? ` (${Math.round(r.progress.fraction * 100)}%)` : ""}`}
+              {`${r.title} — ${r.progress?.message ?? t("result.running")}${typeof r.progress?.fraction === "number" ? ` (${Math.round(r.progress.fraction * 100)}%)` : ""}`}
             </StatusItem>
           ) : r.status === "error" ? (
             <StatusItem icon="circle-alert" tone="danger" title={t("status.showResult")} onClick={() => store.set({ panelOpen: true })}>

@@ -77,7 +77,7 @@ function OutputTab({ tab, run, widthKey }: { tab: TabState; run: Run | null | un
   if (run.status === "running") {
     return (
       <Pane grow align="center" justify="center" gap="sm" pad="lg">
-        <Progress value={run.progress?.fraction !== undefined ? run.progress.fraction * 100 : undefined} label={t("result.running")} />
+        <Progress value={typeof run.progress?.fraction === "number" ? run.progress.fraction * 100 : undefined} label={t("result.running")} />
         {live.length > 1 ? (
           <Pane grow scroll width="form">
             <TextBlock variant="code" label={t("result.liveOutput")}>{liveText(live)}</TextBlock>

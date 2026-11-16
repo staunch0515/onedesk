@@ -67,18 +67,14 @@ export function PluginPage({ tab, descriptor }: { tab: TabState; descriptor: Pag
   const items: ActionBarItem[] = [
     { key: "toggle", label: p.enabled ? t("plugin.disable") : t("plugin.enable"), icon: p.enabled ? "circle-slash" : "circle-check", primary: !p.enabled && installed, disabled: !installed, onSelect: () => client.plugin.setEnabled(id, !p.enabled).catch(actions.fail) },
     { key: "reload", label: t("plugin.reload"), icon: "rotate-cw", disabled: !installed || !p.enabled, onSelect: () => client.plugin.reload(id).then(() => toast({ tone: "success", title: t("plugin.reloaded") }), actions.fail) },
-    ...(real ? [] : [{ key: "updates", label: t("plugin.checkUpdates"), icon: "cloud-download", onSelect: notYet }]),
     ...(real && p.permissions.some((x) => x.id === "secrets") ? [{ key: "secrets", label: t("secrets.title"), icon: "key-round", onSelect: () => actions.open(SECRETS_TARGET) }] : []),
     ...(real
       ? hasFiles
         ? [{ key: "grant", label: t("plugin.grantFolder"), icon: "folder-plus", disabled: !installed || !p.enabled, onSelect: () => void actions.command("plugin.grantFolder", { args: { plugin: id } }) }]
         : []
-      : [{ key: "folder", label: t("plugin.openFolder"), icon: "folder-open", disabled: !installed, onSelect: notYet }]),
-    ...(real
-      ? client.app
-        ? [{ key: "uninstall", label: t("plugin.uninstall"), icon: "trash-2", danger: true, disabled: !installed, onSelect: () => setAsk({ kind: "uninstall", resources: boundTotal }) }]
-        : []
-      : [{ key: "uninstall", label: t("plugin.uninstall"), icon: "trash-2", danger: true, disabled: !installed || p.builtin, onSelect: notYet }]),
+      : []),
+    // Buttons that do nothing yet (the demo's "check for updates", "open folder", "uninstall") are not shown.
+    ...(real && client.app ? [{ key: "uninstall", label: t("plugin.uninstall"), icon: "trash-2", danger: true, disabled: !installed, onSelect: () => setAsk({ kind: "uninstall", resources: boundTotal }) }] : []),
   ];
 
   const versionColumns: Array<DataGridColumn<PluginVersion>> = [
@@ -241,6 +237,7 @@ export function PluginPage({ tab, descriptor }: { tab: TabState; descriptor: Pag
               {t("plugin.loaded")}
             </Badge>
           )}
+          {p.load.state === "loaded" && p.runtime === "idle" && <Badge>{t("plugin.idleBadge")}</Badge>}
         </>
       }
     >
@@ -289,13 +286,18 @@ export function PluginPage({ tab, descriptor }: { tab: TabState; descriptor: Pag
                 </Pane>
               </Banner>
             )}
+            {p.load.state === "loaded" && p.runtime && (
+              <Text size="sm" tone="muted">
+                {p.runtime === "idle" ? t("plugin.runtimeIdle") : t("plugin.runtimeLive")}
+              </Text>
+            )}
             {p.load.state === "disabled" && !waiting && <Banner tone="info" title={t("plugin.loadDisabled")}>{t("plugin.loadDisabledHint", { count: p.resourceCount })}</Banner>}
             {p.load.state === "error" && (
               <Banner tone="danger" title={t("plugin.loadError")} actions={<Button size="sm" onClick={() => client.plugin.reload(id).catch(actions.fail)}>{t("plugin.retry")}</Button>}>
                 {p.load.message}
               </Banner>
             )}
-            {p.load.state === "not-installed" && <Banner tone="warning" title={t("plugin.notInstalled")} actions={<Button size="sm" variant="primary" onClick={notYet}>{t("plugin.install")}</Button>}>{t("plugin.notInstalledHint", { count: p.resourceCount })}</Banner>}
+            {p.load.state === "not-installed" && <Banner tone="warning" title={t("plugin.notInstalled")}>{t("plugin.notInstalledHint", { count: p.resourceCount })}</Banner>}
             <Switch label={t("plugin.enabledSwitch")} description={t("plugin.enabledHint")} checked={p.enabled} disabled={!installed} onCheckedChange={(on) => client.plugin.setEnabled(id, on).catch(actions.fail)} />
           </Pane>
         </Section>

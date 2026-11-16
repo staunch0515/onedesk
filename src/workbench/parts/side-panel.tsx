@@ -22,7 +22,7 @@ export function menuEntries(commands: MenuCommand[], tx: (l: MenuCommand["label"
 
 export function TreePanel({ tree }: { tree: TreeInfo }) {
   const { client, store, actions } = useWorkbench();
-  const { t, tx } = useI18n();
+  const { t, tx, locale } = useI18n();
   const expanded = useUi((s) => s.expanded[tree.id] ?? EMPTY);
   const selected = useUi((s) => s.selected[tree.id] ?? null);
   const renaming = useUi((s) => (s.renaming?.tree === tree.id ? s.renaming.key : null));
@@ -56,7 +56,7 @@ export function TreePanel({ tree }: { tree: TreeInfo }) {
       pending.current.add(parentKey);
       setLoading((s) => new Set(s).add(parentKey));
       try {
-        const children = await loadChildren(client, tree.id, parentKey === ROOT ? null : parentKey);
+        const children = await loadChildren(client, tree.id, parentKey === ROOT ? null : parentKey, locale);
         commit((map) => map.set(parentKey, children));
       } catch (error) {
         actions.fail(error);
@@ -69,7 +69,7 @@ export function TreePanel({ tree }: { tree: TreeInfo }) {
         });
       }
     },
-    [client, tree.id, commit, actions],
+    [client, tree.id, commit, actions, locale],
   );
 
   // Root and every expanded node that is on screen get their children.
@@ -83,7 +83,7 @@ export function TreePanel({ tree }: { tree: TreeInfo }) {
   useEffect(() => {
     const refresh = () => {
       const keys = [...nodesRef.current.keys()];
-      void Promise.all(keys.map((k) => loadChildren(client, tree.id, k === ROOT ? null : k).then((children) => [k, children] as const))).then((entries) => {
+      void Promise.all(keys.map((k) => loadChildren(client, tree.id, k === ROOT ? null : k, locale).then((children) => [k, children] as const))).then((entries) => {
         commit((map) => {
           map.clear();
           for (const [k, children] of entries) map.set(k, children);
@@ -94,7 +94,8 @@ export function TreePanel({ tree }: { tree: TreeInfo }) {
     if (nodesRef.current.size > 0) refresh();
     const offs = [client.events.subscribe(`tree:${tree.id}`, refresh), client.events.subscribe("connection", refresh)];
     return () => offs.forEach((off) => off());
-  }, [client, tree.id, commit, actions]);
+    // `locale` is a dependency on purpose: after a language switch the loaded levels are read again in the new language.
+  }, [client, tree.id, commit, actions, locale]);
 
   const index = useMemo(() => {
     const map = new Map<string, TreeNode>();
@@ -127,14 +128,14 @@ export function TreePanel({ tree }: { tree: TreeInfo }) {
       const key = queue.shift()!;
       let children = nodesRef.current.get(key);
       if (!children) {
-        children = await loadChildren(client, tree.id, key === ROOT ? null : key);
+        children = await loadChildren(client, tree.id, key === ROOT ? null : key, locale);
         const loaded = children;
         commit((map) => map.set(key, loaded));
       }
       count += children.length;
       for (const c of children) if (c.expandable) queue.push(c.key);
     }
-  }, [client, tree.id, commit]);
+  }, [client, tree.id, commit, locale]);
 
   const needle = filter.trim().toLowerCase();
   useEffect(() => {

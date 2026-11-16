@@ -167,7 +167,9 @@ export type PluginPermission = KernelPluginPermission & { label?: Label };
  * UI-side `PluginDetail`: the generated one with the permission superset above (the demo gives a label).
  * `depends` and `dependents` are round 7's additions to the kernel type; optional until the generated type has them.
  */
-export type PluginDetail = Omit<KernelPluginDetail, "permissions"> & { permissions: PluginPermission[]; depends?: PluginDependency[]; dependents?: string[] };
+export type PluginDetail = Omit<KernelPluginDetail, "permissions"> & { permissions: PluginPermission[]; depends?: PluginDependency[]; dependents?: string[]; runtime?: PluginRuntime };
+/** Round 9 (D365): whether the active version has a running environment; `idle` ones start again when used. Optional until the generated type has it. */
+export type PluginRuntime = "live" | "idle";
 
 /** What the shell tells the kernel when a request ends (`plugin.answerInstallRequest`). */
 export type InstallAnswer = InstallAnswerParams;

@@ -30,7 +30,7 @@ export function TaskPanel() {
           statusLabel={statusName[r.status]}
           title={`#${r.seq} ${r.title}`}
           subtitle={[tx(r.actionLabel), r.envName, time(r.startedAt)].filter(Boolean).join(" · ")}
-          progress={r.progress?.fraction !== undefined ? r.progress.fraction * 100 : undefined}
+          progress={typeof r.progress?.fraction === "number" ? r.progress.fraction * 100 : undefined}
           detail={
             r.status === "running"
               ? r.progress?.message

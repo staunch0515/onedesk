@@ -125,6 +125,11 @@ describe("every key the kernel emits has words", () => {
       expect(i18n.runError({ code: "denied", reason: "blockedByPolicy", message: "", params: { host: "example.test:8080" } }), l).toContain("example.test:8080");
       expect(i18n.runError({ code: "notFound", reason: "program", message: "", params: { program: "nope" } }), l).toContain("nope");
       expect(i18n.runError({ code: "denied", reason: "blockedByPolicy", message: "" }), l).toBe(KERNEL_ERRORS[l]["reason.blockedByPolicy"]);
+      // Round 9: the layer's name and the refused path are in the words.
+      expect(i18n.runError({ code: "denied", reason: "blockedByPolicy", message: "", params: { layerName: "Production" } }), l).toContain("Production");
+      expect(i18n.runError({ code: "denied", reason: "blockedByPolicy", message: "", params: { host: "a.test", layerName: "Production" } }), l).toContain("a.test");
+      expect(i18n.runError({ code: "denied", reason: "outsideGrant", message: "", params: { path: "/etc/hosts" } }), l).toContain("/etc/hosts");
+      expect(i18n.runError({ code: "denied", reason: "staleContext", message: "" }), l).toBe(KERNEL_ERRORS[l]["reason.staleContext"]);
     }
   });
 });

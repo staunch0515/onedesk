@@ -109,7 +109,7 @@ export interface ProtocolClient {
   tree: {
     list(): Promise<TreeInfo[]>;
     /** One batch of children (≤ 200); `parentKey` null = top level; `offset` from the previous `next` (§5). Use `loadChildren` to get them all. */
-    children(tree: string, parentKey: string | null, offset?: number): Promise<TreePage>;
+    children(tree: string, parentKey: string | null, offset?: number, locale?: string): Promise<TreePage>;
     /** Keys from the root down to the node (for "reveal in tree"). */
     path(tree: string, key: string): Promise<string[]>;
     move(tree: string, key: string, targetKey: string | null, position: DropPosition): Promise<void>;
