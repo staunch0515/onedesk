@@ -165,6 +165,12 @@ function ViewTab({ runId, tabId }: { runId: string | null; tabId: string }) {
   return <ViewNodes nodes={nodes.data} />;
 }
 
+/** Id of the shell's own output tab (D351): used when the page has no output tab, and always for another plugin's action. */
+export const DEFAULT_OUTPUT_TAB = "run-output";
+
+/** An action added by a dependent plugin carries its plugin id (`<plugin>:<action>`); a page's own actions never do. */
+export const isForeignAction = (action: string | undefined): boolean => (action ?? "").includes(":");
+
 /** Result area of a page (§9.5): the page chooses the sub-tabs, the frame owns the toolbar. */
 export function ResultArea({ tab, descriptor }: { tab: TabState; descriptor: PageDescriptor }) {
   const { client, store, actions } = useWorkbench();
@@ -173,10 +179,15 @@ export function ResultArea({ tab, descriptor }: { tab: TabState; descriptor: Pag
   const panelOpen = useUi((s) => s.panelOpen);
   const runId = descriptor.runId ?? tab.runId ?? null;
   const run = useQuery((c) => (runId ? c.run.get(runId) : Promise.resolve(null)), [runId], runId ? [`run:${runId}`] : []);
-  const tabs = descriptor.resultTabs;
+  const r = run.data;
+  // A dependent plugin's output is never drawn by the page owner's tabs (D351): the shell's own output tab shows it, named after the
+  // action. A page without an output tab gets the same tab, so a run always has somewhere to show.
+  const foreign = isForeignAction(r?.action);
+  const ownTabs = descriptor.resultTabs;
+  const defaultTab = r && (foreign || !ownTabs.some((x) => x.type === "output")) ? { id: DEFAULT_OUTPUT_TAB, label: r.actionLabel ?? t("result.result"), icon: "terminal", type: "output" as const } : null;
+  const tabs = defaultTab ? (foreign ? [defaultTab, ...ownTabs] : [...ownTabs, defaultTab]) : ownTabs;
   const active = tabs.find((x) => x.id === tab.resultTab) ?? tabs[0];
   if (!active) return null;
-  const r = run.data;
 
   const summary = r ? (
     <>

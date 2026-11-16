@@ -8,7 +8,7 @@ import { useQuery, useUi, useWorkbench } from "../state/context";
 import type { TabState } from "../state/store";
 import { AddParamDialog } from "./add-param-dialog";
 import { Frame } from "../parts/frame";
-import { ResultArea, STATUS_TONE } from "../parts/result-area";
+import { DEFAULT_OUTPUT_TAB, isForeignAction, ResultArea, STATUS_TONE } from "../parts/result-area";
 import { TOKENIZERS } from "../parts/sql-tokens";
 import { ViewNodes } from "../parts/view-nodes";
 import { Badge, FactRow } from "../../design";
@@ -219,7 +219,8 @@ export function ViewPage({ tab, descriptor: initial }: { tab: TabState; descript
           input: context.draft,
           params,
         });
-        actions.updateTab(tab.id, { runId, resultTab: now.descriptor.resultTabs.find((x) => x.type === "output")?.id });
+        const own = isForeignAction(action.action ?? action.id) ? undefined : now.descriptor.resultTabs.find((x) => x.type === "output")?.id;
+        actions.updateTab(tab.id, { runId, resultTab: own ?? DEFAULT_OUTPUT_TAB });
         store.set({ panelOpen: true });
       } else if (action.role === "event") {
         const result = await client.page.event(tab.target, action.id, context);
@@ -328,7 +329,7 @@ export function ViewPage({ tab, descriptor: initial }: { tab: TabState; descript
   const hasFill = descriptor.view.some((n) => (n.type === "form" && n.fields.some((f) => f.fill)) || (n.type === "text" && n.mono) || n.type === "table");
   return (
     <>
-    <Frame tab={tab} descriptor={descriptor} actions={items} panel={descriptor.resultTabs.length > 0 ? <ResultArea tab={tab} descriptor={descriptor} /> : undefined}>
+    <Frame tab={tab} descriptor={descriptor} actions={items} panel={descriptor.resultTabs.length > 0 || tab.runId ? <ResultArea tab={tab} descriptor={descriptor} /> : undefined}>
       {descriptor.runId && <RunHeader runId={descriptor.runId} />}
       <Pane grow scroll={!hasFill}>
         {descriptor.view.map((node) => (node.type === "form" ? renderForm(node) : <ViewNodes key={node.id} nodes={[node]} />))}
