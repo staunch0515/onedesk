@@ -154,3 +154,107 @@ fn worker_with_bad_arguments_exits_with_1() {
     assert_eq!(out.status.code(), Some(1));
     assert!(!out.stderr.is_empty());
 }
+
+/* ---------------------------------------------------------------- D340: no orphaned programs */
+
+/// A plugins folder with one package that runs `sh` in an action.
+fn program_plugins(root: &Path) -> PathBuf {
+    let dir = root.join("plugins/test.prog/0.1.0");
+    std::fs::create_dir_all(&dir).unwrap();
+    let m = json!({ "id": "test.prog", "version": "0.1.0", "apiVersion": "2", "name": "n", "icon": "box", "main": "main.js",
+                    "requires": { "programs": [{ "name": "sh", "source": "system" }] },
+                    "contributes": { "actions": [{ "id": "go", "label": "a", "output": "text" }] } });
+    std::fs::write(dir.join("manifest.json"), m.to_string()).unwrap();
+    std::fs::write(
+        dir.join("main.js"),
+        r#"export default { activate(host) { host.actions.handle("go", async (ctx, input) => {
+             await ctx.host.process.run({ program: "sh", args: ["-c", input.script], timeoutMs: 600000 });
+             return { output: { type: "text", text: "" } }; }); } };"#,
+    )
+    .unwrap();
+    root.join("plugins")
+}
+
+fn spawn_with(ws: &Path, plugins: &Path, sock: &Path) -> Child {
+    Command::new(env!("CARGO_BIN_EXE_onedesk-worker"))
+        .arg("--builtin")
+        .arg("test.prog@0.1.0")
+        .arg("--workspace")
+        .arg(ws)
+        .arg("--plugins")
+        .arg(plugins)
+        .arg("--socket")
+        .arg(sock)
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .env("ONEDESK_SECRET_STORE", "memory")
+        .spawn()
+        .unwrap()
+}
+
+fn alive(pid: i32) -> bool {
+    let out = Command::new("/bin/ps").args(["-o", "stat=", "-p", &pid.to_string()]).output().unwrap();
+    let stat = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    !stat.is_empty() && !stat.starts_with('Z')
+}
+
+fn eventually_dead(pid: i32) -> bool {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while Instant::now() < deadline {
+        if !alive(pid) {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    }
+    false
+}
+
+/// Starts a run whose program leaves `sleep 100` (pid written to `pidfile`); returns its pid.
+fn start_sleeper(c: &mut Conn, pidfile: &Path) -> i32 {
+    let script = format!("sleep 100 & echo $! > {}; wait", pidfile.display());
+    c.call("run.start", json!({ "action": "test.prog:go", "target": "core:none", "tabId": "t", "input": { "script": script } })).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        if let Ok(p) = std::fs::read_to_string(pidfile).unwrap_or_default().trim().parse::<i32>() {
+            return p;
+        }
+        assert!(Instant::now() < deadline, "program did not start");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+#[test]
+fn sigterm_ends_the_programs_and_a_killed_workers_programs_end_at_the_next_start() {
+    let tmp = tempfile::tempdir().unwrap();
+    let plugins = program_plugins(tmp.path());
+    let ws = tmp.path().join("ws");
+    let sock = tmp.path().join("w.sock");
+    let groups = ws.join(onedesk_kernel::process::PROCESS_GROUPS_FILE);
+
+    // SIGTERM: the worker ends its programs and exits.
+    let mut w = spawn_with(&ws, &plugins, &sock);
+    let mut c = Conn::open(&sock, &mut w);
+    let pid = start_sleeper(&mut c, &tmp.path().join("p1"));
+    let text = std::fs::read_to_string(&groups).unwrap();
+    let line: Vec<i64> = text.lines().next().unwrap().split(' ').map(|x| x.parse().unwrap()).collect();
+    assert_eq!(line.len(), 3, "<pgid> <start_sec> <start_usec>: {text:?}");
+    assert_eq!(Some((line[1], line[2])), onedesk_kernel::process::start_time(line[0] as i32));
+    Command::new("/bin/kill").args(["-TERM", &w.id().to_string()]).status().unwrap();
+    assert_eq!(wait_exit(&mut w, Duration::from_secs(10)).code(), Some(0));
+    assert!(eventually_dead(pid), "the program ended with the worker");
+    assert!(std::fs::read_to_string(&groups).unwrap_or_default().trim().is_empty());
+
+    // SIGKILL: nothing can clean up at once; the next worker on this workspace does.
+    let mut w = spawn_with(&ws, &plugins, &sock);
+    let mut c = Conn::open(&sock, &mut w);
+    let pid = start_sleeper(&mut c, &tmp.path().join("p2"));
+    w.kill().unwrap();
+    w.wait().unwrap();
+    std::thread::sleep(Duration::from_millis(200));
+    assert!(alive(pid), "an orphan until someone cleans up");
+    let mut w2 = spawn_with(&ws, &plugins, &sock);
+    let _c2 = Conn::open(&sock, &mut w2);
+    assert!(eventually_dead(pid), "the next worker ended it");
+    w2.kill().unwrap();
+    w2.wait().unwrap();
+}

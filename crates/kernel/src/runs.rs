@@ -445,7 +445,7 @@ impl Inner {
         if let Err(e) = self.pipeline.execute(actor, cmd).await {
             eprintln!("onedesk: could not record the end of run {id}: {e:?}");
         }
-        self.procs.forget_run(id);
+        self.procs.end_run(id);
         self.run_events(id);
         // Round 6 (D335): the plugin whose action it was hears that it ended.
         if let Ok(Some(r)) = self.read(|c| store::run_get(c, id)) {

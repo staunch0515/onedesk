@@ -340,7 +340,9 @@ async fn search_matches_all_words_short_words_and_ranks() {
     // Deleted ones are not found; neither is the hidden plugin-state tree.
     c.ok("resource.delete", json!({ "id": b })).await;
     assert_eq!(titles(&c.ok("search.query", json!({ "text": "alpha" })).await), vec!["Alpha report"]);
-    let dir = std::fs::canonicalize(_env.tmp.path()).unwrap();
+    // A subfolder: the temporary root contains the workspace (round 6 review #5).
+    let dir = std::fs::canonicalize(_env.tmp.path()).unwrap().join("granted");
+    std::fs::create_dir_all(&dir).unwrap();
     c.ok("plugin.grantFolder", json!({ "plugin": "test.alpha", "path": dir.display().to_string() })).await;
     assert_eq!(c.ok("search.query", json!({ "text": "test.alpha" })).await, json!([]));
     // Kind filter.

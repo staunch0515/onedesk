@@ -11,6 +11,7 @@ use std::time::Duration;
 use common::*;
 use onedesk_kernel::secrets::{MemoryStore, SecretStoreHandle};
 use rusqlite::Connection;
+use onedesk_protocol::ErrorCode;
 use serde_json::{json, Value};
 
 const PROBE: &str = r#"
@@ -29,7 +30,7 @@ async function probe(ctx, context) {
 const CMD_MAIN: &str = r#"
 const show = (r) => {
   const o = Object.assign({}, r);
-  for (const k of ["stdout", "stderr"]) if (typeof o[k] === "string") { o[k + "Len"] = o[k].length; o[k] = o[k].slice(0, 4000); }
+  for (const k of ["stdout", "stderr"]) if (typeof o[k] === "string") { o[k + "Len"] = o[k].length; o[k + "Tail"] = o[k].slice(-40); o[k] = o[k].slice(0, 4000); }
   return o;
 };
 const fail = (e) => ({ error: e.code || String(e), params: e.params || {} });
@@ -54,6 +55,22 @@ export default { activate(host) {
     for (let i = 0; i < 3; i++) await ctx.host.process.run({ program: "echo", args: ["x"] });
     return { output: { type: "text", text: "done" } };
   });
+  host.actions.handle("detach", async (ctx, input) => {
+    ctx.host.process.run({ program: "sh", args: ["-c", input.script] }).catch(() => {});
+    await ctx.host.util.sleep(300);
+    return { output: { type: "text", text: "left" } };
+  });
+  host.actions.handle("seq", async (ctx, input) => {
+    const out = [];
+    for (const o of input.list) {
+      try { out.push({ ok: show(await ctx.host.process.run(o)) }); } catch (e) { out.push(fail(e)); }
+    }
+    return { output: { type: "text", text: JSON.stringify(out) } };
+  });
+  host.actions.handle("bulk", async (ctx, input) => {
+    for (let i = 0; i < input.n; i++) await ctx.host.resources.create({ kind: "cmd", name: "b" + i, parent: input.parent });
+    return { output: { type: "text", text: "made" } };
+  });
   host.actions.handle("many", async (ctx) => {
     const rs = await Promise.allSettled([1, 2, 3, 4, 5].map(() => ctx.host.process.run({ program: "sleep", args: ["1"] })));
     return { output: { type: "text", text: JSON.stringify(rs.map((r) => r.status === "fulfilled" ? "ok" : (r.reason.params || {}).reason)) } };
@@ -67,6 +84,15 @@ export default { activate(host) {
     }
     if (mode === "hang") { await ctx.host.util.sleep(8000); return; }
     if (mode === "throw") throw new Error("boom");
+    if (mode === "tally") {
+      const t = (await ctx.host.storage.get("tally")) || {};
+      // The first deletion takes its time: the rest of the burst piles up behind it.
+      if (e.change === "deleted" && !t.slept) { t.slept = true; await ctx.host.storage.set("tally", t); await ctx.host.util.sleep(1500); }
+      t[e.change] = (t[e.change] || 0) + 1;
+      t.dropped = (t.dropped || 0) + (e.dropped || 0);
+      await ctx.host.storage.set("tally", t);
+      return;
+    }
     await log(ctx, { event: ctx.event, e, count: (await ctx.host.resources.list({ kind: "cmd" })).length });
     if (mode === "write" && e.change === "created") await ctx.host.resources.create({ kind: "cmd", name: "fromHandler" });
     if (mode === "proc") {
@@ -104,7 +130,10 @@ fn cmd_manifest() -> Value {
             "pages": [{ "id": "p" }],
             "actions": [{ "id": "run", "label": "a", "output": "text" },
                         { "id": "repeat", "label": "a", "output": "text" },
-                        { "id": "many", "label": "a", "output": "text" }],
+                        { "id": "many", "label": "a", "output": "text" },
+                        { "id": "detach", "label": "a", "output": "text" },
+                        { "id": "seq", "label": "a", "output": "text" },
+                        { "id": "bulk", "label": "a", "output": "text" }],
             "commands": [{ "id": "probe", "label": "c" }],
             "events": ["resource.changed", "run.ended"],
             "locales": { "en-US": "locales/en-US.json" }
@@ -861,4 +890,253 @@ async fn shutting_down_ends_running_programs() {
     }
     assert!(!pid_alive(pid), "the worker leaves no program behind");
     assert_eq!(w.env.kernel.live_programs(), 0);
+}
+
+/* ------------------------------------------------------------------ review (round6-review.md) */
+
+async fn seq(c: &Client, list: Value) -> Vec<Value> {
+    let id = start(c, "seq", json!({ "list": list }), None).await;
+    let r = wait_run(c, &id).await;
+    assert_eq!(r["status"], "success", "{r}");
+    serde_json::from_str(r["output"]["text"].as_str().unwrap()).unwrap()
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn review1_recorded_groups_end_only_when_they_are_still_ours() {
+    use std::os::unix::process::CommandExt;
+    let w = world().await;
+    let c = &w.c;
+    // While a program runs its group is listed; afterwards the list is empty.
+    let pids = w.env.path().join("pids");
+    let id = start(c, "run", json!({ "opts": { "program": "sh", "args": ["-c", format!("echo $$ > {}; sleep 100", pids.display())] } }), None).await;
+    let pg: i32 = loop {
+        if let Ok(p) = std::fs::read_to_string(&pids).unwrap_or_default().trim().parse() {
+            break p;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    };
+    let file = w.ws().join(onedesk_kernel::process::PROCESS_GROUPS_FILE);
+    let (s0, u0) = onedesk_kernel::process::start_time(pg).unwrap();
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), format!("{pg} {s0} {u0}\n"));
+    c.ok("run.cancel", json!({ "id": id })).await;
+    wait_run(c, &id).await;
+    w.no_programs_left().await;
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), "");
+
+    // A recorded number now used by someone else (other start time) is left alone; ours ends.
+    let ws = tempfile::tempdir().unwrap();
+    let mut other = std::process::Command::new("/bin/sleep").arg("30").process_group(0).spawn().unwrap();
+    let pid = other.id() as i32;
+    let (sec, usec) = onedesk_kernel::process::start_time(pid).unwrap();
+    std::fs::write(ws.path().join("process-groups"), format!("{pid} {} {usec}\n", sec - 5)).unwrap();
+    assert_eq!(onedesk_kernel::process::cleanup_recorded(ws.path()), 0);
+    assert!(pid_alive(pid));
+    assert!(!ws.path().join("process-groups").exists(), "the list is consumed");
+    std::fs::write(ws.path().join("process-groups"), format!("{pid} {sec} {usec}\n")).unwrap();
+    assert_eq!(onedesk_kernel::process::cleanup_recorded(ws.path()), 1);
+    other.wait().unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn review2_a_program_not_waited_for_ends_with_its_run() {
+    let w = world().await;
+    let c = &w.c;
+    let pids = w.env.path().join("pids");
+    let id = start(c, "detach", json!({ "script": format!("echo $$ > {}; sleep 100", pids.display()) }), None).await;
+    assert_eq!(wait_run(c, &id).await["status"], "success");
+    let pid: i32 = std::fs::read_to_string(&pids).unwrap().trim().parse().unwrap();
+    for _ in 0..200 {
+        if !pid_alive(pid) {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    assert!(!pid_alive(pid));
+    w.no_programs_left().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn review3_10_secrets_are_scrubbed_across_chunks_cuts_and_calls() {
+    let w = world().await;
+    let c = &w.c;
+    c.ok("secrets.set", json!({ "name": "tok", "value": "TopSecret-123" })).await;
+    let env = json!({ "T": "{{secret:tok}}" });
+    // The value written in two halves, a tick apart.
+    let id = start(c, "run", json!({ "opts": { "program": "sh", "args": ["-c", "printf '%.6s' \"$T\"; sleep 0.3; printf '%s\\n' \"${T#??????}\""], "env": env },
+                                    "stream": true }), None).await;
+    let run = wait_run(c, &id).await;
+    let r: Value = serde_json::from_str(run["output"]["text"].as_str().unwrap()).unwrap();
+    let chunks: Vec<String> = r["chunks"].as_array().unwrap().iter().map(|c| c["text"].as_str().unwrap().to_string()).collect();
+    assert_eq!(chunks.concat(), "***\n", "{chunks:?}");
+    assert!(chunks.iter().all(|c| !c.contains("TopSe") && !c.contains("cret-123")), "{chunks:?}");
+    // The value right at the 8 MB cut.
+    let r = proc(c, json!({ "program": "sh", "args": ["-c", "head -c 8388603 /dev/zero | tr '\\0' a; printf %s \"$T\""], "env": env })).await;
+    assert_eq!(r["ok"]["truncated"], true);
+    let tail = r["ok"]["stdoutTail"].as_str().unwrap();
+    assert!(!tail.contains("TopS") && tail.ends_with('a'), "{tail}");
+    // A later call of the same run is scrubbed with what an earlier call substituted.
+    let out = seq(c, json!([
+        { "program": "sh", "args": ["-c", "printf %s \"$T\" > leak"], "env": env },
+        { "program": "cat", "args": ["leak"] }
+    ]))
+    .await;
+    assert_eq!(out[1]["ok"]["stdout"], "***");
+    w.no_programs_left().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn review4_queues_are_bounded_and_failures_merge() {
+    let w = world().await;
+    let c = &w.c;
+    let tally = || async { storage(c, "test.cmd", "tally").await };
+    c.probe("test.cmd", "storage.set", json!(["mode", "tally"])).await;
+    let eff = c.ok("command.execute", json!({ "id": "node.newGroup", "context": { "tree": "resources", "args": { "name": "G" } } })).await;
+    let g = eff.as_array().unwrap().iter().find_map(|e| e["key"].as_str()).unwrap().to_string();
+    let id = start(c, "bulk", json!({ "n": 1100, "parent": g }), None).await;
+    assert_eq!(wait_run(c, &id).await["status"], "success");
+    let settled = |t: &Value, change: &str, n: u64| t[change].as_u64().unwrap_or(0) + t["dropped"].as_u64().unwrap_or(0) >= n;
+    for _ in 0..1500 {
+        if settled(&tally().await, "created", 1100) {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    let before = tally().await;
+    assert!(settled(&before, "created", 1100), "{before}");
+    // One deletion: 1100 events at once; the queue keeps 1000, the next event says how many went.
+    c.ok("resource.delete", json!({ "id": g })).await;
+    let base = before["dropped"].as_u64().unwrap_or(0);
+    let mut t = Value::Null;
+    for _ in 0..1500 {
+        t = tally().await;
+        if t["deleted"].as_u64().unwrap_or(0) + t["dropped"].as_u64().unwrap_or(0) - base >= 1100 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    let dropped = t["dropped"].as_u64().unwrap_or(0) - base;
+    assert!(dropped >= 1 && t["deleted"].as_u64().unwrap() <= 1000 + 1, "{t}");
+    assert_eq!(t["deleted"].as_u64().unwrap() + dropped, 1100, "{t}");
+
+    // Failures of one burst: one audit row, counted.
+    c.probe("test.cmd", "storage.set", json!(["mode", "log"])).await;
+    let eff = c.ok("command.execute", json!({ "id": "node.newGroup", "context": { "tree": "resources", "args": { "name": "H" } } })).await;
+    let h = eff.as_array().unwrap().iter().find_map(|e| e["key"].as_str()).unwrap().to_string();
+    let id = start(c, "bulk", json!({ "n": 5, "parent": h }), None).await;
+    wait_run(c, &id).await;
+    log_len(c, "test.cmd", 6).await; // 5 created + run.ended
+    c.probe("test.cmd", "storage.set", json!(["mode", "throw"])).await;
+    c.ok("resource.delete", json!({ "id": h })).await;
+    let counted = || -> Option<(i64, i64)> {
+        db(&w.env)
+            .query_row(
+                "SELECT (SELECT count(*) FROM audit WHERE op = 'events.failed'), (SELECT max(count) FROM audit_counts WHERE op = 'events.failed')",
+                [],
+                |r| Ok((r.get(0)?, r.get::<_, Option<i64>>(1)?.unwrap_or(0))),
+            )
+            .ok()
+    };
+    for _ in 0..300 {
+        if counted().is_some_and(|(_, n)| n >= 5) {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert_eq!(counted(), Some((1, 5)));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn review5_the_data_folder_is_never_granted_nor_reachable() {
+    let w = world().await;
+    let c = &w.c;
+    for path in [w.ws(), w.ws().join("plugin-data"), w.env.path()] {
+        std::fs::create_dir_all(&path).unwrap();
+        let e = c.call("plugin.grantFolder", json!({ "plugin": "test.cmd", "path": path.display().to_string() })).await.unwrap_err();
+        assert_eq!((e.code, e.params.get("reason").map(String::as_str)), (ErrorCode::Invalid, Some("insideDataDir")), "{path:?}");
+    }
+    // A folder granted earlier that contains it: files inside the data folder stay out of reach.
+    let ok = w.env.path().join("granted");
+    std::fs::create_dir_all(&ok).unwrap();
+    c.ok("plugin.grantFolder", json!({ "plugin": "test.cmd", "path": ok.display().to_string() })).await;
+    db(&w.env)
+        .execute(
+            "UPDATE resources SET body = json_set(body, '$.\"files.folders\"', json_array(?1)) WHERE kind = 'core:plugin-state' AND name = 'test.cmd'",
+            [w.env.path().display().to_string()],
+        )
+        .unwrap();
+    let target = w.ws().join("plugin-data/test.cmd/bin/mine");
+    std::fs::create_dir_all(target.parent().unwrap()).unwrap();
+    let r = c.probe("test.cmd", "files.writeText", json!([target.display().to_string(), "#!/bin/sh\necho evil\n"])).await;
+    assert_eq!((r["error"].as_str(), r["params"]["reason"].as_str()), (Some("denied"), Some("insideDataDir")), "{r}");
+    let r = c.probe("test.cmd", "files.list", json!([w.ws().display().to_string()])).await;
+    assert_eq!(r["params"]["reason"], "insideDataDir");
+    assert!(c.probe("test.cmd", "files.list", json!([ok.display().to_string()])).await.get("ok").is_some());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn review6_8_loader_variables_are_refused_and_bad_names_are_not_recorded() {
+    let w = world().await;
+    let c = &w.c;
+    for k in ["DYLD_INSERT_LIBRARIES", "DYLD_LIBRARY_PATH", "LD_PRELOAD", "ld_preload"] {
+        assert_eq!(reason(&proc(c, json!({ "program": "echo", "env": { k: "/tmp/x.dylib" } })).await), ("invalid", "badEnv"), "{k}");
+    }
+    let long = "x".repeat(300);
+    for bad in ["../../bin/sh", "a b", long.as_str()] {
+        assert_eq!(reason(&proc(c, json!({ "program": bad })).await), ("denied", "undeclaredProgram"));
+    }
+    let objects: Vec<String> = db(&w.env)
+        .prepare("SELECT object FROM audit WHERE op = 'process.run' ORDER BY seq")
+        .unwrap()
+        .query_map([], |r| r.get(0))
+        .unwrap()
+        .map(|r| r.unwrap())
+        .collect();
+    assert_eq!(objects, vec!["echo", "echo", "echo", "echo", "", "", ""]);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn review7_migrate_gets_not_in_run_and_it_is_audited() {
+    let w = world().await;
+    let c = &w.c;
+    let a = new_cmd(c, "A", "").await;
+    let mut m = cmd_manifest();
+    m["upgradesFrom"] = json!(">=0.1.0");
+    let dir = cmd_package(&w.plugins, "0.2.0", m);
+    let main = CMD_MAIN.replace(
+        "host.actions.handle(\"run\"",
+        "host.kinds.handle(\"cmd\", { async migrate(body, from, ctx) { let err = 'ran'; try { await ctx.host.process.run({ program: 'echo' }); } catch (e) { err = e.code + '/' + e.params.reason; } return Object.assign({}, body, { err }); } });\n  host.actions.handle(\"run\"",
+    );
+    std::fs::write(dir.join("main.js"), format!("{PROBE}{main}")).unwrap();
+    c.ok("plugin.rescan", Value::Null).await;
+    let r = c.ok("resource.get", json!({ "id": a })).await;
+    assert_eq!(r["body"]["err"], "denied/notInRun", "{r}");
+    let result: String = db(&w.env).query_row("SELECT result FROM audit WHERE op = 'process.run'", [], |r| r.get(0)).unwrap();
+    assert_eq!(result, "failed:denied");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn review9_11_merged_rows_keep_the_last_exit_and_escaped_holders_do_not_hang() {
+    let w = world().await;
+    let c = &w.c;
+    let sh = |code: i32| json!({ "program": "sh", "args": ["-c", format!("exit {code}")] });
+    seq(c, json!([sh(0), sh(3), sh(0), sh(4)])).await;
+    let (count, failures, last): (i64, i64, String) = db(&w.env)
+        .query_row("SELECT count, failures, last_summary FROM audit_counts WHERE op = 'process.run' AND object = 'sh'", [], |r| {
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+        })
+        .unwrap();
+    assert_eq!((count, failures), (4, 2));
+    assert_eq!(serde_json::from_str::<Value>(&last).unwrap()["code"], 4);
+    let rows = c.ok("audit.list", json!({ "operation": "process.run" })).await;
+    let row = rows.as_array().or_else(|| rows["rows"].as_array()).unwrap().iter().find(|r| r["operation"] == "process.run").unwrap().clone();
+    let detail: Value = serde_json::from_str(row["detail"].as_str().unwrap()).unwrap();
+    assert_eq!((detail["code"].clone(), detail["last"]["code"].clone(), detail["failures"].clone()), (json!(0), json!(4), json!(2)), "{row}");
+
+    // A grandchild that left the group (job control) keeps the pipes open: the call still ends.
+    let t = std::time::Instant::now();
+    let r = proc(c, json!({ "program": "sh", "args": ["-c", "set -m; sleep 30 & echo $!"] })).await;
+    assert!(t.elapsed() < Duration::from_secs(5));
+    let escaped: i32 = r["ok"]["stdout"].as_str().unwrap().trim().parse().unwrap();
+    w.no_programs_left().await;
+    std::process::Command::new("/bin/kill").arg(escaped.to_string()).status().unwrap();
 }
