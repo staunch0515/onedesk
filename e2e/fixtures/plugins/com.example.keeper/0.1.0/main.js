@@ -45,7 +45,8 @@ export default {
             await stashed.network.request({ method: "GET", url: "https://example.com/" });
             return { message: "request went through" };
           } catch (err) {
-            return { message: String(err && err.message) };
+            // the host error as it arrives: its text, code and params (the real kernel puts the reason into params)
+            return { message: JSON.stringify({ message: String(err && err.message), code: err && err.code, params: err && err.params }) };
           }
         }
         throw new Error(`unknown event ${event}`);
