@@ -261,6 +261,7 @@ export function PluginPage({ tab, descriptor }: { tab: TabState; descriptor: Pag
             {p.load.state === "loaded" && (
               <Banner tone="success" title={p.load.ms === undefined ? t("plugin.loadOkPlain") : t("plugin.loadOk", { ms: p.load.ms })}>
                 {missingGrant ? t("plugin.missingGrant") : undefined}
+                {p.load.message === "notExported" ? t("plugin.notExported") : undefined}
               </Banner>
             )}
             {waiting && (

@@ -86,7 +86,7 @@ async fn main() {
                     };
                     ok(preview);
                 }
-                "plugin.rescan" | "plugin.confirmPermissions" => {
+                "plugin.rescan" | "plugin.confirmPermissions" | "plugin.checkRemove" => {
                     // One ordered log of what the main process asked, and what was on disk at that moment.
                     let listing = std::fs::read_dir(std::path::Path::new(&plugins)).map(|rd| rd.filter_map(|e| e.ok()).map(|e| e.file_name().to_string_lossy().into_owned()).collect::<Vec<_>>().join(",")).unwrap_or_default();
                     let method = req["method"].as_str().unwrap_or("");
@@ -96,6 +96,10 @@ async fn main() {
                     let _ = std::fs::write(&note, text);
                     if method == "plugin.rescan" && std::path::Path::new(&workspace).join("rescan-fails").exists() {
                         tx.send(json!({ "id": id, "error": { "code": "pluginError", "params": { "reason": "migrateFailed" } } }).to_string()).ok();
+                        return;
+                    }
+                    if method == "plugin.checkRemove" && std::path::Path::new(&workspace).join("remove-refused").exists() {
+                        tx.send(json!({ "id": id, "error": { "code": "conflict", "params": { "reason": "dependents", "plugins": "org.test.beta" } } }).to_string()).ok();
                         return;
                     }
                     ok(Value::Null);

@@ -57,6 +57,7 @@ export const KERNEL_LABELS: Record<Locale, Table> = {
     "badEvents": "The list of subscribed events is not valid",
     "switchFailed": "The automatic switch to a new version failed",
     "badDepends": "The list of plugins it depends on is not valid",
+    "badPlugins": "The request to install other plugins must be written as { \"install\": true }",
     "badExports": "The list of what it offers to dependent plugins is not valid",
     "dependsUnmet": "A plugin it depends on is missing, disabled or at a version outside the range",
     "noManifest": "No manifest.json",
@@ -131,6 +132,7 @@ export const KERNEL_LABELS: Record<Locale, Table> = {
     "badEvents": "订阅的事件清单不合法",
     "switchFailed": "自动切换到新版本失败了",
     "badDepends": "依赖的插件清单不合法",
+    "badPlugins": "请求安装其他插件要写成 { \"install\": true }",
     "badExports": "对依赖方开放的内容清单不合法",
     "dependsUnmet": "它依赖的插件没装、已停用或版本不在范围内",
     "noManifest": "没有 manifest.json",
@@ -273,6 +275,9 @@ export const KERNEL_ERRORS: Record<Locale, Table> = {
     "conflict.dependents": "Other enabled plugins depend on this one: {plugins}. Disable them first, then try again.",
     "reason.dependsUnmet": "A plugin this one depends on is missing, disabled or at a version outside the range.",
     "reason.pendingRequest": "This plugin already has an install request waiting for an answer.",
+    "reason.notInteractive": "A plugin can only ask to install a plugin while it handles a page event or runs an action.",
+    "reason.requesterDisabled": "The plugin that asked was disabled meanwhile.",
+    "notFound.installRequest": "That install request no longer exists.",
     "reason.badDepends": "The list of plugins it depends on is not valid.",
     "reason.badExports": "The list of what it offers to dependent plugins is not valid.",
     "invalid.tooLarge": "That is too large.",
@@ -394,6 +399,9 @@ export const KERNEL_ERRORS: Record<Locale, Table> = {
     "conflict.dependents": "还有启用着的插件依赖它：{plugins}。请先停用它们，再重试。",
     "reason.dependsUnmet": "它依赖的插件没装、已停用或版本不在范围内。",
     "reason.pendingRequest": "这个插件已经有一个安装请求在等待答复。",
+    "reason.notInteractive": "插件只能在处理页面事件或运行动作时请求安装插件。",
+    "reason.requesterDisabled": "发出请求的插件在等待期间被停用了。",
+    "notFound.installRequest": "这个安装请求已经不存在了。",
     "reason.badDepends": "依赖的插件清单不合法。",
     "reason.badExports": "对依赖方开放的内容清单不合法。",
     "invalid.tooLarge": "内容太大。",
@@ -555,8 +563,8 @@ export const KERNEL_CONFIRMS: Record<Locale, Record<string, { title: string; ok:
 
 /** Plugin permission ids as words. */
 export const PERMISSIONS: Record<Locale, Table> = {
-  "en-US": { files: "Files in granted folders", storage: "Plugin storage", params: "Read parameters", settings: "Read settings", resources: "Own resources", network: "Network access", secrets: "Use secrets", "secrets.plaintext": "Read secret values in plain text", programs: "Run programs", plugins: "Request other plugins" },
-  "zh-CN": { files: "已授权文件夹里的文件", storage: "插件存储", params: "读取参数", settings: "读取设置", resources: "自己的资源", network: "访问网络", secrets: "使用密钥", "secrets.plaintext": "以明文读取密钥的值", programs: "运行程序", plugins: "请求安装其他插件" },
+  "en-US": { files: "Files in granted folders", storage: "Plugin storage", params: "Read parameters", settings: "Read settings", resources: "Resources", network: "Network access", secrets: "Use secrets", "secrets.plaintext": "Read secret values in plain text", programs: "Run programs", plugins: "Request other plugins" },
+  "zh-CN": { files: "已授权文件夹里的文件", storage: "插件存储", params: "读取参数", settings: "读取设置", resources: "资源", network: "访问网络", secrets: "使用密钥", "secrets.plaintext": "以明文读取密钥的值", programs: "运行程序", plugins: "请求安装其他插件" },
 };
 
 /** Run failure codes the kernel reports (`Run.error.code`) as words; other codes keep the message they came with. */

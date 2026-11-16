@@ -375,6 +375,7 @@ export const zhCN: Partial<Record<MessageKey, string>> = {
   "plugin.dependents": "被这些插件依赖",
   "plugin.dependentsHint": "需要它的、已启用的插件。要停用、移除它或把它切到它们不接受的版本，请先停用这些插件。",
   "plugin.dependsUnmetTitle": "在等它依赖的插件",
+  "plugin.notExported": "它的某个动作写了依赖的插件没有开放的类型，这个动作不会出现。",
   "plugin.dependsUnmetHint": "它先保持关闭，等依赖的插件装好、启用且版本在范围内后会自动恢复。它的 {count} 条资源仍可见，显示为灰色。",
   "plugin.dependsNeeds": "需要 {plugin} {range}",
   "plugin.dependsNeedsActive": "需要 {plugin} {range}（正在用：{version}）",
