@@ -308,6 +308,9 @@ impl Host {
             "app.inspectPlugin" => return self.inspect_plugin(client, params).await,
             "app.installPlugin" => return self.install_plugin(client, params).await,
             "app.removePlugin" => return self.remove_plugin(client, params).await,
+            // A client's rescan (a package copied in by hand) takes the same road as ours: refresh the index, add the
+            // built-in list. Its own parameters are ignored; only the main process knows what is built in.
+            "plugin.rescan" => return self.rescan(client).await,
             _ => {}
         }
         self.forward(client, method, params).await
