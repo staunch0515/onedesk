@@ -28,3 +28,34 @@
 ## 没验证
 - 夹具没被真内核加载过；`transfer.*` 的真实行为、进度回调节奏、取消后的临时文件全没验。
 - 假数据模式/截图没看（市场插件不在假数据原型里，但没确认）。
+
+
+---
+
+# 第二阶段（`e2e/round8.spec.ts` 连真内核）
+
+分支已合并协调分支 `c037b00`。devhost 用 `cargo build -p onedesk-worker -p onedesk-host` 在本工作树里编的；运行：`E2E_PORT=1435 pnpm exec playwright test e2e/round8.spec.ts`（devhost 内存钥匙串、临时数据目录；传输服务在进程内起、只听 127.0.0.1）。
+
+## 结果（实际跑过）
+- `round8.spec.ts`：19 个，**18 过、0 失败、1 `test.fixme`**（下面的内核缺陷）。
+- 回归：`round5.spec.ts` + `round7.spec.ts` 共 35 个全过（round7 里市场的 `page.event` 上下文改成 `params: { pick }`，因为市场不再读草稿里的 pick）。`round5` 里已没有 `test.fixme`（外壳会话早已去掉，“永久删除确认框的被引用数”那条是正常通过的测试）。
+- `pnpm test`（40 文件/337 条）、`pnpm lint`、`pnpm typecheck` 通过。`workbench.spec.ts`、round2/3/4/6、cargo、clippy 这次没跑。
+- 新截图 `docs/screenshots/round8-*.png`（5 张）保留；已 `git checkout -- docs/screenshots` 还原基准。
+
+## 覆盖（对应 round8-plan §1）
+transfer：小文件、40 MB（沙箱内存上限以上）和 5 MB 分块（无 Content-Length）下载逐字节相同（sha256）；非 2xx 不写文件；上传 3 MB+17 服务端收到的字节数；capture 的 `.copy` 逐字节相同；审计三种操作名、不含地址路径、不重复记 `network.request`/`process.run`；慢速下载在界面里发起，状态栏/结果区/任务面板有 “N bytes” 进度，取消后目录里没有目标文件也没有 `.part-`（期间确实存在 `.part-`）；拒绝：地址不在授权（`hostNotAllowed`）、路径在授权外（`outsideGrant`）、目标已存在（`conflict/exists`，文件不变）、程序被 `process.allow` 挡（`blockedByPolicy`，`params.program = cat`，界面文字里有“cat”）。
+导出点：安装 board、board-extra，确认框权限 `pages`（detail 含 `com.example.board:card`），board 本身没有；board 树的 menu 有 `new:…:memo`、没有 stray；`stray` 新建 → `denied/notExported`，`export = com.example.board:hidden`，`unmetExports` 正是它；memo 建在 board 树里（不在 resources 树）；页面是 board 的（字段 `body.text`、`save`/`upper`、操作区有 shout、没有 `view` 页签）；`upper` 经 `changes` 返回，保存后重开仍在；`shout` 运行结果 `MAKE THIS LOUD!`；界面里编辑、转大写、Cmd+S、重开仍在；插件页写明没导出的类型；停用 board 被拒（dependents），board-extra 先停再停 board 再启 board-extra → `dependsUnmet`，board 回来恢复、memo 内容仍在。
+市场：选包后没有“Unsaved”，装完下拉清空。
+
+## 缺陷（`test.fixme`）
+- **内核：被拒的网络地址的 `RunError.params` 里没有 `host`。** 复现：transfer 的 job 资源保存的地址是 `http://127.0.0.1:<端口>/…`，运行时把 `body.url` 换成 `http://localhost:<端口>/bytes/10` 跑 `download` → `error = { code: "denied", reason: "hostNotAllowed" }`，没有 `params`。外壳有 `reason.hostNotAllowed|host`、`blockedByPolicy|host` 的文字，但内核只给程序一端带 `program`/`layer`（`crates/kernel/src/process.rs:555`），`network.rs` 的 `denied("hostNotAllowed")`/`denied("blockedByPolicy")` 不带 `host`。所以“网络被拒的运行错误里写明是哪个主机”目前做不到。用例 `refused: the error of a refused address names the host`，修了去掉 `.fixme`。
+
+## 观察到、没追的
+- 一次早先的运行里 vite 日志出现 `Maximum update depth exceeded`（慢速下载正在高频进度、界面刚打开时；之后的运行没再出现），之后状态栏的按钮一度找不到。没有稳定复现，也没确认根因；怀疑外壳在运行进度更新上有 setState 循环，供外壳会话留意。
+- 市场页在选包/装完时 Radix 的 `Select is changing from uncontrolled to controlled`（和反向）警告各出现一次——选包参数在值为空时变成 undefined，建议外壳传 `""`。
+- 状态栏在有运行时显示 “N running” 而不是 “Tasks: N”（测试里按两者之一找按钮）。
+- 任务面板只列本窗口发起的运行：用协议客户端（另一个连接）发起的运行不在面板里，所以进度那条用例是在界面里点 “Download” 发起的。
+
+## 我做的假设（已对真内核验证的）
+- 回环地址要在工作区配置 `network.allow` 里写成 `127.0.0.1:<端口>`（不写端口只允许 80/443）；资源保存的地址授权主机，运行输入里的 `body.url` 不授权。
+- 夹具 `transfer.job` 的 `path` 不需要 `grants: files`，授权文件夹用 `plugin.grantFolder` 即可。

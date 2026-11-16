@@ -86,7 +86,7 @@ async function untilRequest(page: Page): Promise<InstallRequest> {
 }
 /** Starts the market's install event; resolves when the request has been answered. */
 const marketInstall = (page: Page, folder: string) =>
-  call<{ message?: unknown; changes?: Record<string, unknown> }>(page, "page.event", { target: MARKET_TARGET, event: "install", context: { draft: { pick: folder }, locale: "en-US" } });
+  call<{ message?: unknown; changes?: Record<string, unknown> }>(page, "page.event", { target: MARKET_TARGET, event: "install", context: { params: { pick: folder }, locale: "en-US" } });
 
 const setEnabled = (page: Page, plugin: string, enabled: boolean) => call(page, "plugin.setEnabled", { plugin, enabled });
 type Node = { key: string; label: string };
@@ -146,7 +146,7 @@ test("a folder outside what the market can read is refused (outsideGrant) and no
   await bare(page);
   const outside = path.join(base, "elsewhere");
   mkdirSync(outside, { recursive: true });
-  const err = await refused(page, "page.event", { target: MARKET_TARGET, event: "install", context: { draft: { pick: outside } } });
+  const err = await refused(page, "page.event", { target: MARKET_TARGET, event: "install", context: { params: { pick: outside } } });
   expect(err).toMatchObject({ code: "denied" });
   expect(JSON.stringify(err)).toContain("outsideGrant");
   expect(await requests(page)).toEqual([]);
