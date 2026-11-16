@@ -68,6 +68,26 @@ fn run_error_reason(code: &str, params: &BTreeMap<String, String>, detail: Optio
     v
 }
 
+/// Review #5: most page parameters a page event may answer, and the longest value.
+pub const MAX_EVENT_PARAMS: usize = 64;
+pub const MAX_EVENT_PARAM_BYTES: usize = 4 * 1024;
+
+/// `PageEventResult.params` as a plugin answered them: text values only, at most 64 keys of at
+/// most 4 KB each; else `invalid/badParams` (with `detail`).
+fn check_event_params(m: serde_json::Map<String, Value>) -> KResult<BTreeMap<String, String>> {
+    let bad = |why: String| err_p_detail(ErrorCode::Invalid, "badParams", why);
+    if m.len() > MAX_EVENT_PARAMS {
+        return Err(bad(format!("{} keys", m.len())));
+    }
+    m.into_iter()
+        .map(|(k, v)| match v {
+            Value::String(s) if s.len() <= MAX_EVENT_PARAM_BYTES => Ok((k, s)),
+            Value::String(_) => Err(bad(format!("{k}: longer than 4 KB"))),
+            _ => Err(bad(format!("{k}: not text"))),
+        })
+        .collect()
+}
+
 /// What an action handler returns (D285).
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -618,7 +638,7 @@ impl Inner {
             #[serde(default)]
             message: Option<Label>,
             #[serde(default)]
-            params: Option<BTreeMap<String, String>>,
+            params: Option<serde_json::Map<String, Value>>,
         }
         let cx = p.context.unwrap_or_default();
         if json_size(&cx.draft) + json_size(&cx.params) > MAX_INPUT_BYTES {
@@ -647,6 +667,7 @@ impl Inner {
             .map_err(|e| e.to_protocol())?;
         let out = if out.is_null() { json!({}) } else { out };
         let e: EventOut = serde_json::from_value(out).map_err(|e| err_p_detail(ErrorCode::PluginError, "badOutput", e.to_string()))?;
+        let params = e.params.map(check_event_params).transpose()?;
         // D294: only fields the page shows (bind paths of this render) may change.
         let changes = match e.changes {
             Some(ch) if !ch.is_empty() => {
@@ -658,7 +679,7 @@ impl Inner {
             }
             other => other,
         };
-        Ok(PageEventResult { changes, message: e.message, params: e.params })
+        Ok(PageEventResult { changes, message: e.message, params })
     }
 
     /// `body.<key>` paths of the target's kind that only a user may change (D311).

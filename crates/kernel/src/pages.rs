@@ -449,16 +449,19 @@ impl Inner {
             values: values.clone(),
             ..blank(target)
         };
-        let Some((plugin, page)) = run
+        let Some((kind_plugin, plugin, page)) = run
             .resource_kind
             .as_deref()
             .and_then(|k| self.registry.kind(k))
-            .and_then(|(p, k)| self.page_plugin(p, k.page.as_deref()?))
+            .and_then(|(p, k)| self.page_plugin(p, k.page.as_deref()?).map(|(o, pg)| (p, o, pg)))
         else {
             return Ok(d);
         };
         d.kind_label = run.resource_kind.as_deref().map(|k| self.kind_meta(k).label);
-        if !self.plugin_enabled(&plugin.id) {
+        let borrowed = plugin.id != kind_plugin.id;
+        // Review #1: a borrowed page is drawn only while the kind may use it (D356).
+        let usable = !borrowed || run.resource_kind.as_deref().is_some_and(|k| self.kind_usable(k).is_ok());
+        if !self.plugin_enabled(&plugin.id) || !self.plugin_enabled(&kind_plugin.id) || !usable {
             d.state = NodeState::Disabled;
             return Ok(d);
         }
@@ -466,7 +469,7 @@ impl Inner {
         let mut row = live.clone().unwrap_or_else(|| Row {
             id: run.resource_id.clone().unwrap_or_default(),
             kind: run.resource_kind.clone().unwrap_or_default(),
-            plugin_version: Some(plugin.version.clone()),
+            plugin_version: Some(kind_plugin.version.clone()),
             tree: None,
             parent_id: None,
             pos: 0,
@@ -493,14 +496,35 @@ impl Inner {
                 }
             }
         }
-        let protocol_run = self.run_to_protocol(run.clone(), false);
-        let ctx = json!({ "target": target, "resource": self.resource(&row)?, "draft": values, "run": protocol_run,
+        let mut protocol_run = serde_json::to_value(self.run_to_protocol(run.clone(), false)).map_err(internal)?;
+        // D351 / review #1: another plugin's run is never handed to the page's code — no input,
+        // summary, error or output.
+        if run.plugin != plugin.id {
+            if let Some(o) = protocol_run.as_object_mut() {
+                for k in ["input", "summary", "error", "output"] {
+                    o.remove(k);
+                }
+            }
+        }
+        let mut resource = serde_json::to_value(self.resource(&row)?).map_err(internal)?;
+        let mut draft = values;
+        if borrowed {
+            // Like `resolve_resource`: read only, never the kind's secret fields.
+            let secret_fields = self.secret_fields(&row.kind, row.plugin_version.as_deref());
+            resource = crate::deps::without_secrets(resource, &secret_fields);
+            resource["readOnly"] = json!(true);
+            draft = strip(Some(draft), &secret_fields).unwrap_or_default();
+        }
+        let ctx = json!({ "target": target, "resource": resource, "draft": draft, "run": protocol_run,
                           "locale": cx.locale, "envId": run.env_id, "params": ctx_params(cx) });
         let out = self.render(plugin, &page, ctx, client).await?;
         page_frame(&mut d, plugin, &page);
         // D351: a dependent's run shows only the kernel's own result tabs (output, history).
         if run.plugin != plugin.id {
             d.result_tabs.retain(|t| t.tab_type != ResultTabType::View);
+        }
+        if borrowed {
+            borrowed_frame(&mut d);
         }
         d.view = out.view;
         Ok(d)

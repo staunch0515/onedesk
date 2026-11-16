@@ -119,6 +119,10 @@ export default { activate(host) {
     async render(ctx) { return { view: [{ type: "text", id: "t", text: JSON.stringify(ctx.params) }] }; },
     async onEvent(ctx, e) {
       if (e === "clear") return { params: { pick: "" }, message: JSON.stringify(ctx.params) };
+      if (e === "many") { const p = {}; for (let i = 0; i < 65; i++) p["k" + i] = "v"; return { params: p }; }
+      if (e === "long") return { params: { pick: "x".repeat(4097) } };
+      if (e === "edge") { const p = {}; for (let i = 0; i < 64; i++) p["k" + i] = "x".repeat(4096); return { params: p }; }
+      if (e === "num") return { params: { pick: 1 } };
       return { message: JSON.stringify(ctx.params) };
     },
   });
@@ -163,6 +167,17 @@ async fn page_context_params_reach_render_and_events() {
     assert!(e.get("params").is_none(), "{e}");
     let e = c.ok("page.event", json!({ "target": target, "event": "clear", "context": { "params": { "pick": "a" } } })).await;
     assert_eq!(e["params"], json!({ "pick": "" }), "{e}");
+    // Page parameters are not content: nothing goes to the draft, nothing is saved.
+    assert!(e.get("changes").is_none(), "{e}");
+    let r = c.ok("resource.get", json!({ "id": id })).await;
+    assert!(r["body"].get("pick").is_none() && r["rev"] == 1, "{r}");
+    // Review #5: text values only, at most 64 keys of at most 4 KB.
+    let e = c.ok("page.event", json!({ "target": target, "event": "edge" })).await;
+    assert_eq!(e["params"].as_object().unwrap().len(), 64);
+    for bad in ["many", "long", "num"] {
+        let e = c.call("page.event", json!({ "target": target, "event": bad })).await.unwrap_err();
+        assert_eq!(reason(&e), (ErrorCode::Invalid, Some("badParams")), "{bad}: {e:?}");
+    }
 }
 
 /* ------------------------------------------------------------------ §5 RunError.params (D360) */
@@ -352,6 +367,10 @@ export default { activate(host) {
       const r = await tryIt(() => ctx.host.transfer.download({ url: "http://127.0.0.1:9/", to: "/x" }));
       return { view: [{ type: "text", id: "t", text: JSON.stringify(r) }] };
     },
+    async onEvent(ctx) {
+      const r = await tryIt(() => ctx.host.transfer.capture({ program: "cat", to: "/x" }));
+      return { message: JSON.stringify(r) };
+    },
   });
   host.actions.handle("go", async (ctx, input) => {
     const opts = Object.assign({}, input.opts);
@@ -366,6 +385,19 @@ export default { activate(host) {
     r.seen = seen.length;
     r.last = seen.length ? seen[seen.length - 1] : null;
     return text(r);
+  });
+  host.actions.handle("chain", async (ctx, input) => {
+    const ps = [];
+    for (let i = 0; i < input.n; i++) {
+      ps.push(ctx.host.process.run({ program: "sleep", args: ["1.5"], timeoutMs: 10000 }));
+      await ctx.host.util.sleep(1000);
+    }
+    await Promise.all(ps);
+    return text("ok");
+  });
+  host.events.on("resource.changed", async (ctx) => {
+    const r = await tryIt(() => ctx.host.transfer.download({ url: "http://127.0.0.1:9/", to: "/x" }));
+    await ctx.host.storage.set("ev", r);
   });
   host.actions.handle("budget", async (ctx, input) => {
     await ctx.host.util.sleep(input.before);
@@ -383,8 +415,10 @@ fn move_manifest(port: u16, requires: Value) -> Value {
         "contributes": {
             "kinds": [{ "id": "k", "label": "K", "icon": "box", "tree": "resources", "page": "p", "newName": "k" }],
             "pages": [{ "id": "p" }],
-            "actions": [{ "id": "go", "label": "Go", "output": "text" }, { "id": "budget", "label": "B", "output": "text" }],
-            "commands": [{ "id": "probe", "label": "probe" }]
+            "actions": [{ "id": "go", "label": "Go", "output": "text" }, { "id": "budget", "label": "B", "output": "text" },
+                        { "id": "chain", "label": "C", "output": "text" }],
+            "commands": [{ "id": "probe", "label": "probe" }],
+            "events": ["resource.changed"]
         }
     })
 }
@@ -392,7 +426,7 @@ fn move_manifest(port: u16, requires: Value) -> Value {
 fn full_requires(port: u16) -> Value {
     json!({
         "files": true,
-        "network": { "hosts": [format!("127.0.0.1:{port}")] },
+        "network": { "hosts": [format!("127.0.0.1:{port}"), format!("*.localhost:{port}")] },
         "secrets": { "names": ["tok"] },
         "programs": [{ "name": "cat", "source": "system" }, { "name": "sh", "source": "system" }, { "name": "sleep", "source": "system" }]
     })
@@ -549,6 +583,9 @@ async fn each_end_refuses_by_its_own_rules() {
     assert_eq!(why(&r), pair("denied", "hostNotAllowed"));
     let r = t.go("t.move", "download", json!({ "url": format!("{}/redirect?to=http://localhost:{}/big", t.base(), t.port), "to": t.at("a") })).await;
     assert_eq!(why(&r), pair("denied", "hostNotAllowed"));
+    // A wildcard host that resolves to a loopback address: refused unless written out (D308).
+    let r = t.go("t.move", "download", json!({ "url": format!("http://a.localhost:{}/big", t.port), "to": t.at("a") })).await;
+    assert_eq!(why(&r), pair("denied", "localAddress"));
     let ws_cfg = c.ok("tree.children", json!({ "tree": "config" })).await["nodes"][0]["key"].as_str().unwrap().to_string();
     c.ok("params.set", json!({ "node": ws_cfg, "name": "network.allow", "value": "api.example.com", "type": "list" })).await;
     let r = t.go("t.move", "download", json!({ "url": format!("{}/big", t.base()), "to": t.at("a") })).await;
@@ -580,6 +617,11 @@ async fn each_end_refuses_by_its_own_rules() {
     c.ok("params.set", json!({ "node": ws_cfg, "name": "process.allow", "value": "cat", "type": "list" })).await;
     let r = t.go("t.move", "capture", json!({ "program": "sh", "args": ["-c", "echo"], "to": t.at("c") })).await;
     assert_eq!((why(&r), r["params"]["program"].as_str()), (pair("denied", "blockedByPolicy"), Some("sh")));
+    // The program end's environment rules: no dynamic-loader variables.
+    for var in ["DYLD_INSERT_LIBRARIES", "LD_PRELOAD"] {
+        let r = t.go("t.move", "capture", json!({ "program": "cat", "env": { var: "/tmp/x.dylib" }, "to": t.at("c") })).await;
+        assert_eq!(why(&r), pair("invalid", "badEnv"), "{var}");
+    }
     // The manifest does not ask for the capability.
     let r = t.go("t.nofiles", "download", json!({ "url": format!("{}/big", t.base()), "to": t.at("a") })).await;
     assert_eq!(why(&r), pair("denied", "notRequested"));
@@ -600,6 +642,19 @@ async fn each_end_refuses_by_its_own_rules() {
     let p = c.ok("page.resolve", json!({ "target": format!("resource:{id}") })).await;
     let v: Value = serde_json::from_str(p["view"][0]["text"].as_str().unwrap()).unwrap();
     assert_eq!((v["error"].as_str(), v["params"]["reason"].as_str()), (Some("denied"), Some("notInRun")));
+    // A page event, an event subscription.
+    let e = c.ok("page.event", json!({ "target": format!("resource:{id}"), "event": "x" })).await;
+    let v: Value = serde_json::from_str(e["message"].as_str().unwrap()).unwrap();
+    assert_eq!((v["error"].as_str(), v["params"]["reason"].as_str()), (Some("denied"), Some("notInRun")));
+    let mut ev = Value::Null;
+    for _ in 0..200 {
+        ev = c.probe("t.move", "storage.get", json!(["ev"])).await["ok"].clone();
+        if !ev.is_null() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    assert_eq!((ev["error"].as_str(), ev["params"]["reason"].as_str()), (Some("denied"), Some("notInRun")), "{ev}");
     // Nothing was written anywhere; every refusal is audited under its host or program.
     assert_eq!(t.listing(), ["link.txt", "linkdir", "src.txt"]);
     let refused: Vec<(String, String)> = audit(&t.w.env, "transfer.download").into_iter().filter(|a| a.3 != "ok").map(|a| (a.1, a.3)).collect();
@@ -641,8 +696,12 @@ async fn non_2xx_existing_targets_and_overwrite() {
     let r = t.go("t.move", "capture", json!({ "program": "sh", "args": ["-c", "echo new"], "to": t.at("have.txt") })).await;
     assert_eq!(r["params"]["reason"], "exists", "{r}");
     assert_eq!(std::fs::read_to_string(t.grant.join("have.txt")).unwrap(), "old");
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(t.grant.join("have.txt"), std::fs::Permissions::from_mode(0o600)).unwrap();
     let r = t.go("t.move", "download", json!({ "url": format!("{}/echo", t.base()), "to": t.at("have.txt"), "overwrite": true })).await;
     assert_eq!(r["ok"]["bytes"].as_u64(), Some(5), "{r}");
+    // Review #6: overwriting keeps the file's permissions.
+    assert_eq!(std::fs::metadata(t.grant.join("have.txt")).unwrap().permissions().mode() & 0o7777, 0o600);
     assert_eq!(std::fs::read_to_string(t.grant.join("have.txt")).unwrap(), "auth=");
     let r = t.go("t.move", "capture", json!({ "program": "sh", "args": ["-c", "echo new"], "to": t.at("have.txt"), "overwrite": true })).await;
     assert_eq!(r["ok"]["code"].as_i64(), Some(0), "{r}");
@@ -738,7 +797,9 @@ export default { activate(host) {
       }
       return { view: [
         { type: "form", id: "f", layout: "stack", fields: [{ name: "text", label: "Text", kind: "text", bind: "body.text" }] },
-        { type: "text", id: "info", text: JSON.stringify({ kind: r.kind, readOnly: r.readOnly || false, keys: Object.keys(r.body || {}).sort(), get, upd }) },
+        { type: "text", id: "info", text: JSON.stringify({ kind: r.kind, readOnly: r.readOnly || false, keys: Object.keys(r.body || {}).sort(), get, upd,
+            draft: Object.keys(ctx.draft || {}).sort(),
+            run: ctx.run ? Object.keys(ctx.run).filter((k) => ["input", "summary", "error", "output"].includes(k)).sort() : null }) },
       ] };
     },
     async onEvent(ctx, e) {
@@ -846,8 +907,15 @@ async fn a_dependents_kind_lives_in_the_owners_tree_and_uses_its_page() {
     assert_eq!(c.ok("resource.get", json!({ "id": in_group })).await["parentId"], card);
     let e = c.call("tree.move", json!({ "tree": "t.board:board", "key": card, "target": memo, "position": "inside" })).await.unwrap_err();
     assert_eq!(reason(&e), (ErrorCode::Invalid, Some("notAccepted")));
+    // Between trees: never (a memo's tree is the board; a group of another tree is no parent).
     let e = c.call("tree.move", json!({ "tree": "resources", "key": memo, "position": "inside" })).await.unwrap_err();
-    assert_ne!(e.code, ErrorCode::Internal, "{e:?}");
+    assert_eq!((e.code, e.params.get("what").map(String::as_str)), (ErrorCode::NotFound, Some("node")), "{e:?}");
+    let rg = c.ok("tree.createGroup", json!({ "tree": "resources", "name": "R" })).await["key"].as_str().unwrap().to_string();
+    let e = c.call("tree.move", json!({ "tree": "t.board:board", "key": memo, "target": rg, "position": "inside" })).await.unwrap_err();
+    assert_eq!(reason(&e), (ErrorCode::Invalid, Some("otherTree")), "{e:?}");
+    let e = c.call("tree.move", json!({ "tree": "t.board:board", "key": rg, "target": g, "position": "inside" })).await.unwrap_err();
+    assert_eq!((e.code, e.params.get("what").map(String::as_str)), (ErrorCode::NotFound, Some("node")), "{e:?}");
+    assert_eq!(c.ok("resource.get", json!({ "id": memo })).await["tree"], "t.board:board");
 
     // The owner's page draws it: read only, no secret fields; the owner may get it, not write it.
     let p = c.ok("page.resolve", json!({ "target": format!("resource:{memo}") })).await;
@@ -900,7 +968,14 @@ async fn a_dependents_kind_lives_in_the_owners_tree_and_uses_its_page() {
     let p = c.ok("page.resolve", json!({ "target": format!("run:{}", id.as_str().unwrap()) })).await;
     let tabs: Vec<&str> = p["resultTabs"].as_array().unwrap().iter().map(|t| t["id"].as_str().unwrap()).collect();
     assert_eq!(tabs, ["out"], "{p}");
-    assert_eq!(info(&p)["kind"], "t.extra:memo");
+    // Review #1: the history page is drawn like the live one — read only, no secret fields
+    // (resource or snapshot), and nothing of the memo plugin's run (input, summary, error, output).
+    let i = info(&p);
+    assert_eq!((i["kind"].as_str(), i["readOnly"].as_bool(), i["keys"].clone()), (Some("t.extra:memo"), Some(true), json!(["text"])), "{i}");
+    assert!(!i["draft"].as_array().unwrap().iter().any(|k| k == "body.token"), "{i}");
+    assert_eq!(i["run"], json!([]), "{i}");
+    let ids: Vec<&str> = p["actions"].as_array().unwrap().iter().map(|a| a["id"].as_str().unwrap()).collect();
+    assert!(!ids.contains(&"go"), "{ids:?}");
     let e = c.call("run.render", json!({ "id": id, "tabId": "v" })).await.unwrap_err();
     assert_eq!(e.code, ErrorCode::NotFound);
 }
@@ -936,6 +1011,10 @@ async fn an_unexported_tree_or_page_makes_the_kind_unusable_until_it_is_exported
     assert_eq!(detail(c, "t.extra").await["unmetExports"], json!([]));
     assert!(board_menu(c).await.contains(&"new:t.extra:memo".to_string()));
     let memo = save_new(c, "new:t.extra:memo", json!({ "body.text": "kept" })).await.unwrap();
+    let run_id = c
+        .ok("run.start", json!({ "action": "t.extra:tidy", "resourceId": memo, "target": format!("resource:{memo}"), "tabId": "t", "input": {} }))
+        .await;
+    wait_run(c, &run_id).await;
     // And back: the existing memo is shown like a disabled plugin's resource, its data kept.
     c.ok("plugin.activateVersion", json!({ "plugin": "t.board", "version": "0.2.0" })).await;
     let p = c.ok("page.resolve", json!({ "target": format!("resource:{memo}") })).await;
@@ -948,6 +1027,9 @@ async fn an_unexported_tree_or_page_makes_the_kind_unusable_until_it_is_exported
     let e = c.call("page.event", json!({ "target": format!("resource:{memo}"), "event": "ev" })).await.unwrap_err();
     assert_eq!(reason(&e), (ErrorCode::Denied, Some("notExported")), "{e:?}");
     assert_eq!(c.ok("resource.get", json!({ "id": memo })).await["body"]["text"], "kept");
+    // Review #1: its history page is not drawn by the owner either.
+    let p = c.ok("page.resolve", json!({ "target": format!("run:{}", run_id.as_str().unwrap()) })).await;
+    assert_eq!((p["state"].as_str(), p["view"].as_array().map(Vec::len)), (Some("disabled"), Some(0)), "{p}");
     c.ok("plugin.activateVersion", json!({ "plugin": "t.board", "version": "0.1.0" })).await;
     let p = c.ok("page.resolve", json!({ "target": format!("resource:{memo}") })).await;
     assert_eq!(p["state"], "ok", "{p}");
@@ -964,4 +1046,42 @@ async fn a_full_name_without_depends_does_not_load() {
     .await;
     let d = detail(&w.c, "t.extra").await;
     assert_eq!((d["load"]["state"].as_str(), d["load"]["message"].as_str()), (Some("error"), Some("undeclaredDepend")), "{d}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn overlapping_waits_pause_the_budget_at_most_the_cap() {
+    // D361 / review #2: a chain of overlapping `process.run` calls (each 1.5 s, one started every
+    // second, five in all: about 5.5 s of waiting) with a 2 s budget.
+    let capped = transfer_world_cfg(|c| {
+        c.action_timeout = Duration::from_secs(2);
+        c.sandbox.max_wait_pause = Duration::from_secs(1);
+    })
+    .await;
+    let r = run(&capped.w.c, "t.move:chain", json!({ "n": 5 })).await;
+    assert_eq!((r["status"].as_str(), r["error"]["code"].as_str()), (Some("error"), Some("timeout")), "{r}");
+    capped.no_programs_left().await;
+    // Under the cap (default: 1 hour) the same chain finishes.
+    let free = transfer_world_cfg(|c| c.action_timeout = Duration::from_secs(2)).await;
+    let r = run(&free.w.c, "t.move:chain", json!({ "n": 5 })).await;
+    assert_eq!((r["status"].as_str(), out(&r)), (Some("success"), json!("ok")), "{r}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn transfer_in_migrate_is_not_in_a_run() {
+    let t = transfer_world().await;
+    let c = &t.w.c;
+    let id = c.ok("page.save", json!({ "target": "new:t.move:k", "changes": { "name": "x" } })).await["page"]["resourceId"].as_str().unwrap().to_string();
+    let mut m = move_manifest(t.port, full_requires(t.port));
+    m["upgradesFrom"] = json!(">=0.1.0");
+    let main = MOVE_MAIN.replace(
+        "host.commands.handle(\"probe\", probe);",
+        "host.commands.handle(\"probe\", probe);\n  host.kinds.handle(\"k\", { async migrate(body, from, ctx) { let err = 'ran'; try { await ctx.host.transfer.capture({ program: 'cat', to: '/x' }); } catch (e) { err = e.code + '/' + e.params.reason; } return Object.assign({}, body, { err }); } });",
+    );
+    assert_ne!(main, MOVE_MAIN);
+    pkg(&t.w.root, "t.move", "0.2.0", m, &main);
+    c.ok("plugin.rescan", Value::Null).await;
+    let r = c.ok("resource.get", json!({ "id": id })).await;
+    assert_eq!((r["pluginVersion"].as_str(), r["body"]["err"].as_str()), (Some("0.2.0"), Some("denied/notInRun")), "{r}");
+    let a = audit(&t.w.env, "transfer.capture");
+    assert!(a.iter().any(|x| x.3 == "failed:denied"), "{a:?}");
 }
