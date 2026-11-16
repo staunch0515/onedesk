@@ -256,9 +256,7 @@ test("refused: an address that is not authorized, a path outside the folder, a t
   expect(left(grant).filter((n) => n.includes(".part-"))).toEqual([]);
 });
 
-// FINDING (kernel): a refused address carries no `host` in RunError.params (only blockedByPolicy for programs carries
-// `program`/`layer`), although the shell has texts for `hostNotAllowed|host`. Remove `.fixme` when the kernel adds it.
-test.fixme("refused: the error of a refused address names the host", async ({ page }) => {
+test("refused: the error of a refused address names the host", async ({ page }) => {
   await bare(page);
   const r = await transfer(page, "download", `http://localhost:${srv.port}/bytes/10`, path.join(grant, "h.bin"), `${srv.url}/bytes/10`);
   expect(r.error!.params).toMatchObject({ host: expect.stringContaining("localhost") });
