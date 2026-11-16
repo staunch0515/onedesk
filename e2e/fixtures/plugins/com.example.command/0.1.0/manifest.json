@@ -11,10 +11,23 @@
   "requires": {
     "files": false,
     "programs": [
-      { "name": "echo", "source": "system" },
-      { "name": "sleep", "source": "system" },
-      { "name": "sh", "source": "system" },
-      { "name": "hello", "source": "plugin", "path": "bin/hello.sh" }
+      {
+        "name": "echo",
+        "source": "system"
+      },
+      {
+        "name": "sleep",
+        "source": "system"
+      },
+      {
+        "name": "sh",
+        "source": "system"
+      },
+      {
+        "name": "hello",
+        "source": "plugin",
+        "path": "bin/hello.sh"
+      }
     ]
   },
   "contributes": {
@@ -26,9 +39,21 @@
         "tree": "resources",
         "page": "editor",
         "newName": "kind.command.new",
-        "defaults": { "program": "echo", "args": "", "env": "" },
+        "defaults": {
+          "program": "echo",
+          "args": "",
+          "env": ""
+        },
         "fields": {
-          "env": { "type": "longtext", "secrets": true }
+          "env": {
+            "type": "longtext",
+            "secrets": true
+          },
+          "args": {
+            "type": "longtext",
+            "refs": true,
+            "label": "field.args"
+          }
         },
         "draggable": true,
         "accepts": []
@@ -39,9 +64,25 @@
         "id": "run",
         "label": "action.run",
         "icon": "play",
-        "kinds": ["command"],
+        "kinds": [
+          "command"
+        ],
         "output": "text",
-        "shortcut": ["Mod", "Enter"],
+        "shortcut": [
+          "Mod",
+          "Enter"
+        ],
+        "saveFirst": false,
+        "confirm": null
+      },
+      {
+        "id": "fire",
+        "label": "action.fire",
+        "icon": "zap",
+        "kinds": [
+          "command"
+        ],
+        "output": "text",
         "saveFirst": false,
         "confirm": null
       }
@@ -52,19 +93,72 @@
         "recompute": true,
         "usesEnv": false,
         "actions": [
-          { "id": "run", "role": "run", "action": "run", "label": "action.run", "icon": "play", "primary": true, "shortcut": ["Mod", "Enter"] },
-          { "id": "save", "role": "save", "label": "action.save", "icon": "save", "shortcut": ["Mod", "S"] },
-          { "id": "save-run", "role": "save-run", "action": "run", "label": "action.saveRun", "icon": "save-all" }
+          {
+            "id": "run",
+            "role": "run",
+            "action": "run",
+            "label": "action.run",
+            "icon": "play",
+            "primary": true,
+            "shortcut": [
+              "Mod",
+              "Enter"
+            ]
+          },
+          {
+            "id": "save",
+            "role": "save",
+            "label": "action.save",
+            "icon": "save",
+            "shortcut": [
+              "Mod",
+              "S"
+            ]
+          },
+          {
+            "id": "save-run",
+            "role": "save-run",
+            "action": "run",
+            "label": "action.saveRun",
+            "icon": "save-all"
+          },
+          {
+            "id": "fire",
+            "role": "run",
+            "action": "fire",
+            "label": "action.fire",
+            "icon": "zap"
+          }
         ],
         "resultTabs": [
-          { "id": "result", "type": "output", "label": "tab.result", "icon": "terminal" },
-          { "id": "history", "type": "history", "label": "tab.history", "icon": "history" }
+          {
+            "id": "result",
+            "type": "output",
+            "label": "tab.result",
+            "icon": "terminal"
+          },
+          {
+            "id": "history",
+            "type": "history",
+            "label": "tab.history",
+            "icon": "history"
+          }
         ]
       }
     ],
-    "events": ["resource.changed", "run.ended"],
-    "menus": { "new": ["command"] },
-    "locales": { "en-US": "locales/en-US.json", "zh-CN": "locales/zh-CN.json" }
+    "events": [
+      "resource.changed",
+      "run.ended"
+    ],
+    "menus": {
+      "new": [
+        "command"
+      ]
+    },
+    "locales": {
+      "en-US": "locales/en-US.json",
+      "zh-CN": "locales/zh-CN.json"
+    }
   },
   "upgradesFrom": ">=0.1.0"
 }

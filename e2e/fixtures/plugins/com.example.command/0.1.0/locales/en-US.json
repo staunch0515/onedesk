@@ -18,5 +18,6 @@
   "count.line": "Commands: {count}",
   "stderr.mark": "--- stderr ---",
   "summary.exit": "exit {code} · {ms} ms",
-  "summary.signal": "{signal} · {ms} ms"
+  "summary.signal": "{signal} · {ms} ms",
+  "action.fire": "Start without waiting"
 }

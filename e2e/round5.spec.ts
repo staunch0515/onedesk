@@ -183,8 +183,8 @@ async function referencedByThree(page: Page, name: string) {
   return victim;
 }
 
-// Still open: the Deleted page's own permanent-delete dialog ("deleted.purgeBody") shows no reference count (the shell fixed the plain delete only).
-test.fixme("references: the confirmation of a permanent delete names how many items refer to the resource", async ({ page }) => {
+// (The Deleted page's permanent-delete dialog now names the count: round 6 shell.)
+test("references: the confirmation of a permanent delete names how many items refer to the resource", async ({ page }) => {
   const victim = await referencedByThree(page, "Popular");
   await call(page, "resource.delete", { id: victim });
   await openKernel(page, host);
@@ -195,7 +195,8 @@ test.fixme("references: the confirmation of a permanent delete names how many it
   await expect(dialog).toContainText(/\b3\b/);
   await shot(page, "purge-referenced");
   await dialog.getByRole("button", { name: "Cancel" }).click();
-  expect((await get(page, victim)).name).toBe("Popular"); // still there
+  await call(page, "resource.undelete", { id: victim }); // still there (it was only in the Deleted list)
+  expect((await get(page, victim)).name).toBe("Popular");
 });
 
 // round5-plan §1: deleting a referenced resource asks first and names the count.
@@ -425,7 +426,7 @@ test("the workspace configuration is never imported", async ({ page }) => {
 test("the configuration page adds a known parameter from a list (no typing of names)", async ({ page }) => {
   await openKernel(page, host);
   const known = await call<{ name: string; layers: string[] }[]>(page, "params.known");
-  expect(known.map((k) => k.name).sort()).toEqual(["network.allow", "protection.no_export", "protection.readonly", "ui.language"]);
+  expect(known.map((k) => k.name).sort()).toEqual(["network.allow", "process.allow", "protection.no_export", "protection.readonly", "ui.language"]);
   expect(known.find((k) => k.name === "ui.language")!.layers).toEqual(["config"]);
   expect(known.find((k) => k.name === "protection.readonly")!.layers.sort()).toEqual(["config", "env"]);
 
