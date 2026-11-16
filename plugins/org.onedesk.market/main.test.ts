@@ -132,14 +132,15 @@ describe("market: scanning", () => {
     expect(rowsOf(await pages.browse.render(ctxOf(host, { locale: "fr-FR" })))[0]!.slice(0, 3)).toEqual(["Alpha", "1.0.0", "First"]);
   });
 
-  it("falls back to the raw strings when the language file is missing or a path escapes the package", async () => {
+  it("shows the package id (never the raw key) when the language file is missing or a path escapes the package", async () => {
     const { pages } = registry(plugin);
     const files = fakeFiles({
       [`${ROOT}/a/1.0.0/manifest.json`]: pkgManifest("com.example.a", "1.0.0"),
       [`${ROOT}/b/1.0.0/manifest.json`]: pkgManifest("com.example.b", "1.0.0", { contributes: { locales: { "en-US": "../../x.json" } } }),
     });
     const out = await pages.browse.render(ctxOf({ files, plugins: { list: async () => [] } }));
-    expect(rowsOf(out).map((r) => r[0])).toEqual(["plugin.name", "plugin.name"]);
+    expect(rowsOf(out).map((r) => [r[0], r[2]])).toEqual([["com.example.a", ""], ["com.example.b", ""]]);
+    expect(JSON.stringify(out.view)).not.toContain("plugin.name");
     expect(files.readText).not.toHaveBeenCalledWith(`${ROOT}/b/1.0.0/../../x.json`);
   });
 
@@ -188,6 +189,16 @@ describe("market: scanning", () => {
     expect(rowsOf(out)).toHaveLength(200);
     expect(out.view.find((n: any) => n.id === "capped").text).toBe("Only the first 200 packages are shown.");
     expect(checkView(out.view)).toEqual([]);
+  });
+
+  it("a key the language file does not know shows the id and an empty description (the strict-manifest failure case)", async () => {
+    const { pages } = registry(plugin);
+    const files = fakeFiles({
+      [`${ROOT}/broken/manifest.json`]: JSON.stringify({ id: "com.example.broken-pack", version: "0.1.0", name: "plugin.name", description: "plugin.description", contributes: { locales: { "en-US": "locales/en-US.json" } } }),
+      [`${ROOT}/broken/locales/en-US.json`]: JSON.stringify({ other: "x" }),
+    });
+    const out = await pages.browse.render(ctxOf({ files, plugins: { list: async () => [] } }));
+    expect(rowsOf(out)[0]).toEqual(["com.example.broken-pack", "0.1.0", "", "Not installed"]);
   });
 
   it("scans every authorized folder, and skips one that cannot be listed", async () => {
@@ -399,7 +410,8 @@ describe("market: limits, cache and untrusted text", () => {
     const { pages } = registry(plugin);
     const long = "N".repeat(200);
     const files = fakeFiles({
-      [`${ROOT}/a/manifest.json`]: JSON.stringify({ id: "com.example.a", version: "1.0.0", name: "x\u202e" + long, description: "D".repeat(500) + "\u0007" }),
+      [`${ROOT}/a/manifest.json`]: JSON.stringify({ id: "com.example.a", version: "1.0.0", name: "n", description: "d", contributes: { locales: { "en-US": "l.json" } } }),
+      [`${ROOT}/a/l.json`]: JSON.stringify({ n: "x\u202e" + long, d: "D".repeat(500) + "\u0007" }),
       [`${ROOT}/b/manifest.json`]: JSON.stringify({ id: "com.example.b", version: "1.0.0", name: { evil: true }, description: ["x"] }),
       [`${ROOT}/c\u202etxt/manifest.json`]: "{ broken",
     });
@@ -410,6 +422,7 @@ describe("market: limits, cache and untrusted text", () => {
     expect(a[2]).toHaveLength(MAX_DESCRIPTION);
     const b = rows.find((r) => r[0] === "com.example.b")!; // no usable name: the id stands in
     expect(b[2]).toBe("");
+    expect(JSON.stringify(rows)).not.toContain("plugin.");
     expect(JSON.stringify(rows)).not.toMatch(/\[object Object\]|\\u202e|\\u0007/);
     const c = rows.find((r) => r[3] === "Unavailable")!;
     expect(c[0]).toBe("ctxt");
@@ -427,6 +440,6 @@ describe("market: limits, cache and untrusted text", () => {
     const row = rowsOf(out)[0]!;
     expect(row[0]).toHaveLength(MAX_NAME);
     expect(row[0]).not.toContain("\u202e");
-    expect(row[2]).toBe("plugin.description"); // the non-string translation is missing: the raw key stays
+    expect(row[2]).toBe(""); // the non-string translation is missing: no raw key
   });
 });
