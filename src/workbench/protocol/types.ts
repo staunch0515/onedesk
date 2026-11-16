@@ -13,6 +13,7 @@ import type {
   PluginDetail as KernelPluginDetail,
   PluginPermission as KernelPluginPermission,
   Run as KernelRun,
+  RunError as KernelRunError,
   RunOutput as KernelRunOutput,
   Label,
   PageContext as KernelPageContext,
@@ -100,7 +101,8 @@ export type {
  * JSON values); the real client converts when it sends and the mock never needed to.
  */
 export type CommandContext = Omit<KernelCommandContext, "nodeKey" | "args"> & { nodeKey?: string | null; args?: Record<string, unknown> };
-export type PageContext = Omit<KernelPageContext, "envId" | "draft"> & { envId?: string | null; draft?: Record<string, unknown> };
+/** `params` is round 8 (D358): the page's `param: true` field values, the same set `run.start` takes. */
+export type PageContext = Omit<KernelPageContext, "envId" | "draft"> & { envId?: string | null; draft?: Record<string, unknown>; params?: Record<string, string> };
 export type Resource = Omit<KernelResource, "body"> & { body: Record<string, unknown> };
 /**
  * `restrictions` is added by the kernel on top of the generated type (round5-plan §6, field name fixed):
@@ -149,6 +151,8 @@ export type ResourcePatch = Record<string, unknown>;
 export interface PageEventResult {
   /** Bound fields the plugin wants changed; applied to the unsaved content. */
   changes?: Record<string, unknown>;
+  /** Round 8 (D358): new page parameter values (merged over the tab's; "" clears). Never marks the page unsaved. */
+  params?: Record<string, string>;
   message?: Label;
 }
 
@@ -165,12 +169,12 @@ export type PluginPermission = KernelPluginPermission & { label?: Label };
  * UI-side `PluginDetail`: the generated one with the permission superset above (the demo gives a label).
  * `depends` and `dependents` are round 7's additions to the kernel type; optional until the generated type has them.
  */
-export type PluginDetail = Omit<KernelPluginDetail, "permissions"> & { permissions: PluginPermission[]; depends?: PluginDependency[]; dependents?: string[] };
+export type PluginDetail = Omit<KernelPluginDetail, "permissions"> & { permissions: PluginPermission[]; depends?: PluginDependency[]; dependents?: string[]; unmetExports?: string[] };
 
 /** What the shell tells the kernel when a request ends (`plugin.answerInstallRequest`). */
 export type InstallAnswer = InstallAnswerParams;
 /** UI-side superset of the generated `Run`: `input` keeps loose JSON values. */
-export type Run = Omit<KernelRun, "input"> & { input: Record<string, unknown> };
+export type Run = Omit<KernelRun, "input" | "error"> & { input: Record<string, unknown>; error?: KernelRunError & { params?: Record<string, string> } };
 
 export interface RunRequest {
   action: string;

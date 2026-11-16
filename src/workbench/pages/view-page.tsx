@@ -152,23 +152,27 @@ export function ViewPage({ tab, descriptor: initial }: { tab: TabState; descript
 
   // "Recompute after the content changed" (§9.3): ask the plugin again 300 ms after typing stops.
   const draftKey = JSON.stringify(draft);
+  const paramFields = descriptor.view.flatMap((n) => (n.type === "form" ? n.fields.filter((f) => f.param) : []));
+  const kernelPage = client.demo !== undefined && !client.demo.target(tab.target);
+  // Page parameters (D358) go along with every resolve; they live in the tab, so changing one never marks the page unsaved.
+  const pageParams = (entered: Record<string, string>) => runParams(paramFields, entered, kernelPage);
+  const paramsKey = JSON.stringify(pageParams(tab.params));
   useEffect(() => {
-    if (!initial.recompute || Object.keys(draft).length === 0) return;
+    if (!initial.recompute || (Object.keys(draft).length === 0 && paramsKey === "{}")) return;
     let cancelled = false;
     const timer = setTimeout(() => {
-      client.page.resolve(tab.target, { envId: tab.envId, draft }).then((next) => !cancelled && setDescriptor(next), actions.fail);
+      client.page.resolve(tab.target, { envId: tab.envId, draft, params: pageParams(tab.params) }).then((next) => !cancelled && setDescriptor(next), actions.fail);
     }, 300);
     return () => {
       cancelled = true;
       clearTimeout(timer);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [draftKey, initial.recompute, tab.target, tab.envId, client, actions]);
+  }, [draftKey, paramsKey, initial.recompute, tab.target, tab.envId, client, actions]);
 
   const values = descriptor.values;
   const bound = (bind: string): string => String((bind in draft ? draft[bind] : values[bind]) ?? "");
   const readOnly = descriptor.readOnly;
-  const paramFields = descriptor.view.flatMap((n) => (n.type === "form" ? n.fields.filter((f) => f.param) : []));
 
   const setBound = (bind: string, value: string) => {
     if (descriptor.autosave && descriptor.resourceId) client.page.save(`resource:${descriptor.resourceId}`, { [bind]: value }).catch(actions.fail);
@@ -183,7 +187,6 @@ export function ViewPage({ tab, descriptor: initial }: { tab: TabState; descript
   latest.current = { descriptor, draft, tab };
 
   // Values the kernel types as numbers or booleans go out as such (the controls hold text). Demo pages keep text.
-  const kernelPage = client.demo !== undefined && !client.demo.target(tab.target);
   const fieldKinds = new Map(descriptor.view.flatMap((n) => (n.type === "form" ? n.fields.filter((f) => f.bind && !f.param).map((f) => [f.bind!, f.kind] as const) : [])));
   const typed = (bind: string, value: unknown): unknown => {
     if (!kernelPage || typeof value !== "string") return value;
@@ -200,7 +203,7 @@ export function ViewPage({ tab, descriptor: initial }: { tab: TabState; descript
       return;
     }
     const now = latest.current;
-    const context = { envId: now.tab.envId, draft: typedAll({ ...now.descriptor.values, ...now.draft }) };
+    const context = { envId: now.tab.envId, draft: typedAll({ ...now.descriptor.values, ...now.draft }), params: pageParams(now.tab.params) };
     try {
       setBusy(action.id);
       if (action.role === "save" || action.role === "save-run") {
@@ -225,6 +228,10 @@ export function ViewPage({ tab, descriptor: initial }: { tab: TabState; descript
       } else if (action.role === "event") {
         const result = await client.page.event(tab.target, action.id, context);
         for (const [bind, value] of Object.entries(result.changes ?? {})) actions.setDraft(tab.id, bind, value, now.descriptor.values[bind]);
+        if (result.params && Object.keys(result.params).length > 0) {
+          const current = store.get().tabs.find((x) => x.id === tab.id)?.params ?? now.tab.params;
+          actions.updateTab(tab.id, { params: { ...current, ...result.params } });
+        }
         if (result.message) toast({ tone: "neutral", title: tx(result.message) });
       } else if (action.role === "command") {
         await actions.command(action.id, { target: tab.target, tabId: tab.id });

@@ -1,7 +1,7 @@
 import { createContext, useContext, useMemo, type ReactNode } from "react";
 import { kernelErrorCode, type Label, type Locale } from "../protocol";
 import { enUS, type MessageKey } from "./en-US";
-import { AUDIT_OPERATIONS, PERMISSIONS, RUN_ERRORS, RUN_FALLBACK, interpolate, KERNEL_CONFIRMS, KERNEL_ERRORS, KERNEL_LABELS } from "./kernel-texts";
+import { AUDIT_OPERATIONS, PERMISSIONS, RUN_ERRORS, RUN_ERRORS_NAMED, RUN_FALLBACK, interpolate, KERNEL_CONFIRMS, KERNEL_ERRORS, KERNEL_LABELS } from "./kernel-texts";
 import { zhCN } from "./zh-CN";
 
 const TABLES: Record<Locale, Partial<Record<MessageKey, string>>> = { "en-US": enUS, "zh-CN": zhCN };
@@ -22,7 +22,7 @@ export interface I18n {
   /** Title and confirm-button words for a kernel `confirm` message key; undefined for other messages. */
   confirmTexts: (label: Label | undefined) => { title: string; ok: string } | undefined;
   /** A run failure as a sentence: by code when the shell knows it, else the message the run came with. */
-  runError: (error: { code: string; message: string; reason?: string; hint?: string }) => string;
+  runError: (error: { code: string; message: string; reason?: string; hint?: string; params?: Record<string, string> }) => string;
   /** A plugin permission id as words (unknown ids as they are). */
   permission: (id: string) => string;
   /** An audit operation id as words. */
@@ -78,6 +78,18 @@ function build(locale: Locale): I18n {
       // A host refusal the plugin did not catch keeps its own code (denied, invalid…) and carries the reason (D318).
       const own = RUN_ERRORS[locale][e.code] ?? RUN_ERRORS["en-US"][e.code];
       if (own) return own;
+      const params = e.params ?? {};
+      if (e.reason) {
+        for (const l of [locale, "en-US" as const]) {
+          let best: [number, string] | undefined;
+          for (const [key, text] of Object.entries(RUN_ERRORS_NAMED[l])) {
+            const [head, ...need] = key.split("|");
+            if (head !== `${e.code}.${e.reason}` && head !== `reason.${e.reason}`) continue;
+            if (need.length > 0 && need.every((n) => params[n] !== undefined && params[n] !== "") && (!best || need.length > best[0])) best = [need.length, text];
+          }
+          if (best) return interpolate(best[1], params);
+        }
+      }
       const pickIn = (tbl: Record<string, string>) => (e.reason ? (tbl[`${e.code}.${e.reason}`] ?? tbl[`reason.${e.reason}`]) : undefined);
       const byReason = pickIn(KERNEL_ERRORS[locale]) ?? pickIn(KERNEL_ERRORS["en-US"]);
       if (byReason) return byReason;

@@ -59,6 +59,7 @@ export const KERNEL_LABELS: Record<Locale, Table> = {
     "badDepends": "The list of plugins it depends on is not valid",
     "badPlugins": "The request to install other plugins must be written as { \"install\": true }",
     "badExports": "The list of what it offers to dependent plugins is not valid",
+    "undeclaredDepend": "It uses a name from a plugin it does not list in depends",
     "dependsUnmet": "A plugin it depends on is missing, disabled or at a version outside the range",
     "noManifest": "No manifest.json",
     "badJson": "manifest.json is not valid JSON",
@@ -134,6 +135,7 @@ export const KERNEL_LABELS: Record<Locale, Table> = {
     "badDepends": "依赖的插件清单不合法",
     "badPlugins": "请求安装其他插件要写成 { \"install\": true }",
     "badExports": "对依赖方开放的内容清单不合法",
+    "undeclaredDepend": "它用了一个没有写进 depends 的插件的名字",
     "dependsUnmet": "它依赖的插件没装、已停用或版本不在范围内",
     "noManifest": "没有 manifest.json",
     "badJson": "manifest.json 不是合法的 JSON",
@@ -220,7 +222,8 @@ export const KERNEL_ERRORS: Record<Locale, Table> = {
     "reason.hostNotAllowed": "That host and port are not on the plugin's list of allowed addresses (an entry without a port allows only 80 and 443).",
     "reason.blockedByPolicy": "A workspace or environment setting (network.allow for addresses, process.allow for programs) does not allow this.",
     "reason.undeclaredProgram": "The plugin did not declare that program in its manifest.",
-    "reason.notInRun": "Programs can only be run while an action is running, not while rendering or handling events.",
+    "reason.notInRun": "Programs can only be run and files transferred while an action is running, not while rendering or handling events.",
+    "reason.notExported": "The plugin that owns {export} does not offer it to other plugins, so this cannot be created.",
     "reason.notExecutable": "That program file is not executable.",
     "reason.badArgs": "The program arguments are not valid (too many, too long, or containing a NUL).",
     "reason.badEnv": "An environment variable is not valid (empty name, “=” or NUL in the name, or a name starting with DYLD_ or LD_).",
@@ -259,7 +262,7 @@ export const KERNEL_ERRORS: Record<Locale, Table> = {
     "reason.noOutput": "This run's result was cleared, so there is nothing to export.",
     "reason.notEmpty": "The folder must not exist yet or must be empty.",
     "reason.insideData": "Choose a folder outside OneDesk's own data folder.",
-    "reason.exists": "That file already exists. Choose a new name.",
+    "reason.exists": "That file already exists (a transfer does not replace it unless asked to). Choose a new name.",
     "reason.notTable": "This run has no table to export.",
     "reason.notFinished": "The run has not finished.",
     "reason.unsupportedFormat": "Only CSV is supported.",
@@ -281,6 +284,7 @@ export const KERNEL_ERRORS: Record<Locale, Table> = {
     "notFound.installRequest": "That install request no longer exists.",
     "reason.badDepends": "The list of plugins it depends on is not valid.",
     "reason.badExports": "The list of what it offers to dependent plugins is not valid.",
+    "reason.undeclaredDepend": "It uses a name from a plugin it does not list in depends.",
     "invalid.tooLarge": "That is too large.",
     "invalidParams.tooLarge": "The request was too large.",
     "invalid.timeout": "The network request or program took too long and was stopped.",
@@ -345,7 +349,8 @@ export const KERNEL_ERRORS: Record<Locale, Table> = {
     "reason.hostNotAllowed": "这个主机和端口不在插件允许访问的名单里（不写端口的条目只允许 80 和 443）。",
     "reason.blockedByPolicy": "工作区或环境的设置（网络用 network.allow，程序用 process.allow）不允许这样做。",
     "reason.undeclaredProgram": "插件没有在清单里声明这个程序。",
-    "reason.notInRun": "只能在动作运行时运行程序，渲染页面或处理事件时不行。",
+    "reason.notInRun": "只能在动作运行时运行程序、搬运文件，渲染页面或处理事件时不行。",
+    "reason.notExported": "拥有 {export} 的插件没有把它开放给其他插件，所以不能新建。",
     "reason.notExecutable": "这个程序文件不可执行。",
     "reason.badArgs": "程序参数不合法（太多、太长，或含有空字符）。",
     "reason.badEnv": "环境变量不合法（名字为空、含“=”或空字符，或以 DYLD_、LD_ 开头）。",
@@ -384,7 +389,7 @@ export const KERNEL_ERRORS: Record<Locale, Table> = {
     "reason.noOutput": "这次运行的结果已被清理，没有可导出的内容。",
     "reason.notEmpty": "文件夹必须还不存在，或者是空的。",
     "reason.insideData": "请选 OneDesk 自己的数据文件夹之外的位置。",
-    "reason.exists": "这个文件已经存在，请换一个名字。",
+    "reason.exists": "这个文件已经存在（搬运默认不覆盖已有的文件），请换一个名字。",
     "reason.notTable": "这次运行没有可导出的表格。",
     "reason.notFinished": "这次运行还没有结束。",
     "reason.unsupportedFormat": "只支持 CSV。",
@@ -406,6 +411,7 @@ export const KERNEL_ERRORS: Record<Locale, Table> = {
     "notFound.installRequest": "这个安装请求已经不存在了。",
     "reason.badDepends": "依赖的插件清单不合法。",
     "reason.badExports": "对依赖方开放的内容清单不合法。",
+    "reason.undeclaredDepend": "它用了一个没有写进 depends 的插件的名字。",
     "invalid.tooLarge": "内容太大。",
     "invalidParams.tooLarge": "请求内容太大。",
     "invalid.timeout": "网络请求或程序运行时间太长，已停止。",
@@ -462,6 +468,9 @@ export const AUDIT_OPERATIONS: Record<Locale, Table> = {
     "plugin.confirm": "Confirm plugin permissions",
     "network.request": "Network request",
     "process.run": "Run external program",
+    "transfer.download": "Download to a file",
+    "transfer.upload": "Upload a file",
+    "transfer.capture": "Save program output to a file",
     "events.failed": "Event handler failed",
     "network.grant": "Network permission granted",
     "secrets.set": "Write secret",
@@ -530,6 +539,9 @@ export const AUDIT_OPERATIONS: Record<Locale, Table> = {
     "plugin.confirm": "确认插件权限",
     "network.request": "网络请求",
     "process.run": "运行外部程序",
+    "transfer.download": "下载到文件",
+    "transfer.upload": "上传文件",
+    "transfer.capture": "把程序输出存成文件",
     "events.failed": "事件处理出错",
     "network.grant": "授予网络权限",
     "secrets.set": "写入密钥",
@@ -565,8 +577,8 @@ export const KERNEL_CONFIRMS: Record<Locale, Record<string, { title: string; ok:
 
 /** Plugin permission ids as words. */
 export const PERMISSIONS: Record<Locale, Table> = {
-  "en-US": { files: "Files in granted folders", storage: "Plugin storage", params: "Read parameters", settings: "Read settings", resources: "Resources", network: "Network access", secrets: "Use secrets", "secrets.plaintext": "Read secret values in plain text", programs: "Run programs", plugins: "Request other plugins" },
-  "zh-CN": { files: "已授权文件夹里的文件", storage: "插件存储", params: "读取参数", settings: "读取设置", resources: "资源", network: "访问网络", secrets: "使用密钥", "secrets.plaintext": "以明文读取密钥的值", programs: "运行程序", plugins: "请求安装其他插件" },
+  "en-US": { files: "Files in granted folders", storage: "Plugin storage", params: "Read parameters", settings: "Read settings", resources: "Resources", network: "Network access", secrets: "Use secrets", "secrets.plaintext": "Read secret values in plain text", programs: "Run programs", plugins: "Request other plugins", pages: "Show its content with other plugins' pages" },
+  "zh-CN": { files: "已授权文件夹里的文件", storage: "插件存储", params: "读取参数", settings: "读取设置", resources: "资源", network: "访问网络", secrets: "使用密钥", "secrets.plaintext": "以明文读取密钥的值", programs: "运行程序", plugins: "请求安装其他插件", pages: "用其他插件的页面显示内容" },
 };
 
 /** Run failure codes the kernel reports (`Run.error.code`) as words; other codes keep the message they came with. */
@@ -592,4 +604,38 @@ export const RUN_ERRORS: Record<Locale, Table> = {
 };
 
 /** Shown when a run failed with a code the shell has no words for and the run carried no message: never a blank reason. */
+/**
+ * Round 8 (D360): the same reasons with the names the kernel put in `RunError.params`. Key
+ * `<code>.<reason>|<param>|<param>` (or `reason.<reason>|…`); the entry with the most params present wins,
+ * otherwise the general words above stay.
+ */
+export const RUN_ERRORS_NAMED: Record<Locale, Table> = {
+  "en-US": {
+    "reason.blockedByPolicy|program|layer": "The {layer} setting (process.allow) does not allow the program “{program}”.",
+    "reason.blockedByPolicy|program": "A workspace or environment setting (process.allow) does not allow the program “{program}”.",
+    "reason.blockedByPolicy|host|layer": "The {layer} setting (network.allow) does not allow the address “{host}”.",
+    "reason.blockedByPolicy|host": "A workspace or environment setting (network.allow) does not allow the address “{host}”.",
+    "reason.undeclaredProgram|program": "The plugin did not declare the program “{program}” in its manifest.",
+    "notFound.program|program": "The program “{program}” was not found on this computer.",
+    "reason.hostNotAllowed|host": "“{host}” is not on the plugin's list of allowed addresses (an entry without a port allows only 80 and 443).",
+    "reason.localAddress|host": "“{host}” is on this computer or local network and was not allowed explicitly.",
+    "reason.secretNotAllowed|name": "The plugin may not use the secret “{name}”.",
+    "reason.unknownSecret|name": "The secret “{name}” does not exist.",
+    "reason.notExported|export": "The plugin that owns {export} does not offer it to other plugins, so this cannot be created.",
+  },
+  "zh-CN": {
+    "reason.blockedByPolicy|program|layer": "{layer}的设置（process.allow）不允许运行程序“{program}”。",
+    "reason.blockedByPolicy|program": "工作区或环境的设置（process.allow）不允许运行程序“{program}”。",
+    "reason.blockedByPolicy|host|layer": "{layer}的设置（network.allow）不允许访问“{host}”。",
+    "reason.blockedByPolicy|host": "工作区或环境的设置（network.allow）不允许访问“{host}”。",
+    "reason.undeclaredProgram|program": "插件没有在清单里声明程序“{program}”。",
+    "notFound.program|program": "这台电脑上找不到程序“{program}”。",
+    "reason.hostNotAllowed|host": "“{host}”不在插件允许访问的名单里（不写端口的条目只允许 80 和 443）。",
+    "reason.localAddress|host": "“{host}”在本机或局域网内，没有被明确允许。",
+    "reason.secretNotAllowed|name": "插件不能使用密钥“{name}”。",
+    "reason.unknownSecret|name": "密钥“{name}”不存在。",
+    "reason.notExported|export": "拥有 {export} 的插件没有把它开放给其他插件，所以不能新建。",
+  },
+};
+
 export const RUN_FALLBACK: Record<Locale, string> = { "en-US": "The run failed (reason: {code}).", "zh-CN": "运行失败（原因：{code}）。" };
