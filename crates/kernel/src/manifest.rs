@@ -326,6 +326,9 @@ pub struct KindDecl {
     /// Body keys with a kernel meaning: secret fields, granting fields.
     #[serde(default)]
     pub fields: BTreeMap<String, FieldDecl>,
+    /// D375: the code supplies children (`kinds.handle(kind, { children })`) after the stored ones.
+    #[serde(default)]
+    pub children: bool,
 }
 
 impl KindDecl {
@@ -812,6 +815,10 @@ pub fn parse_package(dir: &Path, bytes: &[u8], check_folder: bool) -> Result<Plu
                     return Err(reject(dir, "unknownTree", format!("kind {} tree {t}", k.id)));
                 }
             }
+        }
+        // Supplied children are shown under the kind's node, so it needs a tree.
+        if k.children && k.tree.is_none() {
+            return Err(reject(dir, "childrenWithoutTree", format!("kind {}", k.id)));
         }
         for x in &k.menu {
             if !has_cmd(x) {

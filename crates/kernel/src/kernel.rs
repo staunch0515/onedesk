@@ -786,7 +786,7 @@ impl Inner {
     pub fn node_for(&self, r: &Row) -> KResult<TreeNode> {
         let meta = self.row_meta(r);
         let group = r.kind == KIND_GROUP;
-        let has_children = self.read(|c| store::has_children(c, &r.id))?;
+        let has_children = self.read(|c| store::has_children(c, &r.id))? || self.children_supplier(r).is_some();
         let mut menu = Vec::new();
         if meta.page.is_some() || crate::params::is_param_kind(&r.kind) {
             menu.push(kernel_cmd("node.open", "external-link"));
@@ -862,6 +862,25 @@ impl Inner {
             }
         }
         if self.stored_tree(&p.tree).is_ok() {
+            // D375: under a resource whose kind supplies children, and under those nodes.
+            if let Some(parent) = p.parent.as_deref() {
+                let (rid, node) = match crate::kind_children::parse_child_key(parent) {
+                    Some((rid, k)) => (rid, Some(k)),
+                    None if parent.starts_with(crate::kind_children::FAILED_PREFIX) => {
+                        return Ok(TreePage { nodes: vec![], next: None })
+                    }
+                    None => (parent, None),
+                };
+                let row = self.row_in_tree(&p.tree, rid)?;
+                match self.children_supplier(&row) {
+                    Some(pl) => {
+                        return self.supplied_children(&p.tree, &row, pl, node, offset, p.locale.as_deref(), client).await;
+                    }
+                    // The plugin is off (or the kind does not supply): none of its nodes.
+                    None if node.is_some() => return Ok(TreePage { nodes: vec![], next: None }),
+                    None => {}
+                }
+            }
             let rows = self.read(|c| store::children(c, &p.tree, p.parent.as_deref(), offset, BATCH + 1))?;
             let more = rows.len() > BATCH as usize;
             let nodes = rows.iter().take(BATCH as usize).map(|r| self.node_for(r)).collect::<KResult<Vec<_>>>()?;
@@ -938,7 +957,15 @@ impl Inner {
             return Ok(vec![p.key]);
         }
         if self.stored_tree(&p.tree).is_ok() {
-            let r = self.row_in_tree(&p.tree, &p.key)?;
+            // A plugin-supplied node: the path of its resource, then the node itself.
+            let rid = crate::kind_children::parse_child_key(&p.key).map(|(rid, _)| rid).unwrap_or(&p.key);
+            let r = self.row_in_tree(&p.tree, rid)?;
+            if rid != p.key {
+                let mut ids: Vec<String> = self.read(|c| store::ancestors(c, &r))?.into_iter().map(|a| a.id).collect();
+                ids.push(r.id);
+                ids.push(p.key);
+                return Ok(ids);
+            }
             let mut ids: Vec<String> = self.read(|c| store::ancestors(c, &r))?.into_iter().map(|a| a.id).collect();
             ids.push(r.id);
             return Ok(ids);
@@ -1100,6 +1127,7 @@ impl Inner {
                 commands: plugin.manifest.contributes.commands.iter().map(|c| c.id.clone()).collect(),
                 actions: plugin.manifest.contributes.actions.iter().map(|a| a.id.clone()).collect(),
                 kinds: plugin.manifest.contributes.kinds.iter().map(|k| k.id.clone()).collect(),
+                kind_children: plugin.manifest.contributes.kinds.iter().filter(|k| k.children).map(|k| k.id.clone()).collect(),
                 events: plugin.manifest.contributes.events.clone(),
             },
             labels: plugin.all_labels(),

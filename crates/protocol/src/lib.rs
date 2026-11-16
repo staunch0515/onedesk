@@ -175,6 +175,9 @@ pub enum NodeState {
     MissingPlugin,
     Broken,
     Conflict,
+    /// D375: the node standing in for children a plugin failed to supply (error or timeout);
+    /// `stateReason` holds the error code.
+    LoadFailed,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]

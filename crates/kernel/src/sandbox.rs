@@ -290,6 +290,11 @@ const BOOTSTRAP: &str = r#"
           e.code = "denied";
           throw e;
         }
+        if (kind === "kinds" && h && h.children !== undefined && !declared.kind_children.includes(name)) {
+          const e = new Error("undeclared children of kind: " + name);
+          e.code = "denied";
+          throw e;
+        }
         reg[kind][name] = h;
       },
     });
@@ -441,6 +446,15 @@ const BOOTSTRAP: &str = r#"
     if (typeof f !== "function" && kind === "events") return JSON.stringify({ ok: null });
     if (typeof f !== "function") throw new Error("no handler: " + kind + "/" + name + (fn ? "." + fn : ""));
     const args = JSON.parse(argsJson);
+    // D375: the resource a kind's `children` is asked about is read-only.
+    const freeze = (v) => {
+      if (v && typeof v === "object") {
+        Object.values(v).forEach(freeze);
+        Object.freeze(v);
+      }
+      return v;
+    };
+    if (args[0] && args[0].resource) freeze(args[0].resource);
     const ctx = Object.assign({}, args[0], {
       host: makeHost(callId),
       t,
@@ -451,8 +465,9 @@ const BOOTSTRAP: &str = r#"
       cancelled: () => isCancelled(callId),
     });
     try {
-      // `kinds` handlers take (body, fromVersion, ctx), as the manifest documentation writes them.
-    const out = kind === "kinds" ? await f.call(h, ...args.slice(1), ctx) : await f.call(h, ctx, ...args.slice(1));
+      // `kinds.migrate` takes (body, fromVersion, ctx), as the manifest documentation writes it;
+      // everything else, `kinds.children` included, takes ctx first.
+      const out = kind === "kinds" && fn !== "children" ? await f.call(h, ...args.slice(1), ctx) : await f.call(h, ctx, ...args.slice(1));
       return JSON.stringify({ ok: out === undefined ? null : out });
     } catch (e) {
       // A host error the handler did not catch keeps its code.
@@ -475,6 +490,8 @@ pub struct Declarations {
     pub commands: Vec<String>,
     pub actions: Vec<String>,
     pub kinds: Vec<String>,
+    /// D375: kinds whose manifest declares `children`; only they may register a `children` handler.
+    pub kind_children: Vec<String>,
     pub events: Vec<String>,
 }
 
