@@ -330,6 +330,41 @@ async fn a_kernel_started_on_an_index_runs_plugins_from_their_folders() {
     drop(tmp);
 }
 
+#[test]
+fn opening_with_thousands_of_packages_reads_and_writes_plugin_state_in_bulk() {
+    // Round 9 addendum: start-up cost must not grow with one query and one transaction per
+    // package. Counted, with a loose time bound only as a backstop.
+    const N: usize = 2000;
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("plugins");
+    for i in 0..N {
+        let id = format!("t.many-{i:05}");
+        let dir = root.join(&id).join("0.1.0");
+        std::fs::create_dir_all(&dir).unwrap();
+        let m = json!({ "id": id, "version": "0.1.0", "apiVersion": "2", "name": "n", "icon": "box", "main": "main.js" });
+        std::fs::write(dir.join("manifest.json"), m.to_string()).unwrap();
+        std::fs::write(dir.join("main.js"), "export default { activate() {} };").unwrap();
+    }
+    std::fs::write(root.join(".index"), serde_json::to_vec(&index_of(&root)).unwrap()).unwrap();
+    let ws = tmp.path().join("ws");
+    for round in ["first", "second"] {
+        let t = std::time::Instant::now();
+        let k = onedesk_kernel::Kernel::open(&ws, &root, test_config()).unwrap();
+        let took = t.elapsed();
+        // First sight: one batch; later: nothing to write.
+        assert!(k.writes_sent() <= 2, "{round}: {} writer commands", k.writes_sent());
+        assert_eq!(k.state_queries(), 0, "{round}: plugin state read one by one");
+        assert_eq!(k.rejected_plugins().len(), 0);
+        assert!(took < Duration::from_secs(120), "{round}: {took:?}");
+        let n: i64 = Connection::open(k.db_path())
+            .unwrap()
+            .query_row("SELECT count(*) FROM resources WHERE kind = 'core:plugin-state'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(n, N as i64, "{round}");
+        k.shutdown();
+    }
+}
+
 struct KernelConfigExt;
 impl KernelConfigExt {
     fn with_builtin(ids: &[&str]) -> onedesk_kernel::KernelConfig {

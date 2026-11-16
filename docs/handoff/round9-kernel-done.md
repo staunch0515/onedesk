@@ -136,3 +136,37 @@
 | 10 | 补测试：经 `audit.list` 的结果（同 #1）；`.index` 里绝对路径的 `dir` 被忽略、同一 `dir` 两条只取第一条（`with_an_index_…`）；回收与新调用同时发生（`releases_racing_new_calls_lose_nothing`：空闲 5 ms，60 次调用与运行全部成功、写入不丢、期间确有释放）；D370 把共享 promise 的现有行为固定下来（`a_shared_promise_continues_as_the_invocation_that_settled_it`：页面事件等运行兑现的 promise 后能用运行存下的接口；运行等页面事件兑现的 promise 后自己的接口被拒 `staleContext`）。 | 见左 |
 
 检查（实际跑过，机器负载 260–300）：`cargo test -p onedesk-kernel -p onedesk-worker -p onedesk-protocol` 全过（`round9.rs` 14 个）；clippy `-D warnings` 通过；`sh scripts/gen-types.sh --check` 最新；`pnpm lint`、`pnpm typecheck`、`cargo check -p onedesk-host --tests` 通过。
+
+## 追加：包很多时工作进程启动太慢
+
+先合并了协调分支（`6ea41c6`）。
+
+### 实测（debug 构建，1 万个包，`node e2e/fixtures/make-many-plugins.mjs <目录> 10000`，`.index` 按计划格式事先建好）
+
+计时脚本直接启动 `target/debug/onedesk-worker`，记录 socket 出现（开始监听）和 `hello` 得到答复（内核打开完成）的时间。机器负载一直在变，数字都标了负载。
+
+| | 开始监听 | `hello` 答复（内核就绪） |
+|---|---|---|
+| 改之前，首次（load ~60–100） | 41.9 s（内核打开完才监听） | 同左 |
+| 改之前，第二次 | 9.2 s | 同左 |
+| 改之后，首次（load ~20） | 2.5 s（几乎全是新编出的二进制第一次被系统加载） | 15.3 s |
+| 改之后，第二次及以后（load ~20） | 0.03 s | 2.6 / 3.1 / 2.6 s |
+| 改之后，第二次（load ~170，只计监听前的旧版做法） | — | 2.9–3.9 s |
+
+改之前时间花在（`sample` 取样）：注册表扫描（每个清单校验、读语言文件，单线程，5–13 s）、首次登记（**每个插件一次查询、每个新插件一个写事务**：首次 26 s，第二次 2–4 s）、选活动版本（每个插件再查一两次，约 2 s）。
+
+### 改了什么
+
+1. **工作进程先监听再打开内核**（`crates/worker/src/main.rs`）：主进程连上后连接在 backlog 里等，`hello` 在内核就绪后答复。主进程那边的“15 秒内开始监听”因此与包数无关；它发 `hello` 后的等待没有时限（`crates/host/src/lib.rs` 现有代码），首次 1 万个包约 15 s 在 `hello` 上等。打开失败照旧以 1 退出（并删掉 socket）。
+2. **扫描多线程校验**（`manifest.rs`，`in_parallel`：最多 8 个线程，少于 64 个包时单线程，结果按原顺序）。`.index` 和直接扫描两条路都用。不加依赖（`std::thread::scope`）。
+3. **启动时插件状态一次读出**：`Kernel::open` 里首次登记和选活动版本期间，所有插件状态行用一条查询读进快照（`Inner::state_snapshot`），`plugin_param`、`confirmed_sets` 从快照取；首次登记写完后重读一次快照，选完活动版本后清空（之后照旧逐个查库）。
+4. **首次登记在一个事务里写完**：新命令 `Command::PluginStates`（内部），对每个插件做与 `PluginState` 完全相同的事（建行、修订、审计 `plugin.state` 各一行），只是在一个事务里。
+5. 写资源的几条语句（插入、更新、修订、搜索索引）改用预编译缓存（`prepare_cached`），取样里一半时间在反复解析 SQL。
+
+首次 15 s 剩下的主要是 1 万个插件状态行本身的写入（每个一行资源、一条修订、一条审计、搜索索引）。要再快得改“首次登记”存什么（例如不为每个插件建资源行），那是数据结构的变更，本轮没做；但因为先监听，它已经不会撞主进程的 15 秒时限。若外壳或 e2e 对 `hello` 另有等待时限，首次需要约 15 s（debug，空闲机器）。
+
+### 测试
+
+`round9.rs` 的 `opening_with_thousands_of_packages_reads_and_writes_plugin_state_in_bulk`：2000 个包、有 `.index`，同一工作区打开两次；每次发给写线程的命令 ≤ 2（改之前首次约 2000 个）、逐个查插件状态 0 次（新加的测试计数 `Kernel::writes_sent()`、`Kernel::state_queries()`），2000 行状态都在；时间只设 120 s 的宽松上限。工作进程“先监听”没有单独的自动测试（现有 `crates/worker/tests/worker.rs` 5 个照常通过）。
+
+检查（实际跑过）：`cargo test -p onedesk-kernel -p onedesk-worker -p onedesk-protocol` 全过（`round9.rs` 15 个）；clippy `-D warnings` 通过；`gen-types --check` 最新；`pnpm lint`、`cargo check -p onedesk-host --tests` 通过。没有跑 e2e 的“2000 packages”用例。

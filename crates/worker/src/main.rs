@@ -91,14 +91,20 @@ fn main() -> ExitCode {
     };
     rt.block_on(async move {
         let cfg = KernelConfig { builtin: args.builtin.clone(), plugin_idle: plugin_idle(), ..KernelConfig::default() };
-        let kernel = match Kernel::open(&args.workspace, &args.plugins, cfg) {
-            Ok(k) => Arc::new(k),
-            Err(e) => return fail(format!("cannot open workspace: {e}")),
-        };
+        // Round 9: listen before opening the workspace. With thousands of plugin packages opening
+        // takes seconds; the main process may connect meanwhile (the connection waits in the
+        // backlog) and its `hello` is answered once the kernel is ready.
         let _ = std::fs::remove_file(&args.socket);
         let listener = match tokio::net::UnixListener::bind(&args.socket) {
             Ok(l) => l,
             Err(e) => return fail(format!("cannot listen on {}: {e}", args.socket.display())),
+        };
+        let kernel = match Kernel::open(&args.workspace, &args.plugins, cfg) {
+            Ok(k) => Arc::new(k),
+            Err(e) => {
+                let _ = std::fs::remove_file(&args.socket);
+                return fail(format!("cannot open workspace: {e}"));
+            }
         };
         let stream = match tokio::time::timeout(ACCEPT_TIMEOUT, listener.accept()).await {
             Ok(Ok((s, _))) => s,

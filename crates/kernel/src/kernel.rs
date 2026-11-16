@@ -115,6 +115,10 @@ pub(crate) struct Inner {
     pub event_queues: Mutex<HashMap<String, Arc<crate::events::Queue>>>,
     /// Round 7: unanswered install requests of plugins (D345).
     pub(crate) install_requests: crate::install::Requests,
+    /// Start-up only (many packages): every plugin's state row, read in one query, so the
+    /// first-sight and active-version passes do not query once per plugin. `None` otherwise.
+    pub(crate) state_snapshot: Mutex<Option<HashMap<String, store::Row>>>,
+    pub(crate) state_queries: AtomicU64,
 }
 
 pub(crate) fn parse<T: DeserializeOwned>(v: Value) -> KResult<T> {
@@ -189,10 +193,15 @@ impl Kernel {
             procs: Arc::new(crate::process::Procs::new(&ws_dir)),
             event_queues: Default::default(),
             install_requests: Default::default(),
+            state_snapshot: Mutex::new(None),
+            state_queries: AtomicU64::new(0),
         });
         // D299 first sight, then each plugin's active version.
+        inner.take_state_snapshot();
         inner.first_sight_blocking();
+        inner.take_state_snapshot();
         inner.refresh_active();
+        *inner.state_snapshot.lock().unwrap() = None;
         // D365: the idle reaper; it holds the kernel weakly and ends with it.
         if let Ok(rt) = tokio::runtime::Handle::try_current() {
             let me = Arc::downgrade(&inner);
@@ -254,6 +263,16 @@ impl Kernel {
         out.sort();
         out.dedup();
         out
+    }
+
+    /// Commands sent to the writer since the kernel opened (tests).
+    pub fn writes_sent(&self) -> u64 {
+        self.inner.pipeline.sent()
+    }
+
+    /// Plugin state rows read one by one from the database (tests: start-up reads them at once).
+    pub fn state_queries(&self) -> u64 {
+        self.inner.state_queries.load(Ordering::Relaxed)
     }
 
     /// How many times any plugin runtime was created.
@@ -1225,7 +1244,26 @@ impl Inner {
 
     /// A parameter of the plugin's state node (`enabled`, `settings.<name>`).
     pub fn plugin_param(&self, plugin: &str, name: &str) -> Option<String> {
-        self.read(|c| store::plugin_state(c, plugin)).ok().flatten().and_then(|r| crate::params::get(&r, name)).map(|p| p.value)
+        self.plugin_state_row(plugin).and_then(|r| crate::params::get(&r, name)).map(|p| p.value)
+    }
+
+    /// The plugin's state row (from the start-up snapshot while there is one).
+    pub fn plugin_state_row(&self, plugin: &str) -> Option<store::Row> {
+        if let Some(m) = self.state_snapshot.lock().unwrap().as_ref() {
+            return m.get(plugin).cloned();
+        }
+        self.state_queries.fetch_add(1, Ordering::Relaxed);
+        self.read(|c| store::plugin_state(c, plugin)).ok().flatten()
+    }
+
+    /// Reads every plugin state row in one query into the start-up snapshot.
+    pub(crate) fn take_state_snapshot(&self) {
+        let rows = self.read(|c| store::of_kind(c, store::KIND_PLUGIN_STATE)).unwrap_or_default();
+        let mut m = HashMap::new();
+        for r in rows {
+            m.entry(r.name.clone()).or_insert(r);
+        }
+        *self.state_snapshot.lock().unwrap() = Some(m);
     }
 }
 

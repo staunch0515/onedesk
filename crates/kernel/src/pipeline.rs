@@ -221,6 +221,8 @@ pub enum Command {
     RunClearFinished,
     /// Parameters of a plugin's state node (`enabled`, `settings.<name>`); `None` removes (D290).
     PluginState { plugin: String, set: Vec<(String, Option<String>)> },
+    /// Many `PluginState`s in one transaction (start-up with many packages); audited per plugin.
+    PluginStates(Vec<(String, StateSet)>),
     /// §7.6 takeover: every item (expected rev, new body) is written and rebound, or none is.
     Upgrade { plugin: String, to: String, items: Vec<UpgradeItem>, set_active: bool, prev_active: Option<String> },
     /// Rolls a batch back: items whose rev is still the upgraded one, plus `also` (D304).
@@ -289,8 +291,13 @@ enum Reply {
 
 type Job = (Actor, Command, Reply);
 
+/// Plugin state parameters to set (`None` removes one).
+pub type StateSet = Vec<(String, Option<String>)>;
+
 pub struct Pipeline {
     tx: std::sync::Mutex<Option<mpsc::Sender<Job>>>,
+    /// Commands sent to the writer so far (tests: start-up writes in one batch).
+    sent: std::sync::atomic::AtomicU64,
     thread: std::sync::Mutex<Option<JoinHandle<()>>>,
 }
 
@@ -322,18 +329,25 @@ impl Pipeline {
             .expect("spawn writer thread");
         // Readers use their own connection: they must not run before the startup command committed.
         let _ = ready_rx.recv();
-        Pipeline { tx: std::sync::Mutex::new(Some(tx)), thread: std::sync::Mutex::new(Some(thread)) }
+        Pipeline { tx: std::sync::Mutex::new(Some(tx)), sent: Default::default(), thread: std::sync::Mutex::new(Some(thread)) }
     }
 
     pub async fn execute(&self, actor: Actor, cmd: Command) -> KResult<Outcome> {
+        self.sent.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let (reply, rx) = oneshot::channel();
         let tx = self.tx.lock().unwrap().clone().ok_or_else(|| internal("pipeline stopped"))?;
         tx.send((actor, cmd, Reply::Async(reply))).map_err(|_| internal("writer thread gone"))?;
         rx.await.map_err(|_| internal("writer thread gone"))?
     }
 
+    /// How many commands were sent to the writer.
+    pub fn sent(&self) -> u64 {
+        self.sent.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
     /// Queues a command without waiting for it (from code that cannot wait: a `Drop`).
     pub fn submit(&self, actor: Actor, cmd: Command) {
+        self.sent.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let (reply, _rx) = oneshot::channel();
         if let Some(tx) = self.tx.lock().unwrap().clone() {
             let _ = tx.send((actor, cmd, Reply::Async(reply)));
@@ -342,6 +356,7 @@ impl Pipeline {
 
     /// The same, waiting on the calling thread (start-up code that is not async).
     pub fn execute_blocking(&self, actor: Actor, cmd: Command) -> KResult<Outcome> {
+        self.sent.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let (reply, rx) = mpsc::channel();
         let tx = self.tx.lock().unwrap().clone().ok_or_else(|| internal("pipeline stopped"))?;
         tx.send((actor, cmd, Reply::Blocking(reply))).map_err(|_| internal("writer thread gone"))?;
@@ -482,6 +497,12 @@ impl Writer {
                     Outcome { changed: n > 0, ..Default::default() }
                 }
                 Command::PluginState { plugin, set } => cx.plugin_state(&plugin, &set)?,
+                Command::PluginStates(all) => {
+                    for (plugin, set) in &all {
+                        cx.plugin_state(plugin, set)?;
+                    }
+                    Outcome { changed: true, ..Default::default() }
+                }
                 Command::Upgrade { plugin, to, items, set_active, prev_active } => {
                     cx.upgrade(&plugin, &to, items, set_active, prev_active.as_deref())?
                 }
@@ -569,6 +590,7 @@ fn describe(cmd: &Command) -> (String, String) {
         Command::RunKeep { id, .. } => ("run.keep".into(), id.clone()),
         Command::RunClearFinished => ("run.clearFinished".into(), String::new()),
         Command::PluginState { plugin, .. } => ("plugin.state".into(), plugin.clone()),
+        Command::PluginStates(_) => ("plugin.state".into(), String::new()),
         Command::Storage { plugin, .. } => ("plugin.storage".into(), plugin.clone()),
         Command::Upgrade { plugin, .. } => ("plugin.upgrade".into(), plugin.clone()),
         Command::UndoUpgrade { batch, .. } => ("plugin.undoUpgrade".into(), batch.clone()),
@@ -689,13 +711,10 @@ impl Tx<'_> {
     }
 
     pub(crate) fn insert(&self, r: &Row) -> KResult<()> {
-        self.tx
-            .execute(
-                &format!(
+        self.tx.prepare_cached(&format!(
                     "INSERT INTO resources ({}) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19)",
                     store::COLUMNS
-                ),
-                params![
+                )).map_err(sql)?.execute(params![
                     r.id,
                     r.kind,
                     r.plugin_version,
@@ -724,22 +743,18 @@ impl Tx<'_> {
     /// Keeps the search text of `r` in step with the row, in the same transaction (D277).
     fn index(&self, r: &Row) -> KResult<()> {
         // The search row shares the resource's rowid (migration 0003): no table scans.
-        let rowid: i64 = self.tx.query_row("SELECT rowid FROM resources WHERE id = ?1", [&r.id], |x| x.get(0)).map_err(sql)?;
-        self.tx.execute("DELETE FROM search WHERE rowid = ?1", [rowid]).map_err(sql)?;
+        let rowid: i64 = self.tx.prepare_cached("SELECT rowid FROM resources WHERE id = ?1").map_err(sql)?.query_row([&r.id], |x| x.get(0)).map_err(sql)?;
+        self.tx.prepare_cached("DELETE FROM search WHERE rowid = ?1").map_err(sql)?.execute([rowid]).map_err(sql)?;
         if r.deleted_at.is_none() && r.tree.as_deref() != Some(TREE_PLUGIN_STATE) {
-            self.tx
-                .execute("INSERT INTO search (rowid, name, text) VALUES (?1, ?2, ?3)", params![rowid, r.name, search_text(r)])
+            self.tx.prepare_cached("INSERT INTO search (rowid, name, text) VALUES (?1, ?2, ?3)").map_err(sql)?.execute(params![rowid, r.name, search_text(r)])
                 .map_err(sql)?;
         }
         Ok(())
     }
 
     pub(crate) fn save(&self, r: &Row) -> KResult<()> {
-        self.tx
-            .execute(
-                "UPDATE resources SET parent_id=?2, pos=?3, name=?4, description=?5, tags=?6, body=?7, rev=?8,
-                 updated_at=?9, updated_by=?10, deleted_at=?11, plugin_version=?12 WHERE id=?1",
-                params![
+        self.tx.prepare_cached("UPDATE resources SET parent_id=?2, pos=?3, name=?4, description=?5, tags=?6, body=?7, rev=?8,
+                 updated_at=?9, updated_by=?10, deleted_at=?11, plugin_version=?12 WHERE id=?1").map_err(sql)?.execute(params![
                     r.id,
                     r.parent_id,
                     r.pos,
@@ -763,11 +778,8 @@ impl Tx<'_> {
     }
 
     pub(crate) fn revision_from(&self, r: &Row, op: &str, fields: &[String], restored_from: Option<&str>) -> KResult<()> {
-        self.tx
-            .execute(
-                "INSERT INTO revisions (resource_id, rev, at, actor, op, fields, snapshot, restored_from)
-                 VALUES (?1,?2,?3,?4,?5,?6,?7,?8)",
-                params![
+        self.tx.prepare_cached("INSERT INTO revisions (resource_id, rev, at, actor, op, fields, snapshot, restored_from)
+                 VALUES (?1,?2,?3,?4,?5,?6,?7,?8)").map_err(sql)?.execute(params![
                     r.id,
                     r.rev,
                     self.at,
@@ -783,10 +795,7 @@ impl Tx<'_> {
     }
 
     pub(crate) fn audit(&self, op: &str, object: &str, summary: &Value) -> KResult<()> {
-        self.tx
-            .execute(
-                "INSERT INTO audit (at, actor, op, object, summary, result) VALUES (?1,?2,?3,?4,?5,'ok')",
-                params![self.at, self.actor.as_text(), op, object, summary.to_string()],
+        self.tx.prepare_cached("INSERT INTO audit (at, actor, op, object, summary, result) VALUES (?1,?2,?3,?4,?5,'ok')").map_err(sql)?.execute(params![self.at, self.actor.as_text(), op, object, summary.to_string()],
             )
             .map_err(sql)?;
         Ok(())
