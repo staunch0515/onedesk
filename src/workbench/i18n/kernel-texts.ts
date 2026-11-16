@@ -611,9 +611,7 @@ export const RUN_ERRORS: Record<Locale, Table> = {
  */
 export const RUN_ERRORS_NAMED: Record<Locale, Table> = {
   "en-US": {
-    "reason.blockedByPolicy|program|layer": "The {layer} setting (process.allow) does not allow the program “{program}”.",
     "reason.blockedByPolicy|program": "A workspace or environment setting (process.allow) does not allow the program “{program}”.",
-    "reason.blockedByPolicy|host|layer": "The {layer} setting (network.allow) does not allow the address “{host}”.",
     "reason.blockedByPolicy|host": "A workspace or environment setting (network.allow) does not allow the address “{host}”.",
     "reason.undeclaredProgram|program": "The plugin did not declare the program “{program}” in its manifest.",
     "notFound.program|program": "The program “{program}” was not found on this computer.",
@@ -624,9 +622,7 @@ export const RUN_ERRORS_NAMED: Record<Locale, Table> = {
     "reason.notExported|export": "The plugin that owns {export} does not offer it to other plugins, so this cannot be created.",
   },
   "zh-CN": {
-    "reason.blockedByPolicy|program|layer": "{layer}的设置（process.allow）不允许运行程序“{program}”。",
     "reason.blockedByPolicy|program": "工作区或环境的设置（process.allow）不允许运行程序“{program}”。",
-    "reason.blockedByPolicy|host|layer": "{layer}的设置（network.allow）不允许访问“{host}”。",
     "reason.blockedByPolicy|host": "工作区或环境的设置（network.allow）不允许访问“{host}”。",
     "reason.undeclaredProgram|program": "插件没有在清单里声明程序“{program}”。",
     "notFound.program|program": "这台电脑上找不到程序“{program}”。",

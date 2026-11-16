@@ -119,9 +119,9 @@ describe("every key the kernel emits has words", () => {
     const { buildI18n } = await import("./index");
     for (const l of locales) {
       const i18n = buildI18n(l);
-      const named = i18n.runError({ code: "denied", reason: "blockedByPolicy", message: "", params: { program: "ffmpeg", layer: "workspace" } });
+      const named = i18n.runError({ code: "denied", reason: "blockedByPolicy", message: "", params: { program: "ffmpeg", layer: "1ac58b8b" } });
       expect(named, l).toContain("ffmpeg");
-      expect(named, l).toContain("workspace");
+      expect(named, l).not.toContain("1ac58b8b"); // the layer is a node id, not something to show
       expect(i18n.runError({ code: "denied", reason: "blockedByPolicy", message: "", params: { host: "example.test:8080" } }), l).toContain("example.test:8080");
       expect(i18n.runError({ code: "notFound", reason: "program", message: "", params: { program: "nope" } }), l).toContain("nope");
       expect(i18n.runError({ code: "denied", reason: "blockedByPolicy", message: "" }), l).toBe(KERNEL_ERRORS[l]["reason.blockedByPolicy"]);
