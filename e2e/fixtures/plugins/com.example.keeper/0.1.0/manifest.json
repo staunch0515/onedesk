@@ -1,0 +1,56 @@
+{
+  "id": "com.example.keeper",
+  "version": "0.1.0",
+  "apiVersion": "2",
+  "name": "plugin.name",
+  "description": "plugin.description",
+  "icon": "archive",
+  "main": "main.js",
+  "author": "OneDesk",
+  "license": "MIT",
+  "requires": {
+    "files": false,
+    "network": { "hosts": ["example.com"] }
+  },
+  "contributes": {
+    "kinds": [
+      {
+        "id": "box",
+        "label": "kind.box",
+        "icon": "archive",
+        "tree": "resources",
+        "page": "editor",
+        "newName": "kind.box.new",
+        "defaults": { "text": "" },
+        "draggable": true,
+        "accepts": []
+      }
+    ],
+    "actions": [
+      { "id": "stash", "label": "action.stash", "icon": "download", "kinds": ["box"], "output": "text", "saveFirst": false, "confirm": null },
+      { "id": "slow", "label": "action.slow", "icon": "timer", "kinds": ["box"], "output": "text", "saveFirst": false, "confirm": null }
+    ],
+    "trees": [
+      { "id": "keeper", "label": "tree.keeper", "icon": "archive", "source": "provided", "page": "tree" }
+    ],
+    "pages": [
+      {
+        "id": "editor",
+        "actions": [
+          { "id": "remember", "role": "event", "label": "action.remember", "icon": "save" },
+          { "id": "recall", "role": "event", "label": "action.recall", "icon": "history" },
+          { "id": "abuse", "role": "event", "label": "action.abuse", "icon": "triangle-alert" },
+          { "id": "stash", "role": "run", "action": "stash", "label": "action.stash", "icon": "download" },
+          { "id": "slow", "role": "run", "action": "slow", "label": "action.slow", "icon": "timer" },
+          { "id": "save", "role": "save", "label": "action.save", "icon": "save", "shortcut": ["Mod", "S"] }
+        ],
+        "resultTabs": [
+          { "id": "result", "type": "output", "label": "tab.result", "icon": "terminal" }
+        ]
+      },
+      { "id": "tree", "actions": [] }
+    ],
+    "menus": { "new": ["box"] },
+    "locales": { "en-US": "locales/en-US.json", "zh-CN": "locales/zh-CN.json" }
+  }
+}

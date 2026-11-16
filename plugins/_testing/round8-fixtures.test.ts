@@ -78,6 +78,8 @@ describe("fixture: transfer", () => {
     expect(checkActionResult(res)).toEqual([]);
     expect(res.output.text).toBe("status 200, 40 bytes");
     expect(ctx.progress.mock.calls.map((c: any[]) => c[1])).toEqual(["10 of 40 bytes", "40 bytes"]);
+    // known total: a fraction; no total: null (the shell shows no percentage)
+    expect(ctx.progress.mock.calls.map((c: any[]) => c[0])).toEqual([0.25, null]);
   });
   it("download: a non-2xx answer is reported, not thrown", async () => {
     const { actions } = registry(transfer);

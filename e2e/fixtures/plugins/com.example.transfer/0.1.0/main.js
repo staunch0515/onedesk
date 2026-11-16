@@ -14,6 +14,13 @@ export function progressText(ctx, p) {
   return p && p.total !== undefined && p.total !== null ? tr(ctx, "progress.total", { bytes, total: p.total }) : tr(ctx, "progress.line", { bytes });
 }
 
+// Fraction for ctx.progress: bytes/total when the total is known, otherwise null (unknown total: no percentage).
+export function fractionOf(p) {
+  const total = p && typeof p.total === "number" && p.total > 0 ? p.total : null;
+  if (total === null) return null;
+  return Math.min(1, Math.max(0, (p.bytes || 0) / total));
+}
+
 const str = (input, key) => String((input && input[key]) || "");
 
 export default {
@@ -37,7 +44,7 @@ export default {
       const res = await ctx.host.transfer.download({
         url: str(input, "body.url"),
         to: str(input, "body.path"),
-        onProgress: (p) => ctx.progress(0, progressText(ctx, p)),
+        onProgress: (p) => ctx.progress(fractionOf(p), progressText(ctx, p)),
       });
       return { output: { type: "text", text: tr(ctx, "result.download", { status: res.status, bytes: res.bytes }) }, summary: { message: tr(ctx, "summary.done") } };
     });
@@ -46,7 +53,7 @@ export default {
       const res = await ctx.host.transfer.upload({
         from: str(input, "body.path"),
         url: str(input, "body.url"),
-        onProgress: (p) => ctx.progress(0, progressText(ctx, p)),
+        onProgress: (p) => ctx.progress(fractionOf(p), progressText(ctx, p)),
       });
       return { output: { type: "text", text: tr(ctx, "result.upload", { status: res.status }) }, summary: { message: tr(ctx, "summary.done") } };
     });
@@ -57,7 +64,7 @@ export default {
         program: "cat",
         args: [path],
         to: `${path}.copy`,
-        onProgress: (p) => ctx.progress(0, progressText(ctx, p)),
+        onProgress: (p) => ctx.progress(fractionOf(p), progressText(ctx, p)),
       });
       return { output: { type: "text", text: tr(ctx, "result.capture", { bytes: res.bytes }) }, summary: { message: tr(ctx, "summary.done") } };
     });

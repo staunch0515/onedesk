@@ -1,0 +1,22 @@
+{
+  "plugin.name": "Keeper",
+  "plugin.description": "Test fixture: keeps a draft in storage, can hold on to a host handle, and runs slowly. Used to check idle release and stale host contexts.",
+  "kind.box": "Box",
+  "kind.box.new": "Untitled box",
+  "tree.keeper": "Keeper",
+  "node.label": "Keeper node ({locale})",
+  "action.remember": "Remember draft",
+  "action.recall": "Recall draft",
+  "action.abuse": "Use kept handle",
+  "action.stash": "Keep handle",
+  "action.slow": "Run slowly",
+  "action.save": "Save",
+  "tab.result": "Output",
+  "field.text": "Text",
+  "message.remembered": "Remembered.",
+  "message.nothing": "Nothing remembered.",
+  "message.nothingStashed": "No handle kept.",
+  "result.stashed": "stashed",
+  "result.slow": "done slowly",
+  "page.tree": "Keeper"
+}

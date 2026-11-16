@@ -31,5 +31,7 @@
   "message.nothing": "请先选一个包。",
   "message.refreshed": "已重新扫描。",
   "truncated": "扫描已截断：要查看的文件夹太多（上限 {max}）。",
-  "message.cooldown": "上一次请求没有完成，请 {seconds} 秒后再试。"
+  "message.cooldown": "上一次请求没有完成，请 {seconds} 秒后再试。",
+  "reason.incomplete": "清单缺少必需字段。",
+  "reason.mismatch": "清单与所在文件夹不符（id 或版本不同）。"
 }
