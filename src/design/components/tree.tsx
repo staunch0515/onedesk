@@ -7,7 +7,7 @@ import { Spinner } from "./spinner";
 import { useVirtualWindow } from "./virtual";
 import "./tree.css";
 
-export type TreeNodeState = "ok" | "disabled" | "missing-plugin" | "broken" | "conflict";
+export type TreeNodeState = "ok" | "disabled" | "missing-plugin" | "broken" | "conflict" | "load-failed";
 export type TreeDropPosition = "before" | "inside" | "after";
 
 export interface TreeRow {
@@ -63,6 +63,7 @@ const STATE_ICON: Partial<Record<TreeNodeState, string>> = {
   "missing-plugin": "puzzle",
   broken: "unlink",
   conflict: "git-merge",
+  "load-failed": "circle-alert",
   disabled: "circle-slash",
 };
 

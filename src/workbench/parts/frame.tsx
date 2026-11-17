@@ -7,7 +7,7 @@ import type { TabState } from "../state/store";
 import { useResize } from "./hooks";
 import { InfoPanelPart } from "./info-panel";
 
-const STATE_TONE: Record<NodeState, Tone> = { ok: "neutral", disabled: "neutral", "missing-plugin": "warning", broken: "danger", conflict: "warning" };
+const STATE_TONE: Record<NodeState, Tone> = { ok: "neutral", disabled: "neutral", "missing-plugin": "warning", broken: "danger", conflict: "warning", "load-failed": "danger" };
 
 export interface FrameProps {
   tab: TabState;
@@ -39,6 +39,7 @@ export function Frame({ tab, descriptor, meta, actions, children, panel }: Frame
     "missing-plugin": t("state.missingPlugin"),
     broken: t("state.broken"),
     conflict: t("state.conflict"),
+    "load-failed": t("tree.loadFailed"),
   };
 
   // Said when the kernel gives no reason of its own (D220: shown greyed, never hidden).
@@ -48,6 +49,7 @@ export function Frame({ tab, descriptor, meta, actions, children, panel }: Frame
     "missing-plugin": t("state.missingPluginHint"),
     broken: t("state.brokenHint"),
     conflict: t("state.conflictHint"),
+    "load-failed": t("state.brokenHint"),
   };
 
   const crumbs = descriptor.breadcrumb.map((c, i) => ({

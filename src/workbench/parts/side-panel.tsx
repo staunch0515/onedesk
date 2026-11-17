@@ -24,7 +24,7 @@ export function menuEntries(commands: MenuCommand[], tx: (l: MenuCommand["label"
 
 export function TreePanel({ tree }: { tree: TreeInfo }) {
   const { client, store, actions } = useWorkbench();
-  const { t, tx, locale } = useI18n();
+  const { t, tx, locale, error } = useI18n();
   const expanded = useUi((s) => s.expanded[tree.id] ?? EMPTY);
   const selected = useUi((s) => s.selected[tree.id] ?? null);
   const renaming = useUi((s) => (s.renaming?.tree === tree.id ? s.renaming.key : null));
@@ -177,14 +177,14 @@ export function TreePanel({ tree }: { tree: TreeInfo }) {
         const isOpen = n.expandable && (needle ? childrenOf(n.key).some(matches) : open.has(n.key));
         out.push({
           key: n.key,
-          label: n.label || (n.state === "broken" ? t("tree.loadFailed") : n.label),
+          label: n.label || (n.state === "load-failed" || n.state === "broken" ? t("tree.loadFailed") : n.label),
           icon: n.icon === "folder" && isOpen ? "folder-open" : n.icon,
           depth,
           expandable: n.expandable,
           expanded: isOpen,
           loading: loading.has(n.key),
           state: n.state,
-          stateLabel: n.stateReason ? tx(n.stateReason) : undefined,
+          stateLabel: n.stateReason ? (n.state === "load-failed" && typeof n.stateReason === "string" ? error({ code: n.stateReason, params: {} }) : tx(n.stateReason)) : undefined,
           badge: n.badge,
           marked: tree.id === "environments" && n.key === activeEnv,
           draggable: n.draggable && !needle,
@@ -314,7 +314,7 @@ export function TreePanel({ tree }: { tree: TreeInfo }) {
       <ContextMenu
         point={menu?.point ?? null}
         onClose={() => setMenu(null)}
-        items={menuEntries(commands, tx, (id) => void actions.command(id, { tree: tree.id, nodeKey: menu?.node?.key ?? null }))}
+        items={menuEntries(commands, tx, (id) => void actions.command(id, { tree: tree.id, nodeKey: menu?.node?.key ?? null, target: menu?.node?.target }))}
       />
     </SidePanel>
   );
