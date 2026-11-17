@@ -4,7 +4,7 @@
  * Replace `createMockClient()` in main.tsx with the real client; nothing else in the UI changes.
  */
 import type { ProtocolClient } from "../client";
-import { zhCN } from "../../i18n/zh-CN";
+import { DEMO_LANGUAGES } from "../../i18n/lang-files";
 import { KernelError } from "../errors";
 import type {
   ActionDecl,
@@ -92,7 +92,7 @@ const TREES: TreeInfo[] = [
 ];
 
 const CONFIG_FIELDS: Record<string, Partial<ViewField> & { label: Label }> = {
-  "ui.language": { label: L("Interface language", "界面语言"), kind: "enum", options: [{ value: "en-US", label: "English" }, { value: "zh-CN", label: "简体中文" }], hint: L("Takes effect at once.", "立即生效。") },
+  "ui.language": { label: L("Interface language", "界面语言"), kind: "enum", options: [{ value: "en-US", label: "English" }, { value: "zh-CN", label: "简体中文" }, { value: "ja-JP", label: "日本語" }], hint: L("Takes effect at once.", "立即生效。") },
   "ui.advanced": { label: L("Advanced mode", "高级模式"), kind: "boolean" },
   "ui.theme": { label: L("Theme", "主题"), kind: "enum", options: [{ value: "system", label: L("Follow system", "跟随系统") }, { value: "light", label: L("Light", "浅色") }, { value: "dark", label: L("Dark", "深色") }] },
   "ui.density": { label: L("Density", "密度"), kind: "enum", options: [{ value: "comfortable", label: L("Comfortable", "宽松") }, { value: "compact", label: L("Compact", "紧凑") }] },
@@ -1548,16 +1548,16 @@ export function createMockClient(options: MockOptions = {}): ProtocolClient {
   const client: ProtocolClient = {
     version: "0.1-mock",
 
-    // The demo has no language plugins: Chinese is the shell's own table until the language plugin's JSON replaces it (round 11, phase 2).
+    // The demo has no kernel: the language plugins' own files are read directly (i18n/lang-files.ts).
     i18n: {
       async languages() {
         return [
           { locale: "en-US", name: "English" },
-          { locale: "zh-CN", name: "简体中文" },
+          ...DEMO_LANGUAGES.map((l) => ({ locale: l.locale, name: l.name })),
         ];
       },
       async shell(locale) {
-        return { locale, texts: locale === "zh-CN" ? { ...zhCN } : {} };
+        return { locale, texts: { ...(DEMO_LANGUAGES.find((l) => l.locale === locale)?.texts ?? {}) } };
       },
     },
 

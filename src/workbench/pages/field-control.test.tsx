@@ -36,3 +36,19 @@ describe("secret form field", () => {
     expect((screen.getByLabelText("Token") as HTMLInputElement).readOnly).toBe(true);
   });
 });
+
+describe("ui.language on the configuration page (D379)", () => {
+  it("is a dropdown of the languages on offer, not a text box, and keeps a configured language whose plugin is off", async () => {
+    const { kernelLikeClient, renderInShell } = await import("../testing/harness");
+    const { createMockClient } = await import("../protocol/mock");
+    const mock = createMockClient({ fresh: true, quiet: true });
+    const client = kernelLikeClient(mock, { i18n: { languages: async () => [{ locale: "en-US", name: "English" }, { locale: "ja-JP", name: "日本語", plugin: "p" }], shell: async (locale) => ({ locale, texts: {} }) } });
+    const onChange = vi.fn();
+    const lang: ViewField = { name: "ui.language", label: "ui.language", kind: "text", bind: "params.ui.language" };
+    renderInShell(client, <FieldControl field={lang} value="zh-CN" onChange={onChange} size="md" readOnly={false} />);
+    const box = await screen.findByRole("combobox", { name: "ui.language" });
+    expect(box.textContent).toBe("zh-CN");
+    fireEvent.keyDown(box, { key: "Enter" });
+    expect((await screen.findAllByRole("option")).map((o) => o.textContent)).toEqual(["English", "日本語", "zh-CN"]);
+  });
+});

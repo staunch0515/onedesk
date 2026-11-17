@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 import { render } from "@testing-library/react";
 import { ToastProvider } from "../../design";
 import { I18nProvider } from "../i18n";
-import { zhCN } from "../i18n/zh-CN";
+import { DEMO_LANGUAGES } from "../i18n/lang-files";
 import { ProtocolProvider, type ProtocolClient } from "../protocol";
 import { WorkbenchProvider } from "../state/context";
 import { noticeKeeper } from "../state/notices";
@@ -18,7 +18,7 @@ export function renderInShell(client: ProtocolClient, ui: ReactNode, locale: str
   const store = createStore(null, () => undefined);
   const wrap = (content: ReactNode) => (
     <ProtocolProvider client={client}>
-      <I18nProvider locale={locale} texts={locale === "zh-CN" ? zhCN : undefined}>
+      <I18nProvider locale={locale} texts={DEMO_LANGUAGES.find((l) => l.locale === locale)?.texts}>
         <ToastProvider closeLabel="Close" viewportLabel="Notifications" duration={1000} onToast={noticeKeeper(store)}>
           <WorkbenchProvider store={store}>{content}</WorkbenchProvider>
         </ToastProvider>
