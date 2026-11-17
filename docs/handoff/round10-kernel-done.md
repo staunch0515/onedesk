@@ -110,3 +110,17 @@ host.kinds.handle("<kind>", {
 - `sh scripts/gen-types.sh --check`：协议类型是最新的。
 - `pnpm lint`：架构检查、界面规范检查通过。
 - 没跑：`pnpm check` 的其余部分（`typecheck`、前端 `test`、`e2e`）——不在内核会话的范围里。
+
+## 审查后的修改（`round10-review.md` #3、#4、#11）
+
+先合并了协调分支 `claude/onedesk-coord-3-f0c048`。三条都在一个共用的函数里（`kind_children.rs` 的 `parse_batch`），类型自供子节点和已有的提供树 `children` 都经过它：
+
+- **#3**：插件返回的 `next` 不大于本批的 `offset`，或这一批（去重后）为空却带 `next` → 当作到头（不发 `next`）。类型自供子节点按插件自己的 offset 比较，再加上存储子节点数发出去。
+- **#4**：一批里重复的键只留第一个；键等于父节点键的节点去掉。限制：内核只知道直接的父节点，更上层的祖先（提供树的、或多层插件节点的）不查——要查得每批都调插件的 `path`；外壳那边按审查意见加已访问集合兜底。
+- **#11**：标签按字符截到 200 个；一批超过 1000 个节点在解析节点之前就当作出错（提供树：`pluginError`，详情 “more than 1000 nodes in one batch”；类型自供子节点：显示“加载失败”节点）。提供树原有的“一批超过 200 个 → 出错”保留；类型自供子节点 201–1000 个照旧截成 200 个续取。
+
+测试（`round10.rs` 新增 3 个，两种树各覆盖）：`a_next_that_does_not_advance_ends_the_listing`、`repeated_keys_and_a_key_equal_to_its_parent_are_dropped`、`labels_are_cut_and_oversized_batches_fail`。
+
+检查（合并后、本次提交的代码上实际跑过）：
+- `cargo test -p onedesk-kernel -p onedesk-worker -p onedesk-protocol`：全部通过（`round10.rs` 18 个）。注意：机器负载 400–460 时 `round6.rs` 的 `review4_queues_are_bounded_and_failures_merge` 连续失败两次（事件队列没被塞满：`dropped: 0`——它依赖处理函数比事件来得慢，属计时敏感）；负载 ~340 时整套重跑（`--no-fail-fast`）全部通过。本次修改不涉及事件队列，合并进来的协调分支也没改 `crates/`。
+- clippy（`-D warnings`）、`sh scripts/gen-types.sh --check`（协议没有改动）、`pnpm lint`：通过。

@@ -908,32 +908,11 @@ impl Inner {
         let out = self
             .call_plugin(&plugin.id, "trees", &decl.id, "children", json!([ctx, p.parent, offset]), client)
             .await?;
-        self.provided_page(plugin, &p.tree, p.parent.as_deref(), decl.page.is_some(), out)
+        self.provided_page(plugin, &p.tree, p.parent.as_deref(), offset, decl.page.is_some(), out)
     }
 
-    fn provided_page(&self, plugin: &Plugin, tree: &str, parent: Option<&str>, has_page: bool, out: Value) -> KResult<TreePage> {
-        #[derive(serde::Deserialize)]
-        #[serde(deny_unknown_fields)]
-        struct PNode {
-            key: String,
-            label: String,
-            icon: String,
-            #[serde(default)]
-            expandable: bool,
-            #[serde(default)]
-            target: Option<String>,
-            #[serde(default)]
-            badge: Option<String>,
-        }
-        #[derive(serde::Deserialize)]
-        #[serde(deny_unknown_fields)]
-        struct PPage {
-            nodes: Vec<PNode>,
-            #[serde(default)]
-            next: Option<u32>,
-        }
-        let page: PPage = serde_json::from_value(out)
-            .map_err(|e| err_d(ErrorCode::PluginError, format!("{}: bad tree page: {e}", plugin.id)))?;
+    fn provided_page(&self, plugin: &Plugin, tree: &str, parent: Option<&str>, offset: u32, has_page: bool, out: Value) -> KResult<TreePage> {
+        let page = crate::kind_children::parse_batch(plugin, out, offset, parent)?;
         if page.nodes.len() > BATCH as usize {
             return Err(err_d(ErrorCode::PluginError, "more than 200 nodes in one batch"));
         }

@@ -101,29 +101,7 @@ impl Inner {
     }
 
     fn child_page(&self, plugin: &Plugin, tree: &str, row: &Row, parent_key: &str, offset: u32, out: Value) -> KResult<TreePage> {
-        #[derive(serde::Deserialize)]
-        #[serde(deny_unknown_fields)]
-        struct PNode {
-            key: String,
-            label: String,
-            icon: String,
-            #[serde(default)]
-            expandable: bool,
-            #[serde(default)]
-            target: Option<String>,
-            #[serde(default)]
-            badge: Option<String>,
-        }
-        #[derive(serde::Deserialize)]
-        #[serde(deny_unknown_fields)]
-        struct PPage {
-            nodes: Vec<PNode>,
-            #[serde(default)]
-            next: Option<u32>,
-        }
-        let out = if out.is_null() { json!({ "nodes": [] }) } else { out };
-        let mut page: PPage = serde_json::from_value(out)
-            .map_err(|e| err_d(ErrorCode::PluginError, format!("{}: bad children page: {e}", plugin.id)))?;
+        let mut page = parse_batch(plugin, out, offset, parent_plugin_key(parent_key))?;
         // A larger batch is cut to ours; the rest is asked for again from where it was cut
         // (offsets are positions, as for provided trees).
         if page.nodes.len() > BATCH as usize {
@@ -180,6 +158,65 @@ impl Inner {
             _ => false,
         }
     }
+}
+
+/// The plugin's own key of a parent node (`@<rid>/<key>` → `key`); `None` at the resource.
+fn parent_plugin_key(parent_key: &str) -> Option<&str> {
+    parse_child_key(parent_key).map(|(_, k)| k)
+}
+
+/// One node as a plugin returns it (provided trees and kind children alike).
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct PNode {
+    pub key: String,
+    pub label: String,
+    pub icon: String,
+    #[serde(default)]
+    pub expandable: bool,
+    #[serde(default)]
+    pub target: Option<String>,
+    #[serde(default)]
+    pub badge: Option<String>,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct PPage {
+    pub nodes: Vec<PNode>,
+    #[serde(default)]
+    pub next: Option<u32>,
+}
+
+/// Most nodes one answer may hold before it is even read (review #11).
+pub const MAX_RAW_BATCH: usize = 1000;
+/// Labels are cut to this many characters (review #11).
+pub const MAX_LABEL: usize = 200;
+
+/// Reads and tidies one batch a plugin returned for a tree (round-10 review #3, #4, #11):
+/// - more than `MAX_RAW_BATCH` nodes → `pluginError`, checked before the nodes are parsed;
+/// - labels cut to `MAX_LABEL` characters;
+/// - a key seen earlier in the batch, or equal to the parent's key, is dropped (the kernel only
+///   knows the direct parent; deeper ancestors are the plugin's own business);
+/// - a `next` that does not move past `offset`, or a `next` on an empty batch, means the end.
+pub(crate) fn parse_batch(plugin: &Plugin, out: Value, offset: u32, parent: Option<&str>) -> KResult<PPage> {
+    let out = if out.is_null() { json!({ "nodes": [] }) } else { out };
+    let bad = |what: String| err_d(ErrorCode::PluginError, format!("{}: bad tree page: {what}", plugin.id));
+    if out.get("nodes").and_then(Value::as_array).is_some_and(|a| a.len() > MAX_RAW_BATCH) {
+        return Err(bad(format!("more than {MAX_RAW_BATCH} nodes in one batch")));
+    }
+    let mut page: PPage = serde_json::from_value(out).map_err(|e| bad(e.to_string()))?;
+    let mut seen = std::collections::HashSet::new();
+    page.nodes.retain(|n| Some(n.key.as_str()) != parent && seen.insert(n.key.clone()));
+    for n in &mut page.nodes {
+        if n.label.chars().count() > MAX_LABEL {
+            n.label = n.label.chars().take(MAX_LABEL).collect();
+        }
+    }
+    if page.next.is_some_and(|n| n <= offset) || page.nodes.is_empty() {
+        page.next = None;
+    }
+    Ok(page)
 }
 
 fn blank_node(tree: &str, parent: &str, key: String) -> TreeNode {
