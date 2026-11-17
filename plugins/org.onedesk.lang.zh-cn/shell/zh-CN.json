@@ -487,5 +487,6 @@
   "result.exportPath": "文件路径",
   "result.exportGo": "导出",
   "result.exported": "已写入 {rows} 行到 {path}",
-  "result.exportNeedsTable": "只有表格结果可以导出"
+  "result.exportNeedsTable": "只有表格结果可以导出",
+  "link.refused": "只能打开网页和邮件链接。"
 }
