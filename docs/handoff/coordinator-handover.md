@@ -12,6 +12,7 @@
 - 第八轮（`transfer`、导出点的另两种中的树与页面、页面参数、SHA-256 指纹、`RunError.params`）：范围 `round8-plan.md`，任务书 `round8-kernel.md`、`round8-shell.md`、`round8-tests.md`，决定 D352–D360。已做完并验收（审查 `round8-review.md`，验收 `round8-acceptance.md`，决定到 D362）；是否已合并到 main 看 `git log main`。
 - 第八轮已合并到 `main` 并推送（`8123a08`）。第九轮（清单缓存、空闲回收、宿主接口按上下文授权、小修）：范围 `round9-plan.md`，任务书 `round9-kernel.md`、`round9-shell.md`、`round9-tests.md`，决定 D363–D368；已做完并验收（审查 `round9-review.md`，验收 `round9-acceptance.md`，决定到 D371）；是否已合并到 main 看 `git log main`。阶段 3 到此收尾，下一步是阶段 4（外壳补全）与阶段 5（基础插件，含第一版旧库升级）。
 - 第九轮已合并到 `main` 并推送（`25cc6a8`）。第十轮（阶段 4 第一部分：虚拟滚动、未保存内容的合并、类型自供子节点、通知入口与“只弹提示”的按钮）：范围 `round10-plan.md`，任务书 `round10-kernel.md`、`round10-shell.md`、`round10-tests.md`，决定 D372–D376；进行到哪一步看有没有 `round10-*-done.md`、`round10-review.md`、`round10-acceptance.md`。
+- 用户 2026-11-17 的指示：尽快做到阶段 5；当天授权协调会话自行决定合并到 main 并推送（验收通过、完整检查通过后）、做完一轮直接进下一轮。第十一轮（阶段 5 第一部分：语言插件、网址、提示词、笔记阅读态、欢迎页）：`round11-plan.md` 与三份任务书，决定 D378–D383。第十二轮预定：综合、集合、第一版旧库升级、HTTP 补全；之后多窗口多工作区。
 - 各轮记录在 `docs/handoff/`；遗留事项在 `docs/handoff/todo.md`。
 
 ## 2. 下一轮可选的范围
