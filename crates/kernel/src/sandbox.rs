@@ -297,6 +297,11 @@ const BOOTSTRAP: &str = r#"
           e.code = "denied";
           throw e;
         }
+        if (kind === "kinds" && h && h.drop !== undefined && !declared.kind_drop.includes(name)) {
+          const e = new Error("undeclared drop of kind: " + name);
+          e.code = "denied";
+          throw e;
+        }
         reg[kind][name] = h;
       },
     });
@@ -412,6 +417,7 @@ const BOOTSTRAP: &str = r#"
       resources: Object.freeze({
         get: c("resources.get"), list: c("resources.list"), create: c("resources.create"),
         update: c("resources.update"), move: c("resources.move"), remove: c("resources.remove"),
+        search: c("resources.search"),
       }),
       files: Object.freeze({
         roots: c("files.roots"), list: c("files.list"), stat: c("files.stat"),
@@ -456,7 +462,8 @@ const BOOTSTRAP: &str = r#"
       }
       return v;
     };
-    if (args[0] && args[0].resource) freeze(args[0].resource);
+    // Round 12 (D390): a kind's `drop` gets the target resource to change (through ctx.host).
+    if (args[0] && args[0].resource && !(kind === "kinds" && fn === "drop")) freeze(args[0].resource);
     const ctx = Object.assign({}, args[0], {
       host: makeHost(callId),
       t,
@@ -468,8 +475,8 @@ const BOOTSTRAP: &str = r#"
     });
     try {
       // `kinds.migrate` takes (body, fromVersion, ctx), as the manifest documentation writes it;
-      // everything else, `kinds.children` included, takes ctx first.
-      const out = kind === "kinds" && fn !== "children" ? await f.call(h, ...args.slice(1), ctx) : await f.call(h, ctx, ...args.slice(1));
+      // everything else, `kinds.children` and `kinds.drop` included, takes ctx first.
+      const out = kind === "kinds" && fn !== "children" && fn !== "drop" ? await f.call(h, ...args.slice(1), ctx) : await f.call(h, ctx, ...args.slice(1));
       return JSON.stringify({ ok: out === undefined ? null : out });
     } catch (e) {
       // A host error the handler did not catch keeps its code.
@@ -494,6 +501,8 @@ pub struct Declarations {
     pub kinds: Vec<String>,
     /// D375: kinds whose manifest declares `children`; only they may register a `children` handler.
     pub kind_children: Vec<String>,
+    /// Round 12 (D390): kinds whose manifest declares `drop`; only they may register a `drop` handler.
+    pub kind_drop: Vec<String>,
     pub events: Vec<String>,
 }
 

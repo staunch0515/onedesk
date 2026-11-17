@@ -358,6 +358,9 @@ pub struct KindDecl {
     /// D375: the code supplies children (`kinds.handle(kind, { children })`) after the stored ones.
     #[serde(default)]
     pub children: bool,
+    /// Round 12 (D390): drops onto its nodes go to the code (`kinds.handle(kind, { drop })`).
+    #[serde(default)]
+    pub drop: bool,
 }
 
 impl KindDecl {
@@ -454,6 +457,9 @@ pub struct Plugin {
     pub locales: BTreeMap<String, BTreeMap<String, String>>,
 }
 
+/// Round 12 (D389): the permission id of `requires.resources: true`.
+pub const PERM_RESOURCES_ALL: &str = "resourcesAll";
+
 /// One permission atom; a version's permission set is a set of these (D299).
 pub fn permission_atoms(m: &Manifest) -> BTreeSet<String> {
     let mut a = BTreeSet::new();
@@ -485,8 +491,9 @@ pub fn permission_atoms(m: &Manifest) -> BTreeSet<String> {
             a.insert(format!("programs:{}", p.name));
         }
     }
+    // D389: the basic information of every resource (`resources.search`); no detail.
     if r.resources {
-        a.insert("resources".to_string());
+        a.insert(PERM_RESOURCES_ALL.to_string());
     }
     if r.plugins_install() {
         a.insert("plugins".to_string());
@@ -852,6 +859,10 @@ pub fn parse_package(dir: &Path, bytes: &[u8], check_folder: bool) -> Result<Plu
         // Supplied children are shown under the kind's node, so it needs a tree.
         if k.children && k.tree.is_none() {
             return Err(reject(dir, "childrenWithoutTree", format!("kind {}", k.id)));
+        }
+        // Round 12: drops arrive on the kind's nodes, so it needs a tree as well.
+        if k.drop && k.tree.is_none() {
+            return Err(reject(dir, "dropWithoutTree", format!("kind {}", k.id)));
         }
         for x in &k.menu {
             if !has_cmd(x) {
@@ -1972,5 +1983,38 @@ mod tests {
         assert_eq!(reg.rejected().len(), 1);
         let rules = reg.rules();
         assert_eq!(rules["test.alpha:item"].tree.as_deref(), Some("resources"));
+    }
+
+    /// Round 12 (D389, D390): `requires.resources` is the permission `resourcesAll`; `drop` needs a tree.
+    #[test]
+    fn round12_requires_resources_and_drop() {
+        assert_eq!(reason(with(good(), &["requires", "resources"], json!(true))), "ok");
+        assert_eq!(reason(with(good(), &["requires", "resources"], json!(false))), "ok");
+        assert_eq!(reason(with(good(), &["requires", "resources"], json!("yes"))), "schema");
+        assert_eq!(reason(with(good(), &["requires", "resources"], json!({ "all": true }))), "schema");
+        let tmp = tempfile::tempdir().unwrap();
+        let plain = write(tmp.path(), "test.alpha", "0.1.0", &good());
+        let plain = load_package(&plain).unwrap();
+        let tmp2 = tempfile::tempdir().unwrap();
+        let all = write(tmp2.path(), "test.alpha", "0.1.0", &with(good(), &["requires", "resources"], json!(true)));
+        let all = load_package(&all).unwrap();
+        assert!(all.permissions().contains(PERM_RESOURCES_ALL) && !plain.permissions().contains(PERM_RESOURCES_ALL));
+        assert!(!all.permissions().contains("resources"));
+        // Into the fingerprint, and listed with no detail for the confirmation.
+        assert_ne!(perm_fingerprint(&all.permissions()), perm_fingerprint(&plain.permissions()));
+        let listed = all.permission_list(|_| false);
+        let p = listed.iter().find(|p| p.id == PERM_RESOURCES_ALL).expect("listed");
+        assert_eq!((p.detail.as_str(), p.required), ("", true));
+        assert!(!plain.permission_list(|_| false).iter().any(|p| p.id == PERM_RESOURCES_ALL));
+
+        let kind = |k: Value| with(good(), &["contributes", "kinds", "0"], k);
+        let base = json!({ "id": "item", "label": "kind.item", "icon": "box", "page": "editor" });
+        let mut d = base.clone();
+        d["drop"] = json!(true);
+        assert_eq!(reason(kind(d.clone())), "dropWithoutTree");
+        d["tree"] = json!("resources");
+        assert_eq!(reason(kind(d.clone())), "ok");
+        d["drop"] = json!("yes");
+        assert_eq!(reason(kind(d)), "schema");
     }
 }

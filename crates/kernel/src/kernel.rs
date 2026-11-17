@@ -160,6 +160,8 @@ pub(crate) struct KindMeta {
     pub page: Option<(String, String)>,
     pub draggable: bool,
     pub accepts: Vec<String>,
+    /// Round 12 (D390): the kind decides drops onto its nodes (`drop`), and its plugin runs.
+    pub drop_any: bool,
     pub commands: Vec<MenuCommand>,
     pub state: NodeState,
     /// Why the state is not `ok` (e.g. `<plugin>@<version>` of a missing version).
@@ -458,10 +460,7 @@ impl Inner {
             M::TREE_LIST => to_value(self.tree_list()),
             M::TREE_CHILDREN => to_value(self.tree_children(parse(params)?, client).await?),
             M::TREE_PATH => to_value(self.tree_path(parse(params)?, client).await?),
-            M::TREE_MOVE => {
-                self.tree_move(parse(params)?).await?;
-                Ok(Value::Null)
-            }
+            M::TREE_MOVE => to_value(self.tree_move(parse(params)?, client).await?),
             M::TREE_CREATE_GROUP => {
                 let p: TreeCreateGroupParams = parse(params)?;
                 let id = self.create_group(&p.tree, p.parent, &p.name).await?;
@@ -568,6 +567,7 @@ impl Inner {
                 draggable: true,
                 accepts: vec![kind.into()],
                 commands: vec![],
+                drop_any: false,
                 state: NodeState::Ok,
                 reason: None,
                 plugin: None,
@@ -581,6 +581,7 @@ impl Inner {
                 draggable: true,
                 accepts: vec!["*".into()],
                 commands: vec![],
+                drop_any: false,
                 state: NodeState::Ok,
                 reason: None,
                 plugin: None,
@@ -597,6 +598,7 @@ impl Inner {
                     draggable: true,
                     accepts: vec![],
                     commands: vec![],
+                    drop_any: false,
                     state: NodeState::MissingPlugin,
                     reason: Some(Label::Text(format!("{pid}@{v}"))),
                     plugin: None,
@@ -613,6 +615,7 @@ impl Inner {
                 draggable: k.draggable,
                 accepts: vec![],
                 commands: vec![],
+                drop_any: false,
                 state: NodeState::Disabled,
                 reason: Some(Label::Text("unconfirmedVersion".into())),
                 plugin: None,
@@ -625,6 +628,7 @@ impl Inner {
                 draggable: k.draggable,
                 accepts: k.accepts.iter().map(|a| p.kind_ref(a)).collect(),
                 commands: k.menu.iter().map(|c| self.plugin_menu_cmd(p, c)).collect(),
+                drop_any: k.drop && self.plugin_enabled(&p.id) && self.version_deps_met(p) && self.kind_unmet(p, k).is_empty(),
                 // D290: a disabled plugin's resources stay, greyed out; so do those of a kind
                 // whose borrowed tree or page is not exported (D356).
                 state: if self.plugin_enabled(&p.id) && self.version_deps_met(p) && self.kind_unmet(p, k).is_empty() {
@@ -642,6 +646,7 @@ impl Inner {
                 draggable: true,
                 accepts: vec![],
                 commands: vec![],
+                drop_any: false,
                 state: NodeState::MissingPlugin,
                 reason: Some(Label::Text(kind.into())),
                 plugin: None,
@@ -884,6 +889,7 @@ impl Inner {
             menu,
             draggable: meta.draggable,
             accepts: meta.accepts,
+            drop_any: meta.drop_any.then_some(true),
         })
     }
 
@@ -973,6 +979,7 @@ impl Inner {
                     menu,
                     draggable: false,
                     accepts: vec![],
+                    drop_any: None,
                     key: n.key,
                 }
             })
@@ -1004,9 +1011,15 @@ impl Inner {
         serde_json::from_value(out).map_err(|e| err_d(ErrorCode::PluginError, format!("bad path: {e}")))
     }
 
-    async fn tree_move(&self, p: TreeMoveParams) -> KResult<()> {
+    async fn tree_move(&self, p: TreeMoveParams, client: Option<String>) -> KResult<TreeMoveResult> {
         self.stored_tree(&p.tree)?;
         let row = self.row_in_tree(&p.tree, &p.key)?;
+        // Round 12 (D390): onto a node whose kind decides drops.
+        if let (DropPosition::Inside, Some(t)) = (p.position, p.target.as_deref()) {
+            if let Some(done) = self.plugin_drop(&p.tree, &row, t, p.locale.as_deref(), client).await? {
+                return Ok(done);
+            }
+        }
         let dest = match (p.position, p.target) {
             (DropPosition::Inside, t) => MoveDest::Inside(t),
             (DropPosition::Before, Some(t)) => MoveDest::Before(t),
@@ -1014,7 +1027,7 @@ impl Inner {
             (_, None) => return Err(invalid_params("before/after need a target")),
         };
         self.execute(Actor::User, Command::Move { id: row.id, dest }).await?;
-        Ok(())
+        Ok(TreeMoveResult::default())
     }
 
     /// `favorites` / `deleted`: flat lists the kernel computes (D279); not draggable.
@@ -1054,6 +1067,7 @@ impl Inner {
                     menu,
                     draggable: false,
                     accepts: vec![],
+                    drop_any: None,
                 }
             })
             .collect();
@@ -1156,6 +1170,7 @@ impl Inner {
                 actions: plugin.manifest.contributes.actions.iter().map(|a| a.id.clone()).collect(),
                 kinds: plugin.manifest.contributes.kinds.iter().map(|k| k.id.clone()).collect(),
                 kind_children: plugin.manifest.contributes.kinds.iter().filter(|k| k.children).map(|k| k.id.clone()).collect(),
+                kind_drop: plugin.manifest.contributes.kinds.iter().filter(|k| k.drop).map(|k| k.id.clone()).collect(),
                 events: plugin.manifest.contributes.events.clone(),
             },
             labels: plugin.all_labels(),

@@ -293,6 +293,8 @@ impl Inner {
                 self.execute_quiet(actor, Command::Move { id, dest }, quiet).await?;
                 Ok(Value::Null)
             }
+            // Round 12 (D389): basic information of every resource, with `requires.resources`.
+            "search" => self.resources_search(plugin, arg(args, 0)),
             "remove" => {
                 let id = arg_str(args, 0, "id")?;
                 self.own_row(plugin, &id)?.ok_or_else(|| not_found("resource"))?;
