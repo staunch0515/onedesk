@@ -67,6 +67,12 @@ describe("sample: helpers", () => {
 });
 
 describe("sample: page", () => {
+  it("the manifest has a button for the big table in the page's action area", () => {
+    const manifest = JSON.parse(readFileSync(new URL("./manifest.json", import.meta.url), "utf8"));
+    const editor = manifest.contributes.pages.find((p: any) => p.id === "editor");
+    expect(editor.actions).toContainEqual(expect.objectContaining({ id: "big", role: "run", action: "big" }));
+  });
+
   it("registers what the manifest declares", () => {
     const r = registry(plugin);
     expect(Object.keys(r.pages)).toEqual(["editor"]);

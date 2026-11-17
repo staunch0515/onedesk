@@ -46,3 +46,13 @@
 - 合并后外壳有 4 处类型错（协调会话说明外壳在对齐），我没有碰；vite 运行不受影响。
 - 大树用例在负载很高时慢（约 1 分钟），已给 120 秒的用例超时。
 - 一个坑：在 playwright 里对每个节点写 `expect` 会让 8 万次 `expect` 把用例拖到超时，所以大树的逐节点检查改成普通判断、收集问题后一次 `expect`。
+
+---
+
+# 收尾（合并 `78ace4a` 之后）
+
+- `e2e/round10.spec.ts`：16 个用例**全过，0 个 fixme**（整套约 3.2 分钟）。“Could not load”的 fixme 已去掉并通过；大表格用例改成 1 万行：界面滚到 `data-index=9999`（显示 10000）、排序，并用协议 `run.start` + `run.get` 确认 `output.rows` 为 10000 行、`total` 10000、不 `truncated`。
+- 示例插件：`big` 按钮早已在页面 `actions` 里（role `run`）；vitest 加了一条断言。示例查询页操作区放不下时进“更多”菜单，界面用例两种都兼容。
+- 新增：根下 6000 个存储资源（协议批量建，约 20–27 秒）。实测（debug 构建，机器负载高，两次）：`tree.children` 根的第一批 **363 ms / 1253 ms**（200 个节点，`next=200`）；打开页面到树出现 **9.5 s / 7.7 s**（上限 15 s）；树里实际的行 < 200。这个用例放在最后（之后根下多了 6000 个资源）。
+- `openKernel` 默认会等 `data-theme`，6000 个资源时第一次就因此超过 15 秒（等主题就花了这么久）——说明页面启动期间有明显的卡顿；用例改成不等主题、直接计到树出现。启动期这段时间没有再细分原因。
+- `pnpm test`（50 个文件 423 例）、`pnpm lint`、`pnpm typecheck` 通过（typecheck 在合并前的那次跑里已无报错）；`cargo build -p onedesk-worker -p onedesk-host` 通过。跑完已 `git checkout -- docs/screenshots`。

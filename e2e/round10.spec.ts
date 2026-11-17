@@ -78,6 +78,7 @@ const scrollTo = (el: Locator, where: "bottom" | "top") =>
     if (p) p.scrollTop = w === "bottom" ? p.scrollHeight : 0;
   }, where);
 
+const children2 = (page: Page) => call<Level>(page, "tree.children", { tree: "resources" });
 let shelfId = "";
 let failId = "";
 
@@ -174,10 +175,7 @@ test("shell: a shelf of 20000 expands at once, only the visible rows exist, scro
   await expect(page.getByRole("textbox", { name: "Text", exact: true })).toBeVisible();
 });
 
-// FIXME(shell): the kernel marks a failed plugin batch with state "load-failed" (D375, round10-kernel-done.md §2), but
-// side-panel.tsx only turns state "broken" into “Could not load” (round10-shell-done.md assumed "broken"). The row has an
-// empty label and no text. Remove the fixme when the shell recognizes "load-failed".
-test.fixme("shell: count -1 shows “Could not load” under the shelf", async ({ page }) => {
+test("shell: count -1 shows “Could not load” under the shelf", async ({ page }) => {
   await openKernel(page, host);
   await showTree(page, "Resources");
   const broken = treeItem(page, /^Broken shelf/);
@@ -207,20 +205,17 @@ test("shell: the language switch renames the plugin's nodes", async ({ page }) =
 
 /* ------------------------------------------------------------------ big result table */
 
-// NOTE: the kernel keeps at most MAX_ROWS = 1000 rows of a table output in a run (crates/kernel/src/runs.rs, `total` keeps the
-// real count and `truncated` is set), so the 10000-row table of the sample plugin reaches the result area as 1000 rows. This
-// test checks the windowing on those 1000 rows; plan §1's "1 万行" needs the cap raised or paging (see round10-tests-done.md).
-test("shell: the sample plugin's big table — few DOM rows, the last row (the kernel's 1000) after scrolling, sorting changes the first row", async ({ page }) => {
+test("shell: the sample plugin's big table — few DOM rows, the last (10000th) row after scrolling, sorting changes the first row", async ({ page }) => {
   const qid = await create(page, SAMPLE, { name: "Big query", "body.text": "select 1" });
-  void qid;
   await openKernel(page, host);
   await showTree(page, "Resources");
   await treeItem(page, "Big query").click();
   await expect(page.getByRole("textbox", { name: "Text", exact: true })).toBeVisible();
+  // a button of the page's action area; the frame folds what does not fit into “More actions”
   const direct = page.getByRole("button", { name: /Big table/ });
   if ((await direct.count()) > 0) await direct.click();
   else {
-    await page.getByRole("button", { name: "More actions" }).click(); // the action bar folds what does not fit
+    await page.getByRole("button", { name: "More actions" }).click();
     await page.getByRole("menuitem", { name: /Big table/ }).click();
   }
   const table = page.getByRole("table", { name: "Result" });
@@ -228,13 +223,13 @@ test("shell: the sample plugin's big table — few DOM rows, the last row (the k
   expect(await table.locator("tbody tr[data-index]").count()).toBeLessThan(200);
   await shot(page, "big-table-top");
 
-  const lastRow = table.locator('tbody tr[data-index="999"]');
-  for (let i = 0; i < 20 && (await lastRow.count()) === 0; i++) {
+  const lastRow = table.locator('tbody tr[data-index="9999"]');
+  for (let i = 0; i < 60 && (await lastRow.count()) === 0; i++) {
     await scrollTo(table.locator("tbody tr[data-index]").first(), "bottom");
     await page.waitForTimeout(200);
   }
   await expect(lastRow).toBeVisible();
-  await expect(lastRow).toContainText("1000");
+  await expect(lastRow).toContainText("10000");
   expect(await table.locator("tbody tr[data-index]").count()).toBeLessThan(200);
   await shot(page, "big-table-bottom");
 
@@ -243,6 +238,15 @@ test("shell: the sample plugin's big table — few DOM rows, the last row (the k
   const before = await firstText();
   await table.getByRole("columnheader", { name: "amount" }).click();
   await expect.poll(firstText).not.toBe(before);
+
+  // the protocol: the run keeps all 10000 rows (D377), nothing truncated
+  const runId = await call<string>(page, "run.start", { action: "big", resourceId: qid, target: `resource:${qid}`, tabId: "t", input: {}, params: {} });
+  type Out = { status: string; output?: { type: string; rows: unknown[]; total: number; truncated?: boolean } };
+  await expect.poll(async () => (await call<Out>(page, "run.get", { id: runId })).status, { timeout: 60_000 }).not.toBe("running");
+  const out = (await call<Out>(page, "run.get", { id: runId })).output!;
+  expect(out.rows).toHaveLength(10000);
+  expect(out.total).toBe(10000);
+  expect(out.truncated ?? false).toBe(false);
 });
 
 /* ------------------------------------------------------------------ merging: protocol */
@@ -385,6 +389,57 @@ test("shell: a plugin that declares files still shows “Granted folders”", as
   await expect(page.getByRole("heading", { name: "Granted folders" })).toBeVisible();
 });
 
-test.fixme("shell: the big table has all 10000 rows in the result area (the kernel keeps only 1000 of them, MAX_ROWS in runs.rs)", async () => {
-  // Needs the kernel to keep (or page) more than 1000 rows of a run's table output; then: scroll to data-index 9999.
+// Last on purpose: afterwards the root has 6000 more resources, and the other tests look for theirs by name.
+/* ------------------------------------------------------------------ many stored resources */
+
+test("shell: 6000 stored resources at the root — the tree is there within 15 s of opening the page; first batch timed", async ({ page }) => {
+  test.setTimeout(240_000);
+  await bare(page);
+  const t0 = Date.now();
+  const CHUNK = 200;
+  for (let i = 0; i < 6000; i += CHUNK) {
+    await page.evaluate(
+      async ({ url, from, to }) => {
+        await new Promise<void>((resolve, reject) => {
+          const ws = new WebSocket(url);
+          let id = 1;
+          let pending = 0;
+          ws.onerror = () => reject(new Error("ws error"));
+          ws.onopen = () => ws.send(JSON.stringify({ id: id++, method: "hello", params: { protocol: "1" } }));
+          ws.onmessage = (ev) => {
+            const msg = JSON.parse(String(ev.data));
+            if (msg.error) return reject(new Error(JSON.stringify(msg.error)));
+            if (msg.id === 1) {
+              for (let n = from; n < to; n++) {
+                pending++;
+                ws.send(JSON.stringify({ id: id++, method: "page.save", params: { target: "new:org.onedesk.note:note", changes: { name: `Bulk ${String(n).padStart(5, "0")}`, "body.text": "x" } } }));
+              }
+            } else if (--pending === 0) {
+              ws.close();
+              resolve();
+            }
+          };
+        });
+      },
+      { url: `ws://127.0.0.1:${host.port}/?token=${host.token}&client=e2e-bulk`, from: i, to: i + CHUNK },
+    );
+  }
+  console.log(`ROUND10-TIMING created 6000 resources in ${Date.now() - t0} ms`);
+
+  const t1 = Date.now();
+  const first = await children2(page);
+  const firstMs = Date.now() - t1;
+  console.log(`ROUND10-TIMING tree.children first batch (root, 6000+ resources): ${firstMs} ms, ${first.nodes.length} nodes, next=${first.next}`);
+  test.info().annotations.push({ type: "timing", description: `tree.children first batch ${firstMs} ms` });
+
+  const t2 = Date.now();
+  await openKernel(page, host, null); // no theme wait: the whole time to the tree counts
+  await expect(page.getByRole("navigation", { name: "Views" })).toBeVisible({ timeout: 15_000 });
+  await showTree(page, "Resources");
+  await expect(treeItem(page, /^Big shelf|^Bulk 00000/).first()).toBeVisible({ timeout: 15_000 });
+  const ms = Date.now() - t2;
+  console.log(`ROUND10-TIMING page open → tree visible: ${ms} ms`);
+  test.info().annotations.push({ type: "timing", description: `page open to tree ${ms} ms` });
+  expect(ms).toBeLessThan(15_000);
+  expect(await page.locator("[data-tree-key]").count()).toBeLessThan(200);
 });
