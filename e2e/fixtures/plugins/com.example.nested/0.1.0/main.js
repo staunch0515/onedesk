@@ -1,5 +1,5 @@
 // Fixture: "nested". The kind `shelf` supplies its own child nodes (manifest "children": true): as many as the
-// resource's `count` field says, 500 per batch, continued with `next` (the offset). The first node can be opened
+// resource's `count` field says, 500 per batch, continued with `next` (a number: the offset of the next batch). The first node can be opened
 // (`target: "resource:<this resource's id>"`), the others have no target. count -1 makes the handler throw
 // (to check the "failed to load" node). The action `touch` rewrites the resource's `text` through the host
 // (to check merging of changes made by a plugin).
@@ -44,7 +44,7 @@ export default {
           if (i === 0) n.target = `resource:${ctx.resource.id}`;
           nodes.push(n);
         }
-        return end < count ? { nodes, next: String(end) } : { nodes };
+        return end < count ? { nodes, next: end } : { nodes };
       },
     });
 
