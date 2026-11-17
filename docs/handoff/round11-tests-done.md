@@ -62,3 +62,7 @@
 没有标 `test.fixme`。没有发现需要改别人文件的缺陷。
 
 7. 写测试时踩到的：`getByText("bad link")` 会匹配到资源名 “Bad link”（大小写不敏感的子串）；`page.reload()` 前要等 `ui.get layout` 里已经没有欢迎页（布局是稍后才保存的）——这两个是测试写法问题，不是产品缺陷。
+
+## 审查 #10（笔记页 `recompute: true`）：保留，原因
+外壳只有一条重画页面的路径：`view-page.tsx` 里的 recompute 效果——页面声明了 `recompute`，且草稿或页面参数变了，才在 300 ms 后重新 `page.resolve`。页面事件的返回值（`params`、`changes`）只改标签页状态/草稿，**不会**触发重画。所以去掉 `recompute` 后，点“阅读 / 编辑”改了 `mode` 参数，页面不会变。代价是编辑时每次停顿多一次 `render`（笔记的 render 很轻，不调宿主接口）。要真正去掉，需要外壳在页面事件返回 `params` 后主动重新 resolve（外壳的文件，我没改）；那之后把 `recompute` 删掉即可，vitest 里对应一行断言要改。已在 `main.test.ts` 的测试里写明原因。
+Markdown 的界面断言本来就按渲染结果（角色、文字、`a.od-markdown__ref--broken`）写，不依赖具体库；`[bad link](javascript:alert(1))` 一条断言的是“保留为纯文本”，换库后若输出不同需要对一下。
