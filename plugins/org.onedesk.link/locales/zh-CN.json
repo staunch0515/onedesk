@@ -1,0 +1,16 @@
+{
+  "plugin.name": "网址",
+  "plugin.description": "保存一个网址，用系统浏览器打开。",
+  "kind.link": "网址",
+  "kind.link.new": "未命名网址",
+  "action.open": "打开",
+  "action.save": "保存",
+  "field.url": "地址",
+  "field.url.placeholder": "https://example.com",
+  "field.profile": "浏览器配置文件",
+  "field.profile.hint": "先记下来，暂时不起作用。",
+  "error.noUrl": "请先填写地址。",
+  "error.badUrl": "只能打开 http、https 和 mailto 地址。",
+  "summary.opened": "已打开 {host}",
+  "output.label": "已打开 {host}"
+}

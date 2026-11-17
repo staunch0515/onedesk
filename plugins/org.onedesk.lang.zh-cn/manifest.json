@@ -1,0 +1,16 @@
+{
+  "id": "org.onedesk.lang.zh-cn",
+  "version": "0.1.0",
+  "apiVersion": "2",
+  "name": "plugin.name",
+  "description": "plugin.description",
+  "icon": "languages",
+  "main": "main.js",
+  "author": "OneDesk",
+  "license": "MIT",
+  "requires": { "files": false },
+  "contributes": {
+    "languages": [ { "locale": "zh-CN", "name": "简体中文", "shell": "shell/zh-CN.json" } ],
+    "locales": { "en-US": "locales/en-US.json", "zh-CN": "locales/zh-CN.json", "ja-JP": "locales/ja-JP.json" }
+  }
+}

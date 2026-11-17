@@ -1,0 +1,55 @@
+{
+  "id": "org.onedesk.link",
+  "version": "0.1.0",
+  "apiVersion": "2",
+  "name": "plugin.name",
+  "description": "plugin.description",
+  "icon": "link",
+  "main": "main.js",
+  "author": "OneDesk",
+  "license": "MIT",
+  "legacyKinds": ["link"],
+  "requires": { "files": false },
+  "contributes": {
+    "kinds": [
+      {
+        "id": "link",
+        "label": "kind.link",
+        "icon": "link",
+        "tree": "resources",
+        "page": "editor",
+        "newName": "kind.link.new",
+        "defaults": { "url": "", "profile": "" },
+        "fields": {
+          "url": { "type": "text" },
+          "profile": { "type": "text" }
+        },
+        "draggable": true,
+        "accepts": []
+      }
+    ],
+    "actions": [
+      {
+        "id": "open",
+        "label": "action.open",
+        "icon": "external-link",
+        "kinds": ["link"],
+        "output": "link",
+        "shortcut": ["Mod", "Enter"],
+        "saveFirst": false,
+        "confirm": null
+      }
+    ],
+    "pages": [
+      {
+        "id": "editor",
+        "actions": [
+          { "id": "open", "role": "run", "action": "open", "label": "action.open", "icon": "external-link", "primary": true, "shortcut": ["Mod", "Enter"] },
+          { "id": "save", "role": "save", "label": "action.save", "icon": "save", "shortcut": ["Mod", "S"] }
+        ]
+      }
+    ],
+    "menus": { "new": ["link"] },
+    "locales": { "en-US": "locales/en-US.json", "zh-CN": "locales/zh-CN.json", "ja-JP": "locales/ja-JP.json" }
+  }
+}

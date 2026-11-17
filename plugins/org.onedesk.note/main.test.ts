@@ -6,6 +6,43 @@ import { RENDER_KEYS, checkView, onlyKeys, registry, t } from "../_testing/view-
 
 const ctxOf = (host: unknown, extra: Record<string, unknown> = {}) => ({ target: "resource:r1", locale: "en-US", host, t, ...extra });
 
+describe("note plugin: reading view", () => {
+  it("edit mode is the default: mode strip plus the editor", async () => {
+    const { pages } = registry(plugin);
+    const out = await pages.editor.render(ctxOf({}));
+    expect(out.view.map((n: any) => n.id)).toEqual(["mode", "content"]);
+    expect(out.view[0].fields[0]).toMatchObject({ name: "mode", param: true, kind: "enum" });
+  });
+
+  it("read mode renders the unsaved draft as Markdown, not the saved body", async () => {
+    const { pages } = registry(plugin);
+    const out = await pages.editor.render(ctxOf({}, { params: { mode: "read" }, draft: { "body.text": "# draft" }, resource: { id: "r1", body: { text: "saved" } } }));
+    expect(checkView(out.view)).toEqual([]);
+    expect(out.view.find((n: any) => n.id === "reading")).toEqual({ type: "text", id: "reading", text: "# draft", format: "markdown" });
+    expect(out.view.find((n: any) => n.id === "content")).toBeUndefined();
+    const saved = await pages.editor.render(ctxOf({}, { params: { mode: "read" }, resource: { id: "r1", body: { text: "saved" } } }));
+    expect(saved.view[1].text).toBe("saved");
+  });
+
+  it("toggle flips the page parameter mode and keeps the draft untouched", async () => {
+    const { pages } = registry(plugin);
+    const a = await pages.editor.onEvent(ctxOf({}), "toggle");
+    expect(a.params).toEqual({ mode: "read" });
+    expect(onlyKeys(a, ["changes", "params", "message"])).toEqual([]);
+    expect(a.changes).toBeUndefined();
+    const b = await pages.editor.onEvent(ctxOf({}, { params: { mode: "read" } }), "toggle");
+    expect(b.params).toEqual({ mode: "edit" });
+    await expect(pages.editor.onEvent(ctxOf({}), "nope")).rejects.toThrow();
+  });
+
+  it("the manifest declares the toggle event, recompute and legacyKinds", () => {
+    const m = JSON.parse(readFileSync(new URL("./manifest.json", import.meta.url), "utf8"));
+    expect(m.legacyKinds).toEqual(["note"]);
+    expect(m.contributes.pages[0].recompute).toBe(true);
+    expect(m.contributes.pages[0].actions.find((a: any) => a.id === "toggle")).toMatchObject({ role: "event" });
+  });
+});
+
 describe("note plugin", () => {
   it("registers only what the manifest declares", () => {
     const r = registry(plugin);
@@ -18,7 +55,7 @@ describe("note plugin", () => {
     const { pages } = registry(plugin);
     const out = await pages.editor.render(ctxOf({}));
     expect(checkView(out.view)).toEqual([]);
-    const field = out.view[0].fields[0];
+    const field = out.view.find((n: any) => n.id === "content").fields[0];
     expect(field).toMatchObject({ kind: "longtext", bind: "body.text", fill: true });
     expect(onlyKeys(out, RENDER_KEYS)).toEqual([]);
   });

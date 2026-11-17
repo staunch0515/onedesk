@@ -5,7 +5,7 @@ const FIELD_KEYS = new Set(["name", "label", "kind", "bind", "param", "options",
 const KINDS = new Set(["text", "longtext", "code", "number", "boolean", "date", "datetime", "enum", "secret"]);
 const NODE_KEYS: Record<string, string[]> = {
   form: ["type", "id", "layout", "label", "fields"],
-  text: ["type", "id", "text", "mono", "language", "tone"],
+  text: ["type", "id", "text", "mono", "language", "tone", "format"],
   table: ["type", "id", "columns", "rows", "rowTargets"],
   link: ["type", "id", "label", "target"],
 };
@@ -34,6 +34,7 @@ export function checkView(view: unknown): string[] {
       }
     }
     if (n.type === "text" && typeof n.text !== "string") errs.push("text node needs a string");
+    if (n.type === "text" && n.format !== undefined && !["plain", "markdown"].includes(String(n.format))) errs.push("bad format");
     if (n.type === "text" && n.tone !== undefined && !["default", "muted", "danger"].includes(String(n.tone))) errs.push("bad tone");
   }
   return errs;

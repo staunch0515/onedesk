@@ -1,0 +1,18 @@
+{
+  "plugin.name": "ノート",
+  "plugin.description": "リソースツリーのプレーンテキストのノート。",
+  "kind.note": "ノート",
+  "kind.note.new": "無題のノート",
+  "action.save": "保存",
+  "action.toggle": "閲覧 / 編集",
+  "command.duplicate": "複製",
+  "field.text": "内容",
+  "field.placeholder": "ノートを書きます。[[名前]] で他のリソースにリンクできます。",
+  "copy.suffix": "コピー",
+  "error.notFound": "このノートはもう存在しません。",
+  "field.mode": "モード",
+  "mode.edit": "編集",
+  "mode.read": "閲覧",
+  "message.reading": "閲覧表示",
+  "message.editing": "編集中"
+}

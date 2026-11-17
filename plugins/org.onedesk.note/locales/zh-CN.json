@@ -8,5 +8,11 @@
   "field.text": "内容",
   "field.placeholder": "写下笔记。用 [[名称]] 可以引用其他资源。",
   "copy.suffix": "副本",
-  "error.notFound": "这条笔记已不存在。"
+  "error.notFound": "这条笔记已不存在。",
+  "action.toggle": "阅读 / 编辑",
+  "field.mode": "模式",
+  "mode.edit": "编辑",
+  "mode.read": "阅读",
+  "message.reading": "阅读态",
+  "message.editing": "编辑态"
 }

@@ -217,3 +217,10 @@ describe("http: package", () => {
     expect(m.requires.secrets).toEqual({ names: ["api-token"], plaintext: false });
   });
 });
+
+describe("http: manifest", () => {
+  it("takes over the old kind name", () => {
+    const m = JSON.parse(readFileSync(new URL("./manifest.json", import.meta.url), "utf8"));
+    expect(m.legacyKinds).toEqual(["http-request"]);
+  });
+});
