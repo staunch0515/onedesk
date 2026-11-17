@@ -622,3 +622,42 @@ async fn a_handled_drop_writes_everything_together_with_its_audit() {
     assert_eq!((h["body"]["items"].clone(), h["name"].as_str()), (json!(["x"]), Some("Renamed")));
     assert_eq!(audits(&c, "tree.drop").await.len(), 1);
 }
+
+/* ------------------------------------------------------------------ review #3 (D395) stored trees only */
+
+#[tokio::test(flavor = "multi_thread")]
+async fn search_and_any_targets_only_reach_stored_trees() {
+    let (_env, c) = world(5000).await;
+    let env = env_root(&c, "env").await;
+    let cfg = env_root(&c, "config").await;
+    // A resource without a tree, with a word only it has.
+    let loose = c.probe("test.reach", "resources.create", json!([{ "kind": "loose", "name": "Loose quokka" }])).await;
+    let loose = loose["ok"]["id"].as_str().expect("created").to_string();
+    // A plugin's stored tree is in.
+    let pin = c.probe("test.reach", "resources.create", json!([{ "kind": "pin", "name": "Pinned quokka" }])).await;
+    let pin = pin["ok"]["id"].as_str().expect("created").to_string();
+    let item = create(&c, "test.alpha:item", None, json!({ "name": "Plain quokka" })).await;
+
+    let all = search(&c, "test.reach", json!({ "limit": 500 })).await;
+    let got = ids(&all);
+    for (id, want) in [(&env, false), (&cfg, false), (&loose, false), (&pin, true), (&item, true)] {
+        assert_eq!(got.contains(id), want, "{id}");
+    }
+    assert!(all["ok"]["items"].as_array().unwrap().iter().all(|i| ["resources", "test.reach:shelf"].contains(&i["tree"].as_str().unwrap())));
+    // Not by text, not by id, not by kind.
+    let mut q = ids(&search(&c, "test.reach", json!({ "text": "quokka" })).await);
+    q.sort();
+    let mut want = vec![pin.clone(), item.clone()];
+    want.sort();
+    assert_eq!(q, want);
+    assert_eq!(ids(&search(&c, "test.reach", json!({ "ids": [env, cfg, loose, pin] })).await), vec![pin.clone()]);
+    assert_eq!(search(&c, "test.reach", json!({ "kinds": ["core:env", "core:config", "test.reach:loose"] })).await["ok"]["total"], 0);
+
+    // Supplied children of a resourcesAll plugin: the same boundary.
+    let hub = create(&c, "test.reach:hub", None, json!({ "body.items": [env, cfg, pin, item] })).await;
+    let t: Vec<Value> = kids(&c, &hub).await.iter().map(|n| n["target"].clone()).collect();
+    assert_eq!(t, vec![Value::Null, Value::Null, json!(format!("resource:{pin}")), json!(format!("resource:{item}"))]);
+    // A loose resource of another plugin is never a target; its own still is (as before).
+    let hub2 = create(&c, "test.reach:hub", None, json!({ "body.items": [loose] })).await;
+    assert_eq!(kids(&c, &hub2).await[0]["target"], json!(format!("resource:{loose}")));
+}
