@@ -113,4 +113,26 @@ describe("plugin page versions (kernel plugin)", () => {
     expect(screen.queryByRole("button", { name: /Grant a folder/ })).toBeNull();
     expect(screen.getByText("Uninstall")).toBeTruthy();
   });
+
+  it("shows the section of granted folders only for a plugin that asks for files", async () => {
+    setup(detail({ permissions: [] }));
+    await screen.findByText("0.2.0");
+    expect(screen.queryByText("Granted folders")).toBeNull();
+  });
+
+  it("shows the section of granted folders when the plugin asks for files", async () => {
+    setup(detail());
+    await screen.findByText("0.2.0");
+    expect(screen.getByText("Granted folders")).toBeTruthy();
+  });
+
+  it("titles the page with the plugin's name in the interface language and keeps the tab in step", async () => {
+    const d = detail({ name: { "en-US": "Web", "zh-CN": "网页" } });
+    const base = kernelLikeClient(createMockClient({ fresh: true, quiet: true }), { app: {} as never });
+    const client = { ...base, plugin: { ...base.plugin, get: vi.fn(async () => d) } };
+    const { store } = renderInShell(client, <PluginPage tab={tab} descriptor={descriptor} />, "zh-CN");
+    store.set({ tabs: [{ ...tab, title: "Web" }], activeTabId: "t1" });
+    await waitFor(() => expect(store.get().tabs[0]?.title).toBe("网页"));
+    expect(screen.getAllByText("网页").length).toBeGreaterThan(0);
+  });
 });

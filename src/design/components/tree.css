@@ -211,3 +211,10 @@
   color: var(--fg-subtle);
   font-style: italic;
 }
+
+/* A plugin's children that could not be read: shown as a note under the node, not struck through. */
+.od-tree__row--load-failed,
+.od-tree__row--load-failed .od-tree__icon,
+.od-tree__row--load-failed .od-tree__state {
+  color: var(--danger-text);
+}

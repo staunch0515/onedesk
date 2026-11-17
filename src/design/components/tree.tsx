@@ -7,7 +7,7 @@ import { Spinner } from "./spinner";
 import { useVirtualWindow } from "./virtual";
 import "./tree.css";
 
-export type TreeNodeState = "ok" | "disabled" | "missing-plugin" | "broken" | "conflict";
+export type TreeNodeState = "ok" | "disabled" | "missing-plugin" | "broken" | "conflict" | "load-failed";
 export type TreeDropPosition = "before" | "inside" | "after";
 
 export interface TreeRow {
@@ -63,6 +63,7 @@ const STATE_ICON: Partial<Record<TreeNodeState, string>> = {
   "missing-plugin": "puzzle",
   broken: "unlink",
   conflict: "git-merge",
+  "load-failed": "circle-alert",
   disabled: "circle-slash",
 };
 
@@ -135,18 +136,22 @@ export function Tree({
   // The row that comes into view at the end of a level asks for the next batch.
   // (Not before the size is known: the first, unmeasured draw covers more rows than the screen shows.)
   const needMore = win.rowHeight > 0 ? visible.find((r) => r.more)?.key : undefined;
+  // It asks again whenever the list grew and the row is still in view (a batch shorter than the screen), but not after a failure.
+  const rowCount = rows.length;
   useEffect(() => {
     if (needMore) onNeedMore?.(needMore);
-  }, [needMore, onNeedMore]);
+  }, [needMore, onNeedMore, rowCount]);
 
   // A selection made elsewhere (following the active tab, "reveal in tree") is scrolled into view, drawn or not.
   const selectedIndex = selectedKey ? rows.findIndex((r) => r.key === selectedKey) : -1;
-  const selectedRow = selectedKey ?? null;
+  // Only when the selected node itself changes (or turns up in the list after being read): rows opening or closing above it
+  // move its index, and that must not pull the view back.
+  const revealedFor = useRef<string | null>(null);
   useEffect(() => {
-    if (selectedRow && selectedIndex >= 0) reveal(selectedIndex);
-    // Only when the selection (or where it sits) changes, not on every scroll.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedRow, selectedIndex]);
+    if (!selectedKey) revealedFor.current = null;
+    else if (selectedIndex >= 0 && revealedFor.current !== selectedKey && reveal(selectedIndex)) revealedFor.current = selectedKey;
+    // `win.rowHeight`: before the size is known nothing can be revealed; try again once it is.
+  }, [selectedKey, selectedIndex, reveal, win.rowHeight]);
 
   const clearHoverTimer = () => {
     if (hoverTimer.current) window.clearTimeout(hoverTimer.current.id);

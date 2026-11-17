@@ -6,7 +6,7 @@ import { fakeLayout } from "../../design/testing/layout";
 import type { TreeInfo, TreeNode, TreePage } from "../protocol";
 import { createMockClient } from "../protocol/mock";
 import { kernelLikeClient, renderInShell } from "../testing/harness";
-import { TreePanel } from "./side-panel";
+import { isSyntheticKey, TreePanel } from "./side-panel";
 
 const BATCH = 200;
 const node = (i: number): TreeNode => ({ key: `n${i}`, tree: "big", label: `Node ${i}`, icon: "file", kind: "x", expandable: false, state: "ok", menu: [], draggable: false, accepts: [] });
@@ -85,5 +85,103 @@ describe("a long level is read batch by batch as it is scrolled (D373)", () => {
     await new Promise((r) => setTimeout(r, 200));
     expect(offsets()).toEqual([0, 200]);
     expect(screen.getByText("Node 195")).toBeTruthy(); // what was read is still there
+  });
+});
+
+describe("review fixes for long levels (round 10)", () => {
+  let restore = () => undefined as void;
+  beforeEach(() => {
+    restore = fakeLayout({ viewport: 260, tokens: { "--tree-row-height": "26px" } });
+  });
+  afterEach(() => restore());
+
+  function setup2(opts: { children: (parent: string | null, offset: number) => TreePage; path?: (key: string) => string[]; tabNode?: string }) {
+    const info = infoOf();
+    const children = vi.fn(async (_t: string, parent: string | null, offset = 0) => opts.children(parent, offset));
+    const base = kernelLikeClient(createMockClient({ fresh: true, quiet: true }), {});
+    const client = { ...base, tree: { ...base.tree, children, path: async (_t: string, key: string) => opts.path?.(key) ?? [key] } };
+    const { store } = renderInShell(client, <TreePanel tree={info} />);
+    if (opts.tabNode) {
+      store.set({
+        tabs: [{ id: "t1", target: "resource:x", title: "X", icon: "file", pinned: false, envId: null, params: {}, node: { tree: info.id, key: opts.tabNode } }],
+        activeTabId: "t1",
+      });
+    }
+    return { children, store, offsets: () => children.mock.calls.map((c) => c[2] ?? 0), scroller: () => document.querySelector<HTMLElement>(".od-tree")! };
+  }
+  const nodeOf = (key: string, over: Partial<TreeNode> = {}): TreeNode => ({ key, tree: "t", label: key, icon: "file", kind: "x", expandable: false, state: "ok", menu: [], draggable: false, accepts: [], ...over });
+  const batchOf = (total: number, size: number) => (_p: string | null, offset: number): TreePage => ({
+    nodes: Array.from({ length: Math.min(size, total - offset) }, (_, i) => nodeOf(`n${offset + i}`)),
+    ...(offset + size < total ? { next: offset + size } : {}),
+  });
+
+  it("small batches (each shorter than the screen) are read one after another until the screen is full", async () => {
+    const { offsets } = setup2({ children: batchOf(100, 4) });
+    await screen.findByText("n0");
+    await waitFor(() => expect(screen.queryByText("n12")).toBeTruthy()); // more than the 4 of the first batch, without any scrolling
+    expect(offsets().length).toBeGreaterThan(2);
+    await new Promise((r) => setTimeout(r, 150));
+    expect(offsets().length).toBeLessThan(10); // and then it stops: the screen is full
+  });
+
+  it("the node of the active tab is found even when it sits in a later batch: read on, selected and drawn", async () => {
+    const { offsets } = setup2({ children: batchOf(1000, 200), tabNode: "n650" });
+    const row = await screen.findByText("n650", {}, { timeout: 3000 });
+    expect(row.closest('[role="treeitem"]')!.getAttribute("aria-selected")).toBe("true");
+    expect(Math.max(...offsets())).toBe(600); // read on only as far as the node
+  });
+
+  it("a node that never turns up stops the search at the end of the level", async () => {
+    const { offsets } = setup2({ children: batchOf(450, 200), tabNode: "elsewhere" });
+    await screen.findByText("n0");
+    await waitFor(() => expect(offsets()).toContain(400));
+    await new Promise((r) => setTimeout(r, 100));
+    expect(Math.max(...offsets())).toBe(400); // the end of the level: nothing beyond it was asked for
+  });
+
+  it("a plugin that keeps answering the same `next` does not make the panel loop", async () => {
+    const { offsets } = setup2({ children: (_p, offset) => ({ nodes: offset === 0 ? [nodeOf("a"), nodeOf("b")] : [], next: 5 }), tabNode: "zzz" });
+    await screen.findByText("a");
+    await new Promise((r) => setTimeout(r, 300));
+    expect(offsets().length).toBeLessThan(6);
+  });
+
+  it("a node that fails to load is drawn with words, not blank", async () => {
+    setup2({ children: () => ({ nodes: [nodeOf("!r/", { label: "", state: "load-failed", stateReason: "pluginError" })] }) });
+    const row = (await screen.findByText("Could not load")).closest('[role="treeitem"]')!;
+    expect(row.getAttribute("data-state")).toBe("load-failed");
+    expect(row.getAttribute("title")).toContain("The plugin failed to produce this page.");
+  });
+
+  it("a key repeated in a level, or equal to its parent's, does not make the tree loop", async () => {
+    const { children } = setup2({
+      children: (parent) =>
+        parent === null
+          ? { nodes: [nodeOf("p", { expandable: true }), nodeOf("p", { expandable: true }), nodeOf("q")] }
+          : { nodes: [nodeOf("p", { expandable: true }), nodeOf("c")] },
+    });
+    await screen.findByText("q");
+    expect(screen.getAllByText("p")).toHaveLength(1);
+    fireEvent.click(document.querySelector('[data-tree-key="p"] .od-tree__twist')!);
+    await screen.findByText("c");
+    expect(screen.getAllByText("p")).toHaveLength(1); // the child that claims its parent's key is left out
+    expect(children.mock.calls.length).toBeLessThan(6);
+    // and filtering through it ends
+    fireEvent.change(screen.getByLabelText("Filter by name"), { target: { value: "c" } });
+    await screen.findByText("c");
+  });
+
+  it("the placeholder row has no menu, not even the tree's; plugin nodes are no drop targets", async () => {
+    const { scroller } = setup2({ children: batchOf(1000, 200) });
+    await screen.findByText("n0");
+    scroller().scrollTop = 26 * 190;
+    fireEvent.scroll(scroller());
+    await waitFor(() => expect(document.querySelector("[data-more]")).toBeTruthy());
+    fireEvent.contextMenu(document.querySelector("[data-more]")!);
+    expect(screen.queryAllByRole("menuitem")).toHaveLength(0);
+    expect(isSyntheticKey("@abc/item-1")).toBe(true);
+    expect(isSyntheticKey("!abc/")).toBe(true);
+    expect(isSyntheticKey("\u0000more:")).toBe(true);
+    expect(isSyntheticKey("0123456789abcdef0123456789abcdef")).toBe(false);
   });
 });

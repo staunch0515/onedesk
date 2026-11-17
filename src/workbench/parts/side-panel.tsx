@@ -11,9 +11,19 @@ export const MORE_PREFIX = "\u0000more:";
 const EMPTY: string[] = [];
 /** "Expand all" and the filter read levels in full only up to this many nodes; the rest stays unread (the filter says so). */
 const LOAD_ALL_CAP = 3000;
+/** Finding the node of the active tab reads a level on up to this many nodes. */
+const FOLLOW_CAP = 20000;
 
 /** Children by parent key, per tree. Kept across activity switches so a tree does not flash empty. */
 const cache = new Map<string, Map<string, Level>>();
+
+/**
+ * Rows that are not resources: the "more is being read" row, and a plugin's own nodes (`@<resource>/<key>`, and `!…` for a
+ * failed read). They are not places to drop onto, cannot be dragged, and have no tree-wide menu.
+ */
+export function isSyntheticKey(key: string): boolean {
+  return key.startsWith(MORE_PREFIX) || key.startsWith("@") || key.startsWith("!");
+}
 
 export function menuEntries(commands: MenuCommand[], tx: (l: MenuCommand["label"]) => string, run: (id: string) => void): MenuEntry[] {
   return commands.flatMap((c, i): MenuEntry[] => [
@@ -24,7 +34,7 @@ export function menuEntries(commands: MenuCommand[], tx: (l: MenuCommand["label"
 
 export function TreePanel({ tree }: { tree: TreeInfo }) {
   const { client, store, actions } = useWorkbench();
-  const { t, tx, locale } = useI18n();
+  const { t, tx, locale, error } = useI18n();
   const expanded = useUi((s) => s.expanded[tree.id] ?? EMPTY);
   const selected = useUi((s) => s.selected[tree.id] ?? null);
   const renaming = useUi((s) => (s.renaming?.tree === tree.id ? s.renaming.key : null));
@@ -60,7 +70,10 @@ export function TreePanel({ tree }: { tree: TreeInfo }) {
       try {
         // Only the first batch: the rest is read when its end scrolls into view (D373).
         const level = await loadBatch(client, tree.id, parentKey === ROOT ? null : parentKey, undefined, locale);
-        commit((map) => map.set(parentKey, level));
+        // (A longer read of the same level, made meanwhile while following the active tab, is kept.)
+        commit((map) => {
+          if (!map.has(parentKey)) map.set(parentKey, level);
+        });
       } catch (error) {
         actions.fail(error);
       } finally {
@@ -139,11 +152,23 @@ export function TreePanel({ tree }: { tree: TreeInfo }) {
         if (missing.length === 0 && s.selected[tree.id] === activeNode) return {};
         return { expanded: missing.length > 0 ? { ...s.expanded, [tree.id]: [...open, ...missing] } : s.expanded, selected: { ...s.selected, [tree.id]: activeNode } };
       });
+      // The node may sit in a later batch of its level: read on until it turns up (to the end of the level, at most FOLLOW_CAP nodes).
+      void (async () => {
+        for (let i = 0; i < path.length && !cancelled; i++) {
+          const parent = i === 0 ? ROOT : path[i - 1]!;
+          let level = nodesRef.current.get(parent) ?? (await loadBatch(client, tree.id, parent === ROOT ? null : parent, undefined, locale));
+          while (!level.nodes.some((n) => n.key === path[i]) && level.next !== undefined && level.nodes.length < FOLLOW_CAP && !cancelled) {
+            level = await loadMore(client, tree.id, parent === ROOT ? null : parent, level, locale);
+          }
+          const found = level;
+          if (!cancelled && found.nodes.length > (nodesRef.current.get(parent)?.nodes.length ?? -1)) commit((map) => map.set(parent, found));
+        }
+      })().catch(() => undefined);
     }, () => undefined);
     return () => {
       cancelled = true;
     };
-  }, [activeNode, client, store, tree.id]);
+  }, [activeNode, client, store, tree.id, commit, locale]);
 
   const loadAll = useCallback(async () => {
     const queue = [ROOT];
@@ -170,33 +195,43 @@ export function TreePanel({ tree }: { tree: TreeInfo }) {
     const out: TreeRow[] = [];
     const open = new Set(expanded);
     const childrenOf = (key: string) => levels.get(key)?.nodes ?? [];
-    const matches = (n: TreeNode): boolean => n.label.toLowerCase().includes(needle) || childrenOf(n.key).some(matches);
-    const walk = (parentKey: string, depth: number) => {
+    // A plugin's tree may repeat a key or give a node the key of one of its ancestors: every key is drawn once and a node is never its own ancestor.
+    const shown = new Set<string>();
+    const matches = (n: TreeNode, trail: ReadonlySet<string>): boolean => {
+      if (trail.has(n.key)) return false;
+      if (n.label.toLowerCase().includes(needle)) return true;
+      const inner = new Set(trail).add(n.key);
+      return childrenOf(n.key).some((c) => matches(c, inner));
+    };
+    const walk = (parentKey: string, depth: number, trail: ReadonlySet<string>) => {
       for (const n of childrenOf(parentKey)) {
-        if (needle && !matches(n)) continue;
-        const isOpen = n.expandable && (needle ? childrenOf(n.key).some(matches) : open.has(n.key));
+        if (trail.has(n.key) || shown.has(n.key)) continue;
+        const inner = new Set(trail).add(n.key);
+        if (needle && !matches(n, trail)) continue;
+        shown.add(n.key);
+        const isOpen = n.expandable && (needle ? childrenOf(n.key).some((c) => matches(c, inner)) : open.has(n.key));
         out.push({
           key: n.key,
-          label: n.label || (n.state === "broken" ? t("tree.loadFailed") : n.label),
+          label: n.label || (n.state === "load-failed" || n.state === "broken" ? t("tree.loadFailed") : n.label),
           icon: n.icon === "folder" && isOpen ? "folder-open" : n.icon,
           depth,
           expandable: n.expandable,
           expanded: isOpen,
           loading: loading.has(n.key),
           state: n.state,
-          stateLabel: n.stateReason ? tx(n.stateReason) : undefined,
+          stateLabel: n.stateReason ? (n.state === "load-failed" && typeof n.stateReason === "string" ? error({ code: n.stateReason, params: {} }) : tx(n.stateReason)) : undefined,
           badge: n.badge,
           marked: tree.id === "environments" && n.key === activeEnv,
           draggable: n.draggable && !needle,
         });
-        if (isOpen) walk(n.key, depth + 1);
+        if (isOpen) walk(n.key, depth + 1, inner);
       }
       // A level with more batches ends in a row that asks for the next one when it comes into view.
       if (!needle && levels.get(parentKey)?.next !== undefined) {
         out.push({ key: MORE_PREFIX + parentKey, label: t("tree.loadingMore"), icon: "ellipsis", depth, expandable: false, more: true });
       }
     };
-    walk(ROOT, 0);
+    walk(ROOT, 0, new Set([ROOT]));
     return out;
   }, [levels, expanded, needle, loading, tx, t, tree.id, activeEnv]);
   /** The filter only looks at what has been read; a level too long to read in full says so. */
@@ -217,6 +252,7 @@ export function TreePanel({ tree }: { tree: TreeInfo }) {
 
   const canDrop = (dragKey: string, targetKey: string | null, position: TreeDropPosition) => {
     if (tree.source !== "stored") return false;
+    if (isSyntheticKey(dragKey) || (targetKey !== null && isSyntheticKey(targetKey))) return false;
     const drag = index.get(dragKey);
     const target = targetKey ? index.get(targetKey) : null;
     if (!drag || (targetKey && !target)) return false;
@@ -291,6 +327,7 @@ export function TreePanel({ tree }: { tree: TreeInfo }) {
           onActivate={activate}
           onToggle={toggle}
           onContextMenu={(key, point) => {
+            if (key?.startsWith(MORE_PREFIX)) return; // the "reading more" row has no menu, not even the tree's
             if (key) store.set((s) => ({ selected: { ...s.selected, [tree.id]: key } }));
             setMenu({ point, node: key ? (index.get(key) ?? null) : null });
           }}
@@ -314,7 +351,7 @@ export function TreePanel({ tree }: { tree: TreeInfo }) {
       <ContextMenu
         point={menu?.point ?? null}
         onClose={() => setMenu(null)}
-        items={menuEntries(commands, tx, (id) => void actions.command(id, { tree: tree.id, nodeKey: menu?.node?.key ?? null }))}
+        items={menuEntries(commands, tx, (id) => void actions.command(id, { tree: tree.id, nodeKey: menu?.node?.key ?? null, target: menu?.node?.target }))}
       />
     </SidePanel>
   );
