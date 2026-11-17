@@ -76,8 +76,11 @@ async fn pick_save_file(app: tauri::AppHandle, name: Option<String>) -> Option<S
 
 /// Opens an address in the system browser. The protocol is checked again here (D380); the interface only asks.
 #[tauri::command]
-fn open_external(url: String) -> Result<(), String> {
-    onedesk_host::external::open_external(&url).map_err(|e| format!("{e:?}"))
+async fn open_external(url: String) -> Result<(), String> {
+    // `open` is waited for, so it runs off the async threads; a failure goes back to the interface (D380).
+    tauri::async_runtime::spawn_blocking(move || onedesk_host::external::open_external(&url).map_err(|e| e.to_string()))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 pub fn run() {

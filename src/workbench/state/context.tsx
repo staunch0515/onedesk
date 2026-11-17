@@ -2,6 +2,7 @@ import { createContext, useContext, useEffect, useMemo, useRef, useState, type D
 import { useToast } from "../../design";
 import { useI18n } from "../i18n";
 import type { MessageKey } from "../i18n/en-US";
+import { isOpenableUrl } from "../../design";
 import { useClient, type CommandContext, type CommandEffect, type ProtocolClient } from "../protocol";
 import { staleFields } from "./merge";
 import { saveTab } from "./save";
@@ -54,10 +55,7 @@ const WorkbenchContext = createContext<Workbench | null>(null);
 /** Commands that create a named thing: the shell supplies the default name in the interface language (the kernel's is only a fallback). */
 const DEFAULT_NAME_KEY: Record<string, MessageKey> = { "env.newChild": "default.newEnv", "config.newChild": "default.newConfig", "node.newGroup": "default.newGroup" };
 
-/** The protocols that may leave the application, and the longest address (the same rule as the kernel's `ui.openExternal`, D380). */
-export function isOpenableUrl(url: string): boolean {
-  return url.length > 0 && url.length <= 2048 && !/[\s\u0000-\u001f]/.test(url) && /^(https?:\/\/|mailto:)\S/i.test(url);
-}
+export { isOpenableUrl };
 
 let tabSeq = 0;
 const newTabId = () => `t${Date.now().toString(36)}${(tabSeq++).toString(36)}`;
@@ -164,7 +162,8 @@ export function WorkbenchProvider({ store, children }: { store: Store; children:
         if (platform) await platform(url);
         else window.open(url, "_blank", "noopener,noreferrer");
       } catch (error) {
-        fail(error);
+        // The main process could not hand the address to the system (D380): say so with what it reported.
+        fail(error instanceof Error ? error : new Error(String(error).replace(/^openFailed:/, "")));
       }
     };
 

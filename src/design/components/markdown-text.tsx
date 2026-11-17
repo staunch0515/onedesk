@@ -1,6 +1,7 @@
 import { useMemo, type MouseEvent } from "react";
-import MarkdownIt from "markdown-it";
+import { Marked, Renderer } from "marked";
 import { cx } from "./cx";
+import { isOpenableUrl, normalizeLinkHref } from "./open-url";
 import "./markdown.css";
 
 /** Where a `[[name]]` points: `ok` opens it, anything else shows as a broken reference. */
@@ -18,73 +19,70 @@ export interface MarkdownTextProps {
   className?: string;
 }
 
-/** Links leave the page only as these (same rule as `ui.openExternal`, D380). Everything else is shown as plain text. */
-const LINK_SCHEMES = /^(https?:|mailto:)/i;
 const MAX_REFERENCE = 200;
 
-interface Env {
-  referenceState?: (name: string) => ReferenceState;
-}
+const escapeHtml = (text: string) => text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 
-function createRenderer(): MarkdownIt {
-  // `html: false` is the point: raw HTML in the source is shown as text, never turned into elements.
-  const md = new MarkdownIt({ html: false, linkify: false, typographer: false, breaks: false });
-  md.validateLink = (url) => LINK_SCHEMES.test(url.trim());
+/** The `[[…]]` states for the render in progress (rendering is synchronous, so one slot is enough). */
+let referenceLookup: ((name: string) => ReferenceState) | undefined;
 
-  // `[[name]]`
-  md.inline.ruler.before("link", "od_reference", (state, silent) => {
-    const src = state.src;
-    const start = state.pos;
-    if (src.charCodeAt(start) !== 0x5b || src.charCodeAt(start + 1) !== 0x5b) return false;
-    const end = src.indexOf("]]", start + 2);
-    if (end < 0) return false;
-    const name = src.slice(start + 2, end);
-    if (name.length === 0 || name.length > MAX_REFERENCE || /[[\]\n]/.test(name) || name.trim() === "") return false;
-    if (!silent) {
-      const token = state.push("od_reference", "", 0);
-      token.content = name;
-    }
-    state.pos = end + 2;
-    return true;
+function createRenderer(): Marked {
+  const md = new Marked({
+    gfm: true,
+    breaks: false,
+    async: false,
+    extensions: [
+      {
+        name: "odReference",
+        level: "inline",
+        start: (src: string) => src.indexOf("[["),
+        tokenizer(src: string) {
+          const m = /^\[\[([^[\]\n]{1,200})\]\]/.exec(src);
+          if (!m || m[1]!.trim() === "" || m[1]!.length > MAX_REFERENCE) return undefined;
+          return { type: "odReference", raw: m[0], text: m[1]! };
+        },
+        renderer(token) {
+          const name = String(token["text"]);
+          const state = referenceLookup?.(name) ?? "missing";
+          const cls = state === "ok" ? "od-markdown__ref" : "od-markdown__ref od-markdown__ref--broken";
+          return `<a href="#" class="${cls}" data-od-ref="${escapeHtml(name)}">${escapeHtml(name)}</a>`;
+        },
+      },
+    ],
+    renderer: {
+      // Raw HTML (block and inline) is shown as text, never turned into elements.
+      html: ({ text }) => escapeHtml(text),
+      // Links: opened by the shell, and only when the address is one `openExternal` accepts, judged after decoding.
+      link(this: Renderer, { href, tokens }) {
+        const text = this.parser.parseInline(tokens);
+        const target = normalizeLinkHref(href);
+        return isOpenableUrl(target) ? `<a href="${escapeHtml(target)}" data-od-link rel="noopener noreferrer">${text}</a>` : text;
+      },
+      // Images are not loaded: only the alternative text is shown.
+      image: ({ text }) => `<span class="od-markdown__image-alt">${escapeHtml(text)}</span>`,
+      // Inside a page that already has its h1 every heading moves one level down; the class keeps the written level.
+      heading(this: Renderer, { tokens, depth }) {
+        return `<h${Math.min(depth + 1, 6)} class="od-markdown__h${depth}">${this.parser.parseInline(tokens)}</h${Math.min(depth + 1, 6)}>\n`;
+      },
+      table(this: Renderer, token) {
+        return `<div class="od-markdown__table-wrap">${Renderer.prototype.table.call(this, token)}</div>\n`;
+      },
+    },
   });
-  md.renderer.rules["od_reference"] = (tokens, idx, _options, env: Env) => {
-    const name = tokens[idx]!.content;
-    const state = env.referenceState?.(name) ?? "missing";
-    const cls = state === "ok" ? "od-markdown__ref" : "od-markdown__ref od-markdown__ref--broken";
-    return `<a href="#" class="${cls}" data-od-ref="${md.utils.escapeHtml(name)}">${md.utils.escapeHtml(name)}</a>`;
-  };
-
-  // Images are not loaded: the alternative text is shown.
-  md.renderer.rules.image = (tokens, idx) => `<span class="od-markdown__image-alt">${md.utils.escapeHtml(tokens[idx]!.content)}</span>`;
-
-  // Links: opened by the shell (never in this window).
-  md.renderer.rules.link_open = (tokens, idx) => {
-    const href = tokens[idx]!.attrGet("href") ?? "";
-    return `<a href="${md.utils.escapeHtml(href)}" data-od-link rel="noopener noreferrer">`;
-  };
-
-  // Inside a page that already has its h1 every heading moves one level down; the class keeps the written level.
-  md.renderer.rules.heading_open = (tokens, idx) => {
-    const level = Number(tokens[idx]!.tag.slice(1));
-    return `<h${Math.min(level + 1, 6)} class="od-markdown__h${level}">`;
-  };
-  md.renderer.rules.heading_close = (tokens, idx) => {
-    const level = Number(tokens[idx]!.tag.slice(1));
-    return `</h${Math.min(level + 1, 6)}>\n`;
-  };
-
-  md.renderer.rules.table_open = () => '<div class="od-markdown__table-wrap"><table>\n';
-  md.renderer.rules.table_close = () => "</table></div>\n";
   return md;
 }
 
-let shared: MarkdownIt | undefined;
+let shared: Marked | undefined;
 
 /** The HTML for a source. Exported for tests; nothing else should put this into a page. */
 export function renderMarkdown(source: string, referenceState?: (name: string) => ReferenceState): string {
   shared ??= createRenderer();
-  const env: Env = { referenceState };
-  return shared.render(source, env);
+  referenceLookup = referenceState;
+  try {
+    return shared.parse(source) as string;
+  } finally {
+    referenceLookup = undefined;
+  }
 }
 
 /** Read-only Markdown for plugin text: no raw HTML, only http/https/mailto links, `[[references]]`, no images. */
@@ -100,9 +98,9 @@ export function MarkdownText({ source, onLinkClick, onReferenceClick, referenceS
       return;
     }
     const href = anchor.getAttribute("href");
-    if (href && LINK_SCHEMES.test(href)) onLinkClick(href);
+    if (href && isOpenableUrl(href)) onLinkClick(href);
   };
-  // The markup comes from markdown-it with raw HTML switched off and every attribute value escaped above.
+  // The markup comes from `marked` with every raw HTML token escaped by the renderer above and every attribute value escaped.
   // eslint-disable-next-line react/no-danger
   return <div className={cx("od-markdown", className)} onClick={onClick} dangerouslySetInnerHTML={{ __html: html }} />;
 }
