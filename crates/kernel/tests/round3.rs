@@ -149,25 +149,26 @@ async fn run_times_out() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn input_snapshot_is_kept_and_table_is_truncated_to_1000_rows() {
+async fn input_snapshot_is_kept_and_table_is_truncated_to_10000_rows() {
     let (_env, c) = setup().await;
-    let j = job(&c, "rows 1500").await;
-    let r = run_text(&c, &j, "rows 1500").await;
+    // D377: the limit went from 1000 to 10 000 rows.
+    let j = job(&c, "rows 10500").await;
+    let r = run_text(&c, &j, "rows 10500").await;
     let out = &r["output"];
-    assert_eq!((out["rows"].as_array().unwrap().len(), out["total"].as_u64(), out["truncated"].as_bool()), (1000, Some(1500), Some(true)));
-    assert_eq!(r["summary"]["message"], "made 1500");
+    assert_eq!((out["rows"].as_array().unwrap().len(), out["total"].as_u64(), out["truncated"].as_bool()), (10000, Some(10500), Some(true)));
+    assert_eq!(r["summary"]["message"], "made 10500");
     c.ok("page.save", json!({ "target": format!("resource:{j}"), "changes": { "body.text": "changed later" } })).await;
     let again = c.ok("run.get", json!({ "id": r["id"] })).await;
-    assert_eq!(again["input"]["body.text"], "rows 1500");
+    assert_eq!(again["input"]["body.text"], "rows 10500");
     // The run page shows the snapshot read-only, with the run's number at the end of the breadcrumb.
     let p = c.ok("page.resolve", json!({ "target": format!("run:{}", r["id"].as_str().unwrap()) })).await;
-    assert_eq!((p["readOnly"].as_bool(), p["runId"].as_str(), p["values"]["body.text"].as_str()), (Some(true), r["id"].as_str(), Some("rows 1500")));
+    assert_eq!((p["readOnly"].as_bool(), p["runId"].as_str(), p["values"]["body.text"].as_str()), (Some(true), r["id"].as_str(), Some("rows 10500")));
     assert_eq!(p["breadcrumb"].as_array().unwrap().last().unwrap()["label"], format!("#{}", r["seq"]));
     assert_eq!(p["view"].as_array().unwrap().last().unwrap()["text"], format!("run {}", r["seq"]));
     // Still opens when the resource is gone (from the snapshot).
     c.ok("resource.delete", json!({ "id": j })).await;
     let p = c.ok("page.resolve", json!({ "target": format!("run:{}", r["id"].as_str().unwrap()) })).await;
-    assert_eq!((p["found"].as_bool(), p["values"]["body.text"].as_str()), (Some(true), Some("rows 1500")));
+    assert_eq!((p["found"].as_bool(), p["values"]["body.text"].as_str()), (Some(true), Some("rows 10500")));
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

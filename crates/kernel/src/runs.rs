@@ -23,7 +23,8 @@ pub const METHODS: &[&str] = &[
     M::COMMAND_PALETTE,
 ];
 
-pub const MAX_ROWS: usize = 1000;
+/// D377: rows of a table output handed to the interface (more → `truncated`, with `total`).
+pub const MAX_ROWS: usize = 10_000;
 /// D295: the run's input snapshot and a page's draft, serialized.
 pub const MAX_INPUT_BYTES: usize = 8 * 1024 * 1024;
 

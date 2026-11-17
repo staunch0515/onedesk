@@ -142,7 +142,15 @@ pub(crate) fn kernel_cmd(id: &str, icon: &str) -> MenuCommand {
     }
 }
 
+/// Per-request memo for `node_memo`: (kind, bound version) → meta, supplies children, dependents' actions.
+#[derive(Default)]
+pub(crate) struct NodeMemo(HashMap<(String, Option<String>), KindShared>);
+
+/// What every node of one kind shares: its meta, whether it supplies children, dependents' actions.
+type KindShared = (KindMeta, bool, Vec<ActionDecl>);
+
 /// What the kernel knows about a kind without running any plugin code.
+#[derive(Clone)]
 pub(crate) struct KindMeta {
     pub label: Label,
     pub icon: String,
@@ -797,9 +805,20 @@ impl Inner {
     }
 
     pub fn node_for(&self, r: &Row) -> KResult<TreeNode> {
-        let meta = self.row_meta(r);
+        self.node_memo(r, &mut NodeMemo::default())
+    }
+
+    /// `node_for` for many rows: what rows of one kind (and bound version) share is worked out
+    /// once per batch (round 10: it asks the plugin's state, a few queries per node otherwise).
+    pub(crate) fn node_memo(&self, r: &Row, memo: &mut NodeMemo) -> KResult<TreeNode> {
+        let shared = memo
+            .0
+            .entry((r.kind.clone(), r.plugin_version.clone()))
+            .or_insert_with(|| (self.row_meta(r), self.children_supplier(r).is_some(), self.dependent_actions(&r.kind)))
+            .clone();
+        let (meta, supplies, dependent) = shared;
         let group = r.kind == KIND_GROUP;
-        let has_children = self.read(|c| store::has_children(c, &r.id))? || self.children_supplier(r).is_some();
+        let has_children = supplies || self.read(|c| store::has_children(c, &r.id))?;
         let mut menu = Vec::new();
         if meta.page.is_some() || crate::params::is_param_kind(&r.kind) {
             menu.push(kernel_cmd("node.open", "external-link"));
@@ -821,7 +840,7 @@ impl Inner {
         }
         menu.extend(meta.commands);
         // Review #6 (§7.3): actions of enabled dependents on this kind, after its own items.
-        for (i, a) in self.dependent_actions(&r.kind).into_iter().enumerate() {
+        for (i, a) in dependent.into_iter().enumerate() {
             menu.push(MenuCommand {
                 id: a.id,
                 label: a.label,
@@ -900,7 +919,8 @@ impl Inner {
             }
             let rows = self.read(|c| store::children(c, &p.tree, p.parent.as_deref(), offset, BATCH + 1))?;
             let more = rows.len() > BATCH as usize;
-            let nodes = rows.iter().take(BATCH as usize).map(|r| self.node_for(r)).collect::<KResult<Vec<_>>>()?;
+            let mut memo = NodeMemo::default();
+            let nodes = rows.iter().take(BATCH as usize).map(|r| self.node_memo(r, &mut memo)).collect::<KResult<Vec<_>>>()?;
             return Ok(TreePage { next: more.then_some(offset + BATCH), nodes });
         }
         let (plugin, decl) = self.registry.tree(&p.tree).ok_or_else(|| not_found("tree"))?;
@@ -912,10 +932,8 @@ impl Inner {
     }
 
     fn provided_page(&self, plugin: &Plugin, tree: &str, parent: Option<&str>, offset: u32, has_page: bool, out: Value) -> KResult<TreePage> {
+        // Round 10: up to 1000 nodes are fine; they are handed out in our own batches.
         let page = crate::kind_children::parse_batch(plugin, out, offset, parent)?;
-        if page.nodes.len() > BATCH as usize {
-            return Err(err_d(ErrorCode::PluginError, "more than 200 nodes in one batch"));
-        }
         let nodes = page
             .nodes
             .into_iter()
