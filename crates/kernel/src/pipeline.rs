@@ -865,6 +865,7 @@ impl Tx<'_> {
         self.update_as(id, changes, basis, overwrite, "update", None, "resource.update")
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn update_as(
         &mut self,
         id: &str,

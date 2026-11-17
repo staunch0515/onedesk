@@ -953,63 +953,80 @@ impl Inner {
 
     /// `plugins`: one node per package (refused ones as `broken`); `runs`: the latest 200 runs.
     /// `locale` (D367): the plugin names are given in it (falling back to English).
-    pub fn plugins_tree(&self, locale: Option<&str>) -> KResult<Vec<TreeNode>> {
-        let mut out = Vec::new();
-        for p in &self.registry.plugins() {
-            let enabled = self.plugin_enabled(&p.id);
-            // The switch follows the user's choice; the state says whether it works (round 7).
-            let toggle =
-                if self.plugin_switched_on(&p.id) { kernel_cmd("plugin.disable", "power-off") } else { kernel_cmd("plugin.enable", "power") };
-            out.push(TreeNode {
-                key: p.id.clone(),
-                tree: store::TREE_PLUGINS.into(),
-                parent_key: None,
-                label: p.text(&p.manifest.name, locale),
-                icon: p.manifest.icon.clone(),
-                kind: store::KIND_PLUGIN.into(),
-                expandable: false,
-                state: if enabled { NodeState::Ok } else { NodeState::Disabled },
-                // D337: a failed automatic switch first; then a newer version waiting for the user
-                // to confirm its permissions (D299).
-                state_reason: if self.unmet_dependency(&p.id).is_some() {
-                    Some(Label::Text("dependsUnmet".into()))
-                } else if self.switch_failure(&p.id).is_some() {
-                    Some(Label::Text("switchFailed".into()))
-                } else {
-                    self.registry.versions(&p.id).iter().any(|v| !self.version_confirmed(v)).then(|| Label::Text("unconfirmedVersion".into()))
-                },
-                badge: Some(p.version.clone()),
-                target: Some(format!("plugin:{}", p.id)),
-                menu: vec![kernel_cmd("node.open", "external-link"), toggle],
-                draggable: false,
-                accepts: vec![],
-            });
+    /// One batch of the `plugins` tree and the total number of entries. Only the batch's nodes
+    /// are built (§7 round 10: each node looks at the plugin's state, which with ten thousand
+    /// packages made the first answer take many seconds).
+    pub fn plugins_tree_page(&self, locale: Option<&str>, offset: usize, limit: usize) -> KResult<(Vec<TreeNode>, usize)> {
+        enum Entry<'a> {
+            Plugin(&'static crate::manifest::Plugin),
+            Broken(String, &'a str),
         }
-        let mut seen: Vec<String> = out.iter().map(|n| n.key.clone()).collect();
-        for r in &self.registry.rejected() {
+        let plugins = self.registry.plugins();
+        let rejected = self.registry.rejected();
+        let mut seen: std::collections::HashSet<String> = plugins.iter().map(|p| p.id.clone()).collect();
+        let mut entries: Vec<Entry> = plugins.iter().map(|p| Entry::Plugin(p)).collect();
+        for r in &rejected {
             let Some(id) = r.path.parent().and_then(|p| p.file_name()).map(|n| n.to_string_lossy().into_owned()) else { continue };
-            if seen.contains(&id) {
-                continue;
+            if seen.insert(id.clone()) {
+                entries.push(Entry::Broken(id, &r.reason));
             }
-            seen.push(id.clone());
-            out.push(TreeNode {
-                key: id.clone(),
-                tree: store::TREE_PLUGINS.into(),
-                parent_key: None,
-                label: id.clone(),
-                icon: "puzzle".into(),
-                kind: store::KIND_PLUGIN.into(),
-                expandable: false,
-                state: NodeState::Broken,
-                state_reason: Some(Label::Text(r.reason.clone())),
-                badge: None,
-                target: Some(format!("plugin:{id}")),
-                menu: vec![kernel_cmd("node.open", "external-link")],
-                draggable: false,
-                accepts: vec![],
-            });
         }
-        Ok(out)
+        let total = entries.len();
+        let nodes = entries
+            .into_iter()
+            .skip(offset)
+            .take(limit)
+            .map(|e| match e {
+                Entry::Plugin(p) => self.plugin_node(p, locale),
+                Entry::Broken(id, reason) => TreeNode {
+                    key: id.clone(),
+                    tree: store::TREE_PLUGINS.into(),
+                    parent_key: None,
+                    label: id.clone(),
+                    icon: "puzzle".into(),
+                    kind: store::KIND_PLUGIN.into(),
+                    expandable: false,
+                    state: NodeState::Broken,
+                    state_reason: Some(Label::Text(reason.to_string())),
+                    badge: None,
+                    target: Some(format!("plugin:{id}")),
+                    menu: vec![kernel_cmd("node.open", "external-link")],
+                    draggable: false,
+                    accepts: vec![],
+                },
+            })
+            .collect();
+        Ok((nodes, total))
+    }
+
+    fn plugin_node(&self, p: &crate::manifest::Plugin, locale: Option<&str>) -> TreeNode {
+        let enabled = self.plugin_enabled(&p.id);
+        // The switch follows the user's choice; the state says whether it works (round 7).
+        let toggle = if self.plugin_switched_on(&p.id) { kernel_cmd("plugin.disable", "power-off") } else { kernel_cmd("plugin.enable", "power") };
+        TreeNode {
+            key: p.id.clone(),
+            tree: store::TREE_PLUGINS.into(),
+            parent_key: None,
+            label: p.text(&p.manifest.name, locale),
+            icon: p.manifest.icon.clone(),
+            kind: store::KIND_PLUGIN.into(),
+            expandable: false,
+            state: if enabled { NodeState::Ok } else { NodeState::Disabled },
+            // D337: a failed automatic switch first; then a newer version waiting for the user
+            // to confirm its permissions (D299).
+            state_reason: if self.unmet_dependency(&p.id).is_some() {
+                Some(Label::Text("dependsUnmet".into()))
+            } else if self.switch_failure(&p.id).is_some() {
+                Some(Label::Text("switchFailed".into()))
+            } else {
+                self.registry.versions(&p.id).iter().any(|v| !self.version_confirmed(v)).then(|| Label::Text("unconfirmedVersion".into()))
+            },
+            badge: Some(p.version.clone()),
+            target: Some(format!("plugin:{}", p.id)),
+            menu: vec![kernel_cmd("node.open", "external-link"), toggle],
+            draggable: false,
+            accepts: vec![],
+        }
     }
 
     pub fn runs_tree(&self) -> KResult<Vec<TreeNode>> {

@@ -38,6 +38,7 @@ impl Inner {
 
     /// One batch of children of a resource whose kind supplies them, or of one of the plugin's
     /// own nodes (`node` = its plugin key). `offset` counts the stored children first.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) async fn supplied_children(
         &self,
         tree: &str,

@@ -394,3 +394,47 @@ async fn ctx_resource_is_read_only_and_locale_is_passed() {
     assert_eq!(kids(&c, &shelf, 0, Some("zh-CN")).await["nodes"][0]["label"], "项 0");
     assert_eq!(kids(&c, &shelf, 0, Some("en-US")).await["nodes"][0]["label"], "Item 0");
 }
+
+/* ------------------------------------------------------------------ §7 many packages */
+
+#[tokio::test(flavor = "multi_thread")]
+async fn with_thousands_of_packages_the_first_answers_do_not_look_at_every_plugin() {
+    // Round 10 §7: after opening, neither the background automatic switch nor the first batch
+    // of the `plugins` tree may ask each package's state (that took seconds with 10 000).
+    const N: usize = 3000;
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("plugins");
+    let mut entries = Vec::new();
+    for i in 0..N {
+        let id = format!("t.many-{i:05}");
+        let dir = root.join(&id).join("0.1.0");
+        std::fs::create_dir_all(&dir).unwrap();
+        let m = json!({ "id": id, "version": "0.1.0", "apiVersion": "2", "name": "n", "icon": "box", "main": "main.js" }).to_string();
+        std::fs::write(dir.join("manifest.json"), &m).unwrap();
+        std::fs::write(dir.join("main.js"), "export default { activate() {} };").unwrap();
+        entries.push(json!({ "dir": format!("{id}/0.1.0"), "mtime": 0, "size": m.len(), "manifest": m }));
+    }
+    std::fs::write(root.join(".index"), serde_json::to_vec(&json!({ "version": 1, "entries": entries })).unwrap()).unwrap();
+    let ws = tmp.path().join("ws");
+    // First open registers the packages; the second is the start that has to be quick.
+    onedesk_kernel::Kernel::open(&ws, &root, test_config()).unwrap().shutdown();
+    let t = std::time::Instant::now();
+    let k = std::sync::Arc::new(onedesk_kernel::Kernel::open(&ws, &root, test_config()).unwrap());
+    let c = Client::in_proc(k.clone());
+    c.hello().await;
+    let page = c.ok("tree.children", json!({ "tree": "plugins" })).await;
+    let took = t.elapsed();
+    assert_eq!(page["nodes"].as_array().unwrap().len(), 200);
+    assert_eq!(page["next"], 200);
+    // Let the background automatic switch run: nothing has a newer version, so it asks nothing.
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    let q = k.state_queries();
+    assert!(q < 8 * 200, "{q} plugin state queries for one batch of {N} packages");
+    // The last batch is there too, with the same shape.
+    let last = c.ok("tree.children", json!({ "tree": "plugins", "offset": 2800 })).await;
+    assert_eq!(last["nodes"].as_array().unwrap().len(), 200);
+    assert!(last.get("next").is_none());
+    assert_eq!(last["nodes"][199]["key"], "t.many-02999");
+    // A loose backstop only (debug build, busy machines).
+    assert!(took < std::time::Duration::from_secs(60), "{took:?}");
+}

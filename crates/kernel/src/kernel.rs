@@ -217,8 +217,21 @@ impl Kernel {
         // A newer confirmed version that arrived while the worker was off takes over now (D303).
         if let Ok(rt) = tokio::runtime::Handle::try_current() {
             let me = inner.clone();
+            // Round 10 (§7): only plugins that have a version newer than the active one are
+            // looked at; asking every plugin's state took the reader for seconds with ten
+            // thousand packages, right when the first requests come in.
+            let candidates: Vec<String> = me
+                .registry
+                .ids()
+                .into_iter()
+                .filter(|id| {
+                    let newest = me.registry.versions(id).last().map(|p| p.semver());
+                    let active = me.registry.plugin(id).map(|p| p.semver());
+                    matches!((newest, active), (Some(n), Some(a)) if n > a)
+                })
+                .collect();
             rt.spawn(async move {
-                for id in me.registry.ids() {
+                for id in candidates {
                     if let Err(e) = me.auto_switch(&id).await {
                         eprintln!("onedesk: automatic switch of {id} failed: {e:?}");
                     }
@@ -850,9 +863,13 @@ impl Inner {
             if p.parent.is_some() {
                 return Ok(TreePage { nodes: vec![], next: None });
             }
-            let all = if p.tree == store::TREE_PLUGINS { self.plugins_tree(valid_locale(p.locale.as_deref()))? } else { self.runs_tree()? };
-            let total = all.len();
-            let nodes: Vec<TreeNode> = all.into_iter().skip(offset as usize).take(BATCH as usize).collect();
+            let (nodes, total) = if p.tree == store::TREE_PLUGINS {
+                self.plugins_tree_page(valid_locale(p.locale.as_deref()), offset as usize, BATCH as usize)?
+            } else {
+                let all = self.runs_tree()?;
+                let total = all.len();
+                (all.into_iter().skip(offset as usize).take(BATCH as usize).collect(), total)
+            };
             let next = offset + BATCH;
             return Ok(TreePage { nodes, next: ((next as usize) < total).then_some(next) });
         }
