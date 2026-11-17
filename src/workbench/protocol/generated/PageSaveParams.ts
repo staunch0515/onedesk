@@ -12,4 +12,9 @@ export type PageSaveParams = { target: string,
 /**
  * Bind path → new value; only what changed.
  */
-changes: { [key in string]: JsonValue }, basis?: string, context?: PageContext, };
+changes: { [key in string]: JsonValue }, basis?: string, context?: PageContext, 
+/**
+ * Bind paths the user chose to keep their own value for although they changed after `basis`
+ * (“keep mine”, D374): they are written and never count as a conflict.
+ */
+overwrite?: Array<string>, };

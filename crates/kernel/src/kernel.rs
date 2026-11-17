@@ -217,8 +217,21 @@ impl Kernel {
         // A newer confirmed version that arrived while the worker was off takes over now (D303).
         if let Ok(rt) = tokio::runtime::Handle::try_current() {
             let me = inner.clone();
+            // Round 10 (§7): only plugins that have a version newer than the active one are
+            // looked at; asking every plugin's state took the reader for seconds with ten
+            // thousand packages, right when the first requests come in.
+            let candidates: Vec<String> = me
+                .registry
+                .ids()
+                .into_iter()
+                .filter(|id| {
+                    let newest = me.registry.versions(id).last().map(|p| p.semver());
+                    let active = me.registry.plugin(id).map(|p| p.semver());
+                    matches!((newest, active), (Some(n), Some(a)) if n > a)
+                })
+                .collect();
             rt.spawn(async move {
-                for id in me.registry.ids() {
+                for id in candidates {
                     if let Err(e) = me.auto_switch(&id).await {
                         eprintln!("onedesk: automatic switch of {id} failed: {e:?}");
                     }
@@ -445,7 +458,7 @@ impl Inner {
                     return Err(invalid("emptyName"));
                 }
                 let changes = Changes { name: Some(p.name), ..Default::default() };
-                self.execute(Actor::User, Command::Update { id: row.id, changes, basis: None }).await?;
+                self.execute(Actor::User, Command::Update { id: row.id, changes, basis: None, overwrite: vec![] }).await?;
                 Ok(Value::Null)
             }
             M::RESOURCE_GET => {
@@ -786,7 +799,7 @@ impl Inner {
     pub fn node_for(&self, r: &Row) -> KResult<TreeNode> {
         let meta = self.row_meta(r);
         let group = r.kind == KIND_GROUP;
-        let has_children = self.read(|c| store::has_children(c, &r.id))?;
+        let has_children = self.read(|c| store::has_children(c, &r.id))? || self.children_supplier(r).is_some();
         let mut menu = Vec::new();
         if meta.page.is_some() || crate::params::is_param_kind(&r.kind) {
             menu.push(kernel_cmd("node.open", "external-link"));
@@ -850,9 +863,13 @@ impl Inner {
             if p.parent.is_some() {
                 return Ok(TreePage { nodes: vec![], next: None });
             }
-            let all = if p.tree == store::TREE_PLUGINS { self.plugins_tree(valid_locale(p.locale.as_deref()))? } else { self.runs_tree()? };
-            let total = all.len();
-            let nodes: Vec<TreeNode> = all.into_iter().skip(offset as usize).take(BATCH as usize).collect();
+            let (nodes, total) = if p.tree == store::TREE_PLUGINS {
+                self.plugins_tree_page(valid_locale(p.locale.as_deref()), offset as usize, BATCH as usize)?
+            } else {
+                let all = self.runs_tree()?;
+                let total = all.len();
+                (all.into_iter().skip(offset as usize).take(BATCH as usize).collect(), total)
+            };
             let next = offset + BATCH;
             return Ok(TreePage { nodes, next: ((next as usize) < total).then_some(next) });
         }
@@ -862,6 +879,25 @@ impl Inner {
             }
         }
         if self.stored_tree(&p.tree).is_ok() {
+            // D375: under a resource whose kind supplies children, and under those nodes.
+            if let Some(parent) = p.parent.as_deref() {
+                let (rid, node) = match crate::kind_children::parse_child_key(parent) {
+                    Some((rid, k)) => (rid, Some(k)),
+                    None if parent.starts_with(crate::kind_children::FAILED_PREFIX) => {
+                        return Ok(TreePage { nodes: vec![], next: None })
+                    }
+                    None => (parent, None),
+                };
+                let row = self.row_in_tree(&p.tree, rid)?;
+                match self.children_supplier(&row) {
+                    Some(pl) => {
+                        return self.supplied_children(&p.tree, &row, pl, node, offset, p.locale.as_deref(), client).await;
+                    }
+                    // The plugin is off (or the kind does not supply): none of its nodes.
+                    None if node.is_some() => return Ok(TreePage { nodes: vec![], next: None }),
+                    None => {}
+                }
+            }
             let rows = self.read(|c| store::children(c, &p.tree, p.parent.as_deref(), offset, BATCH + 1))?;
             let more = rows.len() > BATCH as usize;
             let nodes = rows.iter().take(BATCH as usize).map(|r| self.node_for(r)).collect::<KResult<Vec<_>>>()?;
@@ -938,7 +974,15 @@ impl Inner {
             return Ok(vec![p.key]);
         }
         if self.stored_tree(&p.tree).is_ok() {
-            let r = self.row_in_tree(&p.tree, &p.key)?;
+            // A plugin-supplied node: the path of its resource, then the node itself.
+            let rid = crate::kind_children::parse_child_key(&p.key).map(|(rid, _)| rid).unwrap_or(&p.key);
+            let r = self.row_in_tree(&p.tree, rid)?;
+            if rid != p.key {
+                let mut ids: Vec<String> = self.read(|c| store::ancestors(c, &r))?.into_iter().map(|a| a.id).collect();
+                ids.push(r.id);
+                ids.push(p.key);
+                return Ok(ids);
+            }
             let mut ids: Vec<String> = self.read(|c| store::ancestors(c, &r))?.into_iter().map(|a| a.id).collect();
             ids.push(r.id);
             return Ok(ids);
@@ -1100,6 +1144,7 @@ impl Inner {
                 commands: plugin.manifest.contributes.commands.iter().map(|c| c.id.clone()).collect(),
                 actions: plugin.manifest.contributes.actions.iter().map(|a| a.id.clone()).collect(),
                 kinds: plugin.manifest.contributes.kinds.iter().map(|k| k.id.clone()).collect(),
+                kind_children: plugin.manifest.contributes.kinds.iter().filter(|k| k.children).map(|k| k.id.clone()).collect(),
                 events: plugin.manifest.contributes.events.clone(),
             },
             labels: plugin.all_labels(),

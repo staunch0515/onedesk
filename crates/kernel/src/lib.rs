@@ -10,6 +10,7 @@ pub mod process;
 pub mod files;
 mod host;
 pub mod kernel;
+mod kind_children;
 pub mod manifest;
 mod pages;
 pub mod params;

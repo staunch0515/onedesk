@@ -9,7 +9,7 @@ use std::sync::Arc;
 use std::thread::JoinHandle;
 
 use onedesk_protocol::{ErrorCode, JsonMap};
-use rusqlite::{params, Connection, Transaction};
+use rusqlite::{params, Connection, OptionalExtension, Transaction};
 use serde_json::{json, Value};
 use tokio::sync::oneshot;
 
@@ -182,7 +182,9 @@ pub enum MoveDest {
 #[derive(Debug, Clone)]
 pub enum Command {
     Create(NewResource),
-    Update { id: String, changes: Changes, basis: Option<i64> },
+    /// `overwrite`: fields the user chose to keep their own value for although they changed after
+    /// `basis` (D374); they never count as a conflict.
+    Update { id: String, changes: Changes, basis: Option<i64>, overwrite: Vec<String> },
     /// A parameter command (`params.set` / `unset` / `acknowledge`): an update audited under its own name.
     Params { id: String, changes: Changes, basis: Option<i64>, op: String },
     Move { id: String, dest: MoveDest },
@@ -448,8 +450,8 @@ impl Writer {
             }
             let out = match cmd {
                 Command::Create(n) => cx.create(n)?,
-                Command::Update { id, changes, basis } => cx.update(&id, &changes, basis)?,
-                Command::Params { id, changes, basis, op } => cx.update_as(&id, &changes, basis, "update", None, &op)?,
+                Command::Update { id, changes, basis, overwrite } => cx.update(&id, &changes, basis, &overwrite)?,
+                Command::Params { id, changes, basis, op } => cx.update_as(&id, &changes, basis, &[], "update", None, &op)?,
                 Command::Move { id, dest } => cx.move_to(&id, dest)?,
                 Command::Delete { id } => cx.delete(&id)?,
                 Command::Audit { op, object, summary } => {
@@ -859,15 +861,17 @@ impl Tx<'_> {
         Ok(Outcome { id: Some(row.id.clone()), changed: true, rows: vec![row], ..Default::default() })
     }
 
-    fn update(&mut self, id: &str, changes: &Changes, basis: Option<i64>) -> KResult<Outcome> {
-        self.update_as(id, changes, basis, "update", None, "resource.update")
+    fn update(&mut self, id: &str, changes: &Changes, basis: Option<i64>, overwrite: &[String]) -> KResult<Outcome> {
+        self.update_as(id, changes, basis, overwrite, "update", None, "resource.update")
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn update_as(
         &mut self,
         id: &str,
         changes: &Changes,
         basis: Option<i64>,
+        overwrite: &[String],
         op: &str,
         restored_from: Option<&str>,
         audit_op: &str,
@@ -883,19 +887,20 @@ impl Tx<'_> {
         }
         if let Some(b) = basis {
             if b < row.rev {
-                // Conflict only when one of *these* fields changed after `basis` (§4 并发规则).
-                let mut st = self
-                    .tx
-                    .prepare_cached("SELECT fields FROM revisions WHERE resource_id = ?1 AND rev > ?2")
-                    .map_err(sql)?;
-                let later: BTreeSet<String> = st
-                    .query_map(params![id, b], |r| r.get::<_, String>(0))
-                    .map_err(sql)?
-                    .filter_map(|f| f.ok())
-                    .flat_map(|f| serde_json::from_str::<Vec<String>>(&f).unwrap_or_default())
+                // D374: refuse only when one of *these* fields changed after `basis` (§4 并发规则, §9.3).
+                let later = self.changed_since(&row, b)?;
+                let clash: Vec<String> = changes
+                    .fields()
+                    .into_iter()
+                    .filter(|f| !overwrite.contains(f))
+                    .filter(|f| later.as_ref().is_none_or(|l| l.contains(f) || (f.starts_with("params.") && l.contains("*"))))
                     .collect();
-                if let Some(f) = changes.fields().into_iter().find(|f| later.contains(f) || later.contains("*")) {
-                    return Err(err_p(ErrorCode::Conflict, &[("field", &f), ("rev", &row.rev.to_string())]));
+                if let Some(first) = clash.first() {
+                    let rev = row.rev.to_string();
+                    return Err(err_p(
+                        ErrorCode::Conflict,
+                        &[("reason", "stale"), ("fields", &clash.join(",")), ("field", first), ("rev", &rev)],
+                    ));
                 }
             }
         }
@@ -918,6 +923,49 @@ impl Tx<'_> {
         self.revision_from(&row, op, &changed, restored_from)?;
         self.audit(audit_op, &row.id, &audit_fields(&changed))?;
         Ok(Outcome { id: Some(row.id.clone()), changed: true, rows: vec![row], ..Default::default() })
+    }
+
+    /// The bind paths whose value differs between revision `basis` and `row` (name, description,
+    /// tags, top-level `body.*`, by comparing the stored snapshot), plus the `params.*` recorded
+    /// after it. `None` when that revision is no longer in the history: every field counts as changed.
+    fn changed_since(&self, row: &Row, basis: i64) -> KResult<Option<BTreeSet<String>>> {
+        let snap: Option<String> = self
+            .tx
+            .prepare_cached("SELECT snapshot FROM revisions WHERE resource_id = ?1 AND rev = ?2")
+            .map_err(sql)?
+            .query_row(params![row.id, basis], |r| r.get(0))
+            .optional()
+            .map_err(sql)?;
+        let Some(old) = snap.and_then(|s| serde_json::from_str::<Row>(&s).ok()) else {
+            return Ok(None);
+        };
+        let mut out = BTreeSet::new();
+        if old.name != row.name {
+            out.insert("name".to_string());
+        }
+        if old.description != row.description {
+            out.insert("description".to_string());
+        }
+        if old.tags != row.tags {
+            out.insert("tags".to_string());
+        }
+        for k in old.body.keys().chain(row.body.keys()) {
+            if old.body.get(k) != row.body.get(k) {
+                out.insert(format!("body.{k}"));
+            }
+        }
+        let mut st = self
+            .tx
+            .prepare_cached("SELECT fields FROM revisions WHERE resource_id = ?1 AND rev > ?2")
+            .map_err(sql)?;
+        let later = st
+            .query_map(params![row.id, basis], |r| r.get::<_, String>(0))
+            .map_err(sql)?
+            .filter_map(|f| f.ok())
+            .flat_map(|f| serde_json::from_str::<Vec<String>>(&f).unwrap_or_default())
+            .filter(|f| f.starts_with("params.") || f == "*");
+        out.extend(later);
+        Ok(Some(out))
     }
 
     fn move_to(&mut self, id: &str, dest: MoveDest) -> KResult<Outcome> {
@@ -1023,7 +1071,7 @@ impl Tx<'_> {
             Some(r) => {
                 let mut changes = Changes::default();
                 changes.body.insert(key.into(), json!(folders));
-                self.update(&r.id, &changes, None)
+                self.update(&r.id, &changes, None, &[])
             }
             None => {
                 let mut body = JsonMap::new();
@@ -1143,7 +1191,7 @@ impl Tx<'_> {
             out.id = Some(id.to_string());
             return Ok(out);
         }
-        let mut out = self.update_as(id, changes, None, "restore", Some(entry), "resource.restore")?;
+        let mut out = self.update_as(id, changes, None, &[], "restore", Some(entry), "resource.restore")?;
         // §7.6 / review #10: the restored content comes with the version that handles it.
         if let Some(v) = version {
             let mut row = self.live(id)?;

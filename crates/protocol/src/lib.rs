@@ -175,6 +175,9 @@ pub enum NodeState {
     MissingPlugin,
     Broken,
     Conflict,
+    /// D375: the node standing in for children a plugin failed to supply (error or timeout);
+    /// `stateReason` holds the error code.
+    LoadFailed,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -650,6 +653,9 @@ pub struct PageSaveParams {
     pub changes: JsonMap,
     pub basis: Option<String>,
     pub context: Option<PageContext>,
+    /// Bind paths the user chose to keep their own value for although they changed after `basis`
+    /// (“keep mine”, D374): they are written and never count as a conflict.
+    pub overwrite: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
