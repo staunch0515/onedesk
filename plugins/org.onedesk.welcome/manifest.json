@@ -1,0 +1,18 @@
+{
+  "id": "org.onedesk.welcome",
+  "version": "0.1.0",
+  "apiVersion": "2",
+  "name": "plugin.name",
+  "description": "plugin.description",
+  "icon": "hand",
+  "main": "main.js",
+  "author": "OneDesk",
+  "license": "MIT",
+  "requires": { "files": false },
+  "contributes": {
+    "pages": [
+      { "id": "welcome", "startup": true }
+    ],
+    "locales": { "en-US": "locales/en-US.json", "zh-CN": "locales/zh-CN.json", "ja-JP": "locales/ja-JP.json" }
+  }
+}

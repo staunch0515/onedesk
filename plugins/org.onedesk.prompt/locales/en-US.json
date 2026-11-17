@@ -1,0 +1,13 @@
+{
+  "plugin.name": "Prompts",
+  "plugin.description": "Reusable prompt text with {{name}} placeholders you fill in and copy.",
+  "kind.prompt": "Prompt",
+  "kind.prompt.new": "Untitled prompt",
+  "action.copy": "Copy",
+  "action.preview": "Preview",
+  "action.save": "Save",
+  "field.text": "Prompt",
+  "field.text.placeholder": "Write the prompt. Use {{name}} for a value you fill in each time.",
+  "message.copied": "Copied",
+  "summary.preview": "{count} placeholder(s), {filled} filled"
+}

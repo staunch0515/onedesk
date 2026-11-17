@@ -1,0 +1,10 @@
+{
+  "plugin.name": "Welcome",
+  "plugin.description": "The page shown when nothing is open.",
+  "page.title": "Welcome",
+  "intro": "# Welcome to OneDesk\n\nOneDesk keeps your everyday work in one place: **notes**, **links**, **prompts** and **requests** live in the tree on the left, and plugins add more.\n\n- Type `[[Name]]` in a note to link another item.\n- Press the command palette shortcut to find anything.\n\nStart with one of these:",
+  "entry.note": "New note",
+  "entry.link": "New link",
+  "entry.prompt": "New prompt",
+  "entry.http": "New HTTP request"
+}

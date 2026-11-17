@@ -1,0 +1,53 @@
+{
+  "id": "org.onedesk.prompt",
+  "version": "0.1.0",
+  "apiVersion": "2",
+  "name": "plugin.name",
+  "description": "plugin.description",
+  "icon": "message-square-text",
+  "main": "main.js",
+  "author": "OneDesk",
+  "license": "MIT",
+  "legacyKinds": ["prompt"],
+  "requires": { "files": false },
+  "contributes": {
+    "kinds": [
+      {
+        "id": "prompt",
+        "label": "kind.prompt",
+        "icon": "message-square-text",
+        "tree": "resources",
+        "page": "editor",
+        "newName": "kind.prompt.new",
+        "defaults": { "text": "" },
+        "fields": { "text": { "type": "longtext", "refs": true } },
+        "draggable": true,
+        "accepts": []
+      }
+    ],
+    "actions": [
+      {
+        "id": "preview",
+        "label": "action.preview",
+        "icon": "eye",
+        "kinds": ["prompt"],
+        "output": "text",
+        "saveFirst": false,
+        "confirm": null
+      }
+    ],
+    "pages": [
+      {
+        "id": "editor",
+        "recompute": true,
+        "actions": [
+          { "id": "copy", "role": "event", "label": "action.copy", "icon": "copy", "primary": true, "shortcut": ["Mod", "Shift", "C"] },
+          { "id": "preview", "role": "run", "action": "preview", "label": "action.preview", "icon": "eye" },
+          { "id": "save", "role": "save", "label": "action.save", "icon": "save", "shortcut": ["Mod", "S"] }
+        ]
+      }
+    ],
+    "menus": { "new": ["prompt"] },
+    "locales": { "en-US": "locales/en-US.json", "zh-CN": "locales/zh-CN.json", "ja-JP": "locales/ja-JP.json" }
+  }
+}

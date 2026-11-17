@@ -8,5 +8,11 @@
   "field.text": "Content",
   "field.placeholder": "Write the note. Use [[Name]] to link another resource.",
   "copy.suffix": "copy",
-  "error.notFound": "The note no longer exists."
+  "error.notFound": "The note no longer exists.",
+  "action.toggle": "Read / Edit",
+  "field.mode": "Mode",
+  "mode.edit": "Edit",
+  "mode.read": "Read",
+  "message.reading": "Reading view",
+  "message.editing": "Editing"
 }

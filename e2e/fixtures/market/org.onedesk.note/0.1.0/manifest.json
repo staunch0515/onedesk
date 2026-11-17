@@ -7,6 +7,7 @@
   "icon": "sticky-note",
   "main": "main.js",
   "requires": { "files": false },
+  "legacyKinds": ["note"],
   "exports": { "kinds": [ { "id": "note", "actions": true, "read": true } ] },
   "contributes": {
     "kinds": [
@@ -27,13 +28,15 @@
     "pages": [
       {
         "id": "editor",
+        "recompute": true,
         "actions": [
+          { "id": "toggle", "role": "event", "label": "action.toggle", "icon": "book-open", "shortcut": ["Mod", "Shift", "R"] },
           { "id": "save", "role": "save", "label": "action.save", "icon": "save", "primary": true, "shortcut": ["Mod", "S"] }
         ]
       }
     ],
     "commands": [{ "id": "duplicate", "label": "command.duplicate", "icon": "copy" }],
     "menus": { "new": ["note"] },
-    "locales": { "en-US": "locales/en-US.json", "zh-CN": "locales/zh-CN.json" }
+    "locales": { "en-US": "locales/en-US.json", "zh-CN": "locales/zh-CN.json", "ja-JP": "locales/ja-JP.json" }
   }
 }

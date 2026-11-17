@@ -1,0 +1,16 @@
+{
+  "plugin.name": "リンク",
+  "plugin.description": "ウェブアドレスを保存し、システムのブラウザで開きます。",
+  "kind.link": "リンク",
+  "kind.link.new": "無題のリンク",
+  "action.open": "開く",
+  "action.save": "保存",
+  "field.url": "アドレス",
+  "field.url.placeholder": "https://example.com",
+  "field.profile": "ブラウザのプロファイル",
+  "field.profile.hint": "記憶のみで、まだ使われません。",
+  "error.noUrl": "先にアドレスを入力してください。",
+  "error.badUrl": "開けるのは http、https、mailto のアドレスだけです。",
+  "summary.opened": "{host} を開きました",
+  "output.label": "{host} を開きました"
+}

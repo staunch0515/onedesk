@@ -1,0 +1,16 @@
+{
+  "plugin.name": "Links",
+  "plugin.description": "Save a web address and open it in the system browser.",
+  "kind.link": "Link",
+  "kind.link.new": "Untitled link",
+  "action.open": "Open",
+  "action.save": "Save",
+  "field.url": "Address",
+  "field.url.placeholder": "https://example.com",
+  "field.profile": "Browser profile",
+  "field.profile.hint": "Remembered for later; not used yet.",
+  "error.noUrl": "Enter an address first.",
+  "error.badUrl": "Only http, https and mailto addresses can be opened.",
+  "summary.opened": "Opened {host}",
+  "output.label": "Opened {host}"
+}

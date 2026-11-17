@@ -1,0 +1,16 @@
+{
+  "id": "org.onedesk.lang.ja-jp",
+  "version": "0.1.0",
+  "apiVersion": "2",
+  "name": "plugin.name",
+  "description": "plugin.description",
+  "icon": "languages",
+  "main": "main.js",
+  "author": "OneDesk",
+  "license": "MIT",
+  "requires": { "files": false },
+  "contributes": {
+    "languages": [ { "locale": "ja-JP", "name": "日本語", "shell": "shell/ja-JP.json" } ],
+    "locales": { "en-US": "locales/en-US.json", "zh-CN": "locales/zh-CN.json", "ja-JP": "locales/ja-JP.json" }
+  }
+}
