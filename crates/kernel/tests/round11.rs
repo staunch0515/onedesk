@@ -400,3 +400,138 @@ async fn legacy_kinds_are_shown_in_the_plugin_detail() {
     let n: i64 = db(&w.env).query_row("SELECT count(*) FROM resources WHERE kind IN ('link', 'old-link')", [], |r| r.get(0)).unwrap();
     assert_eq!(n, 0);
 }
+
+/* ------------------------------------------------------------------ review fixes (round11-review.md #2, #4, #5) */
+
+/// #2: the 2048 limit is on the normalized address (non-ASCII is percent-encoded, IDN hosts punycode).
+#[tokio::test(flavor = "multi_thread")]
+async fn open_external_limits_the_normalized_length_of_non_ascii_addresses() {
+    let w = web_world().await;
+    assert_eq!(run_open(&w.c, "https://例子.测试/路径?q=值").await, "ok");
+    let e = w.c.event(|e| e.topic == "ui" && e.payload.as_ref().is_some_and(|p| p["type"] == "openExternal")).await;
+    let url = e.payload.unwrap()["url"].as_str().unwrap().to_string();
+    assert!(url.is_ascii() && url.starts_with("https://xn--"), "{url}");
+    assert!(url.contains("%E8%B7%AF"), "{url}");
+    assert_eq!(audit(&w.env, "ui.openExternal")[0].1, "xn--fsqu00a.xn--0zwm56d");
+    // "https://example.com/" is 20 characters; each 中 becomes 9 (`%E4%B8%AD`).
+    let fits = format!("https://example.com/{}", "中".repeat(225)); // 2045 once encoded
+    let over = format!("https://example.com/{}", "中".repeat(228)); // 248 characters as written, 2072 encoded
+    assert!(over.chars().count() < 2048);
+    assert_eq!(run_open(&w.c, &fits).await, "ok");
+    assert_eq!(run_open(&w.c, &over).await, "badUrl");
+    assert_eq!(audit(&w.env, "ui.openExternal").iter().filter(|r| r.3 == "ok").count(), 2, "the refused one is not audited as opened");
+}
+
+fn many_manifest() -> Value {
+    let mut m = web_manifest();
+    m["contributes"]["actions"] = json!([{ "id": "open", "label": "Open", "output": "text" }, { "id": "many", "label": "Many", "output": "text" }]);
+    m
+}
+
+const MANY_MAIN: &str = r##"
+const seven = async (ctx, bad) => {
+  const out = [];
+  if (bad) out.push(await tryIt(() => ctx.host.ui.openExternal("ftp://nope")));
+  for (let i = 0; i < 7; i++) out.push(await tryIt(() => ctx.host.ui.openExternal("https://example.com/" + i)));
+  return out.join(",");
+};
+export default { activate(host) {
+  host.commands.handle("probe", probe);
+  host.actions.handle("open", async (ctx, input) => ({ output: { type: "text", text: await tryIt(() => ctx.host.ui.openExternal(input.url)) } }));
+  host.actions.handle("many", async (ctx) => ({ output: { type: "text", text: await seven(ctx, true) } }));
+  host.pages.handle("ed", { async render() { return { view: [] }; } });
+  host.pages.handle("home", { async render() { return { view: [] }; }, async onEvent(ctx) { return { message: await seven(ctx, false) }; } });
+} };
+"##;
+
+/// #5 (D386): at most five per invocation; each run or page event starts again.
+#[tokio::test(flavor = "multi_thread")]
+async fn open_external_at_most_five_times_per_invocation() {
+    let w = world(|r| {
+        pkg(r, "t.web", "0.1.0", many_manifest(), MANY_MAIN);
+    })
+    .await;
+    let five_then_refused = "ok,ok,ok,ok,ok,tooMany,tooMany";
+    for _ in 0..2 {
+        let id = w.c.ok("run.start", json!({ "action": "t.web:many", "target": "core:none", "tabId": "t" })).await;
+        // An invalid address does not use up one of the five.
+        assert_eq!(wait_run(&w.c, &id).await["output"]["text"], format!("badUrl,{five_then_refused}"));
+    }
+    let ev = w.c.ok("page.event", json!({ "target": "page:t.web/home", "event": "x" })).await;
+    assert_eq!(ev["message"], five_then_refused);
+    let rows = audit(&w.env, "ui.openExternal");
+    assert_eq!(rows.iter().filter(|r| r.3 == "ok").count(), 15);
+    assert_eq!(rows.iter().filter(|r| r.3 != "ok").count(), 6, "the refusals are audited: {rows:?}");
+    // Another run after all that still may open.
+    assert_eq!(run_open(&w.c, "https://example.com/again").await, "ok");
+}
+
+/// #4: `migrate` and tree handlers may not open addresses.
+#[tokio::test(flavor = "multi_thread")]
+async fn open_external_is_refused_in_migrate_and_tree_handlers() {
+    let mig = |v: &str| {
+        json!({
+            "upgradesFrom": ">=0.1.0",
+            "contributes": {
+                "kinds": [{ "id": "doc", "label": "k", "icon": "file", "tree": "resources", "page": "p" }],
+                "pages": [{ "id": "p" }],
+                "trees": [{ "id": "t", "label": "t", "icon": "box", "source": "provided" }],
+                "commands": [{ "id": "probe", "label": "probe" }]
+            },
+            "version": v
+        })
+    };
+    const MIG_MAIN: &str = r##"
+export default { activate(host) {
+  host.commands.handle("probe", probe);
+  host.pages.handle("p", { async render() { return { view: [] }; } });
+  host.trees.handle("t", { async children(ctx) {
+    return { nodes: [{ key: "k", label: await tryIt(() => ctx.host.ui.openExternal("https://example.com/tree")), icon: "box" }] };
+  } });
+  host.kinds.handle("doc", { async migrate(body, from, ctx) {
+    return { ...body, opened: await tryIt(() => ctx.host.ui.openExternal("https://example.com/migrate")) };
+  } });
+} };
+"##;
+    let w = world(|r| {
+        pkg(r, "t.mig", "0.1.0", mig("0.1.0"), MIG_MAIN);
+    })
+    .await;
+    let tree = w.c.ok("tree.children", json!({ "tree": "t.mig:t" })).await;
+    assert_eq!(tree["nodes"][0]["label"], "notInteractive", "{tree}");
+    let id = w.c.ok("page.save", json!({ "target": "new:t.mig:doc", "changes": { "name": "d" } })).await["page"]["resourceId"].as_str().unwrap().to_string();
+    // A new version with the same permissions: the main process confirms it (built-in), the
+    // kernel switches and takes the resource over with `migrate`.
+    pkg(&w.root, "t.mig", "0.2.0", mig("0.2.0"), MIG_MAIN);
+    w.c.ok("plugin.rescan", json!({ "builtin": ["t.mig@0.2.0"] })).await;
+    let r = w.c.ok("resource.get", json!({ "id": id })).await;
+    assert_eq!(r["pluginVersion"], "0.2.0", "{r}");
+    assert_eq!(r["body"]["opened"], "pureCall");
+    assert!(audit(&w.env, "ui.openExternal").iter().all(|r| r.3 != "ok"));
+}
+
+fn lang_at(root: &Path, id: &str, version: &str, langs: &[(&str, &str, &str)]) {
+    let list: Vec<Value> = langs.iter().map(|(l, n, _)| json!({ "locale": l, "name": n, "shell": format!("shell/{l}.json") })).collect();
+    let dir = pkg(root, id, version, json!({ "contributes": { "languages": list } }), "export default {};");
+    std::fs::create_dir_all(dir.join("shell")).unwrap();
+    for (l, _, body) in langs {
+        std::fs::write(dir.join(format!("shell/{l}.json")), body).unwrap();
+    }
+}
+
+/// #4: switching a language plugin's version changes the languages and publishes the topic.
+#[tokio::test(flavor = "multi_thread")]
+async fn switching_a_language_plugins_version_publishes_languages() {
+    let w = world(|r| lang_at(r, "t.lang.v", "0.1.0", &[("zh-CN", "简体中文", r#"{ "a": "一" }"#)])).await;
+    assert_eq!(locales(&w.c).await, vec![pair("en-US", None), pair("zh-CN", Some("t.lang.v"))]);
+    lang_at(&w.root, "t.lang.v", "0.2.0", &[("ja-JP", "日本語", r#"{ "a": "二" }"#)]);
+    w.c.ok("plugin.rescan", json!({ "builtin": ["t.lang.v@0.2.0"] })).await;
+    w.c.event(|e| e.topic == "languages").await;
+    assert_eq!(locales(&w.c).await, vec![pair("en-US", None), pair("ja-JP", Some("t.lang.v"))]);
+    assert_eq!(w.c.ok("i18n.shell", json!({ "locale": "ja-JP" })).await["texts"], json!({ "a": "二" }));
+    // Back to the old version by hand.
+    w.c.ok("plugin.activateVersion", json!({ "plugin": "t.lang.v", "version": "0.1.0" })).await;
+    w.c.event(|e| e.topic == "languages").await;
+    assert_eq!(locales(&w.c).await, vec![pair("en-US", None), pair("zh-CN", Some("t.lang.v"))]);
+    assert_eq!(w.env.kernel.activation_count(), 0);
+}

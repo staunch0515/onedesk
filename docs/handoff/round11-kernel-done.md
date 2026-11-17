@@ -49,7 +49,7 @@
 ctx.host.ui.openExternal(url: string): Promise<null>
 ```
 - 只在**运行**（`actions` 处理函数）和**页面事件**（`pages.onEvent`）里可用；渲染、事件订阅、`migrate`、树/子节点处理函数、命令处理函数 → `denied`，原因 `notInteractive`（与 `plugins.requestInstall` 同一规则、同一原因码）；`migrate` 里照旧先被 `denied/pureCall` 拦下。
-- `url`：1–2048 个字符；协议只能是 `http`、`https`（必须有主机）、`mailto`（必须有地址）；其余 → `invalid`，原因 `badUrl`。`url` 不是字符串 → `invalidParams`。
+- `url`：非空，**规范化后**（百分号编码、IDN 转 punycode 之后，即实际发出的网址）最长 2048 字节（审查后改，见末节）；一次运行或一次页面事件里最多 5 次，第 6 次起 `denied/tooMany`（D386）；协议只能是 `http`、`https`（必须有主机）、`mailto`（必须有地址）；其余 → `invalid`，原因 `badUrl`。`url` 不是字符串 → `invalidParams`。
 - 成功：先写审计，再向调用的客户端发 `ui` 主题 `{ type: "openExternal", url }`（`url` 是解析后规范化的形式，例如主机名小写）。
 
 ## 新增错误原因码与审计操作名（全部）
@@ -94,3 +94,23 @@ ctx.host.ui.openExternal(url: string): Promise<null>
 - `sh scripts/gen-types.sh --check`：协议类型是最新的。
 - `node scripts/check-ui.mjs`：通过。
 - **`node scripts/check-arch.mjs`（`pnpm lint` 的前半）：失败 1 处**——`crates/protocol/src/lib.rs` 的 `TextFormat::Markdown`。架构检查把 `markdown` 列为内核侧禁用的工具词，而计划 §4 / D381 把 `format: "plain" | "markdown"` 定死在协议里，两者冲突。不改名字就过不了，换个写法躲开检查（例如拼接字符串、手写序列化）等于绕过检查，我没有这样做；`scripts/check-arch.mjs` 不在我允许修改的文件里（且测试会话可写 `scripts/check-*.mjs`）。**请协调会话决定**，建议：在 `check-arch.mjs` 里对 `crates/protocol` 放行这一个词（它现在是协议里的文字格式名，不是某个插件），或在 `decisions.md` 记一条例外。修好之前 `pnpm lint` / `pnpm check` 在这个分支上是红的。
+
+## 审查后的修改（`round11-review.md` 处理人含“内核”的条目）
+
+先合并了 `claude/onedesk-coord-3-f0c048`（带来 D384–D386、审查文件、主进程的 `external.rs`）。
+
+- **#2 长度按规范化后的网址算**：`external_url` 先用原文字节数做一个廉价上限（4×2048，只为限制解析开销），解析后再检查 `Url::as_str()` 的长度 ≤ 2048——这正是放进 `ui` 效果、交给外壳和主进程的那个字符串，所以内核不会再审计“成功”而外壳拒绝。测试 `open_external_limits_the_normalized_length_of_non_ascii_addresses`：中文域名与中文路径（发出的网址是 ASCII、`xn--` 主机、`%E8%B7%AF` 路径，审计对象是 punycode 主机名）；`https://example.com/` 加 225 个“中”（编码后 2045）可以，加 228 个（原文 248 个字符，编码后 2072）→ `badUrl`，且不记成功审计。
+- **#5 次数上限（D386）**：`CallInfo` 新增 `external_opens`（每次调用一个计数器，运行、页面事件各自从 0 开始）；只有通过地址校验的调用才计数，第 6 次起 `denied`，原因 **`tooMany`**（新原因码），走“拒绝也审计”的路径（对象仍只有主机名）。常量 `MAX_EXTERNAL_OPENS = 5`。测试 `open_external_at_most_five_times_per_invocation`：两次运行各是“一个 `badUrl` + 5 个成功 + 2 个 `tooMany`”，页面事件里“5 个成功 + 2 个 `tooMany`”；成功审计 15 条、拒绝审计 6 条；之后的新运行照样能打开。
+- **#4 内核部分的测试**：
+  - `open_external_is_refused_in_migrate_and_tree_handlers`：提供树的 `children` 里 → `notInteractive`；`migrate` 里（新版本经主进程确认后自动切换并接管）→ `pureCall`（`migrate` 里一切写/副作用调用照旧先被 `pureCall` 拦下）；没有成功审计。
+  - `switching_a_language_plugins_version_publishes_languages`：语言插件装 0.2.0（换了语言）→ 自动切换 → 发 `languages`，列表与 `i18n.shell` 跟着变；手动 `plugin.activateVersion` 回 0.1.0 → 再发，列表恢复；全程不激活插件。
+- 新增原因码（补全上面的清单）：`denied/tooMany`。没有新协议类型、没有新审计操作名。
+- 上节说的 `check-arch.mjs` 与 `markdown` 的冲突已由 D384 解决（合并后禁用词里没有 `markdown`），`pnpm lint` 现在通过。
+
+### 审查后的检查
+
+（2026-11-18 实际运行，机器负载很高：load average 170–420，其他会话在编译）
+- `cargo test --no-fail-fast -p onedesk-kernel -p onedesk-worker -p onedesk-protocol`：`round11` 16 个全过（原 12 + 新 4），其余全过；**有两个与本次修改无关的计时测试在高负载下各失败过一次、单独重跑通过**：`round4::network_allow_lists_redirects_loopback_limits_and_counting`（取 9 MB 本机响应超过测试配置的 5 秒插件时限，第一次整体跑时失败、单独跑又失败一次，之后整体跑和单独跑都通过）和 `round6::review4_queues_are_bounded_and_failures_merge`（整体跑失败一次，单独连跑两次通过）。合并只改了 `crates/host`，我的修改不碰网络和事件队列。
+- `cargo clippy … --all-targets -- -D warnings`：无警告。
+- `sh scripts/gen-types.sh --check`：协议类型是最新的（这次没有协议变更）。
+- `pnpm lint`：架构检查与界面规范检查都通过。

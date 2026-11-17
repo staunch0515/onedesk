@@ -40,7 +40,7 @@
   "plugin.removeTitle": "バージョン {version} を削除しますか？",
   "plugin.uninstallTitle": "このプラグインをアンインストールしますか？",
   "plugin.removeBound": "{count} 件のリソースがまだ使っています。再インストールするまで「プラグインなし」と表示されます。",
-  "plugin.removeFree":"使っているリソースはありません。ファイルは削除されず、脇に移動されます。",
+  "plugin.removeFree": "使っているリソースはありません。ファイルは削除されず、脇に移動されます。",
   "plugin.undoTitle": "直前のアップグレードを取り消しますか？",
   "plugin.undoBody": "{count} 件のリソースがアップグレード前の状態（古いバージョン）に戻ります。その後に編集されたリソースは次に一覧表示されます。",
   "plugin.pickTitle": "アップグレード後に編集されたもの",
@@ -487,5 +487,6 @@
   "result.exportPath": "ファイルのパス",
   "result.exportGo": "エクスポート",
   "result.exported": "{rows} 行を {path} に書き込みました",
-  "result.exportNeedsTable": "エクスポートできるのは表の結果だけです"
+  "result.exportNeedsTable": "エクスポートできるのは表の結果だけです",
+  "link.refused": "開けるのはウェブとメールのリンクだけです。"
 }
