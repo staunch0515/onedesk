@@ -151,6 +151,7 @@ impl Inner {
                 .is_some_and(|p| p == plugin.id),
             Target::Node { tree, .. } => self.registry.tree(&tree).is_some_and(|(p, _)| p.id == plugin.id),
             Target::Plugin(id) => id == plugin.id,
+            Target::Page { plugin: p, .. } => p == plugin.id,
             _ => false,
         }
     }

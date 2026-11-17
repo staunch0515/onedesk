@@ -21,6 +21,8 @@ pub enum Target {
     Plugin(String),
     /// `run:<id>`: a past run, shown read-only with its input snapshot.
     Run(String),
+    /// Round 11: `page:<plugin>/<page>`, a plugin's standalone page (D382).
+    Page { plugin: String, page: String },
     Other,
 }
 
@@ -47,6 +49,11 @@ pub fn parse_target(t: &str) -> Target {
     if let Some(p) = t.strip_prefix("core:") {
         if p == "audit" || p == "deleted" {
             return Target::Core(p.to_string());
+        }
+    }
+    if let Some((plugin, page)) = t.strip_prefix("page:").and_then(|r| r.split_once('/')) {
+        if !plugin.is_empty() && !page.is_empty() && !page.contains('/') {
+            return Target::Page { plugin: plugin.to_string(), page: page.to_string() };
         }
     }
     if let Some(rest) = t.strip_prefix("node:") {
@@ -272,6 +279,7 @@ impl Inner {
             Target::Run(id) => self.resolve_run(target, &id, &cx, client).await,
             Target::New { kind, parent } => self.resolve_new(target, &kind, parent, &cx, client).await,
             Target::Node { tree, key } => self.resolve_node(target, &tree, &key, &cx, client).await,
+            Target::Page { plugin, page } => self.resolve_standalone(target, &plugin, &page, &cx, client).await,
             Target::Other => Ok(missing(target)),
         }?;
         // §6.3: the prohibitions in force for this page (workspace configuration + the tab's environment).
@@ -647,6 +655,43 @@ impl Inner {
         })
     }
 
+    /// Round 11 (D382): a plugin's standalone page — one no kind or tree of that plugin uses.
+    /// `ctx` has no resource and no node.
+    pub(crate) fn standalone_page(&self, plugin: &str, page: &str) -> Option<&'static Plugin> {
+        let p = self.registry.plugin(plugin)?;
+        p.page(page)?;
+        let c = &p.manifest.contributes;
+        let used = c.kinds.iter().any(|k| k.page.as_deref() == Some(page)) || c.trees.iter().any(|t| t.page.as_deref() == Some(page));
+        (!used).then_some(p)
+    }
+
+    async fn resolve_standalone(
+        &self,
+        target: &str,
+        plugin: &str,
+        page: &str,
+        cx: &PageContext,
+        client: Option<String>,
+    ) -> KResult<PageDescriptor> {
+        let Some(p) = self.standalone_page(plugin, page) else { return Ok(missing(target)) };
+        if !self.plugin_enabled(plugin) {
+            return Ok(PageDescriptor { state: NodeState::Disabled, read_only: true, ..missing(target) });
+        }
+        let ctx = json!({ "target": target, "draft": cx.draft, "locale": cx.locale, "envId": cx.env_id, "params": ctx_params(cx) });
+        let out = self.render(p, page, ctx, client).await?;
+        let mut d = PageDescriptor {
+            title: out.title.unwrap_or_else(|| p.text(&p.manifest.name, cx.locale.as_deref())),
+            icon: out.icon.unwrap_or_else(|| p.manifest.icon.clone()),
+            read_only: out.read_only.unwrap_or(false),
+            values: out.values.unwrap_or_default(),
+            basis: out.basis,
+            view: out.view,
+            ..blank(target)
+        };
+        page_frame(&mut d, p, page);
+        Ok(d)
+    }
+
     pub async fn save(&self, p: PageSaveParams, client: Option<String>) -> KResult<PageSaveResult> {
         let cx = p.context.clone().unwrap_or_default();
         // D327: a save with the tab's environment also obeys that environment's chain. Parameter
@@ -751,7 +796,7 @@ impl Inner {
                 }
                 Ok(PageSaveResult { page })
             }
-            Target::Core(_) | Target::Plugin(_) | Target::Run(_) | Target::Other => Err(not_found("target")),
+            Target::Core(_) | Target::Plugin(_) | Target::Run(_) | Target::Page { .. } | Target::Other => Err(not_found("target")),
         }
     }
 }

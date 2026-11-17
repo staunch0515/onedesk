@@ -9,6 +9,7 @@ pub mod events;
 pub mod process;
 pub mod files;
 mod host;
+mod i18n;
 pub mod kernel;
 mod kind_children;
 pub mod manifest;

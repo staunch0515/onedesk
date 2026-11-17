@@ -2,6 +2,7 @@
 import type { FormLayout } from "./FormLayout";
 import type { Label } from "./Label";
 import type { OutputColumn } from "./OutputColumn";
+import type { TextFormat } from "./TextFormat";
 import type { Tone } from "./Tone";
 import type { ViewField } from "./ViewField";
 import type { JsonValue } from "./serde_json/JsonValue";
@@ -10,4 +11,8 @@ import type { JsonValue } from "./serde_json/JsonValue";
  * The four base nodes (D207). Plugin output is validated against this type; unknown
  * fields or node types are a `pluginError`.
  */
-export type ViewNode = { "type": "form", id: string, layout: FormLayout, label?: Label, fields: Array<ViewField>, } | { "type": "text", id: string, text: string, mono?: boolean, language?: string, tone?: Tone, } | { "type": "table", id: string, columns: Array<OutputColumn>, rows: Array<Array<JsonValue>>, rowTargets?: Array<string>, } | { "type": "link", id: string, label: Label, target: string, };
+export type ViewNode = { "type": "form", id: string, layout: FormLayout, label?: Label, fields: Array<ViewField>, } | { "type": "text", id: string, text: string, mono?: boolean, language?: string, tone?: Tone, 
+/**
+ * Round 11 (D381): how the shell shows `text`; absent = `plain`.
+ */
+format?: TextFormat, } | { "type": "table", id: string, columns: Array<OutputColumn>, rows: Array<Array<JsonValue>>, rowTargets?: Array<string>, } | { "type": "link", id: string, label: Label, target: string, };
