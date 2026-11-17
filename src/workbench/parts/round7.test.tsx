@@ -108,13 +108,13 @@ describe("plugin page dependencies", () => {
 });
 
 describe("texts", () => {
-  it("words the switch failure and audit names in Chinese too", () => {
+  it("words the dependents refusal with the plugin names", () => {
     function Probe() {
       const { error } = useI18n();
       return <span>{error(new KernelError("conflict", { reason: "dependents", plugins: "x" }))}</span>;
     }
-    renderInShell(createMockClient({ fresh: true, quiet: true }), <Probe />, "zh-CN");
-    expect(screen.getByText(/依赖它：x/)).toBeTruthy();
+    renderInShell(createMockClient({ fresh: true, quiet: true }), <Probe />);
+    expect(screen.getByText(/depend on this one: x\./)).toBeTruthy();
   });
 });
 

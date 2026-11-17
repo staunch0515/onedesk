@@ -28,12 +28,12 @@ function show(locale: "en-US" | "zh-CN", message: string) {
 
 describe("purge confirmation", () => {
   it("words the kernel's key, never shows the key itself, and names the action", async () => {
-    show("zh-CN", "deleted.purge.confirm");
-    expect(await screen.findByText(/不可撤销/)).toBeTruthy();
+    show("en-US", "deleted.purge.confirm");
+    expect(await screen.findByText(/cannot be undone/i)).toBeTruthy();
     expect(screen.queryByText("deleted.purge.confirm")).toBeNull();
     expect(screen.getByText(/backups/)).toBeTruthy();
-    expect(screen.getByRole("button", { name: "永久删除" })).toBeTruthy();
-    expect(screen.getByText("永久删除？")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Delete permanently" })).toBeTruthy();
+    expect(screen.getByText("Delete permanently?")).toBeTruthy();
   });
 
   it("falls back to the generic title and button for an unknown message", async () => {

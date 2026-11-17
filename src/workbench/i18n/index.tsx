@@ -1,26 +1,13 @@
 import { createContext, useContext, useMemo, type ReactNode } from "react";
 import { kernelErrorCode, type Label, type Locale } from "../protocol";
 import { enUS, type MessageKey } from "./en-US";
-import { AUDIT_OPERATIONS, PERMISSIONS, RUN_ERRORS, RUN_ERRORS_NAMED, RUN_FALLBACK, interpolate, KERNEL_CONFIRMS, KERNEL_ERRORS, KERNEL_LABELS } from "./kernel-texts";
+import { AUDIT_OPERATIONS, PERMISSIONS, RUN_ERRORS, RUN_ERRORS_NAMED, RUN_FALLBACK, KERNEL_CONFIRMS, KERNEL_ERRORS, KERNEL_LABELS } from "./kernel-texts";
 
 /** The language the shell has built in; every other language arrives as a text overlay from a language plugin (D379). */
 export const BUILT_IN_LOCALE: Locale = "en-US";
 
-/**
- * Kernel-text tables (`kernel-texts.ts`) still carry English and Chinese words (the kernel's ids and error codes).
- * Another language falls back to English there until those tables move into the language plugins.
- */
-const KERNEL_TEXT_LOCALES = ["en-US", "zh-CN"] as const;
-type KernelTextLocale = (typeof KERNEL_TEXT_LOCALES)[number];
-
-function kernelTextLocale(locale: Locale): KernelTextLocale {
-  return (KERNEL_TEXT_LOCALES as readonly string[]).includes(locale) ? (locale as KernelTextLocale) : "en-US";
-}
-
 export interface I18n {
   locale: Locale;
-  /** The language of the kernel-text tables in use (`locale`, or English where the shell has none for it). */
-  kernelLocale: "en-US" | "zh-CN";
   /** Shell text by key; missing keys fall back to English, never to the key name (I.1). */
   t: (key: MessageKey, vars?: Record<string, string | number>) => string;
   /** Text supplied by the kernel or a plugin. Kernel ids (`node.rename`) get their word; unknown ones show as they are (D262). */
@@ -65,55 +52,55 @@ export function buildI18n(locale: Locale, texts?: Record<string, string>): I18n 
  */
 function build(locale: Locale, texts?: Record<string, string>): I18n {
   const table: Record<string, string> = texts ?? {};
-  const kernelLocale = kernelTextLocale(locale);
   // Dates, numbers and sorting follow the language; a tag the runtime does not know falls back to English formats.
   const fmt = Intl.DateTimeFormat.supportedLocalesOf(locale).length > 0 ? locale : BUILT_IN_LOCALE;
   const dt = new Intl.DateTimeFormat(fmt, { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false });
   const tm = new Intl.DateTimeFormat(fmt, { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
   const nf = new Intl.NumberFormat(fmt);
   const sec = new Intl.NumberFormat(fmt, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const t = (key: MessageKey, vars?: Record<string, string | number>): string => {
+    const own = table[key];
+    const text: string = typeof own === "string" && own !== "" ? own : enUS[key];
+    return vars ? text.replace(/\{(\w+)\}/g, (whole: string, name: string) => (name in vars ? String(vars[name]) : whole)) : text;
+  };
   return {
     locale,
-    kernelLocale,
-    t: (key, vars) => {
-      const own = table[key];
-      const text: string = typeof own === "string" && own !== "" ? own : enUS[key];
-      return vars ? text.replace(/\{(\w+)\}/g, (whole: string, name: string) => (name in vars ? String(vars[name]) : whole)) : text;
+    t,
+    confirmTexts: (label) => {
+      const known = typeof label === "string" ? KERNEL_CONFIRMS[label] : undefined;
+      return known ? { title: t(known.title), ok: t(known.ok) } : undefined;
     },
-    confirmTexts: (label) => (typeof label === "string" ? (KERNEL_CONFIRMS[kernelLocale][label] ?? KERNEL_CONFIRMS["en-US"][label]) : undefined),
-    tx: (label) => (label === undefined ? "" : typeof label === "string" ? (KERNEL_LABELS[kernelLocale][label] ?? KERNEL_LABELS["en-US"][label] ?? warnMissing(label)) : (label[locale] ?? label["en-US"] ?? Object.values(label)[0] ?? "")),
+    tx: (label) => (label === undefined ? "" : typeof label === "string" ? (KERNEL_LABELS[label] ? t(KERNEL_LABELS[label]!) : warnMissing(label)) : (label[locale] ?? label["en-US"] ?? "")),
     error: (error) => {
       const known = kernelErrorCode(error);
       const reason = known?.params.reason;
       const what = known?.params.what;
-      const pick = (table: Record<string, string>) => (known && reason ? (table[`${known.code}.${reason}`] ?? table[`reason.${reason}`] ?? KERNEL_LABELS[kernelLocale][reason] ?? KERNEL_LABELS["en-US"][reason]) : undefined) ?? (known && what ? table[`${known.code}.${what}`] : undefined) ?? (known ? table[known.code] : undefined);
-      const text = known && (pick(KERNEL_ERRORS[kernelLocale]) ?? pick(KERNEL_ERRORS["en-US"]));
-      if (known && text) return interpolate(text, known.params);
+      const pick = (table: Record<string, MessageKey>): MessageKey | undefined => (known && reason ? (table[`${known.code}.${reason}`] ?? table[`reason.${reason}`] ?? KERNEL_LABELS[reason]) : undefined) ?? (known && what ? table[`${known.code}.${what}`] : undefined) ?? (known ? table[known.code] : undefined);
+      const key = known && pick(KERNEL_ERRORS);
+      if (known && key) return t(key, known.params);
       return error instanceof Error ? error.message : String(error);
     },
     runError: (e) => {
       // A host refusal the plugin did not catch keeps its own code (denied, invalid…) and carries the reason (D318).
-      const own = RUN_ERRORS[kernelLocale][e.code] ?? RUN_ERRORS["en-US"][e.code];
-      if (own) return own;
+      const own = RUN_ERRORS[e.code];
+      if (own) return t(own);
       const params = e.params ?? {};
       if (e.reason) {
-        for (const l of [kernelLocale, "en-US" as const]) {
-          let best: [number, string] | undefined;
-          for (const [key, text] of Object.entries(RUN_ERRORS_NAMED[l])) {
-            const [head, ...need] = key.split("|");
-            if (head !== `${e.code}.${e.reason}` && head !== `reason.${e.reason}`) continue;
-            if (need.length > 0 && need.every((n) => params[n] !== undefined && params[n] !== "") && (!best || need.length > best[0])) best = [need.length, text];
-          }
-          if (best) return interpolate(best[1], params);
+        let best: [number, MessageKey] | undefined;
+        for (const [key, text] of Object.entries(RUN_ERRORS_NAMED)) {
+          const [head, ...need] = key.split("|");
+          if (head !== `${e.code}.${e.reason}` && head !== `reason.${e.reason}`) continue;
+          if (need.length > 0 && need.every((n) => params[n] !== undefined && params[n] !== "") && (!best || need.length > best[0])) best = [need.length, text];
         }
+        if (best) return t(best[1], params);
       }
-      const pickIn = (tbl: Record<string, string>) => (e.reason ? (tbl[`${e.code}.${e.reason}`] ?? tbl[`reason.${e.reason}`]) : undefined);
-      const byReason = pickIn(KERNEL_ERRORS[kernelLocale]) ?? pickIn(KERNEL_ERRORS["en-US"]);
-      if (byReason) return byReason;
-      return KERNEL_ERRORS[kernelLocale][e.code] ?? KERNEL_ERRORS["en-US"][e.code] ?? (e.message.trim() ? e.message : interpolate(RUN_FALLBACK[kernelLocale], { code: e.code }));
+      const byReason = e.reason ? (KERNEL_ERRORS[`${e.code}.${e.reason}`] ?? KERNEL_ERRORS[`reason.${e.reason}`]) : undefined;
+      if (byReason) return t(byReason);
+      const general = KERNEL_ERRORS[e.code];
+      return general ? t(general) : e.message.trim() ? e.message : t(RUN_FALLBACK, { code: e.code });
     },
-    permission: (id) => PERMISSIONS[kernelLocale][id] ?? PERMISSIONS["en-US"][id] ?? id,
-    operation: (id) => AUDIT_OPERATIONS[kernelLocale][id] ?? AUDIT_OPERATIONS["en-US"][id] ?? id,
+    permission: (id) => (PERMISSIONS[id] ? t(PERMISSIONS[id]!) : id),
+    operation: (id) => (AUDIT_OPERATIONS[id] ? t(AUDIT_OPERATIONS[id]!) : id),
     dateTime: (at) => dt.format(at),
     time: (at) => tm.format(at),
     number: (n) => nf.format(n),
