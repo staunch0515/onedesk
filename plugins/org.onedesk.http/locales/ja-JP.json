@@ -24,5 +24,14 @@
   "summary.sent": "{status} · {ms} ms · {bytes} バイト",
   "summary.truncated": " · 切り詰め",
   "field.token": "トークン（シークレット）",
-  "field.token.hint": "キーチェーンに保存されます。ヘッダーでは {{token}} を使います。"
+  "field.token.hint": "キーチェーンに保存されます。ヘッダーでは {{token}} を使います。",
+  "field.query": "クエリパラメータ",
+  "field.query.placeholder": "1 行に 1 つ、名前=値。アドレスの後ろに付き、自動でエンコードされます。",
+  "error.method": "このメソッドには対応していません。",
+  "tab.info": "ステータス",
+  "info.name": "項目",
+  "info.value": "値",
+  "info.status": "ステータス",
+  "info.time": "所要時間",
+  "info.size": "サイズ"
 }

@@ -1,0 +1,19 @@
+{
+  "plugin.name": "コレクション",
+  "plugin.description": "条件に合う項目をその都度検索して並べるノードです。結果は保存されず、内容の変更に追従します。",
+  "kind.collection": "コレクション",
+  "kind.collection.new": "無題のコレクション",
+  "action.save": "保存",
+  "field.kinds": "種類",
+  "field.kinds.placeholder": "種類の完全名をカンマ区切りで（省略可）",
+  "field.tags": "タグ",
+  "field.tags.placeholder": "カンマ区切り。すべてを含む項目のみ（省略可）",
+  "field.text": "テキスト",
+  "field.text.placeholder": "名前・説明・タグ・本文に含まれる語（省略可）",
+  "page.needCondition": "条件を 1 つ以上入力してください。",
+  "page.total": "{total} 件",
+  "page.total.partial": "{total} 件（先頭 {shown} 件を表示）",
+  "col.icon": "アイコン",
+  "col.name": "名前",
+  "col.kind": "種類"
+}

@@ -34,6 +34,7 @@
         "defaults": {
           "method": "GET",
           "url": "",
+          "query": "",
           "headers": "",
           "body": ""
         },
@@ -44,6 +45,10 @@
           },
           "token": {
             "type": "secret"
+          },
+          "query": {
+            "type": "longtext",
+            "secrets": true
           },
           "headers": {
             "type": "longtext",
@@ -117,6 +122,12 @@
             "type": "output",
             "label": "tab.response",
             "icon": "file-text"
+          },
+          {
+            "id": "info",
+            "type": "view",
+            "label": "tab.info",
+            "icon": "info"
           },
           {
             "id": "headers",

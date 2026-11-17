@@ -3,7 +3,13 @@
 // Sandbox rules: no console, timers or fetch; the network is ctx.host.network.
 
 const HEADERS_KEY = "lastHeaders";
-const METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"];
+const INFO_KEY = "lastInfo";
+const METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"];
+const STATUS_TEXT = {
+  200: "OK", 201: "Created", 202: "Accepted", 204: "No Content", 301: "Moved Permanently", 302: "Found", 304: "Not Modified",
+  400: "Bad Request", 401: "Unauthorized", 403: "Forbidden", 404: "Not Found", 405: "Method Not Allowed", 409: "Conflict",
+  422: "Unprocessable Entity", 429: "Too Many Requests", 500: "Internal Server Error", 502: "Bad Gateway", 503: "Service Unavailable", 504: "Gateway Timeout",
+};
 const NO_BODY = ["GET", "HEAD"];
 
 /* ---------------------------------------------------------------- helpers */
@@ -57,6 +63,54 @@ export function parseHeaders(text) {
   return out;
 }
 
+export function statusText(status, given) {
+  if (typeof given === "string" && given) return given;
+  return STATUS_TEXT[status] || "";
+}
+
+// "name=value" per line; blank lines and '#' lines are skipped. Names and values are percent-encoded,
+// except {{secret:…}} which is left exactly as written for the host to fill in.
+export function encodePart(text) {
+  return String(text)
+    .split(/(\{\{[^{}]*\}\})/)
+    .map((p, i) => (i % 2 === 1 ? p : encodeURIComponent(p)))
+    .join("");
+}
+
+export function parseQuery(text) {
+  const out = [];
+  for (const raw of String(text || "").split("\n")) {
+    const line = raw.trim();
+    if (!line || line.startsWith("#")) continue;
+    const i = line.indexOf("=");
+    const name = (i < 0 ? line : line.slice(0, i)).trim();
+    if (!name) continue;
+    out.push([name, i < 0 ? "" : line.slice(i + 1).trim()]);
+  }
+  return out;
+}
+
+export function withQuery(url, pairs) {
+  if (pairs.length === 0) return url;
+  const hash = url.indexOf("#");
+  const base = hash < 0 ? url : url.slice(0, hash);
+  const tail = hash < 0 ? "" : url.slice(hash);
+  const qs = pairs.map(([k, v]) => `${encodePart(k)}=${encodePart(v)}`).join("&");
+  const sep = base.includes("?") ? (base.endsWith("?") || base.endsWith("&") ? "" : "&") : "?";
+  return base + sep + qs + tail;
+}
+
+// Pretty-prints a JSON body when the Content-Type says JSON and the text parses; anything else is returned as it came.
+export function formatBody(text, headers) {
+  const type = Object.keys(headers || {}).filter((k) => k.toLowerCase() === "content-type").map((k) => String(headers[k]).toLowerCase())[0] || "";
+  if (!/json/.test(type)) return text;
+  try {
+    return JSON.stringify(JSON.parse(text), null, 2);
+  } catch (e) {
+    return text;
+  }
+}
+
 export function byteLength(text) {
   let n = 0;
   for (let i = 0; i < text.length; i++) {
@@ -85,7 +139,7 @@ function bodyOf(ctx) {
     const b = ctx.resource && ctx.resource.body;
     return b && typeof b[key] === "string" ? b[key] : dflt;
   };
-  return { method: pick("method", "GET"), url: pick("url", ""), headers: pick("headers", ""), body: pick("body", "") };
+  return { method: pick("method", "GET"), url: pick("url", ""), query: pick("query", ""), headers: pick("headers", ""), body: pick("body", "") };
 }
 
 /* ---------------------------------------------------------------- plugin */
@@ -109,7 +163,7 @@ export default {
           },
         ];
 
-        const names = paramNames(req.url, req.headers, req.body);
+        const names = paramNames(req.url, req.query, req.headers, req.body);
         if (names.length > 0) {
           const fields = [];
           for (const name of names) {
@@ -129,6 +183,12 @@ export default {
           view.push({ type: "form", id: "params", layout: "strip", fields });
         }
 
+        view.push({
+          type: "form",
+          id: "query",
+          layout: "stack",
+          fields: [withRO({ name: "query", label: ctx.t("field.query"), kind: "longtext", bind: "body.query", placeholder: ctx.t("field.query.placeholder") })],
+        });
         view.push({
           type: "form",
           id: "auth",
@@ -151,15 +211,37 @@ export default {
       },
 
       async renderResultTab(ctx, tabId) {
-        if (tabId !== "headers") throw new Error(`unknown result tab ${tabId}`);
-        const key = `${HEADERS_KEY}:${(ctx.run && ctx.run.resourceId) || "-"}`;
-        const raw = await ctx.host.storage.get(key);
-        let headers = null;
-        try {
-          headers = raw ? JSON.parse(raw) : null;
-        } catch (e) {
-          headers = null;
+        const id = (ctx.run && ctx.run.resourceId) || "-";
+        const read = async (prefix) => {
+          const raw = await ctx.host.storage.get(`${prefix}:${id}`);
+          try {
+            return raw ? JSON.parse(raw) : null;
+          } catch (e) {
+            return null;
+          }
+        };
+        if (tabId === "info") {
+          const info = await read(INFO_KEY);
+          if (!info) return [{ type: "text", id: "none", text: tr(ctx, "headers.none"), tone: "muted" }];
+          const status = `${info.status}${info.statusText ? ` ${info.statusText}` : ""}`;
+          return [
+            {
+              type: "table",
+              id: "info",
+              columns: [
+                { key: "name", label: tr(ctx, "info.name") },
+                { key: "value", label: tr(ctx, "info.value") },
+              ],
+              rows: [
+                [tr(ctx, "info.status"), status],
+                [tr(ctx, "info.time"), `${info.ms} ms`],
+                [tr(ctx, "info.size"), `${info.bytes} bytes`],
+              ],
+            },
+          ];
         }
+        if (tabId !== "headers") throw new Error(`unknown result tab ${tabId}`);
+        const headers = await read(HEADERS_KEY);
         const names = headers ? Object.keys(headers).sort() : [];
         if (names.length === 0) return [{ type: "text", id: "none", text: tr(ctx, "headers.none"), tone: "muted" }];
         return [
@@ -180,22 +262,26 @@ export default {
       const raw = {
         method: String((input && input["body.method"]) || "GET").toUpperCase(),
         url: String((input && input["body.url"]) || ""),
+        query: String((input && input["body.query"]) || ""),
         headers: String((input && input["body.headers"]) || ""),
         body: String((input && input["body.body"]) || ""),
       };
       if (!raw.url.trim()) throw new Error(tr(ctx, "error.noUrl"));
+      if (!METHODS.includes(raw.method)) throw new Error(tr(ctx, "error.method"));
 
       // {{token}} stands for the secret saved in this request's token field (its name is in the resource body).
       const ref = ctx.resource && ctx.resource.body && ctx.resource.body.token;
       const alias = (text) => (ref && typeof ref.secret === "string" ? text.split("{{token}}").join(`{{secret:${ref.secret}}}`) : text);
       raw.url = alias(raw.url);
+      raw.query = alias(raw.query);
       raw.headers = alias(raw.headers);
       raw.body = alias(raw.body);
 
       const values = {};
-      for (const name of paramNames(raw.url, raw.headers, raw.body)) values[name] = await valueOf(ctx, name);
+      for (const name of paramNames(raw.url, raw.query, raw.headers, raw.body)) values[name] = await valueOf(ctx, name);
 
-      const request = { method: raw.method, url: fillParams(raw.url, values).trim() };
+      const pairs = parseQuery(fillParams(raw.query, values));
+      const request = { method: raw.method, url: withQuery(fillParams(raw.url, values).trim(), pairs) };
       const headers = parseHeaders(fillParams(raw.headers, values));
       if (Object.keys(headers).length > 0) request.headers = headers;
       if (!NO_BODY.includes(raw.method) && raw.body !== "") request.body = fillParams(raw.body, values);
@@ -210,13 +296,16 @@ export default {
       }
       const ms = Date.now() - started;
 
-      const key = `${HEADERS_KEY}:${(ctx.resource && ctx.resource.id) || "-"}`;
-      await ctx.host.storage.set(key, JSON.stringify(res.headers || {}));
+      const id = (ctx.resource && ctx.resource.id) || "-";
+      await ctx.host.storage.set(`${HEADERS_KEY}:${id}`, JSON.stringify(res.headers || {}));
 
       const text = String(res.body || "");
+      const bytes = byteLength(text);
+      const status = statusText(res.status, res.statusText);
+      await ctx.host.storage.set(`${INFO_KEY}:${id}`, JSON.stringify({ status: res.status, statusText: status, ms, bytes }));
       return {
-        output: { type: "text", text },
-        summary: { message: tr(ctx, "summary.sent", { status: res.status, ms, bytes: byteLength(text) }) + (res.truncated ? tr(ctx, "summary.truncated") : "") },
+        output: { type: "text", text: raw.method === "HEAD" ? "" : formatBody(text, res.headers) },
+        summary: { message: tr(ctx, "summary.sent", { status: `${res.status}${status ? ` ${status}` : ""}`, ms, bytes }) + (res.truncated ? tr(ctx, "summary.truncated") : "") },
       };
     });
   },
