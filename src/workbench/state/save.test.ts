@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { KernelError } from "../protocol/errors";
 import type { ProtocolClient } from "../protocol";
 import { saveTab } from "./save";
@@ -62,5 +62,43 @@ describe("saveTab", () => {
     store.set({ drafts: {} });
     await saveTab(client, store, "t1");
     expect(calls).toHaveLength(0);
+  });
+});
+
+describe("saveTab and a change made elsewhere (D374)", () => {
+  const stale = (fields: string) => new KernelError("conflict", { reason: "stale", fields, rev: "7" });
+
+  it("a stale refusal puts the fields into the pending merge, keeps the draft and the basis, and reads the page again", async () => {
+    const { client, store } = setup("resource:r1", () => stale("body.text"));
+    await expect(saveTab(client, store, "t1")).rejects.toMatchObject({ code: "conflict" });
+    expect(store.get().merge.t1).toEqual({ conflicts: ["body.text"], keep: [] });
+    expect(store.get().drafts.t1).toEqual({ "body.text": "hello" });
+    expect(store.get().tabs[0]).toMatchObject({ basis: "1", reload: 1 });
+  });
+
+  it("does not send anything while a conflict waits for the user's answer", async () => {
+    const { client, store, calls } = setup("resource:r1");
+    store.set({ merge: { t1: { conflicts: ["body.text"], keep: [] } } });
+    await expect(saveTab(client, store, "t1")).rejects.toMatchObject({ code: "conflict" });
+    expect(calls).toHaveLength(0);
+  });
+
+  it("\"keep mine\" goes with the save as overwrite, and a successful save clears the merge", async () => {
+    const { client, store, calls } = setup("resource:r1");
+    store.set({ merge: { t1: { conflicts: [], keep: ["body.text", "gone"] } } });
+    const spy = vi.spyOn(client.page, "save");
+    await saveTab(client, store, "t1");
+    expect(calls[0]).toEqual({ target: "resource:r1", changes: { "body.text": "hello" }, basis: "1" });
+    expect(spy.mock.calls[0]![4]).toEqual(["body.text"]);
+    expect(store.get().merge.t1).toBeUndefined();
+    // what was written is the new saved value, so it is not "changed elsewhere" when the page is read again
+    expect(store.get().bases.t1).toEqual({ "body.text": "hello" });
+  });
+
+  it("sends no overwrite when nothing was kept", async () => {
+    const { client, store } = setup("resource:r1");
+    const spy = vi.spyOn(client.page, "save");
+    await saveTab(client, store, "t1");
+    expect(spy.mock.calls[0]![4]).toBeUndefined();
   });
 });

@@ -2,6 +2,8 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState, type RefObje
 
 /** Rows drawn above and below the visible ones, so fast scrolling does not show blanks. */
 export const OVERSCAN_ROWS = 8;
+/** Rows drawn before the size of the scroller is known (the very first render, or where there is no layout): enough for any screen, cheap for any list. */
+export const UNMEASURED_ROWS = 300;
 
 export interface WindowRange {
   /** First row drawn. */
@@ -15,13 +17,13 @@ export interface WindowRange {
 
 /**
  * Which rows of a list of `count` fixed-height rows must exist for a viewport scrolled to `scrollTop`.
- * Pure, so the arithmetic is tested without a browser. Without a usable height (not laid out yet) every row is drawn.
+ * Pure, so the arithmetic is tested without a browser. Without a usable height (not laid out yet) the first `UNMEASURED_ROWS` rows are drawn.
  */
 export function computeWindow(input: { count: number; rowHeight: number; scrollTop: number; viewport: number; overscan?: number }): WindowRange {
   const { count, rowHeight, viewport } = input;
   const overscan = input.overscan ?? OVERSCAN_ROWS;
   if (count <= 0) return { start: 0, end: 0, before: 0, after: 0 };
-  if (!(rowHeight > 0) || !(viewport > 0)) return { start: 0, end: count, before: 0, after: 0 };
+  if (!(rowHeight > 0) || !(viewport > 0)) return { start: 0, end: Math.min(count, UNMEASURED_ROWS), before: 0, after: 0 };
   const top = Math.max(0, input.scrollTop);
   const first = Math.min(count - 1, Math.floor(top / rowHeight));
   const last = Math.min(count, Math.ceil((top + viewport) / rowHeight));
@@ -40,7 +42,7 @@ export function scrollTopFor(input: { index: number; rowHeight: number; scrollTo
 }
 
 function readPx(el: Element, variable: string): number {
-  const raw = getComputedStyle(el).getPropertyValue(variable).trim();
+  const raw = window.getComputedStyle(el).getPropertyValue(variable).trim();
   return raw.endsWith("px") ? Number.parseFloat(raw) : Number.NaN;
 }
 

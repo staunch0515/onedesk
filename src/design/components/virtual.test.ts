@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { computeWindow, scrollTopFor } from "./virtual";
+import { computeWindow, scrollTopFor, UNMEASURED_ROWS } from "./virtual";
 
 describe("computeWindow", () => {
   const base = { count: 20000, rowHeight: 26, viewport: 520, overscan: 8 };
@@ -31,9 +31,10 @@ describe("computeWindow", () => {
     expect(w.start).toBeLessThan(20000);
   });
 
-  it("draws everything while the size is unknown (not laid out), and nothing for an empty list", () => {
-    expect(computeWindow({ ...base, viewport: 0, scrollTop: 0 })).toEqual({ start: 0, end: 20000, before: 0, after: 0 });
-    expect(computeWindow({ ...base, rowHeight: Number.NaN, scrollTop: 0 }).end).toBe(20000);
+  it("draws only a bounded first part while the size is unknown (not laid out), and nothing for an empty list", () => {
+    expect(computeWindow({ ...base, viewport: 0, scrollTop: 0 })).toEqual({ start: 0, end: UNMEASURED_ROWS, before: 0, after: 0 });
+    expect(computeWindow({ ...base, rowHeight: Number.NaN, scrollTop: 0 }).end).toBe(UNMEASURED_ROWS);
+    expect(computeWindow({ ...base, count: 40, viewport: 0, scrollTop: 0 }).end).toBe(40);
     expect(computeWindow({ ...base, count: 0, scrollTop: 0 })).toEqual({ start: 0, end: 0, before: 0, after: 0 });
   });
 

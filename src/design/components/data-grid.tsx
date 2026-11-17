@@ -176,7 +176,7 @@ export function DataGrid<Row>({
     rowHeight: measured.row > 0 ? measured.row : undefined,
     header: measured.header,
   });
-  const windowed = !autoHeight && win.rowHeight > 0 && win.end - win.start < sorted.length;
+  const windowed = !autoHeight && win.end - win.start < sorted.length;
   const first = windowed ? win.start : 0;
   const shown = windowed ? sorted.slice(win.start, win.end) : sorted;
   const focusRow = (index: number) => {

@@ -133,7 +133,8 @@ export function Tree({
   const visible = rows.slice(win.start, win.end);
 
   // The row that comes into view at the end of a level asks for the next batch.
-  const needMore = visible.find((r) => r.more)?.key;
+  // (Not before the size is known: the first, unmeasured draw covers more rows than the screen shows.)
+  const needMore = win.rowHeight > 0 ? visible.find((r) => r.more)?.key : undefined;
   useEffect(() => {
     if (needMore) onNeedMore?.(needMore);
   }, [needMore, onNeedMore]);
