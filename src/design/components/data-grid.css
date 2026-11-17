@@ -196,3 +196,9 @@
   position: sticky;
   left: 0;
 }
+
+/* Virtual scrolling: space for the rows that are not drawn; no padding, no rules, never selectable. */
+.od-grid__gap td {
+  padding: 0;
+  border: 0;
+}

@@ -80,8 +80,13 @@ function ResolvedPage({ tab }: { tab: TabState }) {
   useEffect(() => {
     if (!d) return;
     const last = d.breadcrumb[d.breadcrumb.length - 1];
-    actions.updateTab(tab.id, { title: d.title, icon: d.icon, usesEnv: d.usesEnv, basis: d.basis, missing: !d.found, node: last?.tree && last.key ? { tree: last.tree, key: last.key } : null });
-  }, [d, tab.id, actions]);
+    // While a conflict waits for the user's answer (or "keep mine" is pending) the saved basis stays: the kernel then still
+    // sees what changed elsewhere and the choice decides what is written (D374).
+    const m = store.get().merge[tab.id];
+    const typed = store.get().drafts[tab.id] ?? {};
+    const hold = Boolean(m && (m.conflicts.some((f) => f in typed) || m.keep.some((f) => f in typed)));
+    actions.updateTab(tab.id, { ...(d.page === "plugin" ? {} : { title: d.title }), icon: d.icon, usesEnv: d.usesEnv, ...(hold ? {} : { basis: d.basis }), missing: !d.found, node: last?.tree && last.key ? { tree: last.tree, key: last.key } : null });
+  }, [d, tab.id, actions, store]);
   useEffect(() => {
     if (d?.usesEnv) store.set({ envTabId: tab.id });
   }, [d?.usesEnv, tab.id, store]);

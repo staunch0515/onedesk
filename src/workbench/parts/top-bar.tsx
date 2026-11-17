@@ -43,15 +43,10 @@ export function TopBarPart({ onSettings }: { onSettings: () => void }) {
   }, [query, client, actions]);
 
   const current = workspaces.data?.find((w) => w.current);
-  const notInPrototype = () => toast({ tone: "warning", title: t("common.notInPrototype") });
+  // Switching, creating and opening another workspace in a new window are not built yet (next round, D372): they are not offered.
   const workspaceMenu: MenuEntry[] = [
     { type: "label", key: "label", label: t("topbar.workspaces") },
-    ...(workspaces.data ?? []).map(
-      (w): MenuEntry => ({ key: w.id, label: w.name, icon: w.current ? "check" : "box", onSelect: w.current ? () => undefined : notInPrototype }),
-    ),
-    { type: "separator", key: "sep" },
-    { key: "new", label: t("topbar.newWorkspace"), icon: "plus", onSelect: notInPrototype },
-    { key: "window", label: t("topbar.openInNewWindow"), icon: "app-window", onSelect: notInPrototype },
+    ...(workspaces.data ?? []).filter((w) => w.current).map((w): MenuEntry => ({ key: w.id, label: w.name, icon: "check", onSelect: () => undefined })),
   ];
 
   const newMenu: MenuEntry[] = (newItems.data ?? []).flatMap((item): MenuEntry[] => [

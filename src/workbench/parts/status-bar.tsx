@@ -1,3 +1,4 @@
+import { markAllRead, unreadCount } from "../state/notices";
 import { DropdownMenu, StatusBar, StatusItem, type Density, type ThemePreference } from "../../design";
 import { LOCALES, useI18n } from "../i18n";
 import type { Locale } from "../protocol";
@@ -14,6 +15,8 @@ export function StatusBarPart({ settings, onSetting, resolvedTheme }: { settings
   const { t, number, duration, runError } = useI18n();
   const tab = useUi((s) => s.tabs.find((x) => x.id === s.activeTabId) ?? null);
   const tasksOpen = useUi((s) => s.tasksOpen);
+  const noticesOpen = useUi((s) => s.noticesOpen);
+  const unread = useUi((s) => unreadCount(s.notices));
   const workspaces = useQuery((c) => c.workspace.list(), []);
   const tasks = useQuery((c) => c.run.tasks(), [], ["runs"]);
   const envId = tab?.usesEnv ? tab.envId : null;
@@ -69,8 +72,18 @@ export function StatusBarPart({ settings, onSetting, resolvedTheme }: { settings
           <StatusItem icon="flask-conical" tone="warning" title={client.demo ? t("status.partialDemoHint") : t("status.mockHint", { version: client.version })}>
             {client.demo ? t("status.partialDemo") : t("status.mock")}
           </StatusItem>
-          <StatusItem icon={running > 0 ? "loader" : failed > 0 ? "circle-alert" : "list-checks"} busy={running > 0} tone={running > 0 ? "accent" : "default"} pressed={tasksOpen} title={t("status.tasksHint")} onClick={() => store.set({ tasksOpen: !tasksOpen })}>
+          <StatusItem icon={running > 0 ? "loader" : failed > 0 ? "circle-alert" : "list-checks"} busy={running > 0} tone={running > 0 ? "accent" : "default"} pressed={tasksOpen} title={t("status.tasksHint")} onClick={() => store.set({ tasksOpen: !tasksOpen, noticesOpen: false })}>
             {running > 0 ? t("status.running", { count: running }) : t("status.tasks", { count: tasks.data?.length ?? 0 })}
+          </StatusItem>
+          <StatusItem
+            icon="bell"
+            tone={unread > 0 ? "accent" : "default"}
+            pressed={noticesOpen}
+            title={t("notices.hint")}
+            aria-label={unread > 0 ? t("notices.unread", { count: unread }) : t("notices.title")}
+            onClick={() => store.set((s) => ({ noticesOpen: !s.noticesOpen, tasksOpen: false, notices: s.noticesOpen ? s.notices : markAllRead(s.notices) }))}
+          >
+            {unread > 0 ? String(unread) : undefined}
           </StatusItem>
           <StatusItem icon={settings.density === "compact" ? "rows-4" : "rows-3"} title={t("status.density")} onClick={() => onSetting("ui.density", settings.density === "compact" ? "comfortable" : "compact")}>
             {settings.density === "compact" ? t("status.compact") : t("status.comfortable")}

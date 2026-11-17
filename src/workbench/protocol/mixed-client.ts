@@ -165,9 +165,9 @@ export function createMixedClient(kernel: KernelClient, mock: ProtocolClient): P
         // Demo pages know the demo's own environments, not the kernel's: they get none.
         return fromMock(await mock.page.resolve(target.replace(/[?&]demo=1/, ""), { ...context, envId: null }));
       },
-      async save(target, changes, basis, context) {
+      async save(target, changes, basis, context, overwrite) {
         if ((await targetOwner(target)) === "kernel") {
-          const result = await kernel.page.save(target, changes, basis, context);
+          const result = await kernel.page.save(target, changes, basis, context, overwrite);
           if (result.page.resourceId) kernelIds.add(result.page.resourceId);
           return result;
         }

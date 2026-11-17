@@ -3,6 +3,7 @@ import { useToast } from "../../design";
 import { useI18n } from "../i18n";
 import type { MessageKey } from "../i18n/en-US";
 import { useClient, type CommandContext, type CommandEffect, type ProtocolClient } from "../protocol";
+import { staleFields } from "./merge";
 import { saveTab } from "./save";
 import { useStore, type Store, type TabState, type UiState } from "./store";
 
@@ -22,6 +23,11 @@ export interface Actions {
   /** Sets (or, when equal to `saved`, clears) one unsaved bound value. */
   setDraft: (tabId: string, bind: string, value: unknown, saved: unknown) => void;
   clearDraft: (tabId: string, binds?: string[]) => void;
+  /**
+   * Answers the "changed elsewhere" bar (D374). `keep`: the typed values stay and are sent with `overwrite` on save.
+   * `adopt`: the typed values of the conflicting fields are dropped and the page shows the new ones; `basis` is the page's current one.
+   */
+  resolveMerge: (tabId: string, choice: "keep" | "adopt", basis?: string) => void;
   /** Writes a tab's unsaved bound values. Returns false when it failed. */
   save: (tabId: string) => Promise<boolean>;
   command: (id: string, context?: CommandContext) => Promise<void>;
@@ -73,8 +79,14 @@ export function WorkbenchProvider({ store, children }: { store: Store; children:
           activeTabId = (after ?? before)?.id ?? null;
         }
         const drafts = { ...s.drafts };
-        for (const id of tabIds) delete drafts[id];
-        return { tabs, activeTabId, drafts, confirmClose: null };
+        const bases = { ...s.bases };
+        const merge = { ...s.merge };
+        for (const id of tabIds) {
+          delete drafts[id];
+          delete bases[id];
+          delete merge[id];
+        }
+        return { tabs, activeTabId, drafts, bases, merge, confirmClose: null };
       });
     };
 
@@ -106,7 +118,8 @@ export function WorkbenchProvider({ store, children }: { store: Store; children:
         }
         return true;
       } catch (error) {
-        fail(error);
+        // A change made elsewhere to a field typed here: the page shows the bar and nothing is lost, so no error toast.
+        if (!staleFields(error)) fail(error);
         return false;
       }
     };
@@ -220,6 +233,22 @@ export function WorkbenchProvider({ store, children }: { store: Store; children:
           const tab = s.tabs.find((t) => t.id === tabId);
           if (!tab || (Object.keys(patch) as Array<keyof TabState>).every((k) => JSON.stringify(tab[k]) === JSON.stringify(patch[k]))) return {};
           return { tabs: s.tabs.map((t) => (t.id === tabId ? { ...t, ...patch } : t)), ...(patch.envId ? { lastEnvId: patch.envId } : {}) };
+        }),
+      resolveMerge: (tabId, choice, basis) =>
+        store.set((s) => {
+          const pending = s.merge[tabId];
+          if (!pending) return {};
+          if (choice === "keep") return { merge: { ...s.merge, [tabId]: { conflicts: [], keep: [...new Set([...pending.keep, ...pending.conflicts])] } } };
+          const draft = { ...(s.drafts[tabId] ?? {}) };
+          for (const f of pending.conflicts) delete draft[f];
+          const { [tabId]: _gone, ...merge } = s.merge;
+          const kept = pending.keep.filter((f) => f in draft);
+          return {
+            drafts: { ...s.drafts, [tabId]: draft },
+            merge: kept.length > 0 ? { ...merge, [tabId]: { conflicts: [], keep: kept } } : merge,
+            // The conflicting fields now show the new saved values, so the page's basis may move on.
+            tabs: basis ? s.tabs.map((t) => (t.id === tabId ? { ...t, basis } : t)) : s.tabs,
+          };
         }),
       setDraft: (tabId, bind, value, saved) =>
         store.set((s) => {

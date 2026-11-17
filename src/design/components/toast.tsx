@@ -45,9 +45,11 @@ export interface ToastProviderProps {
   viewportLabel?: string;
   /** Default display time in ms. */
   duration?: number;
+  /** Called once for every toast shown (the app keeps a list of them). */
+  onToast?: (options: ToastOptions, id: number) => void;
 }
 
-export function ToastProvider({ children, closeLabel, viewportLabel, duration = 5000 }: ToastProviderProps) {
+export function ToastProvider({ children, closeLabel, viewportLabel, duration = 5000, onToast }: ToastProviderProps) {
   const [toasts, setToasts] = useState<ToastEntry[]>([]);
   const nextId = useRef(1);
 
@@ -55,8 +57,11 @@ export function ToastProvider({ children, closeLabel, viewportLabel, duration = 
     setToasts((list) => list.map((t) => (t.id === id ? { ...t, open: false } : t)));
   }, []);
 
+  const onToastRef = useRef(onToast);
+  onToastRef.current = onToast;
   const toast = useCallback((options: ToastOptions) => {
     const id = nextId.current++;
+    onToastRef.current?.(options, id);
     // Closed toasts are unmounted by Radix after their exit animation; prune them on the next add.
     setToasts((list) => [...list.filter((t) => t.open), { ...options, id, open: true }]);
     return id;
