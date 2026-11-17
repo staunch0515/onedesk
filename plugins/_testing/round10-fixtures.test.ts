@@ -47,13 +47,13 @@ describe("fixture: nested", () => {
   });
 
   describe("children", () => {
-    const children = (count: unknown, offset?: string, extra: Record<string, unknown> = {}) => registry(nested).kinds.shelf.children(ctxOf({}, { resource: shelf(count), ...extra }), null, offset);
+    const children = (count: unknown, offset?: number, extra: Record<string, unknown> = {}) => registry(nested).kinds.shelf.children(ctxOf({}, { resource: shelf(count), ...extra }), null, offset);
 
     it("gives count nodes in batches of 500 continued by next; the first has the target, the rest none", async () => {
       const first = await children(1200);
       expect(onlyKeys(first, TREE_PAGE_KEYS)).toEqual([]);
       expect(first.nodes).toHaveLength(500);
-      expect(first.next).toBe("500");
+      expect(first.next).toBe(500);
       for (const n of first.nodes) expect(onlyKeys(n, TREE_NODE_KEYS)).toEqual([]);
       expect(first.nodes[0]).toMatchObject({ key: "item-1", label: "Item 00001", target: "resource:res-1" });
       expect(first.nodes.slice(1).some((n: any) => "target" in n)).toBe(false);
@@ -68,7 +68,7 @@ describe("fixture: nested", () => {
     });
     it("walks 20000 nodes in 40 batches with unique keys", async () => {
       const keys = new Set<string>();
-      let offset: string | undefined;
+      let offset: number | undefined;
       let batches = 0;
       do {
         const page = await children(20000, offset);
