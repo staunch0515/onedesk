@@ -1,0 +1,19 @@
+{
+  "plugin.name": "Collection",
+  "plugin.description": "A node that lists whatever matches its conditions right now. Nothing is stored; the results follow your content.",
+  "kind.collection": "Collection",
+  "kind.collection.new": "Untitled collection",
+  "action.save": "Save",
+  "field.kinds": "Types",
+  "field.kinds.placeholder": "Full type names, comma separated (optional)",
+  "field.tags": "Tags",
+  "field.tags.placeholder": "Comma separated; an item must have all of them (optional)",
+  "field.text": "Text",
+  "field.text.placeholder": "Words in the name, description, tags or body (optional)",
+  "page.needCondition": "Fill in at least one condition.",
+  "page.total": "{total} result(s)",
+  "page.total.partial": "{total} result(s), showing the first {shown}",
+  "col.icon": "Icon",
+  "col.name": "Name",
+  "col.kind": "Type"
+}

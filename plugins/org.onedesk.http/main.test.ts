@@ -1,13 +1,14 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 // @ts-ignore plain JS module, no types
-import plugin, { byteLength, fillParams, paramKind, paramNames, parseHeaders } from "./main.js";
+import plugin, { byteLength, encodePart, fillParams, formatBody, paramKind, paramNames, parseHeaders, parseQuery, statusText, withQuery } from "./main.js";
 import { RENDER_KEYS, checkActionResult, checkView, hostError, onlyKeys, registry } from "../_testing/view-check";
 
 const load = (f: string) => JSON.parse(readFileSync(new URL(`./locales/${f}.json`, import.meta.url), "utf8")) as Record<string, string>;
 const EN = load("en-US");
 const ZH = load("zh-CN");
-const t = (key: string) => ({ "en-US": EN[key], "zh-CN": ZH[key] });
+const JA = load("ja-JP");
+const t = (key: string) => ({ "en-US": EN[key], "zh-CN": ZH[key], "ja-JP": JA[key] });
 
 type Host = Record<string, any>;
 function fakeHost(over: Host = {}): Host {
@@ -61,14 +62,15 @@ describe("http: page", () => {
     const out = await pages.editor.render(ctxOf(fakeHost(), resourceOf({ method: "POST", url: "https://example.com/x", headers: "", body: "" })));
     expect(checkView(out.view)).toEqual([]);
     expect(onlyKeys(out, RENDER_KEYS)).toEqual([]);
-    expect(out.view.map((n: any) => n.id)).toEqual(["line", "auth", "headers", "payload"]);
-    expect(out.view[1].fields[0]).toMatchObject({ kind: "secret", bind: "body.token" });
+    expect(out.view.map((n: any) => n.id)).toEqual(["line", "query", "auth", "headers", "payload"]);
+    expect(out.view[1].fields[0]).toMatchObject({ kind: "longtext", bind: "body.query" });
+    expect(out.view[2].fields[0]).toMatchObject({ kind: "secret", bind: "body.token" });
     const [method, url] = out.view[0].fields;
     expect(method).toMatchObject({ kind: "enum", bind: "body.method" });
-    expect(method.options.map((o: any) => o.value)).toEqual(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]);
+    expect(method.options.map((o: any) => o.value)).toEqual(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"]);
     expect(url).toMatchObject({ kind: "text", bind: "body.url" });
-    expect(out.view[2].fields[0]).toMatchObject({ kind: "longtext", bind: "body.headers" });
-    expect(out.view[3].fields[0]).toMatchObject({ kind: "longtext", bind: "body.body", fill: true });
+    expect(out.view[3].fields[0]).toMatchObject({ kind: "longtext", bind: "body.headers" });
+    expect(out.view[4].fields[0]).toMatchObject({ kind: "longtext", bind: "body.body", fill: true });
   });
 
   it("render: parameter strip from all three fields (and the unsaved draft), with environment values", async () => {
@@ -127,7 +129,8 @@ describe("http: send action", () => {
     });
     expect(checkActionResult(res)).toEqual([]);
     expect(res.output).toEqual({ type: "text", text: "hello" });
-    expect(res.summary.message).toMatch(/^200 · \d+ ms · 5 bytes$/);
+    expect(JSON.parse(host.storage.set.mock.calls[1]![1])).toMatchObject({ status: 200, statusText: "OK", bytes: 5 });
+    expect(res.summary.message).toMatch(/^200 OK · \d+ ms · 5 bytes$/);
     expect(JSON.parse(host.storage.set.mock.calls[0]![1])).toEqual({ "content-type": "text/plain" });
     expect(host.storage.set.mock.calls[0]![0]).toBe("lastHeaders:r1");
   });
@@ -148,7 +151,7 @@ describe("http: send action", () => {
     const host = fakeHost({ network: { request: vi.fn(async () => ({ status: 404, headers: {}, body: "nope", truncated: false })) } });
     const res = await send(host, { "body.method": "GET", "body.url": "https://e.com/missing", "body.headers": "", "body.body": "" });
     expect(res.output.text).toBe("nope");
-    expect(res.summary.message).toMatch(/^404 /);
+    expect(res.summary.message).toMatch(/^404 Not Found · /);
   });
 
   it("marks a truncated body in the summary", async () => {
@@ -182,6 +185,84 @@ describe("http: send action", () => {
     expect(req.url).toBe("https://e.com/?k={{secret:q}}");
     expect(req.headers).toEqual({ X: "{{secret:a_b}}" });
     expect(host.secrets).toBeUndefined();
+  });
+});
+
+describe("http: round 12 additions", () => {
+  const send = (host: Host, input: Record<string, string>, extra: Record<string, unknown> = {}) => registry(plugin).actions.send(ctxOf(host, { ...resourceOf({}), ...extra }), input);
+  const base = { "body.method": "GET", "body.url": "https://e.com/a", "body.query": "", "body.headers": "", "body.body": "" };
+
+  it("parses and encodes the query lines, keeping {{secret:…}} as written", () => {
+    expect(parseQuery("q=a b\n\n# c\nflag\nk=v=w\n=x")).toEqual([["q", "a b"], ["flag", ""], ["k", "v=w"]]);
+    expect(encodePart("a b&{{secret:k_1}}é")).toBe("a%20b%26{{secret:k_1}}%C3%A9");
+    expect(withQuery("https://e.com/a", [["q", "1"]])).toBe("https://e.com/a?q=1");
+    expect(withQuery("https://e.com/a?x=1", [["q", "1"]])).toBe("https://e.com/a?x=1&q=1");
+    expect(withQuery("https://e.com/a?", [["q", "1"]])).toBe("https://e.com/a?q=1");
+    expect(withQuery("https://e.com/a#top", [["q", "1"]])).toBe("https://e.com/a?q=1#top");
+    expect(withQuery("https://e.com", [])).toBe("https://e.com");
+  });
+
+  it("send adds the query to the address, with parameters filled in", async () => {
+    const host = fakeHost();
+    await send(host, { ...base, "body.query": "page=:page\nname=a b\nkey={{secret:k}}" }, { params: { page: "2" } });
+    expect(host.network.request.mock.calls[0]![0].url).toBe("https://e.com/a?page=2&name=a%20b&key={{secret:k}}");
+  });
+
+  it("send formats a JSON body when the Content-Type says JSON, and leaves other bodies and bad JSON alone", async () => {
+    const json = fakeHost({ network: { request: vi.fn(async () => ({ status: 200, headers: { "Content-Type": "application/json; charset=utf-8" }, body: '{"a":[1,2],"b":null}', truncated: false })) } });
+    const res = await send(json, base);
+    expect(res.output.text).toBe('{\n  "a": [\n    1,\n    2\n  ],\n  "b": null\n}');
+    expect(formatBody("{bad", { "content-type": "application/json" })).toBe("{bad");
+    expect(formatBody('{"a":1}', { "content-type": "text/plain" })).toBe('{"a":1}');
+    expect(formatBody('{"a":1}', {})).toBe('{"a":1}');
+  });
+
+  it("HEAD sends no body and shows none, but keeps status and headers", async () => {
+    const host = fakeHost({ network: { request: vi.fn(async () => ({ status: 200, headers: { etag: "x" }, body: "", truncated: false })) } });
+    const res = await send(host, { ...base, "body.method": "HEAD", "body.body": "ignored" });
+    expect(host.network.request.mock.calls[0]![0]).toEqual({ method: "HEAD", url: "https://e.com/a" });
+    expect(res.output).toEqual({ type: "text", text: "" });
+    expect(JSON.parse(host.storage.set.mock.calls[0]![1])).toEqual({ etag: "x" });
+  });
+
+  it("PUT, PATCH and DELETE are sent with their body; an unknown method fails before any request", async () => {
+    for (const m of ["PUT", "PATCH", "DELETE"]) {
+      const host = fakeHost();
+      await send(host, { ...base, "body.method": m, "body.body": "x" });
+      expect(host.network.request.mock.calls[0]![0]).toMatchObject({ method: m, body: "x" });
+    }
+    const host = fakeHost();
+    await expect(send(host, { ...base, "body.method": "OPTIONS" })).rejects.toThrow("This method is not supported.");
+    expect(host.network.request).not.toHaveBeenCalled();
+  });
+
+  it("status text comes from the host when it gives one, else from a table, else is empty", () => {
+    expect(statusText(418, "I'm a teapot")).toBe("I'm a teapot");
+    expect(statusText(404)).toBe("Not Found");
+    expect(statusText(299)).toBe("");
+  });
+
+  it("the Status result tab shows status, time and size; a muted note without a response", async () => {
+    const { pages } = registry(plugin);
+    const host = fakeHost();
+    await send(host, base, { resource: { id: "r1", body: {} } });
+    const view = await pages.editor.renderResultTab(ctxOf(host, { run: { id: "r", resourceId: "r1" } }), "info");
+    expect(checkView(view)).toEqual([]);
+    expect(view[0].rows[0]).toEqual(["Status", "200 OK"]);
+    expect(view[0].rows[1][1]).toMatch(/^\d+ ms$/);
+    expect(view[0].rows[2]).toEqual(["Size", "5 bytes"]);
+    const none = await pages.editor.renderResultTab(ctxOf(fakeHost(), { run: { id: "r", resourceId: "zzz" } }), "info");
+    expect(none[0]).toMatchObject({ type: "text", tone: "muted" });
+  });
+
+  it("the manifest declares the query field and the six methods' default; keys exist in en, zh and ja", () => {
+    const m = JSON.parse(readFileSync(new URL("./manifest.json", import.meta.url), "utf8"));
+    const kind = m.contributes.kinds[0];
+    expect(kind.defaults).toMatchObject({ method: "GET", url: "", query: "", headers: "", body: "" });
+    expect(kind.fields.query).toEqual({ type: "longtext", secrets: true });
+    expect(m.contributes.pages[0].resultTabs.map((x: any) => x.id)).toEqual(["response", "info", "headers", "history"]);
+    for (const k of ["field.query", "tab.info", "info.status", "error.method"]) expect([EN[k], ZH[k], JA[k]].every((x) => typeof x === "string")).toBe(true);
+    expect(Object.keys(JA).sort()).toEqual(Object.keys(EN).sort());
   });
 });
 

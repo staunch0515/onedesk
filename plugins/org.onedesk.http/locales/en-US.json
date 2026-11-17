@@ -24,5 +24,14 @@
   "summary.sent": "{status} · {ms} ms · {bytes} bytes",
   "summary.truncated": " · truncated",
   "field.token": "Token (secret)",
-  "field.token.hint": "Written to the keychain; use {{token}} in the headers."
+  "field.token.hint": "Written to the keychain; use {{token}} in the headers.",
+  "field.query": "Query parameters",
+  "field.query.placeholder": "One per line: name=value. Added to the address and percent-encoded.",
+  "error.method": "This method is not supported.",
+  "tab.info": "Status",
+  "info.name": "Item",
+  "info.value": "Value",
+  "info.status": "Status",
+  "info.time": "Time",
+  "info.size": "Size"
 }

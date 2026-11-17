@@ -1,0 +1,14 @@
+{
+  "plugin.name": "コンポジット",
+  "plugin.description": "他の項目への参照をまとめるノードです。何でもドラッグして載せられ、元の項目は移動も複製もされません。",
+  "kind.composite": "コンポジット",
+  "kind.composite.new": "無題のコンポジット",
+  "action.save": "保存",
+  "node.missing": "（存在しません）",
+  "page.empty": "このノードに項目をドラッグしてください。",
+  "col.icon": "アイコン",
+  "col.name": "名前",
+  "col.kind": "種類",
+  "message.added": "{n} 件を追加しました",
+  "message.removed": "コンポジットから外しました"
+}

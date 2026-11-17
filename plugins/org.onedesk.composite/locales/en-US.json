@@ -1,0 +1,14 @@
+{
+  "plugin.name": "Composite",
+  "plugin.description": "A node that gathers references to other items. Drag anything onto it; nothing is moved or copied.",
+  "kind.composite": "Composite",
+  "kind.composite.new": "Untitled composite",
+  "action.save": "Save",
+  "node.missing": "(no longer exists)",
+  "page.empty": "Drag items onto this node.",
+  "col.icon": "Icon",
+  "col.name": "Name",
+  "col.kind": "Type",
+  "message.added": "Added {n} item(s)",
+  "message.removed": "Removed from this composite"
+}
