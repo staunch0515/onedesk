@@ -108,7 +108,7 @@ impl Inner {
             .nodes
             .into_iter()
             .map(|n| {
-                let target = n.target.filter(|t| self.child_target_ok(plugin, row, t));
+                let target = n.target.filter(|t| self.plugin_target_ok(plugin, Some(&row.id), t));
                 let mut node = blank_node(tree, parent_key, format!("{CHILD_PREFIX}{}/{}", row.id, n.key));
                 if target.is_some() {
                     node.menu.push(kernel_cmd("node.open", "external-link"));
@@ -125,20 +125,21 @@ impl Inner {
         Ok(TreePage { nodes, next: page.next })
     }
 
-    /// What a plugin node may open: what the plugin could open or read itself (§9.1 targets) —
-    /// this resource, a resource it may read (any live one with `requires.resources`, D389), one of
-    /// its own runs, its own trees or plugin page.
-    /// Anything else is dropped (the node is then not openable).
-    fn child_target_ok(&self, plugin: &Plugin, row: &Row, target: &str) -> bool {
+    /// What a plugin node (or a table row, D393) may open: what the plugin could open or read
+    /// itself (§9.1 targets) — `own` (the resource it is drawing), a resource it may read (any
+    /// live one in a stored tree with `requires.resources`, D389/D395), one of its own runs, its
+    /// own trees or plugin page. Anything else is dropped (the node or row is then not openable).
+    pub(crate) fn plugin_target_ok(&self, plugin: &Plugin, own: Option<&str>, target: &str) -> bool {
         use crate::pages::{parse_target, Target};
         if !crate::pages::is_target(target) {
             return false;
         }
         match parse_target(target) {
-            Target::Resource(id) if id == row.id => true,
+            Target::Resource(id) if Some(id.as_str()) == own => true,
             Target::Resource(id) => match self.read(|c| store::get(c, &id)) {
-                // Round 12 (D389): with `requires.resources` any live resource (not plugin state).
-                Ok(Some(r)) if plugin.manifest.requires.resources => !self.hidden_tree(&r),
+                // Round 12 (D389, D395): with `requires.resources` any live resource the user sees
+                // in a stored tree.
+                Ok(Some(r)) if plugin.manifest.requires.resources && self.in_stored_tree(&r) => true,
                 Ok(Some(r)) => {
                     Registry::split(&r.kind).is_some_and(|(p, _)| p == plugin.id) || self.export_allows(plugin, &r.kind, true)
                 }

@@ -2,6 +2,7 @@
 import type { FormLayout } from "./FormLayout";
 import type { Label } from "./Label";
 import type { OutputColumn } from "./OutputColumn";
+import type { TableRowAction } from "./TableRowAction";
 import type { TextFormat } from "./TextFormat";
 import type { Tone } from "./Tone";
 import type { ViewField } from "./ViewField";
@@ -15,4 +16,18 @@ export type ViewNode = { "type": "form", id: string, layout: FormLayout, label?:
 /**
  * Round 11 (D381): how the shell shows `text`; absent = `plain`.
  */
-format?: TextFormat, } | { "type": "table", id: string, columns: Array<OutputColumn>, rows: Array<Array<JsonValue>>, rowTargets?: Array<string>, } | { "type": "link", id: string, label: Label, target: string, };
+format?: TextFormat, } | { "type": "table", id: string, columns: Array<OutputColumn>, rows: Array<Array<JsonValue>>, 
+/**
+ * What clicking a row opens; as long as `rows`. Round 12 (D393): `null` (or a target the
+ * plugin may not open) = that row opens nothing.
+ */
+rowTargets?: Array<string | null>, 
+/**
+ * Round 12 (D393): buttons on every row (at most 4). Each sends the page event named by its
+ * `id`, with the row's key as `context.row`.
+ */
+rowActions?: Array<TableRowAction>, 
+/**
+ * Round 12 (D393): one key per row (as long as `rows`), handed back as `context.row`.
+ */
+rowKeys?: Array<string>, } | { "type": "link", id: string, label: Label, target: string, };

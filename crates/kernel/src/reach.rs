@@ -17,7 +17,7 @@ use crate::kernel::{valid_locale, Inner, KindMeta};
 use crate::manifest::{Plugin, Registry};
 use crate::pipeline::Command;
 use crate::sandbox::CallInfo;
-use crate::store::{self, Row, TREE_PLUGIN_STATE};
+use crate::store::{self, Row, TREE_RESOURCES};
 use crate::util::*;
 
 /// `limit` when none is given, and its upper bound.
@@ -57,7 +57,69 @@ struct DropAnswer {
     message: Option<Label>,
 }
 
+/// Most row actions on one table (D393), and the longest `context.row`.
+pub const MAX_ROW_ACTIONS: usize = 4;
+pub const MAX_ROW_KEY: usize = 1000;
+
 impl Inner {
+    /// D395: the stored trees the user sees resources in — the kernel's resource tree and the
+    /// plugins' stored trees (not environments, configuration or plugin state).
+    pub(crate) fn stored_tree_ids(&self) -> Vec<String> {
+        let mut out = vec![TREE_RESOURCES.to_string()];
+        for p in &self.registry.plugins() {
+            for t in &p.manifest.contributes.trees {
+                if t.source == TreeSource::Stored {
+                    out.push(p.full(&t.id));
+                }
+            }
+        }
+        out
+    }
+
+    pub(crate) fn in_stored_tree(&self, r: &Row) -> bool {
+        match r.tree.as_deref() {
+            Some(TREE_RESOURCES) => true,
+            Some(t) => self.registry.tree(t).is_some_and(|(_, d)| d.source == TreeSource::Stored),
+            None => false,
+        }
+    }
+
+    /// D393: checks the tables of a view a plugin drew: `rowTargets` and `rowKeys` as long as
+    /// `rows`, at most `MAX_ROW_ACTIONS` row actions (else `pluginError/badOutput`); row targets
+    /// the plugin may not open become `null` (same rule as its children's targets).
+    pub(crate) fn check_tables(&self, plugin: &Plugin, own: Option<&str>, view: &mut [ViewNode]) -> KResult<()> {
+        let bad = |what: &str| {
+            let mut e = err_p(ErrorCode::PluginError, &[("reason", "badOutput"), ("plugin", &plugin.id)]);
+            e.detail = Some(format!("table: {what}"));
+            e
+        };
+        for node in view.iter_mut() {
+            let ViewNode::Table { id, rows, row_targets, row_actions, row_keys, .. } = node else { continue };
+            if row_targets.as_ref().is_some_and(|t| t.len() != rows.len()) {
+                return Err(bad(&format!("{id}: rowTargets and rows differ in length")));
+            }
+            if row_keys.as_ref().is_some_and(|k| k.len() != rows.len()) {
+                return Err(bad(&format!("{id}: rowKeys and rows differ in length")));
+            }
+            if let Some(a) = row_actions {
+                if a.len() > MAX_ROW_ACTIONS {
+                    return Err(bad(&format!("{id}: more than {MAX_ROW_ACTIONS} row actions")));
+                }
+                if a.iter().any(|x| x.id.is_empty()) {
+                    return Err(bad(&format!("{id}: row action without id")));
+                }
+            }
+            if let Some(ts) = row_targets {
+                for t in ts.iter_mut() {
+                    if t.as_deref().is_some_and(|x| !self.plugin_target_ok(plugin, own, x)) {
+                        *t = None;
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// `ResourceInfo` of a row; `memo` keeps one kind's meta per batch.
     pub(crate) fn resource_info(&self, r: &Row, memo: &mut HashMap<(String, Option<String>), KindMeta>) -> ResourceInfo {
         let meta = memo.entry((r.kind.clone(), r.plugin_version.clone())).or_insert_with(|| self.row_meta(r));
@@ -102,8 +164,10 @@ impl Inner {
         let limit = o.limit.unwrap_or(SEARCH_DEFAULT_LIMIT).clamp(1, SEARCH_MAX_LIMIT);
         let offset = o.offset.unwrap_or(0);
 
-        let mut args: Vec<String> = vec![TREE_PLUGIN_STATE.to_string()];
-        let mut wheres = vec!["r.tree IS NOT ?1".to_string()];
+        // D395: only what the user sees in a stored tree (not environments, configuration,
+        // plugin state, or resources without a tree).
+        let mut args: Vec<String> = vec![serde_json::to_string(&self.stored_tree_ids()).map_err(internal)?];
+        let mut wheres = vec!["r.tree IN (SELECT value FROM json_each(?1))".to_string()];
         let push = |args: &mut Vec<String>, v: String| {
             args.push(v);
             args.len()

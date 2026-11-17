@@ -623,10 +623,15 @@ impl Inner {
             Some(row) => Some(self.resource(&row)?),
             None => None,
         };
+        let r_resource = r.resource_id.clone();
         let run = self.run_to_protocol(r, true);
         let ctx = json!({ "target": format!("run:{id}"), "run": run, "resource": resource, "envId": run.env_id, "locale": locale });
         let out = self.call_plugin(&plugin.id, "pages", &page, "renderResultTab", json!([ctx, tab]), client).await?;
-        serde_json::from_value(out).map_err(|e| err_p_detail(ErrorCode::PluginError, "badOutput", e.to_string()))
+        let mut view: Vec<ViewNode> =
+            serde_json::from_value(out).map_err(|e| err_p_detail(ErrorCode::PluginError, "badOutput", e.to_string()))?;
+        // D393: table rows (lengths, row actions, row targets).
+        self.check_tables(plugin, r_resource.as_deref(), &mut view)?;
+        Ok(view)
     }
 
     /* ---------------------------------------------------------------- page events (§9.3) */
@@ -661,6 +666,13 @@ impl Inner {
         ctx["locale"] = json!(cx.locale);
         ctx["envId"] = json!(cx.env_id);
         ctx["params"] = crate::pages::ctx_params(&cx);
+        // D393: the row a row action was clicked on.
+        if cx.row.as_ref().is_some_and(|r| r.chars().count() > crate::reach::MAX_ROW_KEY) {
+            return Err(err_p(ErrorCode::InvalidParams, &[("reason", "tooLarge")]));
+        }
+        if let Some(row) = &cx.row {
+            ctx["row"] = json!(row);
+        }
         let resource_id = ctx["resource"]["id"].as_str().map(String::from);
         let info = CallInfo { client, env_id: cx.env_id.clone(), resource_id, page_event: true, ..Default::default() };
         let out = self
