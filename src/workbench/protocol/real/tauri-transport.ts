@@ -30,6 +30,9 @@ export async function createTauriTransport(): Promise<Transport> {
     async pickSaveFile(name) {
       return (await invoke<string | null>("pick_save_file", { name: name ?? null })) ?? null;
     },
+    async openExternal(url) {
+      await invoke("open_external", { url });
+    },
     close() {
       unlisten();
       handlers.clear();

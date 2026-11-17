@@ -96,6 +96,7 @@ export const enUS = {
   "folder.grant": "Grant",
   "confirm.title": "Are you sure?",
   "confirm.ok": "Confirm",
+  "link.refused": "Only web and email links can be opened.",
   "copy.done": "Copied",
   "demo.badge": "Demo data",
   "demo.treeHint": "This view is still demo data; nothing here is saved by the workspace.",

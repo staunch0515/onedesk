@@ -23,7 +23,7 @@ function setup() {
     client,
     <>
       <Grab />
-      <StatusBarPart settings={{ locale: "en-US", theme: "light", density: "comfortable" }} onSetting={() => undefined} resolvedTheme="light" />
+      <StatusBarPart languages={[{ locale: "en-US", name: "English" }, { locale: "zh-CN", name: "简体中文" }]} settings={{ locale: "en-US", theme: "light", density: "comfortable" }} onSetting={() => undefined} resolvedTheme="light" />
       <Panel />
     </>,
   );

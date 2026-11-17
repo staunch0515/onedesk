@@ -2,17 +2,25 @@ import { createContext, useContext, useMemo, type ReactNode } from "react";
 import { kernelErrorCode, type Label, type Locale } from "../protocol";
 import { enUS, type MessageKey } from "./en-US";
 import { AUDIT_OPERATIONS, PERMISSIONS, RUN_ERRORS, RUN_ERRORS_NAMED, RUN_FALLBACK, interpolate, KERNEL_CONFIRMS, KERNEL_ERRORS, KERNEL_LABELS } from "./kernel-texts";
-import { zhCN } from "./zh-CN";
 
-const TABLES: Record<Locale, Partial<Record<MessageKey, string>>> = { "en-US": enUS, "zh-CN": zhCN };
+/** The language the shell has built in; every other language arrives as a text overlay from a language plugin (D379). */
+export const BUILT_IN_LOCALE: Locale = "en-US";
 
-export const LOCALES: Array<{ value: Locale; label: string }> = [
-  { value: "en-US", label: "English" },
-  { value: "zh-CN", label: "简体中文" },
-];
+/**
+ * Kernel-text tables (`kernel-texts.ts`) still carry English and Chinese words (the kernel's ids and error codes).
+ * Another language falls back to English there until those tables move into the language plugins.
+ */
+const KERNEL_TEXT_LOCALES = ["en-US", "zh-CN"] as const;
+type KernelTextLocale = (typeof KERNEL_TEXT_LOCALES)[number];
+
+function kernelTextLocale(locale: Locale): KernelTextLocale {
+  return (KERNEL_TEXT_LOCALES as readonly string[]).includes(locale) ? (locale as KernelTextLocale) : "en-US";
+}
 
 export interface I18n {
   locale: Locale;
+  /** The language of the kernel-text tables in use (`locale`, or English where the shell has none for it). */
+  kernelLocale: "en-US" | "zh-CN";
   /** Shell text by key; missing keys fall back to English, never to the key name (I.1). */
   t: (key: MessageKey, vars?: Record<string, string | number>) => string;
   /** Text supplied by the kernel or a plugin. Kernel ids (`node.rename`) get their word; unknown ones show as they are (D262). */
@@ -47,40 +55,49 @@ function warnMissing(label: string): string {
 }
 
 /** Exported for tests. */
-export function buildI18n(locale: Locale): I18n {
-  return build(locale);
+export function buildI18n(locale: Locale, texts?: Record<string, string>): I18n {
+  return build(locale, texts);
 }
 
-function build(locale: Locale): I18n {
-  const table = TABLES[locale];
-  const dt = new Intl.DateTimeFormat(locale, { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false });
-  const tm = new Intl.DateTimeFormat(locale, { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
-  const nf = new Intl.NumberFormat(locale);
-  const sec = new Intl.NumberFormat(locale, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+/**
+ * Shell text = the built-in English, overlaid by the chosen language's `texts` (D379). A key the overlay lacks (or gives
+ * as something else than a string) falls back to English, so nothing is ever blank or a bare key.
+ */
+function build(locale: Locale, texts?: Record<string, string>): I18n {
+  const table: Record<string, string> = texts ?? {};
+  const kernelLocale = kernelTextLocale(locale);
+  // Dates, numbers and sorting follow the language; a tag the runtime does not know falls back to English formats.
+  const fmt = Intl.DateTimeFormat.supportedLocalesOf(locale).length > 0 ? locale : BUILT_IN_LOCALE;
+  const dt = new Intl.DateTimeFormat(fmt, { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false });
+  const tm = new Intl.DateTimeFormat(fmt, { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
+  const nf = new Intl.NumberFormat(fmt);
+  const sec = new Intl.NumberFormat(fmt, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   return {
     locale,
+    kernelLocale,
     t: (key, vars) => {
-      const text: string = table[key] ?? enUS[key];
+      const own = table[key];
+      const text: string = typeof own === "string" && own !== "" ? own : enUS[key];
       return vars ? text.replace(/\{(\w+)\}/g, (whole: string, name: string) => (name in vars ? String(vars[name]) : whole)) : text;
     },
-    confirmTexts: (label) => (typeof label === "string" ? (KERNEL_CONFIRMS[locale][label] ?? KERNEL_CONFIRMS["en-US"][label]) : undefined),
-    tx: (label) => (label === undefined ? "" : typeof label === "string" ? (KERNEL_LABELS[locale][label] ?? KERNEL_LABELS["en-US"][label] ?? warnMissing(label)) : (label[locale] ?? label["en-US"] ?? "")),
+    confirmTexts: (label) => (typeof label === "string" ? (KERNEL_CONFIRMS[kernelLocale][label] ?? KERNEL_CONFIRMS["en-US"][label]) : undefined),
+    tx: (label) => (label === undefined ? "" : typeof label === "string" ? (KERNEL_LABELS[kernelLocale][label] ?? KERNEL_LABELS["en-US"][label] ?? warnMissing(label)) : (label[locale] ?? label["en-US"] ?? Object.values(label)[0] ?? "")),
     error: (error) => {
       const known = kernelErrorCode(error);
       const reason = known?.params.reason;
       const what = known?.params.what;
-      const pick = (table: Record<string, string>) => (known && reason ? (table[`${known.code}.${reason}`] ?? table[`reason.${reason}`] ?? KERNEL_LABELS[locale][reason] ?? KERNEL_LABELS["en-US"][reason]) : undefined) ?? (known && what ? table[`${known.code}.${what}`] : undefined) ?? (known ? table[known.code] : undefined);
-      const text = known && (pick(KERNEL_ERRORS[locale]) ?? pick(KERNEL_ERRORS["en-US"]));
+      const pick = (table: Record<string, string>) => (known && reason ? (table[`${known.code}.${reason}`] ?? table[`reason.${reason}`] ?? KERNEL_LABELS[kernelLocale][reason] ?? KERNEL_LABELS["en-US"][reason]) : undefined) ?? (known && what ? table[`${known.code}.${what}`] : undefined) ?? (known ? table[known.code] : undefined);
+      const text = known && (pick(KERNEL_ERRORS[kernelLocale]) ?? pick(KERNEL_ERRORS["en-US"]));
       if (known && text) return interpolate(text, known.params);
       return error instanceof Error ? error.message : String(error);
     },
     runError: (e) => {
       // A host refusal the plugin did not catch keeps its own code (denied, invalid…) and carries the reason (D318).
-      const own = RUN_ERRORS[locale][e.code] ?? RUN_ERRORS["en-US"][e.code];
+      const own = RUN_ERRORS[kernelLocale][e.code] ?? RUN_ERRORS["en-US"][e.code];
       if (own) return own;
       const params = e.params ?? {};
       if (e.reason) {
-        for (const l of [locale, "en-US" as const]) {
+        for (const l of [kernelLocale, "en-US" as const]) {
           let best: [number, string] | undefined;
           for (const [key, text] of Object.entries(RUN_ERRORS_NAMED[l])) {
             const [head, ...need] = key.split("|");
@@ -91,12 +108,12 @@ function build(locale: Locale): I18n {
         }
       }
       const pickIn = (tbl: Record<string, string>) => (e.reason ? (tbl[`${e.code}.${e.reason}`] ?? tbl[`reason.${e.reason}`]) : undefined);
-      const byReason = pickIn(KERNEL_ERRORS[locale]) ?? pickIn(KERNEL_ERRORS["en-US"]);
+      const byReason = pickIn(KERNEL_ERRORS[kernelLocale]) ?? pickIn(KERNEL_ERRORS["en-US"]);
       if (byReason) return byReason;
-      return KERNEL_ERRORS[locale][e.code] ?? KERNEL_ERRORS["en-US"][e.code] ?? (e.message.trim() ? e.message : interpolate(RUN_FALLBACK[locale], { code: e.code }));
+      return KERNEL_ERRORS[kernelLocale][e.code] ?? KERNEL_ERRORS["en-US"][e.code] ?? (e.message.trim() ? e.message : interpolate(RUN_FALLBACK[kernelLocale], { code: e.code }));
     },
-    permission: (id) => PERMISSIONS[locale][id] ?? PERMISSIONS["en-US"][id] ?? id,
-    operation: (id) => AUDIT_OPERATIONS[locale][id] ?? AUDIT_OPERATIONS["en-US"][id] ?? id,
+    permission: (id) => PERMISSIONS[kernelLocale][id] ?? PERMISSIONS["en-US"][id] ?? id,
+    operation: (id) => AUDIT_OPERATIONS[kernelLocale][id] ?? AUDIT_OPERATIONS["en-US"][id] ?? id,
     dateTime: (at) => dt.format(at),
     time: (at) => tm.format(at),
     number: (n) => nf.format(n),
@@ -106,8 +123,9 @@ function build(locale: Locale): I18n {
 
 const I18nContext = createContext<I18n>(build("en-US"));
 
-export function I18nProvider({ locale, children }: { locale: Locale; children: ReactNode }) {
-  const value = useMemo(() => build(locale), [locale]);
+/** `texts` is the language plugin's shell text for `locale` (key → text); absent for the built-in English. */
+export function I18nProvider({ locale, texts, children }: { locale: Locale; texts?: Record<string, string>; children: ReactNode }) {
+  const value = useMemo(() => build(locale, texts), [locale, texts]);
   return <I18nContext.Provider value={value}>{children}</I18nContext.Provider>;
 }
 

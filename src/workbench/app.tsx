@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ThemeProvider, ToastProvider, useToast, type Density, type ThemePreference } from "../design";
-import { I18nProvider, useI18n } from "./i18n";
-import { ProtocolProvider, useClient, type Locale, type ProtocolClient } from "./protocol";
+import { BUILT_IN_LOCALE, I18nProvider, useI18n } from "./i18n";
+import { ProtocolProvider, useClient, type LanguageInfo, type Locale, type ProtocolClient } from "./protocol";
 import type { Settings } from "./parts/status-bar";
 import { WorkbenchProvider } from "./state/context";
 import { noticeKeeper } from "./state/notices";
@@ -11,10 +11,61 @@ import { Workbench } from "./workbench";
 export async function readSettings(client: ProtocolClient): Promise<Settings> {
   const [language, theme, density] = await Promise.all([client.workspace.getConfig("ui.language"), client.workspace.getConfig("ui.theme"), client.workspace.getConfig("ui.density")]);
   return {
-    locale: language === "zh-CN" ? "zh-CN" : "en-US",
+    // Whatever is configured; `Shell` falls back to English when no enabled language plugin offers it (D379).
+    locale: language && language.trim() !== "" ? language : BUILT_IN_LOCALE,
     theme: (["system", "light", "dark"].includes(theme ?? "") ? theme : "system") as ThemePreference,
     density: (density === "compact" ? "compact" : "comfortable") as Density,
   };
+}
+
+const ENGLISH: LanguageInfo = { locale: BUILT_IN_LOCALE, name: "English" };
+
+/**
+ * The languages on offer (`i18n.languages`, refreshed on the `languages` topic) and the chosen one's texts (D379).
+ * The chosen language is the configured one if it is on offer, else English; its texts overlay the built-in English.
+ */
+export function useLanguage(configured: Locale): { languages: LanguageInfo[]; locale: Locale; texts: Record<string, string> | undefined } {
+  const client = useClient();
+  const [languages, setLanguages] = useState<LanguageInfo[]>([ENGLISH]);
+  const [loaded, setLoaded] = useState(!client.i18n);
+  useEffect(() => {
+    const api = client.i18n;
+    if (!api) return;
+    let live = true;
+    const load = () =>
+      api.languages().then(
+        (list) => live && (setLanguages(list.some((l) => l.locale === BUILT_IN_LOCALE) ? list : [ENGLISH, ...list]), setLoaded(true)),
+        () => live && setLoaded(true),
+      );
+    void load();
+    const off = client.events.subscribe("languages", () => void load());
+    return () => {
+      live = false;
+      off();
+    };
+  }, [client]);
+
+  // Until the list is known the configured language is trusted, so the first paint is not English-then-Chinese.
+  const locale = !loaded || languages.some((l) => l.locale === configured) ? configured : BUILT_IN_LOCALE;
+  const [shell, setShell] = useState<{ locale: Locale; texts: Record<string, string> } | null>(null);
+  const plugin = languages.find((l) => l.locale === locale)?.plugin;
+  useEffect(() => {
+    const api = client.i18n;
+    if (!api || locale === BUILT_IN_LOCALE) {
+      setShell(null);
+      return;
+    }
+    let live = true;
+    // `plugin` in the key list: the same locale from another plugin (or another version) reloads the texts.
+    void api.shell(locale).then(
+      (r) => live && setShell({ locale, texts: r.texts }),
+      () => live && setShell(null),
+    );
+    return () => {
+      live = false;
+    };
+  }, [client, locale, plugin]);
+  return { languages, locale, texts: shell?.locale === locale ? shell.texts : undefined };
 }
 
 function Toasts({ store, children }: { store: Store; children: React.ReactNode }) {
@@ -56,9 +107,10 @@ function Shell({ store, initial, startupError }: { store: Store; initial: Settin
 
   // Language, theme and density are workspace configuration (D192): follow them when they change anywhere.
   useEffect(() => client.events.subscribe("config", () => void readSettings(client).then(setSettings)), [client]);
+  const language = useLanguage(settings.locale);
   useEffect(() => {
-    document.documentElement.lang = settings.locale;
-  }, [settings.locale]);
+    document.documentElement.lang = language.locale;
+  }, [language.locale]);
 
   const onSetting = useCallback(
     (name: "ui.language" | "ui.theme" | "ui.density", value: string) => {
@@ -74,12 +126,12 @@ function Shell({ store, initial, startupError }: { store: Store; initial: Settin
   );
 
   return (
-    <I18nProvider locale={settings.locale}>
+    <I18nProvider locale={language.locale} texts={language.texts}>
       <ThemeProvider theme={settings.theme} density={settings.density}>
         <Toasts store={store}>
           <ConnectionNotices startupError={startupError} />
           <WorkbenchProvider store={store}>
-            <Workbench settings={settings} onSetting={onSetting} />
+            <Workbench settings={{ ...settings, locale: language.locale }} languages={language.languages} onSetting={onSetting} />
           </WorkbenchProvider>
         </Toasts>
       </ThemeProvider>

@@ -74,6 +74,12 @@ async fn pick_save_file(app: tauri::AppHandle, name: Option<String>) -> Option<S
     rx.await.ok().flatten().and_then(|p| p.into_path().ok()).map(|p| p.to_string_lossy().into_owned())
 }
 
+/// Opens an address in the system browser. The protocol is checked again here (D380); the interface only asks.
+#[tauri::command]
+fn open_external(url: String) -> Result<(), String> {
+    onedesk_host::external::open_external(&url).map_err(|e| format!("{e:?}"))
+}
+
 pub fn run() {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
@@ -83,7 +89,7 @@ pub fn run() {
             }
         }))
         .plugin(tauri_plugin_dialog::init())
-        .invoke_handler(tauri::generate_handler![protocol_request, pick_folder, pick_save_file])
+        .invoke_handler(tauri::generate_handler![protocol_request, pick_folder, pick_save_file, open_external])
         .setup(|app| {
             let cfg = HostConfig { data_dir: default_data_dir(), worker_bin: resolve_worker_bin(), builtin_plugins: builtin_plugins_dir() };
             let state = match tauri::async_runtime::block_on(Host::start(cfg)) {

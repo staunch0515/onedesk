@@ -94,6 +94,7 @@ export const zhCN: Partial<Record<MessageKey, string>> = {
   "folder.grant": "授权",
   "confirm.title": "确定吗？",
   "confirm.ok": "确定",
+  "link.refused": "只能打开网页和邮件链接。",
   "copy.done": "已复制",
   "demo.badge": "演示数据",
   "demo.treeHint": "这个视图还是演示数据，工作区不会保存这里的任何东西。",

@@ -81,7 +81,7 @@ export function createMixedClient(kernel: KernelClient, mock: ProtocolClient): P
       return isDemoTree(tree) ? "demo" : "kernel";
     }
     // `core:audit`, `core:deleted`: kernel pages. `plugin:<id>`: plugins are the kernel's.
-    if (target.startsWith("core:") || target.startsWith("plugin:") || target.startsWith("shell:")) return "kernel";
+    if (target.startsWith("core:") || target.startsWith("plugin:") || target.startsWith("shell:") || target.startsWith("page:")) return "kernel";
     if (target.startsWith("run:")) return demoRuns.has(target.slice(4)) ? "demo" : "kernel";
     return "demo";
   };
@@ -98,7 +98,7 @@ export function createMixedClient(kernel: KernelClient, mock: ProtocolClient): P
         if (target.startsWith("resource:")) return demoIds.has(target.slice(9));
         if (target.startsWith("new:")) return isDemoNew(target);
         if (target.startsWith("node:")) return isDemoTree(decodeURIComponent(target.slice(5).split("/")[0] ?? ""));
-        if (target.startsWith("core:") || target.startsWith("plugin:") || target.startsWith("shell:")) return false;
+        if (target.startsWith("core:") || target.startsWith("plugin:") || target.startsWith("shell:") || target.startsWith("page:")) return false;
         if (target.startsWith("run:")) return demoRuns.has(target.slice(4));
         return true;
       },
@@ -223,9 +223,16 @@ export function createMixedClient(kernel: KernelClient, mock: ProtocolClient): P
       installRequests: kernel.plugin.installRequests ? () => kernel.plugin.installRequests!() : undefined,
       answerInstallRequest: kernel.plugin.answerInstallRequest ? (answer) => kernel.plugin.answerInstallRequest!(answer) : undefined,
     },
-    platform: kernel.transport.pickFolder
-      ? { pickFolder: () => kernel.transport.pickFolder!(), pickSaveFile: kernel.transport.pickSaveFile ? (name) => kernel.transport.pickSaveFile!(name) : undefined }
-      : undefined,
+    // The kernel's languages (language plugins) replace the demo's own: a workspace with a kernel has no demo language.
+    i18n: kernel.i18n,
+    platform:
+      kernel.transport.pickFolder || kernel.transport.openExternal
+        ? {
+            openExternal: kernel.transport.openExternal ? (url) => kernel.transport.openExternal!(url) : undefined,
+            pickFolder: kernel.transport.pickFolder ? () => kernel.transport.pickFolder!() : undefined,
+            pickSaveFile: kernel.transport.pickSaveFile ? (name) => kernel.transport.pickSaveFile!(name) : undefined,
+          }
+        : undefined,
     ui: kernel.ui,
     events: {
       subscribe(topic, handler) {

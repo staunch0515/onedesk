@@ -165,3 +165,21 @@
 .od-markdown del {
   color: var(--fg-muted);
 }
+
+/* [[reference]] in plugin text (round 11): a resolved one is a link; a broken one is struck through and cannot be opened. */
+.od-markdown .od-markdown__ref {
+  text-decoration-style: dotted;
+}
+
+.od-markdown .od-markdown__ref--broken {
+  color: var(--fg-subtle);
+  text-decoration: line-through;
+  text-decoration-color: var(--danger-border);
+  cursor: default;
+}
+
+/* Images are not loaded; the alternative text stands in. */
+.od-markdown .od-markdown__image-alt {
+  color: var(--fg-muted);
+  font-style: italic;
+}
