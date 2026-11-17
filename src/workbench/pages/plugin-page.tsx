@@ -21,7 +21,7 @@ type Ask =
 /** Plugin page (ui-spec §4, I.6): description, versions, enable switch, settings, permissions, what it provides, load status. */
 export function PluginPage({ tab, descriptor }: { tab: TabState; descriptor: PageDescriptor }) {
   const { client, actions } = useWorkbench();
-  const { t, tx, dateTime, permission, kernelLocale: locale } = useI18n();
+  const { t, tx, dateTime, permission } = useI18n();
   const { toast } = useToast();
   const [ask, setAsk] = useState<Ask | null>(null);
   const id = tab.target.slice("plugin:".length);
@@ -310,7 +310,7 @@ export function PluginPage({ tab, descriptor }: { tab: TabState; descriptor: Pag
         {p.versions.length > 0 && (
           <Section title={t("plugin.versions")} description={t("plugin.versionsHint")}>
             {switchFailure && (
-              <Banner tone="danger" title={t("plugin.switchFailure", { version: switchFailure.version, at: dateTime(switchFailure.at), reason: (KERNEL_ERRORS[locale][`reason.${switchFailure.reason}`] ?? KERNEL_ERRORS["en-US"][`reason.${switchFailure.reason}`] ?? switchFailure.reason).replace(/[.。]$/, "") })} />
+              <Banner tone="danger" title={t("plugin.switchFailure", { version: switchFailure.version, at: dateTime(switchFailure.at), reason: (KERNEL_ERRORS[`reason.${switchFailure.reason}`] ? t(KERNEL_ERRORS[`reason.${switchFailure.reason}`]!) : switchFailure.reason).replace(/[.。]$/, "") })} />
             )}
             {real && p.lastUpgrade && !p.lastUpgrade.undone && (
               <Banner tone="info" title={t("plugin.lastUpgrade", { count: p.lastUpgrade.count, from: p.lastUpgrade.from, to: p.lastUpgrade.to })} actions={<Button size="sm" onClick={() => setAsk({ kind: "undo", count: p.lastUpgrade!.count })}>{t("plugin.undoUpgrade")}</Button>} />

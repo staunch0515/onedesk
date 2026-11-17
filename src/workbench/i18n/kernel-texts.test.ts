@@ -1,10 +1,23 @@
 import { describe, expect, it } from "vitest";
-import { AUDIT_OPERATIONS, RUN_ERRORS, RUN_FALLBACK, KERNEL_CONFIRMS, KERNEL_ERRORS, KERNEL_LABELS } from "./kernel-texts";
+import { enUS, type MessageKey } from "./en-US";
+import * as maps from "./kernel-texts";
+
+// The kernel's ids map to shell text keys (D387); the words are English here, other languages come from language plugins.
+const words = (m: Record<string, MessageKey>): Record<string, string> => Object.fromEntries(Object.entries(m).map(([id, key]) => [id, enUS[key]]));
+const AUDIT_OPERATIONS = { "en-US": words(maps.AUDIT_OPERATIONS) };
+const RUN_ERRORS = { "en-US": words(maps.RUN_ERRORS) };
+const KERNEL_ERRORS = { "en-US": words(maps.KERNEL_ERRORS) };
+const KERNEL_LABELS = { "en-US": words(maps.KERNEL_LABELS) };
+const KERNEL_CONFIRMS = { "en-US": Object.fromEntries(Object.entries(maps.KERNEL_CONFIRMS).map(([id, v]) => [id, { title: enUS[v.title], ok: enUS[v.ok] }])) };
+const RUN_FALLBACK = { "en-US": enUS[maps.RUN_FALLBACK] };
 
 describe("kernel texts", () => {
-  it("has a Chinese word for every English one", () => {
-    expect(Object.keys(KERNEL_ERRORS["zh-CN"]).sort()).toEqual(Object.keys(KERNEL_ERRORS["en-US"]).sort());
-    expect(Object.keys(KERNEL_LABELS["zh-CN"]).sort()).toEqual(Object.keys(KERNEL_LABELS["en-US"]).sort());
+  it("maps every kernel id to an English text in en-US.ts, and keeps no other language's words in the shell", async () => {
+    for (const table of [maps.KERNEL_ERRORS, maps.KERNEL_LABELS, maps.AUDIT_OPERATIONS, maps.PERMISSIONS, maps.RUN_ERRORS, maps.RUN_ERRORS_NAMED]) {
+      for (const [id, key] of Object.entries(table)) expect(enUS[key], `${id} → ${key}`).toBeTruthy();
+    }
+    const { readFileSync } = await import("node:fs");
+    expect(readFileSync("src/workbench/i18n/kernel-texts.ts", "utf8")).not.toMatch(/[\u3040-\u30ff\u4e00-\u9fff]/);
   });
 
   it("covers every error code of the protocol", async () => {
@@ -16,9 +29,6 @@ describe("kernel texts", () => {
     for (const code of codes) expect(KERNEL_ERRORS["en-US"][code], code).toBeTruthy();
   });
 
-  it("words audit operations in both languages", () => {
-    expect(Object.keys(AUDIT_OPERATIONS["zh-CN"]).sort()).toEqual(Object.keys(AUDIT_OPERATIONS["en-US"]).sort());
-  });
 });
 
 describe("every key the kernel emits has words", () => {
@@ -32,7 +42,7 @@ describe("every key the kernel emits has words", () => {
       .filter((l) => !l.trim().startsWith("//"))
       .join("\n");
   };
-  const locales = ["en-US", "zh-CN"] as const;
+  const locales = ["en-US"] as const;
   // Every `reason` the kernel documents (docs/handoff/round3-kernel-done.md, "错误原因").
   const KERNEL_REASONS = ["emptyName", "unknownKind", "parentNotFound", "otherTree", "notAccepted", "notInTree", "self", "descendant", "targetNotFound", "noGroups", "notParamNode", "reservedField", "secretUnsupported", "duplicateName", "notDeleted", "notRestorable", "nothingBefore", "notAbsolute", "notFolder", "notFile", "tooLarge", "notText", "badTarget", "badKey", "tooManyKeys", "unknownSetting", "badValue", "helloFirst", "foreignKind", "notRequested", "outsideGrant", "undeclaredSetting", "pluginDisabled", "callEnded", "cancelled", "timeout", "changedOnDisk", "providedTree", "threw", "badOutput", "outOfMemory", "engine", "notLoaded", "alreadyInstalled", "notValid", "symlink", "changedSinceInspect", "forbiddenHeader", "grantField", "unconfirmedVersion", "tooBig", "needsVersion", "notConfirmed", "pureCall", "notInMigrate", "secretNotAllowed", "unknownSecret", "plaintextUndeclared", "hostNotAllowed", "blockedByPolicy", "undeclaredProgram", "badArgs", "badEnv", "tooManyProcesses", "notInRun", "notExecutable", "localAddress", "alreadyUndone", "badSecretName", "badScheme", "badUrl", "badMethod", "tooManyRedirects", "changedDuringUpgrade", "migrateFailed", "readonly", "noExport", "notExport", "badVersion", "unreadable", "notEmpty", "insideData", "exists", "notTable", "notFinished", "unsupportedFormat", "changedSincePreview", "insideDataDir", "noParent", "writeFailed", "fingerprintChanged", "badParent", "badFormat", "duplicateId", "tooLarge", "noOutput", "dependents", "pendingRequest", "dependsUnmet", "badDepends", "badExports", "undeclaredDepend", "notInteractive", "requesterDisabled", "notExported"];
   const MANIFEST_REASONS = ["noManifest", "badJson", "schema", "apiVersion", "badId", "idMismatch", "badVersion", "versionMismatch", "mainMissing", "badName", "duplicate", "unknownPage", "unknownTree", "unknownCommand", "unknownKind", "missingAction", "unknownAction", "badSetting", "localeMissing", "badLocale", "badUpgradesFrom", "badHost", "badSecretName", "grantsUndeclared", "badGrants", "badSecretsField", "unconfirmedVersion", "restrictedByUpperLayer", "badRefsField", "badPrograms", "badEvents", "switchFailed", "badDepends", "badExports", "undeclaredDepend", "badPlugins", "dependsUnmet"];
@@ -52,8 +62,7 @@ describe("every key the kernel emits has words", () => {
 
   it("has a title and a confirm button for the purge confirmation", () => {
     for (const l of locales) expect(KERNEL_CONFIRMS[l]["deleted.purge.confirm"]).toMatchObject({ title: expect.any(String), ok: expect.any(String) });
-    expect(KERNEL_LABELS["zh-CN"]["deleted.purge.confirm"]).toMatch(/不可撤销/);
-    expect(KERNEL_LABELS["zh-CN"]["deleted.purge.confirm"]).toMatch(/backups/);
+    expect(KERNEL_LABELS["en-US"]["deleted.purge.confirm"]).toMatch(/backups/);
   });
 
   it("notices a new key in the kernel sources that has no words yet", async () => {
@@ -78,7 +87,6 @@ describe("every key the kernel emits has words", () => {
   });
 
   it("has words for the run failure codes the shell knows, in both languages", () => {
-    expect(Object.keys(RUN_ERRORS["zh-CN"]).sort()).toEqual(Object.keys(RUN_ERRORS["en-US"]).sort());
     for (const code of ["pluginDisabled", "interrupted", "badOutput", "timeout", "unknownAction", "invalidInput", "pluginError"]) expect(RUN_ERRORS["en-US"][code]).toBeTruthy();
   });
 
@@ -88,7 +96,6 @@ describe("every key the kernel emits has words", () => {
 
   it("never leaves a run failure blank", () => {
     expect(RUN_FALLBACK["en-US"]).toContain("{code}");
-    expect(RUN_FALLBACK["zh-CN"]).toContain("{code}");
     // Codes the kernel passes through from refused host calls have words through the general error table.
     for (const code of ["denied", "invalid", "conflict", "notFound", "invalidParams", "internal"]) for (const l of locales) expect(KERNEL_ERRORS[l][code], `${l} ${code}`).toBeTruthy();
   });
