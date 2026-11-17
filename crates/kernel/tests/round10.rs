@@ -167,6 +167,15 @@ export default {
           try { ctx.resource.body.count = 99; ctx.resource.name = "changed"; } catch (e) { refused = true; }
           return { nodes: [{ key: "m", label: ctx.resource.name + ":" + ctx.resource.body.count + ":" + refused, icon: "box" }] };
         }
+        // Review #3/#4/#11: badly behaved batches.
+        if (b.mode === "stuck") return { nodes: [], next: offset };
+        if (b.mode === "back") return { nodes: [{ key: "b" + offset, label: "b", icon: "box" }], next: offset };
+        if (b.mode === "dup") {
+          if (node) return { nodes: [{ key: node, label: "self", icon: "box" }, { key: "z", label: "z", icon: "box" }] };
+          return { nodes: ["a", "a", "b", "a"].map((k, i) => ({ key: k, label: k + i, icon: "box", expandable: true })) };
+        }
+        if (b.mode === "long") return { nodes: [{ key: "l", label: "x".repeat(500), icon: "box" }] };
+        if (b.mode === "huge") return { nodes: Array.from({ length: 1001 }, (_, i) => ({ key: "h" + i, label: "h", icon: "box" })) };
         if (node) return { nodes: [{ key: node + ".1", label: "deep", icon: "box" }] };
         const count = b.count || 0;
         const word = ctx.locale === "zh-CN" ? "项 " : "Item ";
@@ -196,10 +205,30 @@ export default {
 };
 "#;
 
+const TREES_MAIN: &str = r#"
+export default {
+  activate(host) {
+    host.trees.handle("t", {
+      async children(ctx, parent, offset) {
+        const p = parent || "";
+        if (p === "") return { nodes: ["stuck", "back", "dup", "long", "huge"].map((k) => ({ key: k, label: k, icon: "box", expandable: true })) };
+        if (p === "stuck") return { nodes: [], next: offset + 5 };
+        if (p === "back") return { nodes: [{ key: "b" + offset, label: "b", icon: "box" }], next: Math.max(0, offset - 1) };
+        if (p === "dup") return { nodes: [{ key: "x", label: "x1", icon: "box" }, { key: "dup", label: "self", icon: "box" }, { key: "x", label: "x2", icon: "box" }] };
+        if (p === "long") return { nodes: [{ key: "l", label: "é".repeat(300), icon: "box" }] };
+        if (p === "huge") return { nodes: Array.from({ length: 1001 }, (_, i) => ({ key: "h" + i, label: "h", icon: "box" })) };
+        return { nodes: [] };
+      },
+    });
+  },
+};
+"#;
+
 fn kids_plugins(dir: &std::path::Path) -> std::path::PathBuf {
     plugins_with(
         dir,
         &[
+            ("test.trees", json!({ "trees": [ { "id": "t", "label": "t", "icon": "box", "source": "provided" } ] }), TREES_MAIN),
             (
                 "test.kids",
                 json!({ "kinds": [
@@ -437,4 +466,69 @@ async fn with_thousands_of_packages_the_first_answers_do_not_look_at_every_plugi
     assert_eq!(last["nodes"][199]["key"], "t.many-02999");
     // A loose backstop only (debug build, busy machines).
     assert!(took < std::time::Duration::from_secs(60), "{took:?}");
+}
+
+/* ------------------------------------------------------------------ round-10 review #3 #4 #11 */
+
+async fn prov(c: &Client, parent: &str, offset: u32) -> Result<Value, ProtocolError> {
+    c.call("tree.children", json!({ "tree": "test.trees:t", "parent": parent, "offset": offset })).await
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_next_that_does_not_advance_ends_the_listing() {
+    let (_env, c) = kids_world(5000).await;
+    // Kind children: an empty batch with `next`, and a `next` equal to the offset.
+    let stuck = create(&c, "test.kids:shelf", None, json!({ "mode": "stuck" })).await;
+    let p = kids(&c, &stuck, 0, None).await;
+    assert_eq!((p["nodes"].clone(), p.get("next")), (json!([]), None));
+    let back = create(&c, "test.kids:shelf", None, json!({ "mode": "back" })).await;
+    let p = kids(&c, &back, 0, None).await;
+    assert_eq!(p["nodes"].as_array().unwrap().len(), 1);
+    assert!(p.get("next").is_none(), "{p}");
+    let (all, calls) = all_kids(&c, &back).await;
+    assert_eq!((all.len(), calls), (1, 1));
+    // Provided trees: the same.
+    let p = prov(&c, "stuck", 0).await.unwrap();
+    assert_eq!((p["nodes"].clone(), p.get("next")), (json!([]), None));
+    let p = prov(&c, "back", 3).await.unwrap();
+    assert_eq!(p["nodes"].as_array().unwrap().len(), 1);
+    assert!(p.get("next").is_none(), "{p}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn repeated_keys_and_a_key_equal_to_its_parent_are_dropped() {
+    let (_env, c) = kids_world(5000).await;
+    let dup = create(&c, "test.kids:shelf", None, json!({ "mode": "dup" })).await;
+    let p = kids(&c, &dup, 0, None).await;
+    let got: Vec<(&str, &str)> =
+        p["nodes"].as_array().unwrap().iter().map(|n| (n["key"].as_str().unwrap(), n["label"].as_str().unwrap())).collect();
+    let (ka, kb) = (format!("@{dup}/a"), format!("@{dup}/b"));
+    assert_eq!(got, vec![(ka.as_str(), "a0"), (kb.as_str(), "b2")]);
+    // Below a plugin node: a child with the parent's own key is dropped.
+    let p = kids(&c, &ka, 0, None).await;
+    let keys: Vec<&str> = p["nodes"].as_array().unwrap().iter().map(|n| n["key"].as_str().unwrap()).collect();
+    assert_eq!(keys, vec![format!("@{dup}/z")]);
+    // Provided tree.
+    let p = prov(&c, "dup", 0).await.unwrap();
+    let got: Vec<(&str, &str)> =
+        p["nodes"].as_array().unwrap().iter().map(|n| (n["key"].as_str().unwrap(), n["label"].as_str().unwrap())).collect();
+    assert_eq!(got, vec![("x", "x1")]);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn labels_are_cut_and_oversized_batches_fail() {
+    let (_env, c) = kids_world(5000).await;
+    let long = create(&c, "test.kids:shelf", None, json!({ "mode": "long" })).await;
+    let p = kids(&c, &long, 0, None).await;
+    assert_eq!(p["nodes"][0]["label"].as_str().unwrap().chars().count(), 200);
+    let huge = create(&c, "test.kids:shelf", None, json!({ "mode": "huge" })).await;
+    let p = kids(&c, &huge, 0, None).await;
+    assert_eq!(p["nodes"].as_array().unwrap().len(), 1);
+    assert_eq!(p["nodes"][0]["state"], "load-failed");
+    // Provided tree: cut by characters, not bytes; over 1000 is a plugin error.
+    let p = prov(&c, "long", 0).await.unwrap();
+    assert_eq!(p["nodes"][0]["label"].as_str().unwrap(), "é".repeat(200));
+    let e = prov(&c, "huge", 0).await.unwrap_err();
+    assert_eq!(e.code, ErrorCode::PluginError);
+    assert!(format!("{e:?}").contains("more than 1000"), "{e:?}");
 }
