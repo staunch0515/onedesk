@@ -364,7 +364,8 @@ impl Inner {
             | Command::Move { .. }
             | Command::Restore { .. }
             | Command::Upgrade { .. }
-            | Command::UndoUpgrade { .. } => Some("updated"),
+            | Command::UndoUpgrade { .. }
+            | Command::Batch(_) => Some("updated"),
             Command::Delete { .. } => Some("deleted"),
             Command::Undelete { .. } => Some("restored"),
             Command::Purge { .. } => Some("purged"),

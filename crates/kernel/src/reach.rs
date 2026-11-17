@@ -264,7 +264,8 @@ impl Inner {
         let ctx = json!({ "tree": tree, "locale": valid_locale(locale), "resource": resource });
         let sources = vec![self.resource_info(row, &mut HashMap::new())];
         let ev = json!({ "sources": sources });
-        let info = CallInfo { client, resource_id: Some(t.id.clone()), ..Default::default() };
+        let writes = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let info = CallInfo { client, resource_id: Some(t.id.clone()), drop_writes: Some(writes.clone()), ..Default::default() };
         let as_plugin_error = |e: ProtocolError| ProtocolError { code: ErrorCode::PluginError, params: e.params, detail: e.detail };
         let out = self
             .call_version(plugin, "kinds", &short, "drop", json!([ctx, ev]), info, None, None)
@@ -282,11 +283,11 @@ impl Inner {
         if !answer.handled {
             return Ok(None);
         }
-        self.execute(
-            plugin.actor(),
-            Command::Audit { op: "tree.drop".into(), object: t.id.clone(), summary: json!({ "sources": sources.len() }) },
-        )
-        .await?;
+        // D394: the plugin's updates and the audit row in one transaction; on any failure above
+        // (error, timeout, bad answer, not handled) the kept updates are simply dropped.
+        let mut cmds = std::mem::take(&mut *writes.lock().unwrap());
+        cmds.push(Command::Audit { op: "tree.drop".into(), object: t.id.clone(), summary: json!({ "sources": sources.len() }) });
+        self.execute(plugin.actor(), Command::Batch(cmds)).await?;
         Ok(Some(TreeMoveResult { handled: Some(true), message: answer.message }))
     }
 }
