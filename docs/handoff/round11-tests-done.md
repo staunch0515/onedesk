@@ -30,3 +30,35 @@
 - 没有连真内核：清单字段是否被内核接受、页面事件/参数的真实行为、`openExternal`/`copy` 的真实效果都没验证。
 - 日语译文没有母语者审阅。
 - 没有跑 `pnpm e2e`、`pnpm test:rust`、`pnpm clippy`（本阶段不涉及）。
+
+---
+
+# 第二阶段：`e2e/round11.spec.ts`（连真内核）
+
+已合并协调分支 `d7a5b52`。先做的第 1 项（`link.refused` 键补进两份语言 JSON）单独提交 `4476e30`；`lang-check` 只对照 `en-US.ts`，外壳可以删 `zh-CN.ts`。
+
+## 怎么跑
+`cargo build --workspace`（devhost 会拉起 `onedesk-worker`，只编 host 不够）→ `E2E_PORT=1435 pnpm exec playwright test e2e/round11.spec.ts`。devhost 用 `ONEDESK_SECRET_STORE=memory` 和临时目录；`window.open`、剪贴板在页面启动前被替换成记录器，不会打开真浏览器。
+
+## 覆盖（17 条，串行）
+- 协议：`i18n.languages` = en-US、ja-JP、zh-CN（顺序、名字、`plugin`）；`i18n.shell` 两种语言键集合一致、en-US 和未知语言空表；`plugin.get.legacyKinds`（note、http、link、prompt；welcome、语言插件为空）；`workspace.info.startupPages`。
+- 欢迎页：全新数据目录第一次启动显示；四个入口各打开对应类型的编辑页；已有标签页的启动不再弹出；关掉后不再回来。
+- 网址：`run.start` 的 `ui` 主题发 `openExternal` 带地址；审计 `ui.openExternal` 的对象只有主机名，没有路径/查询；界面里点“打开”→ `window.open` 被调用一次；`javascript:`、`file:` 被插件拒绝并显示文字；协议层这几种、`ftp:`、超长地址的运行都以 error 结束、不发效果、不增加审计行。
+- 提示词：`{{name}}`、`{{城市}}` 两个输入框，`{{secret:x}}` 没有；输入后不出现“Unsaved”；“复制”→ 剪贴板是代入后的文字（`{{secret:x}}` 原样保留）；协议层 `page.event copy` 发 `ui` 的 `copy` 效果；`preview` 输出。
+- 笔记阅读态：标题、列表、行内代码、代码块渲染；显示的是未保存草稿；`<script>`、`<img onerror>` 原样显示成文字且没执行；网址链接走 `window.open`；`javascript:` 链接不成为 `<a>`；保存后 `[[Other note]]` 可点并打开那条笔记；解析不到的 `[[…]]` 是失效样式（`od-markdown__ref--broken`）点了不开标签；切回编辑草稿还在。
+- 语言：不带 `lang` 默认英语；状态栏菜单有英语/日语/中文，选中文、日语立即变并写入 `ui.language`，刷新后保持；插件页面（网址编辑页）的字段文字随语言变；停用日语插件后选项消失、日语界面回到英语，重新启用后恢复；英/中/日三种语言下抽查三个页面没有形如 `a.b.c` 的键名。
+
+## 与计划/任务书不一致或要注意的
+1. **关掉欢迎页再刷新**：任务书写“关掉后刷新不再自动打开”，但外壳实现（`startup.ts`，D382 原文“直到又一次没有任何标签页的启动”）是：刷新时若没有标签页就再打开。我的测试只断言“关掉后同一次会话里不会回来”和“有标签页时刷新不弹出”，**没有**断言“全部关掉后刷新仍不弹”（那与实现相反）。需要协调会话确认想要哪种。
+2. 内核把网址里的主机名转小写再发效果（`https://Docs.Example.com/…` → `https://docs.example.com/…`），测试按这个写。
+3. 笔记阅读态的“模式”下拉（`param: true` 的 enum，没有默认值）在编辑态显示成一个空的“Choose”框：内核/外壳没有给页面参数默认值。功能没问题，但观感上多余；可考虑让页面参数支持默认值。（没改，没有标 fixme。）
+4. 未保存草稿里新写的 `[[x]]` 在阅读态是失效样式，保存后才能点（外壳交接里已写的已知限制）；测试里先保存再点。
+5. 外壳的内核词表（`kernel-texts.ts`）没有日语；日语界面里内核错误文字回退英语（外壳交接第 6 点）。我没有对此写断言。
+6. 首个 `shell:` 测试偶尔会撞上刚启动的 devhost 还没就绪（第一次整套运行里出现过一次“workspace service stopped”），重跑通过；没有加重试。
+
+## 测试结果
+`E2E_PORT=1435 pnpm exec playwright test e2e/round11.spec.ts`：**17 通过，0 跳过，0 fixme**（串行，约 3 分钟；只有一次整套运行中前面反复的失败是我自己的测试写法问题，已修）。`pnpm typecheck` 通过、`pnpm lint` 通过。截图 `docs/screenshots/round11-*.png` 生成后没有提交（已删，重跑即可再生成）；`git checkout -- docs/screenshots` 已执行。
+
+没有标 `test.fixme`。没有发现需要改别人文件的缺陷。
+
+7. 写测试时踩到的：`getByText("bad link")` 会匹配到资源名 “Bad link”（大小写不敏感的子串）；`page.reload()` 前要等 `ui.get layout` 里已经没有欢迎页（布局是稍后才保存的）——这两个是测试写法问题，不是产品缺陷。
