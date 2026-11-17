@@ -56,3 +56,28 @@
 - 浏览器里实际点“保留我的/采用新的”走完整的保存（带 `overwrite`）没有走过（单元测试覆盖了每一步，但没有端到端）。
 - 插件页主页链接在 Tauri 里是否打开系统浏览器（见上表）。
 - 键盘 Home/End/上下在窗口化的树里只有 jsdom 测试（End）。
+
+## 合并后对齐（协调分支 `e30b9d9` 合并之后）
+
+**类型**：内核的 `NodeState` 多了 `"load-failed"`：`frame.tsx` 两张文字表和色调表、设计组件 `TreeNodeState`（图标 `circle-alert`、`od-tree__row--load-failed` 用 `--danger-text`）都认了；`stateReason` 是错误码字符串，用 `error({code})` 配文字（“The plugin failed to produce this page.”）。`node.open` 的菜单命令现在带 `target`（插件节点的键 `@…` 内核按资源找会 `notFound`）。`kernel-texts` 测试通过。
+
+**对着真内核走了一遍**（devhost：`ONEDESK_SECRET_STORE=memory`、数据目录在会话 scratchpad、用 Playwright 驱动一个临时脚本，脚本没有提交，副本在 `/private/tmp/claude-501/walk/zz-r10-walk.spec.ts.txt`）：
+- **nested 夹具**：装好，`count = 5` 的 shelf 展开后 5 个节点；第一个节点右键只有“Open”、点击打开该资源的标签页；第二个节点右键**没有菜单**；`count = -1` 的 shelf 展开后是一个“Could not load”（`data-state="load-failed"`）。✔
+- **长层（用存储的资源代替，因为夹具的大 shelf 在内核里失败，见缺陷 1）**：根下 6000 个资源：展开前 DOM 里 34 行，滚到底（读完全部批次）后 DOM 里 43 行，最后一个节点可见；Home 回到第一个；过滤时出现“只在已读取的节点里查找”说明。✔　`End` 键只到**已读取**的最后一行（不会替用户读完整层）——这是有意的，记在此。
+- **合并**（note 资源）：① 编辑正文不保存，别处改名称 → 没有提示条，保存后名称和正文都在（`["Renamed elsewhere","my edit one"]`）✔；② 再改正文不保存，别处改正文 → 顶部出现“Changed elsewhere”，点“Keep mine”再保存 → 库里是我的（`my edit two`）✔；③ 同样再来一次点“Use the new one” → 编辑框显示别人的值（`their edit two`）、提示条消失 ✔。**用 nested 的 `touch`（插件改 `text`）出提示条这一条没有走**（脚本没写到）。
+- **通知入口**：保存两次后铃铛 `Notices (2 unread)`，点开列出两条“Saved”并带时间，“Clear”后显示“Nothing has been shown in this session.” ✔
+- **示例插件的 `big` 动作**：页面上没有这个按钮（页面动作只有 Run/Save/Save & run/Explain），我用 `run.start` 启动再从任务面板打开：结果表 DOM 里 16 行，滚到底也是 16 行，排序（点 customer 表头）、拖列宽（176px → 264px）正常。✔ 但表的 `aria-rowcount` 是 **1000**，不是 1 万（见缺陷 2）。
+- **插件页标题随语言、没声明 `files` 不显示“已授权的文件夹”**：这次没在真内核上走成（我写的临时脚本选择器不对，放弃了）；只有单元测试（`plugin-page.test.tsx` 新增 3 例：无 `files` 无该节、有 `files` 有该节、`name` 为 Label 时标题和标签页标题取当前语言）。
+- 启动速度：6000 个资源时页面要十几秒才起来（每个请求排队，`tree.children`（资源树第一批 200 个）单次约 2 秒，`workspace.info` 约 1.7 秒）——见缺陷 3。
+
+**缺陷（不是我的文件，没改）**
+1. 内核/夹具：`e2e/fixtures/plugins/com.example.nested` 的 shelf，`count` > 500（第一批 500 个、带 `next: 500`）时 `tree.children` 整层变成“加载失败”（`pluginError`）。复现：装夹具，`page.save new:com.example.nested:shelf` 带 `body.count: 501`，`tree.children {tree:"resources", parent:<id>}`。`count` 在 200…500 之间（不带 `next`）正常，一批超 200 个被截成 200 个并给 `next:200`。推测是内核在“插件一批超过 200 个且插件自己给了 `next`”时判错（和审查 #3 的 `next` 规则有关）。所以夹具不能产生“2 万个自供子节点”，这一条验收我用 6000 个存储资源代替了。
+2. 内核或示例插件：`big` 动作返回 1 万行，任务摘要说 10,000 rows，但结果表（`run.get` 的 `output.rows`）只有 1000 行（`aria-rowcount` 1000）。可能是内核把表输出截到 1000 行（`rowLimit`？）而插件注释说“不受 rowLimit 影响”。要 1 万行真的送到界面，这里要查。
+3. 内核：根资源树有 6000 个资源时每个请求（`workspace.info`、`tree.children` 第一批）要 1.7–2 秒，页面启动 >15 秒（Playwright 的 15 秒断言超时就过不了）。可能是 `tree.children` 对整层排序/统计，且读连接被占着；`workspace.info` 也慢说明不只是这一个方法。
+
+## 基准截图（10 张假数据模式）
+重新生成后逐张对照提交里的旧基准（像素差异 + 肉眼看并排对比图）。**旧基准本来就已过期**，所以差别不只来自本轮：
+- 本轮有意的变化：状态栏右侧多了铃铛（“任务”和“密度”之间）。`workbench-{light,dark}-tree-menu` 只有这一处（差异区域在状态栏 879–1063 × 782–796 像素）；`tasks` 里铃铛上有“1”（任务面板打开时弹了一条通知）。
+- 不是本轮造成的（来自前几轮，旧基准没跟上）：`env`：环境页参数区多了“Add parameter”按钮（过滤框旁）、说明文字换行不同；`plugin`：假数据模式下“Check for updates”“Open plugin folder”按钮隐藏（第九轮）；`sql`、`tasks`、`env` 里的时间、运行记录（“Executing…”进度、结果表有了数据）、历史表的日期是随时间变的（演示数据按“现在”生成），所以每次重跑都不同。
+- 没有看到错位、间距或行高的变化（树、表格、栏的盒子位置都对得上）。dark 版与 light 版的差别同上。
+新基准已提交。
