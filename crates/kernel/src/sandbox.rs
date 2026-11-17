@@ -132,6 +132,8 @@ pub struct CallInfo {
     pub event: bool,
     /// Round 7: a page event handler (the user acted on the page) — may ask to install plugins.
     pub page_event: bool,
+    /// Round 11 (D386): `ui.openExternal` calls made so far in this invocation.
+    pub external_opens: Arc<std::sync::atomic::AtomicUsize>,
     /// Round 7 (D345): held while a host call waits for the user; that time is not counted.
     pub hold: Arc<crate::install::Hold>,
 }
