@@ -1,0 +1,15 @@
+{
+  "plugin.name": "Nested",
+  "plugin.description": "Test fixture: a kind that supplies its own child nodes (as many as its count field says), and an action that rewrites the resource.",
+  "kind.shelf": "Shelf",
+  "kind.shelf.new": "Untitled shelf",
+  "action.touch": "Touch",
+  "action.save": "Save",
+  "tab.result": "Output",
+  "field.count": "Count",
+  "field.text": "Text",
+  "node.item": "Item {n}",
+  "error.badCount": "The count is -1, so the children fail on purpose.",
+  "result.touched": "touched",
+  "touch.text": "changed by the plugin"
+}

@@ -35,5 +35,6 @@
   "explain.hand": "在这里填写",
   "explain.env": "来自环境 {source}",
   "explain.unset": "未设置",
-  "summary.explain": "已说明"
+  "summary.explain": "已说明",
+  "action.big": "大表格（1 万行）"
 }

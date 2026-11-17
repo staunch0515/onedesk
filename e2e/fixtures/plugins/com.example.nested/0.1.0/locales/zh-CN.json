@@ -1,0 +1,15 @@
+{
+  "plugin.name": "嵌套",
+  "plugin.description": "测试夹具：一个自己提供子节点的类型（数量由 count 字段决定），以及一个改写资源的动作。",
+  "kind.shelf": "架子",
+  "kind.shelf.new": "未命名架子",
+  "action.touch": "改一下",
+  "action.save": "保存",
+  "tab.result": "输出",
+  "field.count": "数量",
+  "field.text": "文字",
+  "node.item": "条目 {n}",
+  "error.badCount": "数量是 -1，所以子节点按预期加载失败。",
+  "result.touched": "已改",
+  "touch.text": "由插件改的"
+}

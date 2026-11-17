@@ -54,6 +54,17 @@
         "output": "text",
         "saveFirst": false,
         "confirm": null
+      },
+      {
+        "id": "big",
+        "label": "action.big",
+        "icon": "table",
+        "kinds": [
+          "query"
+        ],
+        "output": "table",
+        "saveFirst": false,
+        "confirm": null
       }
     ],
     "pages": [
@@ -103,6 +114,13 @@
             "role": "event",
             "label": "action.tidy",
             "icon": "align-left"
+          },
+          {
+            "id": "big",
+            "role": "run",
+            "action": "big",
+            "label": "action.big",
+            "icon": "table"
           }
         ],
         "resultTabs": [
