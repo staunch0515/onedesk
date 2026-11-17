@@ -71,9 +71,18 @@ export default {
         if (mode === "bad") return 42;
         if (mode === "none") return undefined;
         if (mode === "pass") return { handled: false };
-        if (mode === "writeThenThrow") {
-          await ctx.host.resources.update(ctx.resource.id, { "body.items": ["x"] });
-          throw new Error("late");
+        if (mode.startsWith("write")) {
+          const r = await ctx.host.resources.update(ctx.resource.id, { "body.items": ["x"] });
+          if (mode === "writeThenThrow") throw new Error("late");
+          if (mode === "writeThenHang") { await ctx.host.util.sleep(60000); return { handled: true }; }
+          if (mode === "writeThenBad") return { handled: "yes" };
+          if (mode === "writeThenPass") return { handled: false };
+          if (mode === "writeThenCreate") { await ctx.host.resources.create({ kind: "card", name: "side" }); return { handled: true }; }
+          if (mode === "writeThenStorage") { await ctx.host.storage.set("k", "v"); return { handled: true }; }
+          if (mode === "writeTwice") {
+            await ctx.host.resources.update(ctx.resource.id, { "name": "Renamed" });
+            return { handled: true, message: JSON.stringify(r) };
+          }
         }
         const items = (ctx.resource.body.items || []).slice();
         for (const s of ev.sources) if (!items.includes(s.id)) items.push(s.id);
@@ -565,4 +574,90 @@ async fn a_row_action_event_hands_the_row_to_ctx_row() {
     assert_eq!(r["message"], json!({ "en-US": "up@none" }));
     let e = c.call("page.event", json!({ "target": target, "event": "up", "context": { "row": "x".repeat(1001) } })).await.unwrap_err();
     assert_eq!(e.code, ErrorCode::InvalidParams);
+}
+
+/* ------------------------------------------------------------------ review #2 (D394) one transaction */
+
+#[tokio::test(flavor = "multi_thread")]
+async fn writes_made_before_a_failure_are_not_kept() {
+    let (_env, c) = world(800).await;
+    let item = create(&c, "test.alpha:item", None, json!({})).await;
+    for mode in ["writeThenThrow", "writeThenHang", "writeThenBad", "writeThenCreate", "writeThenStorage"] {
+        let hub = create(&c, "test.reach:hub", None, json!({ "body.mode": mode })).await;
+        let rev = get(&c, &hub).await["rev"].clone();
+        let e = c.call("tree.move", mv(&item, &hub)).await.unwrap_err();
+        assert_eq!(e.code, ErrorCode::PluginError, "{mode}: {e:?}");
+        let h = get(&c, &hub).await;
+        assert_eq!((h["body"].get("items"), h["rev"].clone()), (None, rev), "{mode}");
+        assert_eq!(get(&c, &item).await.get("parentId"), None, "{mode}");
+    }
+    // Nothing else was created or stored either.
+    let cards = search(&c, "test.reach", json!({ "kinds": ["test.reach:card"] })).await;
+    assert_eq!(cards["ok"]["total"], 0);
+    assert!(audits(&c, "tree.drop").await.iter().all(|a| a["result"] != "ok"));
+    // The refused create was recorded as refused.
+    let denied = c.ok("audit.list", json!({ "result": "denied" })).await;
+    assert!(denied.as_array().unwrap().iter().any(|a| a["operation"] == "resources.create"), "{denied}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn not_handled_drops_the_kept_writes_too() {
+    let (_env, c) = world(5000).await;
+    let hub = create(&c, "test.reach:hub", None, json!({ "body.mode": "writeThenPass" })).await;
+    let item = create(&c, "test.alpha:item", None, json!({})).await;
+    let e = c.call("tree.move", mv(&item, &hub)).await.unwrap_err();
+    assert_eq!(e.params.get("reason").map(String::as_str), Some("notAccepted"));
+    assert_eq!(get(&c, &hub).await["body"].get("items"), None);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_handled_drop_writes_everything_together_with_its_audit() {
+    let (_env, c) = world(5000).await;
+    let hub = create(&c, "test.reach:hub", None, json!({ "body.mode": "writeTwice", "name": "H" })).await;
+    let item = create(&c, "test.alpha:item", None, json!({})).await;
+    let r = c.ok("tree.move", mv(&item, &hub)).await;
+    // The update answered before the commit: no rev yet.
+    assert_eq!(r, json!({ "handled": true, "message": "{\"rev\":null}" }));
+    let h = get(&c, &hub).await;
+    assert_eq!((h["body"]["items"].clone(), h["name"].as_str()), (json!(["x"]), Some("Renamed")));
+    assert_eq!(audits(&c, "tree.drop").await.len(), 1);
+}
+
+/* ------------------------------------------------------------------ review #3 (D395) stored trees only */
+
+#[tokio::test(flavor = "multi_thread")]
+async fn search_and_any_targets_only_reach_stored_trees() {
+    let (_env, c) = world(5000).await;
+    let env = env_root(&c, "env").await;
+    let cfg = env_root(&c, "config").await;
+    // A resource without a tree, with a word only it has.
+    let loose = c.probe("test.reach", "resources.create", json!([{ "kind": "loose", "name": "Loose quokka" }])).await;
+    let loose = loose["ok"]["id"].as_str().expect("created").to_string();
+    // A plugin's stored tree is in.
+    let pin = c.probe("test.reach", "resources.create", json!([{ "kind": "pin", "name": "Pinned quokka" }])).await;
+    let pin = pin["ok"]["id"].as_str().expect("created").to_string();
+    let item = create(&c, "test.alpha:item", None, json!({ "name": "Plain quokka" })).await;
+
+    let all = search(&c, "test.reach", json!({ "limit": 500 })).await;
+    let got = ids(&all);
+    for (id, want) in [(&env, false), (&cfg, false), (&loose, false), (&pin, true), (&item, true)] {
+        assert_eq!(got.contains(id), want, "{id}");
+    }
+    assert!(all["ok"]["items"].as_array().unwrap().iter().all(|i| ["resources", "test.reach:shelf"].contains(&i["tree"].as_str().unwrap())));
+    // Not by text, not by id, not by kind.
+    let mut q = ids(&search(&c, "test.reach", json!({ "text": "quokka" })).await);
+    q.sort();
+    let mut want = vec![pin.clone(), item.clone()];
+    want.sort();
+    assert_eq!(q, want);
+    assert_eq!(ids(&search(&c, "test.reach", json!({ "ids": [env, cfg, loose, pin] })).await), vec![pin.clone()]);
+    assert_eq!(search(&c, "test.reach", json!({ "kinds": ["core:env", "core:config", "test.reach:loose"] })).await["ok"]["total"], 0);
+
+    // Supplied children of a resourcesAll plugin: the same boundary.
+    let hub = create(&c, "test.reach:hub", None, json!({ "body.items": [env, cfg, pin, item] })).await;
+    let t: Vec<Value> = kids(&c, &hub).await.iter().map(|n| n["target"].clone()).collect();
+    assert_eq!(t, vec![Value::Null, Value::Null, json!(format!("resource:{pin}")), json!(format!("resource:{item}"))]);
+    // A loose resource of another plugin is never a target; its own still is (as before).
+    let hub2 = create(&c, "test.reach:hub", None, json!({ "body.items": [loose] })).await;
+    assert_eq!(kids(&c, &hub2).await[0]["target"], json!(format!("resource:{loose}")));
 }

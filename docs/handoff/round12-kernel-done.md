@@ -93,3 +93,16 @@ host.kinds.handle("<kind>", { drop(ctx, ev) { … } })
 - 没有跑 `pnpm e2e`、`pnpm test`（外壳）和整套 `pnpm check`：范围外，且外壳在另一个会话里改。
 - 外壳对 `tree.move` 返回值从 `null` 变成对象是否有依赖 `null` 的地方，我没查外壳代码（只读不改也没看）；请外壳会话核对。
 - 一次 `tree.move` 只拖一个资源，所以 `ev.sources` 总是一个；多选拖放不在本轮。
+
+## 审查后的修改（`round12-review.md` #1、#2、#3、#5；D393–D395）
+
+先合并了协调分支 `claude/onedesk-coord-4-3ac9ba`。
+
+- **#1（D393）提交 `e4aa6c0`**：表格节点只增 `rowActions?: TableRowAction[]`（`{ id, label: Label, icon? }`，最多 4 个，`id` 不能空）、`rowKeys?: string[]`；`rowTargets` 从 `string[]` 放宽为 `(string|null)[]`（旧数据照样能读）。`rowTargets`/`rowKeys` 与 `rows` 不等长、行动作超过 4 个、未知字段 → `pluginError/badOutput`。插件打不开的 `rowTargets`（规则与自供子节点的 `target` 同一个函数 `plugin_target_ok`）被内核改成 `null`。页面渲染（`page.resolve`、保存后的重画）和结果页签的视图都校验。`PageContext` 只增 `row?: string`（≤1000 字符，否则 `invalidParams/tooLarge`）；`page.event` 时作为 `ctx.row` 交给 `onEvent`，没给时 `ctx` 里没有这个键。新类型 `TableRowAction` 已生成。外壳的 `pnpm typecheck` 在此提交上报错（外壳自定的 `RowAction{event}`、`row: number`），由外壳对齐。
+- **#2（D394）提交 `e88728e`**：放置期间插件的 `resources.update` 不立即写，先存起来；处理函数答 `handled: true` 后，这些更新和审计 `tree.drop` 作为一条新的管线命令 `Command::Batch` 在**同一个事务**里写入（任一条失败全部回滚，失败审计记在 `tree.drop` 名下）。出错、超时、返回不合法、`handled: false`、返回空 → 存起来的更新全部丢弃。放置期间别的写入一律拒绝：`resources.create`、`resources.move`、`resources.remove`、`files.writeText`、`storage.set`、`storage.remove` → `denied`，`reason = "inDrop"`（照例记拒绝审计）。放置期间 `resources.update` 返回 `{ rev: null }`（提交前不知道新版本号），之后的 `resources.get` 读到的仍是旧值。
+- **#3（D395）**（规则在 `e4aa6c0`，边界测试在下一个提交）：`resources.search` 和有 `resourcesAll` 时可指向的目标，只含所在树是存储树的资源——内核的 `resources` 树和插件声明的 `source: "stored"` 树；环境、配置、插件状态、没有树的资源都不在内（按文字、按 `ids`、按 `kinds` 都取不到）。没有 `resourcesAll` 时原有规则不变（自己的类型、依赖导出的类型仍可作目标，包括自己没有树的资源）。
+- **#5**：`tree.move` 的参数早已只增 `locale?: string`（顶层字段，与 `tree`、`key`、`target`、`position` 并列），交给 `drop` 的 `ctx.locale`，有测试（`a_drop_calls_the_plugin_and_moves_nothing`）；内核无需再改，外壳带上即可。
+
+新增原因码：`denied/inDrop`。新增内部命令 `Command::Batch`（只接受更新与审计行）。
+
+测试（实际跑过）：`round12.rs` 现在 22 个，新增 `table_rows_carry_actions_keys_and_checked_targets`、`bad_tables_are_plugin_errors`、`a_row_action_event_hands_the_row_to_ctx_row`、`writes_made_before_a_failure_are_not_kept`（先写后抛错 / 超时 / 坏返回值 / 再建资源 / 再写存储）、`not_handled_drops_the_kept_writes_too`、`a_handled_drop_writes_everything_together_with_its_audit`、`search_and_any_targets_only_reach_stored_trees`。`cargo test -p onedesk-kernel -p onedesk-worker -p onedesk-protocol` 全过；clippy `-D warnings` 过；`gen-types.sh --check` 最新；`pnpm lint` 过。没跑外壳的 typecheck 以外的前端检查和 e2e。
