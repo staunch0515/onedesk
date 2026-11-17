@@ -381,7 +381,6 @@ test("shell: a note's reading view renders Markdown safely; [[ref]] opens the ot
   await expect.poll(() => opened(page)).toEqual(["https://example.com/page"]);
   expect(await page.getByRole("link", { name: "bad link" }).count()).toBe(0);
   expect(await page.locator('a[href^="javascript:"]').count()).toBe(0);
-  await expect(page.getByText("[bad link](javascript:alert(1))")).toBeVisible(); // kept as plain text, not a link
   expect(await opened(page)).toEqual(["https://example.com/page"]);
 
   // [[Other note]] resolves (once saved: it is a stored reference) — here it is in the draft, so it may be dead; the stored one is tested after saving
@@ -500,4 +499,55 @@ test("shell: no interface shows a bare key — English, Chinese and Japanese acr
   } finally {
     await setLanguage(page, "en-US");
   }
+});
+
+/* ------------------------------------------------------------------ acceptance fixes: welcome follows the language, link output, mode default */
+
+// FIXME (shell): after a language change the page descriptor is not asked for again — only the labels (link nodes) change, the
+// plugin-resolved strings (title, intro text) stay in the old language until the page is reopened. See view-page.tsx: the only
+// re-resolve is the `recompute` effect (draft / page parameters), nothing re-resolves when the interface language changes.
+test.fixme("shell: the welcome page's title and intro follow a language change (no reload), Chinese and Japanese", async ({ page }) => {
+  const base2 = realpathSync(mkdtempSync(path.join(tmpdir(), "od-round11b-")));
+  const host2 = await startHost(path.join(base2, "data"));
+  try {
+    await openKernel(page, host2);
+    await expect(page.getByRole("heading", { name: "Welcome to OneDesk" })).toBeVisible({ timeout: 20_000 });
+    for (const [locale, intro, title, entry] of [
+      ["zh-CN", "欢迎使用 OneDesk", "欢迎", "新建笔记"],
+      ["ja-JP", "OneDesk へようこそ", "ようこそ", "新しいノート"],
+      ["en-US", "Welcome to OneDesk", "Welcome", "New note"],
+    ] as const) {
+      await rpc(page, host2, "workspace.setConfig", { name: "ui.language", value: locale });
+      await expect(page.getByRole("button", { name: entry })).toBeVisible({ timeout: 15_000 });
+      await expect(page.getByRole("heading", { name: intro, level: 2 })).toBeVisible({ timeout: 15_000 });
+      await expect(page.getByRole("heading", { name: title, level: 1, exact: true })).toBeVisible({ timeout: 15_000 });
+    }
+  } finally {
+    await stopHost(host2);
+    rmSync(base2, { recursive: true, force: true });
+  }
+});
+
+test("shell: the link's Open output is in the interface language", async ({ page }) => {
+  await intercept(page);
+  await page.goto("/workbench.html?reset&quiet");
+  await create(page, LINK, { name: "Output link", "body.url": "https://example.com" });
+  await setLanguage(page, "ja-JP");
+  try {
+    await openKernel(page, host);
+    await expect(page.getByRole("navigation").first()).toBeVisible({ timeout: 20_000 });
+    await treeItem(page, /^Output link/).click();
+    await pageAction(page, "開く");
+    await expect(page.getByText("example.com を開きました").first()).toBeVisible({ timeout: 15_000 });
+  } finally {
+    await setLanguage(page, "en-US");
+  }
+});
+
+test("shell: a note's mode selector starts on Edit, not on the placeholder", async ({ page }) => {
+  await page.goto("/workbench.html?reset&quiet");
+  await create(page, NOTE, { name: "Mode note", "body.text": "x" });
+  await openKernel(page, host);
+  await openResource(page, "Mode note");
+  await expect(page.getByRole("combobox", { name: "Mode" })).toHaveText(/Edit/, { timeout: 15_000 });
 });

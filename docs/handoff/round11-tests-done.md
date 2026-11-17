@@ -66,3 +66,11 @@
 ## 审查 #10（笔记页 `recompute: true`）：保留，原因
 外壳只有一条重画页面的路径：`view-page.tsx` 里的 recompute 效果——页面声明了 `recompute`，且草稿或页面参数变了，才在 300 ms 后重新 `page.resolve`。页面事件的返回值（`params`、`changes`）只改标签页状态/草稿，**不会**触发重画。所以去掉 `recompute` 后，点“阅读 / 编辑”改了 `mode` 参数，页面不会变。代价是编辑时每次停顿多一次 `render`（笔记的 render 很轻，不调宿主接口）。要真正去掉，需要外壳在页面事件返回 `params` 后主动重新 resolve（外壳的文件，我没改）；那之后把 `recompute` 删掉即可，vitest 里对应一行断言要改。已在 `main.test.ts` 的测试里写明原因。
 Markdown 的界面断言本来就按渲染结果（角色、文字、`a.od-markdown__ref--broken`）写，不依赖具体库；`[bad link](javascript:alert(1))` 一条断言的是“保留为纯文本”，换库后若输出不同需要对一下。
+
+## 验收三处（合并 `2f7f60a` 之后）
+1. **欢迎页切语言后介绍/标题不变——外壳问题，`test.fixme`**。插件按 `ctx.locale` 取字（vitest 里 zh 已测），入口是 Label 所以会变；`text` 节点和 `title` 是插件按渲染时的语言解析出的字符串，外壳在界面语言变化后不会重新 `page.resolve`（`view-page.tsx` 里唯一的重取是 `recompute` 效果，只看草稿和页面参数）。重新打开页面后就是新语言。位置：`src/workbench/pages/view-page.tsx` 的 recompute 效果（缺“语言变了就重取”）。`e2e/round11.spec.ts` 里 `test.fixme("shell: the welcome page's title and intro follow a language change…")`，修好后去掉 fixme 即可（中、日、英三个来回）。
+2. **网址 `open` 输出**：本来就走 `ctx.t`（用 `ctx.locale`）。新增界面检查：日语界面运行“開く”后结果区是“example.com を開きました”（通过）。我试过把输出 `label` 做成各语言的 Label 让它随语言变，**内核拒绝**（`badOutput`：动作的 link 输出 `label` 必须是字符串），已还原。所以运行输出是运行时语言的字符串，切语言后不会变——这是协议类型（`RunOutput::Link.label: String`）的限制，要变就得改协议（接口决定）。
+3. **笔记“模式”下拉默认值**：给 `mode` 字段加了 `envValue: "edit"`（外壳的枚举控件显示 `value || envValue`），首次打开显示“Edit”而不是占位符；没有 `envSource` 所以没有“来自环境”的提示。vitest 和界面检查（`combobox "Mode"` 含 Edit）已加。
+4. markdown 库换成 `marked` 后，把“`[bad link](javascript:alert(1))` 保留为纯文本”那条文字断言去掉了（输出细节因库而异），仍保留“没有 javascript: 的 `<a>`、没有名为 bad link 的链接”。
+
+结果：`e2e/round11.spec.ts` 19 通过、1 fixme（跳过）。
