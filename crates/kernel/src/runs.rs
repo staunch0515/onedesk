@@ -1001,6 +1001,7 @@ impl Inner {
                     menu: vec![kernel_cmd("node.open", "external-link")],
                     draggable: false,
                     accepts: vec![],
+                    drop_any: None,
                 },
             })
             .collect();
@@ -1034,6 +1035,7 @@ impl Inner {
             menu: vec![kernel_cmd("node.open", "external-link"), toggle],
             draggable: false,
             accepts: vec![],
+            drop_any: None,
         }
     }
 
@@ -1066,6 +1068,7 @@ impl Inner {
                     menu,
                     draggable: false,
                     accepts: vec![],
+                    drop_any: None,
                 }
             })
             .collect())

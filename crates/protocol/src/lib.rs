@@ -261,6 +261,10 @@ pub struct TreeNode {
     pub draggable: bool,
     /// Kinds accepted as children (`*` = any kind of this tree). Empty = nothing.
     pub accepts: Vec<String>,
+    /// Round 12 (D390): dropping any resource node *onto* this node is allowed — its kind decides
+    /// (`drop`). Before/after it the ordinary rules apply. Absent = false.
+    #[serde(default)]
+    pub drop_any: Option<bool>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -316,6 +320,54 @@ pub struct TreeMoveParams {
     /// Absent with `inside` = to the top level, at the end.
     pub target: Option<String>,
     pub position: DropPosition,
+    /// Round 12 (D390): the interface language, handed to a kind's `drop` as `ctx.locale`.
+    #[serde(default)]
+    pub locale: Option<String>,
+}
+
+/// Round 12 (D390): what `tree.move` did. `handled`: the target's kind took the drop (nothing
+/// moved); `message`: optional text from the plugin for the shell to show. Both absent = an
+/// ordinary move.
+#[skip_serializing_none]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, optional_fields)]
+pub struct TreeMoveResult {
+    pub handled: Option<bool>,
+    pub message: Option<Label>,
+}
+
+/// Round 12 (D389): the basic information of a resource (`host.resources.search`, a kind's
+/// `drop` sources). Never the body or the description.
+#[skip_serializing_none]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, optional_fields)]
+pub struct ResourceInfo {
+    pub id: String,
+    pub name: String,
+    /// Full kind name.
+    pub kind: String,
+    pub kind_label: Option<Label>,
+    pub icon: String,
+    pub tree: String,
+    /// Parent resource id; absent at the top level.
+    pub parent: Option<String>,
+    pub tags: Vec<String>,
+    pub deleted: bool,
+}
+
+/// Round 12 (D389): one page of `host.resources.search`.
+#[skip_serializing_none]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, optional_fields)]
+pub struct ResourceSearchResult {
+    pub items: Vec<ResourceInfo>,
+    /// Matches in all (without `limit` / `offset`).
+    pub total: u32,
+    /// Offset of the next page; absent = this was the last one.
+    pub next: Option<u32>,
 }
 
 #[skip_serializing_none]
@@ -1399,6 +1451,7 @@ pub struct PluginSetting {
 #[ts(export)]
 pub struct PluginPermission {
     /// `files`, `network`, `secrets`, `programs`, `resources`, `plugins` (§7.2 `requires`);
+    /// round 12: `resourcesAll` (`requires.resources: true`, no detail, D389);
     /// round 8: `pages` (its kinds use other plugins' pages; `detail` lists `<plugin>:<page>`).
     pub id: String,
     /// What the manifest asks for, as text for display (hosts, names…); empty when a plain flag.

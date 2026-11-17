@@ -3,6 +3,7 @@
 export type PluginPermission = { 
 /**
  * `files`, `network`, `secrets`, `programs`, `resources`, `plugins` (§7.2 `requires`);
+ * round 12: `resourcesAll` (`requires.resources: true`, no detail, D389);
  * round 8: `pages` (its kinds use other plugins' pages; `detail` lists `<plugin>:<page>`).
  */
 id: string, 
