@@ -14,7 +14,7 @@ afterEach(() => vi.restoreAllMocks());
 describe("permission resourcesAll (D389)", () => {
   it("has its own words in English, and a language's overlay wins", () => {
     expect(buildI18n("en-US").permission("resourcesAll")).toMatch(/name, type and location/);
-    expect(buildI18n("xx", { "permission.resourcesAll": "XX" }).permission("resourcesAll")).toBe("XX");
+    expect(buildI18n("xx", { "kernel.permission.resourcesAll": "XX" }).permission("resourcesAll")).toBe("XX");
     expect(buildI18n("en-US").permission("resources")).toBe("Resources"); // the old ids are untouched
   });
 });

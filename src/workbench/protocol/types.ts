@@ -90,6 +90,7 @@ export type {
   Tone,
   TreeInfo,
   TreeNode,
+  TreeMoveResult,
   TreePage,
   ViewField,
   WorkspaceInfo,
