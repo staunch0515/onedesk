@@ -381,6 +381,7 @@ export const enUS = {
   "plugin.permissions": "Permissions",
   "plugin.permissionsHint": "What the plugin may touch outside its sandbox. Revoking takes effect at once.",
   "plugin.permission": "Permission",
+  "permission.resourcesAll": "Read the name, type and location (not the content) of everything in this workspace",
   "plugin.scope": "Scope",
   "plugin.required": "Needed",
   "plugin.requiredYes": "Required",

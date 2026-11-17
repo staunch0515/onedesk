@@ -277,6 +277,18 @@ export function ViewPage({ tab, descriptor: initial }: { tab: TabState; descript
       setBusy(null);
     }
   };
+  /** A row button of a table (round 12): the page event goes out with the row's index; the plugin's answer is applied like any page event. */
+  const rowEvent = async (event: string, row: number) => {
+    const now = latest.current;
+    const context = { envId: now.tab.envId, draft: typedAll({ ...now.descriptor.values, ...now.draft }), params: pageParams(now.tab.params), row };
+    try {
+      const result = await client.page.event(tab.target, event, context);
+      for (const [bind, value] of Object.entries(result.changes ?? {})) actions.setDraft(tab.id, bind, value, now.descriptor.values[bind]);
+      if (result.message) toast({ tone: "neutral", title: tx(result.message) });
+    } catch (error) {
+      actions.fail(error);
+    }
+  };
   const invokeRef = useRef(invoke);
   invokeRef.current = invoke;
 
@@ -397,7 +409,7 @@ export function ViewPage({ tab, descriptor: initial }: { tab: TabState; descript
       {conflictBar}
       {descriptor.runId && <RunHeader runId={descriptor.runId} />}
       <Pane grow scroll={!hasFill}>
-        {descriptor.view.map((node) => (node.type === "form" ? renderForm(node) : <ViewNodes key={node.id} nodes={[node]} />))}
+        {descriptor.view.map((node) => (node.type === "form" ? renderForm(node) : <ViewNodes key={node.id} nodes={[node]} onRowAction={(event, row) => void rowEvent(event, row)} />))}
       </Pane>
     </Frame>
       {isConfig && (

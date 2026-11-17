@@ -112,7 +112,8 @@ function build(locale: Locale, texts?: Record<string, string>): I18n {
       if (byReason) return byReason;
       return KERNEL_ERRORS[kernelLocale][e.code] ?? KERNEL_ERRORS["en-US"][e.code] ?? (e.message.trim() ? e.message : interpolate(RUN_FALLBACK[kernelLocale], { code: e.code }));
     },
-    permission: (id) => PERMISSIONS[kernelLocale][id] ?? PERMISSIONS["en-US"][id] ?? id,
+    // Ids the kernel tables lack take their words from the shell texts (`permission.<id>`), so a language plugin can translate them.
+    permission: (id) => PERMISSIONS[kernelLocale][id] ?? table[`permission.${id}`] ?? PERMISSIONS["en-US"][id] ?? (enUS as Record<string, string>)[`permission.${id}`] ?? id,
     operation: (id) => AUDIT_OPERATIONS[kernelLocale][id] ?? AUDIT_OPERATIONS["en-US"][id] ?? id,
     dateTime: (at) => dt.format(at),
     time: (at) => tm.format(at),
