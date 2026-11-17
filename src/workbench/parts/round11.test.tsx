@@ -48,6 +48,17 @@ describe("the openExternal effect", () => {
   });
 });
 
+describe("a failed hand-over to the system browser", () => {
+  it("is shown as a sentence with the system's reason, not thrown away", async () => {
+    const openExternal = vi.fn(async () => Promise.reject("openFailed:exit status 1"));
+    const client = kernelLikeClient(createMockClient({ fresh: true, quiet: true }), { platform: { openExternal } });
+    const { store } = renderInShell(client, <Grab />);
+    await act(async () => actions.runEffects([{ type: "openExternal", url: "https://e.com" }]));
+    expect(await screen.findByText("The system could not open the link: exit status 1")).toBeTruthy();
+    expect(store.get().notices.length).toBeGreaterThan(0);
+  });
+});
+
 describe("a markdown text node", () => {
   const nodes: ViewNode[] = [{ type: "text", id: "t", format: "markdown", text: "# Title\n\n<b>raw</b> [site](https://e.com) [[Known]] [[Nowhere]]" }];
 

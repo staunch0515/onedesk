@@ -1,0 +1,44 @@
+{
+  "id": "org.onedesk.collection",
+  "version": "0.1.0",
+  "apiVersion": "2",
+  "name": "plugin.name",
+  "description": "plugin.description",
+  "icon": "list-filter",
+  "main": "main.js",
+  "author": "OneDesk",
+  "license": "MIT",
+  "requires": { "files": false, "resources": true },
+  "contributes": {
+    "kinds": [
+      {
+        "id": "collection",
+        "label": "kind.collection",
+        "icon": "list-filter",
+        "tree": "resources",
+        "page": "editor",
+        "newName": "kind.collection.new",
+        "defaults": { "kinds": "", "tags": "", "text": "" },
+        "fields": {
+          "kinds": { "type": "text" },
+          "tags": { "type": "text" },
+          "text": { "type": "text" }
+        },
+        "draggable": true,
+        "accepts": [],
+        "children": true
+      }
+    ],
+    "pages": [
+      {
+        "id": "editor",
+        "recompute": true,
+        "actions": [
+          { "id": "save", "role": "save", "label": "action.save", "icon": "save", "primary": true, "shortcut": ["Mod", "S"] }
+        ]
+      }
+    ],
+    "menus": { "new": ["collection"] },
+    "locales": { "en-US": "locales/en-US.json", "zh-CN": "locales/zh-CN.json", "ja-JP": "locales/ja-JP.json" }
+  }
+}

@@ -6,7 +6,7 @@ const read = (p: string) => JSON.parse(readFileSync(dir(p), "utf8")) as Record<s
 const holes = (s: string) => (s.replace(/\{\{[^{}]*\}\}/g, "").match(/\{[a-zA-Z_]+\}/g) ?? []).sort().join();
 
 // Round 11 plugins and the ones that gained a Japanese file: English, Chinese and Japanese carry the same keys.
-const PLUGINS = ["org.onedesk.link", "org.onedesk.prompt", "org.onedesk.note", "org.onedesk.http", "org.onedesk.welcome", "org.onedesk.lang.zh-cn", "org.onedesk.lang.ja-jp"];
+const PLUGINS = ["org.onedesk.link", "org.onedesk.prompt", "org.onedesk.note", "org.onedesk.http", "org.onedesk.welcome", "org.onedesk.lang.zh-cn", "org.onedesk.lang.ja-jp", "org.onedesk.composite", "org.onedesk.collection"];
 
 describe.each(PLUGINS)("%s locales", (p) => {
   it("en-US, zh-CN and ja-JP have the same keys and {holes}", () => {

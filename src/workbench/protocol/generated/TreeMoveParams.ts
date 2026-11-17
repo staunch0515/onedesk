@@ -5,4 +5,8 @@ export type TreeMoveParams = { tree: string, key: string,
 /**
  * Absent with `inside` = to the top level, at the end.
  */
-target?: string, position: DropPosition, };
+target?: string, position: DropPosition, 
+/**
+ * Round 12 (D390): the interface language, handed to a kind's `drop` as `ctx.locale`.
+ */
+locale?: string, };

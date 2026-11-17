@@ -24,5 +24,14 @@
   "summary.sent": "{status} · {ms} 毫秒 · {bytes} 字节",
   "summary.truncated": " · 已截断",
   "field.token": "令牌（密钥）",
-  "field.token.hint": "写入钥匙串；在请求头里用 {{token}}。"
+  "field.token.hint": "写入钥匙串；在请求头里用 {{token}}。",
+  "field.query": "查询参数",
+  "field.query.placeholder": "每行一个：名=值。会加到地址后面并自动编码。",
+  "error.method": "不支持这个方法。",
+  "tab.info": "状态",
+  "info.name": "项目",
+  "info.value": "值",
+  "info.status": "状态码",
+  "info.time": "耗时",
+  "info.size": "大小"
 }

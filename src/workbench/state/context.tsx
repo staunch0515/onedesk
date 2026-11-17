@@ -163,7 +163,7 @@ export function WorkbenchProvider({ store, children }: { store: Store; children:
         else window.open(url, "_blank", "noopener,noreferrer");
       } catch (error) {
         // The main process could not hand the address to the system (D380): say so with what it reported.
-        fail(error instanceof Error ? error : new Error(String(error).replace(/^openFailed:/, "")));
+        fail(new Error(live.current.i18n.t("link.openFailed", { reason: (error instanceof Error ? error.message : String(error)).replace(/^openFailed:/, "") })));
       }
     };
 

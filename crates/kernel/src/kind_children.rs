@@ -126,7 +126,8 @@ impl Inner {
     }
 
     /// What a plugin node may open: what the plugin could open or read itself (§9.1 targets) —
-    /// this resource, a resource it may read, one of its own runs, its own trees or plugin page.
+    /// this resource, a resource it may read (any live one with `requires.resources`, D389), one of
+    /// its own runs, its own trees or plugin page.
     /// Anything else is dropped (the node is then not openable).
     fn child_target_ok(&self, plugin: &Plugin, row: &Row, target: &str) -> bool {
         use crate::pages::{parse_target, Target};
@@ -136,6 +137,8 @@ impl Inner {
         match parse_target(target) {
             Target::Resource(id) if id == row.id => true,
             Target::Resource(id) => match self.read(|c| store::get(c, &id)) {
+                // Round 12 (D389): with `requires.resources` any live resource (not plugin state).
+                Ok(Some(r)) if plugin.manifest.requires.resources => !self.hidden_tree(&r),
                 Ok(Some(r)) => {
                     Registry::split(&r.kind).is_some_and(|(p, _)| p == plugin.id) || self.export_allows(plugin, &r.kind, true)
                 }
@@ -256,5 +259,6 @@ fn blank_node(tree: &str, parent: &str, key: String) -> TreeNode {
         menu: vec![],
         draggable: false,
         accepts: vec![],
+        drop_any: None,
     }
 }

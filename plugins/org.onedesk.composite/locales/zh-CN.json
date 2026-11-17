@@ -1,0 +1,14 @@
+{
+  "plugin.name": "综合",
+  "plugin.description": "把其他内容的引用收在一起的节点。把任何内容拖上来即可，原内容不会被移动或复制。",
+  "kind.composite": "综合",
+  "kind.composite.new": "未命名综合",
+  "action.save": "保存",
+  "node.missing": "（已不存在）",
+  "page.empty": "把内容拖到这个节点上。",
+  "col.icon": "图标",
+  "col.name": "名称",
+  "col.kind": "类型",
+  "message.added": "已加入 {n} 项",
+  "message.removed": "已从综合中移除"
+}

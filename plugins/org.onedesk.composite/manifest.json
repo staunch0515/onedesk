@@ -1,0 +1,39 @@
+{
+  "id": "org.onedesk.composite",
+  "version": "0.1.0",
+  "apiVersion": "2",
+  "name": "plugin.name",
+  "description": "plugin.description",
+  "icon": "layers",
+  "main": "main.js",
+  "author": "OneDesk",
+  "license": "MIT",
+  "requires": { "files": false, "resources": true },
+  "contributes": {
+    "kinds": [
+      {
+        "id": "composite",
+        "label": "kind.composite",
+        "icon": "layers",
+        "tree": "resources",
+        "page": "editor",
+        "newName": "kind.composite.new",
+        "defaults": { "items": [] },
+        "draggable": true,
+        "accepts": ["composite"],
+        "children": true,
+        "drop": true
+      }
+    ],
+    "pages": [
+      {
+        "id": "editor",
+        "actions": [
+          { "id": "save", "role": "save", "label": "action.save", "icon": "save", "primary": true, "shortcut": ["Mod", "S"] }
+        ]
+      }
+    ],
+    "menus": { "new": ["composite"] },
+    "locales": { "en-US": "locales/en-US.json", "zh-CN": "locales/zh-CN.json", "ja-JP": "locales/ja-JP.json" }
+  }
+}

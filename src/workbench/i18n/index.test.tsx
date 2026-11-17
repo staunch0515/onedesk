@@ -23,8 +23,8 @@ describe("run failures and refusals in words", () => {
   });
 
   it("falls back to a generic sentence with the code when nothing else is known", () => {
-    view("zh-CN", { run: { code: "weird", message: "  " } });
-    expect(screen.getByText("运行失败（原因：weird）。")).toBeTruthy();
+    view("en-US", { run: { code: "weird", message: "  " } });
+    expect(screen.getByText("The run failed (reason: weird).")).toBeTruthy();
   });
 
   it("keeps the run's own message for a code it has no words for", () => {
@@ -38,16 +38,39 @@ describe("run failures and refusals in words", () => {
   });
 
   it("words the host-call refusals for cancel and timeout", () => {
-    const { unmount } = view("zh-CN", { error: new KernelError("denied", { reason: "cancelled" }) });
-    expect(screen.getByText("调用已被取消。")).toBeTruthy();
+    const { unmount } = view("en-US", { error: new KernelError("denied", { reason: "cancelled" }) });
+    expect(screen.getByText(/cancelled/i)).toBeTruthy();
     unmount();
-    view("zh-CN", { error: new KernelError("denied", { reason: "timeout" }) });
-    expect(screen.getByText("调用时间太长。")).toBeTruthy();
+    view("en-US", { error: new KernelError("denied", { reason: "timeout" }) });
+    expect(screen.getByText(/too long|time/i)).toBeTruthy();
   });
 
   it("words a ProtocolError that arrived as plain data (an install preview's problem)", () => {
     view("en-US", { error: { code: "invalid", params: { reason: "schema" } } });
     expect(screen.queryByText("[object Object]")).toBeNull();
     expect(screen.getByText("The manifest does not match the format")).toBeTruthy();
+  });
+});
+
+describe("kernel words come from the language's overlay like any other text (D387)", () => {
+  it("uses the overlay's words for kernel ids, errors, operations and permissions, and English for what it lacks", () => {
+    const texts = { "kernel.label.node.rename": "名前を変更", "kernel.error.denied": "拒否されました", "kernel.audit.resource.create": "作成", "kernel.permission.network": "ネットワーク" };
+    let words!: ReturnType<typeof useI18n>;
+    function Grab() {
+      words = useI18n();
+      return null;
+    }
+    render(
+      <I18nProvider locale="ja-JP" texts={texts}>
+        <Grab />
+      </I18nProvider>,
+    );
+    expect(words.tx("node.rename")).toBe("名前を変更");
+    expect(words.tx("node.open")).toBe("Open");
+    expect(words.error(new KernelError("denied", {}))).toBe("拒否されました");
+    expect(words.operation("resource.create")).toBe("作成");
+    expect(words.permission("network")).toBe("ネットワーク");
+    expect(words.permission("files")).toBe("Files in granted folders");
+    expect(words.operation("unknown.op")).toBe("unknown.op");
   });
 });

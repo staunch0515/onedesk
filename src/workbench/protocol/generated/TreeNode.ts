@@ -18,4 +18,9 @@ target?: string, menu: Array<MenuCommand>, draggable: boolean,
 /**
  * Kinds accepted as children (`*` = any kind of this tree). Empty = nothing.
  */
-accepts: Array<string>, };
+accepts: Array<string>, 
+/**
+ * Round 12 (D390): dropping any resource node *onto* this node is allowed — its kind decides
+ * (`drop`). Before/after it the ordinary rules apply. Absent = false.
+ */
+dropAny?: boolean, };
