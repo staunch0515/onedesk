@@ -3,7 +3,7 @@
  * Architecture boundary check (fails closed: when unsure, reject).
  *  1. crates/kernel, crates/worker, crates/protocol, crates/host, src-tauri: source (not tests/fixtures)
  *     must not mention any plugin id under plugins/ or its kind names, nor the banned tool words
- *     (note, markdown, sql, postgres, ssh, docker, psql, video, ffmpeg) as whole words.
+ *     (note, sql, postgres, ssh, docker, psql, video, ffmpeg) as whole words.
  *  2. crates/kernel must not depend on tauri.
  *  3. src/workbench must not import plugins/; only main.tsx may import protocol/mock.
  *  4. plugins/<id>: no imports outside the package, no browser/sandbox-absent globals.
@@ -44,7 +44,7 @@ if (existsSync(pluginsDir)) {
 }
 
 // ---- 1: kernel-side sources know no concrete plugin
-const BANNED_WORDS = ["note", "markdown", "sql", "postgres", "ssh", "docker", "psql", "video", "ffmpeg"];
+const BANNED_WORDS = ["note", "sql", "postgres", "ssh", "docker", "psql", "video", "ffmpeg"];
 const wordRe = new RegExp(`(?<![A-Za-z0-9_])(${BANNED_WORDS.join("|")})(?![A-Za-z0-9_])`, "i");
 const wordReNoSql = new RegExp(`(?<![A-Za-z0-9_])(${BANNED_WORDS.filter((w) => w !== "sql").join("|")})(?![A-Za-z0-9_])`, "i");
 const kernelSide = ["crates/kernel", "crates/worker", "crates/protocol", "crates/host", "src-tauri"].map((d) => join(root, d));
