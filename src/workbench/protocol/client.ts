@@ -43,6 +43,8 @@ import type {
   ViewNode,
   WorkspaceEntry,
   WorkspaceInfo,
+  LanguageInfo,
+  ShellTexts,
 } from "./types";
 
 /**
@@ -78,7 +80,13 @@ export interface ProtocolClient {
     delete(name: string): Promise<void>;
   };
 
-  readonly platform?: { pickFolder?: () => Promise<string | null>; pickSaveFile?: (name?: string) => Promise<string | null> };
+  /** Languages from language plugins (D379). Absent: only the built-in English (and the demo's own). */
+  readonly i18n?: {
+    languages(): Promise<LanguageInfo[]>;
+    shell(locale: string): Promise<ShellTexts>;
+  };
+
+  readonly platform?: { /** Opens an address in the system browser; the main process checks the protocol again (D380). Absent in a plain browser. */ openExternal?: (url: string) => Promise<void>; pickFolder?: () => Promise<string | null>; pickSaveFile?: (name?: string) => Promise<string | null> };
 
   readonly demo?: { tree(id: string): boolean; target(target: string): boolean };
 

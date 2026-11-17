@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import { render } from "@testing-library/react";
 import { ToastProvider } from "../../design";
 import { I18nProvider } from "../i18n";
+import { zhCN } from "../i18n/zh-CN";
 import { ProtocolProvider, type ProtocolClient } from "../protocol";
 import { WorkbenchProvider } from "../state/context";
 import { noticeKeeper } from "../state/notices";
@@ -13,11 +14,11 @@ export function kernelLikeClient(mock: ProtocolClient, overrides: Partial<Protoc
 }
 
 /** Renders `ui` inside the same providers the app uses. `rerender` shows other content in the same providers (state is kept). */
-export function renderInShell(client: ProtocolClient, ui: ReactNode, locale: "en-US" | "zh-CN" = "en-US"): { store: Store; rerender: (ui: ReactNode) => void } {
+export function renderInShell(client: ProtocolClient, ui: ReactNode, locale: string = "en-US"): { store: Store; rerender: (ui: ReactNode) => void } {
   const store = createStore(null, () => undefined);
   const wrap = (content: ReactNode) => (
     <ProtocolProvider client={client}>
-      <I18nProvider locale={locale}>
+      <I18nProvider locale={locale} texts={locale === "zh-CN" ? zhCN : undefined}>
         <ToastProvider closeLabel="Close" viewportLabel="Notifications" duration={1000} onToast={noticeKeeper(store)}>
           <WorkbenchProvider store={store}>{content}</WorkbenchProvider>
         </ToastProvider>

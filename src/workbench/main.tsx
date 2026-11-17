@@ -17,6 +17,7 @@ import type { ProtocolClient } from "./protocol";
 import { createMixedClient } from "./protocol/mixed-client";
 import { createMockClient } from "./protocol/mock";
 import { connectKernel } from "./protocol/real";
+import { openStartupPage } from "./state/startup";
 import { createStore, type LayoutState } from "./state/store";
 
 async function start() {
@@ -53,6 +54,9 @@ async function start() {
       }
     }
   }
+
+  // No tab came back (nothing saved, or all closed before the last quit): the startup page, once (D382).
+  await openStartupPage(client, store);
 
   const settings = await readSettings(client);
   createRoot(document.getElementById("root")!).render(

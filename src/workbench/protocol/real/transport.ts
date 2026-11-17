@@ -10,6 +10,8 @@ export interface Transport {
   pickFolder?(): Promise<string | null>;
   /** Opens the system "save as" dialog with a suggested file name (desktop only). */
   pickSaveFile?(name?: string): Promise<string | null>;
+  /** Opens an address with the system's default browser (desktop only; the main process checks the protocol). */
+  openExternal?(url: string): Promise<void>;
   close(): void;
 }
 

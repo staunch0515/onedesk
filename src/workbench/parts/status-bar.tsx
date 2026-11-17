@@ -1,7 +1,7 @@
 import { markAllRead, unreadCount } from "../state/notices";
 import { DropdownMenu, StatusBar, StatusItem, type Density, type ThemePreference } from "../../design";
-import { LOCALES, useI18n } from "../i18n";
-import type { Locale } from "../protocol";
+import { useI18n } from "../i18n";
+import type { LanguageInfo, Locale } from "../protocol";
 import { useQuery, useUi, useWorkbench } from "../state/context";
 
 export interface Settings {
@@ -10,7 +10,7 @@ export interface Settings {
   density: Density;
 }
 
-export function StatusBarPart({ settings, onSetting, resolvedTheme }: { settings: Settings; onSetting: (name: "ui.language" | "ui.theme" | "ui.density", value: string) => void; resolvedTheme: "light" | "dark" }) {
+export function StatusBarPart({ settings, languages, onSetting, resolvedTheme }: { settings: Settings; languages: LanguageInfo[]; onSetting: (name: "ui.language" | "ui.theme" | "ui.density", value: string) => void; resolvedTheme: "light" | "dark" }) {
   const { client, store, actions } = useWorkbench();
   const { t, number, duration, runError } = useI18n();
   const tab = useUi((s) => s.tabs.find((x) => x.id === s.activeTabId) ?? null);
@@ -92,10 +92,10 @@ export function StatusBarPart({ settings, onSetting, resolvedTheme }: { settings
           <DropdownMenu
             side="top"
             align="end"
-            items={LOCALES.map((l) => ({ key: l.value, label: l.label, icon: l.value === settings.locale ? "check" : "languages", onSelect: () => onSetting("ui.language", l.value) }))}
+            items={languages.map((l) => ({ key: l.locale, label: l.name, icon: l.locale === settings.locale ? "check" : "languages", onSelect: () => onSetting("ui.language", l.locale) }))}
             trigger={
               <StatusItem icon="languages" title={t("status.language")} aria-label={t("status.language")}>
-                {LOCALES.find((l) => l.value === settings.locale)?.label}
+                {languages.find((l) => l.locale === settings.locale)?.name ?? settings.locale}
               </StatusItem>
             }
           />

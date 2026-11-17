@@ -21,7 +21,7 @@ type Ask =
 /** Plugin page (ui-spec §4, I.6): description, versions, enable switch, settings, permissions, what it provides, load status. */
 export function PluginPage({ tab, descriptor }: { tab: TabState; descriptor: PageDescriptor }) {
   const { client, actions } = useWorkbench();
-  const { t, tx, dateTime, permission, locale } = useI18n();
+  const { t, tx, dateTime, permission, kernelLocale: locale } = useI18n();
   const { toast } = useToast();
   const [ask, setAsk] = useState<Ask | null>(null);
   const id = tab.target.slice("plugin:".length);

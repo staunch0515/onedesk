@@ -22,6 +22,7 @@ use tokio::net::UnixStream;
 use tokio::sync::{broadcast, oneshot, watch};
 
 pub mod data_dir;
+pub mod external;
 pub mod index;
 pub mod install;
 pub mod plugins;

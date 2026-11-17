@@ -3,7 +3,8 @@
  * plain ids (`node.rename`, `resources`, `core:group`) and error codes carry no text. Unknown ids
  * are shown as they are. Plugin text never lives here: it comes as a Label.
  */
-import type { Locale } from "../protocol/types";
+/** The languages the kernel-text tables have words for; any other language falls back to English here. */
+type Locale = "en-US" | "zh-CN";
 
 type Table = Record<string, string>;
 

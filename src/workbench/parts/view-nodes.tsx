@@ -1,10 +1,40 @@
-import { Button, CodeEditor, DataGrid, EmptyState, Pane, Text, TextBlock, type DataGridColumn } from "../../design";
+import { useCallback } from "react";
+import { Button, CodeEditor, DataGrid, EmptyState, MarkdownText, Pane, Text, TextBlock, type DataGridColumn, type ReferenceState } from "../../design";
 import { useI18n } from "../i18n";
 import type { OutputCell, ViewNode } from "../protocol";
-import { useWorkbench } from "../state/context";
+import { useQuery, useUi, useWorkbench } from "../state/context";
 import { TOKENIZERS } from "./sql-tokens";
 
 type Indexed = { cells: OutputCell[]; index: number };
+
+/**
+ * A text node with `format: "markdown"` (D381). `[[name]]` is resolved with the references of the resource the
+ * active tab shows (`refs.outgoing`, the stored text); unresolved or deleted ones show as broken and cannot be opened.
+ */
+function MarkdownNode({ source }: { source: string }) {
+  const { actions } = useWorkbench();
+  const target = useUi((s) => s.tabs.find((x) => x.id === s.activeTabId)?.target ?? "");
+  const resourceId = target.startsWith("resource:") ? target.slice("resource:".length) : null;
+  const refs = useQuery((c) => (resourceId ? c.refs.outgoing(resourceId) : Promise.resolve([])), [resourceId], resourceId ? [`resource:${resourceId}`] : []);
+  const lookup = useCallback(
+    (name: string) => (refs.data ?? []).find((r) => r.text === name),
+    [refs.data],
+  );
+  const referenceState = useCallback((name: string): ReferenceState => lookup(name)?.state ?? "missing", [lookup]);
+  return (
+    <Pane pad="md">
+      <MarkdownText
+        source={source}
+        referenceState={referenceState}
+        onLinkClick={(href) => void actions.openExternal(href)}
+        onReferenceClick={(name) => {
+          const to = lookup(name)?.target;
+          if (to) actions.open(`resource:${to.id}`);
+        }}
+      />
+    </Pane>
+  );
+}
 
 /** Draws the read-only view nodes (text, table, link, placeholder). Forms are drawn by the view page. */
 export function ViewNodes({ nodes }: { nodes: ViewNode[] }) {
@@ -15,6 +45,7 @@ export function ViewNodes({ nodes }: { nodes: ViewNode[] }) {
       {nodes.map((node) => {
         switch (node.type) {
           case "text":
+            if (node.format === "markdown" && !node.mono) return <MarkdownNode key={node.id} source={node.text} />;
             return node.mono ? (
               <CodeEditor key={node.id} label={node.id} value={node.text} readOnly tokenize={node.language ? TOKENIZERS[node.language] : undefined} />
             ) : (

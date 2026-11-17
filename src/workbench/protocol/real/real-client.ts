@@ -1,6 +1,6 @@
 import type { ConnectionState, EventMessage, HelloResult, TreePage } from "../generated";
 import type { ProtocolClient } from "../client";
-import type { ExportResult, ImportPreview, ImportResult, KnownParam, RefInfo, RunExportResult, InstallPreview, InstallRequest, PluginVersionParams, SecretInfo, UndoUpgradeResult, UpgradeResult, PageEventResult, PaletteCommand, PluginDetail, Run, ViewNode, AuditFacets, AuditFilter, AuditRow, EnvOption, EnvView, HistoryEntry, ResolvedParam, SearchHit, CommandContext, CommandEffect, NewItem, PageContext, PageDescriptor, PageSaveResult, PluginGrants, Resource, TreeInfo, TreeNode, WorkspaceInfo } from "../types";
+import type { ExportResult, ImportPreview, ImportResult, KnownParam, RefInfo, RunExportResult, InstallPreview, InstallRequest, PluginVersionParams, SecretInfo, UndoUpgradeResult, UpgradeResult, PageEventResult, PaletteCommand, PluginDetail, Run, ViewNode, AuditFacets, AuditFilter, AuditRow, EnvOption, EnvView, HistoryEntry, ResolvedParam, SearchHit, CommandContext, CommandEffect, NewItem, PageContext, PageDescriptor, PageSaveResult, PluginGrants, Resource, TreeInfo, TreeNode, WorkspaceInfo, LanguageInfo, ShellTexts } from "../types";
 import { EventBus } from "./event-bus";
 import { KernelError } from "../errors";
 import type { Transport } from "./transport";
@@ -26,6 +26,8 @@ export interface KernelClient {
   app: NonNullable<ProtocolClient["app"]>;
   secrets: NonNullable<ProtocolClient["secrets"]>;
   ui: ProtocolClient["ui"];
+  /** `i18n.languages` / `i18n.shell` (D379). */
+  i18n: NonNullable<ProtocolClient["i18n"]>;
   events: ProtocolClient["events"];
   /** Connection state as last reported by the main process. */
   connection(): ConnectionState;
@@ -158,6 +160,10 @@ export async function createKernelClient(transport: Transport, locale?: () => st
     ui: {
       get: async <T,>(key: string) => ((await call<T | null>("ui.get", { key })) ?? null) as T | null,
       set: async (key, value) => void (await call("ui.set", { key, value: value ?? null })),
+    },
+    i18n: {
+      languages: () => call<LanguageInfo[]>("i18n.languages"),
+      shell: (locale) => call<ShellTexts>("i18n.shell", { locale }),
     },
     events: { subscribe: (topic, handler) => bus.subscribe(topic, handler) },
     connection: () => connection,

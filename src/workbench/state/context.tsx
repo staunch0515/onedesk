@@ -34,6 +34,8 @@ export interface Actions {
   /** Runs effects the kernel pushed (a plugin's `host.ui.open/notify/copy`). */
   runEffects: (effects: CommandEffect[]) => Promise<void>;
   reveal: (tree: string, key: string) => Promise<void>;
+  /** Opens an address (http, https, mailto) in the system browser; the desktop main process checks it again (D380). */
+  openExternal: (url: string) => Promise<void>;
   /** Gives a plugin access to a folder (the user chose it in a dialog). */
   grantFolder: (plugin: string, path: string) => Promise<void>;
   setExpanded: (tree: string, keys: string[]) => void;
@@ -51,6 +53,11 @@ const WorkbenchContext = createContext<Workbench | null>(null);
 
 /** Commands that create a named thing: the shell supplies the default name in the interface language (the kernel's is only a fallback). */
 const DEFAULT_NAME_KEY: Record<string, MessageKey> = { "env.newChild": "default.newEnv", "config.newChild": "default.newConfig", "node.newGroup": "default.newGroup" };
+
+/** The protocols that may leave the application, and the longest address (the same rule as the kernel's `ui.openExternal`, D380). */
+export function isOpenableUrl(url: string): boolean {
+  return url.length > 0 && url.length <= 2048 && !/[\s\u0000-\u001f]/.test(url) && /^(https?:\/\/|mailto:)\S/i.test(url);
+}
 
 let tabSeq = 0;
 const newTabId = () => `t${Date.now().toString(36)}${(tabSeq++).toString(36)}`;
@@ -147,6 +154,20 @@ export function WorkbenchProvider({ store, children }: { store: Store; children:
       }
     };
 
+    const openExternal = async (url: string) => {
+      if (!isOpenableUrl(url)) {
+        fail(new Error(live.current.i18n.t("link.refused")));
+        return;
+      }
+      try {
+        const platform = client.platform?.openExternal;
+        if (platform) await platform(url);
+        else window.open(url, "_blank", "noopener,noreferrer");
+      } catch (error) {
+        fail(error);
+      }
+    };
+
     const applyEffects = async (effects: CommandEffect[], context: CommandContext = {}) => {
       const { toast: show, i18n: i } = live.current;
       for (const effect of effects) {
@@ -154,6 +175,9 @@ export function WorkbenchProvider({ store, children }: { store: Store; children:
           case "open":
             // The kernel names the initial page state `params` / `envId`; the demo's effects carry it under `state`.
             open(effect.target, { params: effect.params ?? effect.state?.params, envId: effect.envId ?? effect.state?.envId });
+            break;
+          case "openExternal":
+            await openExternal(effect.url);
             break;
           case "toast":
             show({ tone: effect.tone ?? "neutral", title: i.tx(effect.message) });
@@ -213,6 +237,7 @@ export function WorkbenchProvider({ store, children }: { store: Store; children:
 
     return {
       fail,
+      openExternal,
       open,
       forceClose,
       save,

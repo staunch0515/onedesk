@@ -1,7 +1,7 @@
 import { useEffect, useMemo } from "react";
 import { ActivityBar, Button, CommandPalette, Dialog, Sized, Splitter, WorkbenchFrame, WorkbenchMain, useTheme, useToast, type CommandGroup } from "../design";
-import { LOCALES, useI18n } from "./i18n";
-import { loadChildren } from "./protocol";
+import { useI18n } from "./i18n";
+import { loadChildren, type LanguageInfo } from "./protocol";
 import { CommandDialogs } from "./parts/command-dialogs";
 import { InstallDialogs, startInstall } from "./parts/install-dialogs";
 import { startExport, startImport, TransferDialogs } from "./parts/transfer-dialogs";
@@ -18,12 +18,14 @@ import { useQuery, useUi, useWorkbench } from "./state/context";
 
 export interface WorkbenchProps {
   settings: Settings;
+  /** `i18n.languages`: what the language picker lists (D379). */
+  languages: LanguageInfo[];
   /** Rejects when the workspace refused to store the setting. */
   onSetting: (name: "ui.language" | "ui.theme" | "ui.density", value: string) => Promise<void>;
 }
 
 /** The whole window: top bar, activity bar, side panel, tabs + page, status bar (I.8). */
-export function Workbench({ settings, onSetting: storeSetting }: WorkbenchProps) {
+export function Workbench({ settings, languages, onSetting: storeSetting }: WorkbenchProps) {
   const { client, store, actions } = useWorkbench();
   // A refused write shows as a toast; the shell has already read the stored value back.
   const onSetting = useMemo(() => (name: "ui.language" | "ui.theme" | "ui.density", value: string) => void storeSetting(name, value).catch(actions.fail), [storeSetting, actions]);
@@ -164,7 +166,7 @@ export function Workbench({ settings, onSetting: storeSetting }: WorkbenchProps)
           { id: "theme.system", label: t("palette.themeSystem"), icon: "monitor", onSelect: () => onSetting("ui.theme", "system") },
           { id: "density.comfortable", label: t("palette.densityComfortable"), icon: "rows-3", onSelect: () => onSetting("ui.density", "comfortable") },
           { id: "density.compact", label: t("palette.densityCompact"), icon: "rows-4", onSelect: () => onSetting("ui.density", "compact") },
-          ...LOCALES.map((l) => ({ id: `lang.${l.value}`, label: `${t("status.language")}: ${l.label}`, icon: "languages", keywords: ["language", "语言"], onSelect: () => onSetting("ui.language", l.value) })),
+          ...languages.map((l) => ({ id: `lang.${l.locale}`, label: `${t("status.language")}: ${l.name}`, icon: "languages", keywords: ["language", "语言"], onSelect: () => onSetting("ui.language", l.locale) })),
         ],
       },
       {
@@ -182,7 +184,7 @@ export function Workbench({ settings, onSetting: storeSetting }: WorkbenchProps)
   return (
     <WorkbenchFrame
       topbar={<TopBarPart onSettings={() => void openSettings()} />}
-      statusBar={<StatusBarPart settings={settings} onSetting={onSetting} resolvedTheme={resolvedTheme} />}
+      statusBar={<StatusBarPart settings={settings} languages={languages} onSetting={onSetting} resolvedTheme={resolvedTheme} />}
       floating={noticesOpen ? <NoticePanel /> : tasksOpen ? <TaskPanel /> : undefined}
     >
       <ActivityBar

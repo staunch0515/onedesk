@@ -4,6 +4,7 @@
  * Replace `createMockClient()` in main.tsx with the real client; nothing else in the UI changes.
  */
 import type { ProtocolClient } from "../client";
+import { zhCN } from "../../i18n/zh-CN";
 import { KernelError } from "../errors";
 import type {
   ActionDecl,
@@ -1546,6 +1547,19 @@ export function createMockClient(options: MockOptions = {}): ProtocolClient {
 
   const client: ProtocolClient = {
     version: "0.1-mock",
+
+    // The demo has no language plugins: Chinese is the shell's own table until the language plugin's JSON replaces it (round 11, phase 2).
+    i18n: {
+      async languages() {
+        return [
+          { locale: "en-US", name: "English" },
+          { locale: "zh-CN", name: "简体中文" },
+        ];
+      },
+      async shell(locale) {
+        return { locale, texts: locale === "zh-CN" ? { ...zhCN } : {} };
+      },
+    },
 
     workspace: {
       async info() {
