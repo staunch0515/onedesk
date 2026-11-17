@@ -7,7 +7,6 @@
  */
 import type {
   InstallAnswerParams,
-  WorkspaceInfo as KernelWorkspaceInfo,
   PluginDependency,
   CommandContext as KernelCommandContext,
   CommandEffect as KernelEffect,
@@ -93,6 +92,9 @@ export type {
   TreeNode,
   TreePage,
   ViewField,
+  WorkspaceInfo,
+  LanguageInfo,
+  I18nShellResult as ShellTexts,
 } from "./generated";
 
 /**
@@ -120,30 +122,8 @@ export interface WorkspaceEntry {
 /** Demo only: tells the user a demo page is not built yet. Never produced by the kernel. */
 export type PlaceholderNode = { type: "placeholder"; id: string; icon: string; message: Label; action?: { label: Label; disabled?: boolean } };
 
-/**
- * Round 11 (D381): a text node may say `format: "markdown"`. The generated type gets the field when the kernel
- * branch is merged; until then the shell adds it here (optional, default plain).
- */
-export type TextNode = Extract<KernelViewNode, { type: "text" }> & { format?: "plain" | "markdown" };
-
 /** The four kernel nodes plus the demo-only placeholder. */
-export type ViewNode = Exclude<KernelViewNode, { type: "text" }> | TextNode | PlaceholderNode;
-
-/** `workspace.info`: round 11 adds `startupPages` (targets `page:<plugin>/<page>` of the enabled plugins' startup pages). */
-export type WorkspaceInfo = KernelWorkspaceInfo & { startupPages?: string[] };
-
-/** One language the interface can show (`i18n.languages`, D379). `plugin` is absent for the built-in English. */
-export interface LanguageInfo {
-  locale: string;
-  name: string;
-  plugin?: string;
-}
-
-/** `i18n.shell`: the plugin's shell texts for one locale (key → text); empty for English and unknown locales. */
-export interface ShellTexts {
-  locale: string;
-  texts: Record<string, string>;
-}
+export type ViewNode = KernelViewNode | PlaceholderNode;
 
 /**
  * What the shell does after a command: the kernel's effects plus two demo-only ones
@@ -152,7 +132,6 @@ export interface ShellTexts {
 export type CommandEffect =
   | Exclude<KernelEffect, { type: "open" }>
   | (Extract<KernelEffect, { type: "open" }> & { state?: { params?: Record<string, string>; envId?: string | null } })
-  | { type: "openExternal"; url: string }
   | { type: "set-tab-env"; envId: string }
   | { type: "show-tasks" };
 

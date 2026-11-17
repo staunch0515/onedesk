@@ -27,12 +27,25 @@ interface FieldProps {
   secret?: { saved: boolean };
 }
 
+/** The workspace configuration's `ui.language` is chosen from the languages on offer (`i18n.languages`, D379), not typed. */
+const LANGUAGE_PARAM = /^(params?[.:])?ui\.language$/;
+
+function LanguageSelect({ id, size, label, value, disabled, onChange }: { id?: string; size: "sm" | "md"; label: string; value: string; disabled: boolean; onChange: (value: string) => void }) {
+  const { t } = useI18n();
+  const languages = useQuery((c) => (c.i18n ? c.i18n.languages() : Promise.resolve([])), [], ["languages"]);
+  const list = languages.data ?? [];
+  // A language that is configured but not on offer (its plugin is off) stays visible, as it is.
+  const options = [...list, ...(value && !list.some((l) => l.locale === value) ? [{ locale: value, name: value }] : [])];
+  return <Select id={id} size={size} aria-label={label} disabled={disabled} value={value || undefined} placeholder={t("field.choose")} onValueChange={onChange} options={options.map((l) => ({ value: l.locale, label: l.name }))} />;
+}
+
 /** One form control, chosen by the field's kind. Values are always text; booleans are "true" / "false". */
 export function FieldControl({ field, value, onChange, size, readOnly, id, secret }: FieldProps) {
   const { tx, t } = useI18n();
   const label = tx(field.label);
   const placeholder = field.envValue || (field.placeholder ? tx(field.placeholder) : undefined);
   const locked = readOnly || Boolean(field.readOnly);
+  if (LANGUAGE_PARAM.test(field.bind ?? field.name) && field.kind === "text") return <LanguageSelect id={id} size={size} label={label} value={value} disabled={locked} onChange={onChange} />;
   switch (field.kind) {
     case "boolean":
       return <Switch id={id} aria-label={label} checked={(value || field.envValue) === "true"} disabled={locked} onCheckedChange={(on) => onChange(on ? "true" : "false")} />;
