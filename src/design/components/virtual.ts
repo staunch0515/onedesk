@@ -19,12 +19,12 @@ export interface WindowRange {
  * Which rows of a list of `count` fixed-height rows must exist for a viewport scrolled to `scrollTop`.
  * Pure, so the arithmetic is tested without a browser. Without a usable height (not laid out yet) the first `UNMEASURED_ROWS` rows are drawn.
  */
-export function computeWindow(input: { count: number; rowHeight: number; scrollTop: number; viewport: number; overscan?: number }): WindowRange {
+export function computeWindow(input: { count: number; rowHeight: number; scrollTop: number; viewport: number; overscan?: number; /** Space above the first row inside the scroller (its padding), in px. */ inset?: number }): WindowRange {
   const { count, rowHeight, viewport } = input;
   const overscan = input.overscan ?? OVERSCAN_ROWS;
   if (count <= 0) return { start: 0, end: 0, before: 0, after: 0 };
   if (!(rowHeight > 0) || !(viewport > 0)) return { start: 0, end: Math.min(count, UNMEASURED_ROWS), before: 0, after: 0 };
-  const top = Math.max(0, input.scrollTop);
+  const top = Math.max(0, input.scrollTop - (input.inset ?? 0));
   const first = Math.min(count - 1, Math.floor(top / rowHeight));
   const last = Math.min(count, Math.ceil((top + viewport) / rowHeight));
   const start = Math.max(0, first - overscan);
@@ -33,9 +33,9 @@ export function computeWindow(input: { count: number; rowHeight: number; scrollT
 }
 
 /** The scroll position that brings row `index` fully into view with the least movement (`viewport` excludes a sticky header). */
-export function scrollTopFor(input: { index: number; rowHeight: number; scrollTop: number; viewport: number }): number {
+export function scrollTopFor(input: { index: number; rowHeight: number; scrollTop: number; viewport: number; inset?: number }): number {
   const { index, rowHeight, viewport } = input;
-  const top = index * rowHeight;
+  const top = (input.inset ?? 0) + index * rowHeight;
   if (top < input.scrollTop) return top;
   if (top + rowHeight > input.scrollTop + viewport) return Math.max(0, top + rowHeight - viewport);
   return input.scrollTop;
@@ -59,7 +59,8 @@ export interface VirtualOptions {
 export interface VirtualWindow extends WindowRange {
   rowHeight: number;
   /** Brings a row into view even if it is not drawn at the moment. */
-  reveal: (index: number) => void;
+  /** Returns false when it could not act yet (size not known). */
+  reveal: (index: number) => boolean;
 }
 
 /**
@@ -67,13 +68,14 @@ export interface VirtualWindow extends WindowRange {
  * comes from a token so the rows keep their look. Not laid out (no height known): all rows are drawn.
  */
 export function useVirtualWindow(ref: RefObject<HTMLElement | null>, { count, rowHeightVar, rowHeight: override, header = 0 }: VirtualOptions): VirtualWindow {
-  const [metrics, setMetrics] = useState({ scrollTop: 0, viewport: 0, rowHeight: override ?? 0 });
+  const [metrics, setMetrics] = useState({ scrollTop: 0, viewport: 0, rowHeight: override ?? 0, inset: 0 });
   const measure = useCallback(() => {
     const el = ref.current;
     if (!el) return;
     const rowHeight = override ?? readPx(el, rowHeightVar);
-    const next = { scrollTop: el.scrollTop, viewport: Math.max(0, el.clientHeight - header), rowHeight: Number.isFinite(rowHeight) ? rowHeight : 0 };
-    setMetrics((m) => (m.scrollTop === next.scrollTop && m.viewport === next.viewport && m.rowHeight === next.rowHeight ? m : next));
+    const inset = Number.parseFloat(window.getComputedStyle(el).paddingTop) || 0;
+    const next = { scrollTop: el.scrollTop, viewport: Math.max(0, el.clientHeight - header), rowHeight: Number.isFinite(rowHeight) ? rowHeight : 0, inset };
+    setMetrics((m) => (m.scrollTop === next.scrollTop && m.viewport === next.viewport && m.rowHeight === next.rowHeight && m.inset === next.inset ? m : next));
   }, [ref, rowHeightVar, override, header]);
 
   useLayoutEffect(measure, [measure, count]);
@@ -98,18 +100,22 @@ export function useVirtualWindow(ref: RefObject<HTMLElement | null>, { count, ro
     };
   }, [ref, measure]);
 
-  const range = computeWindow({ count, rowHeight: metrics.rowHeight, scrollTop: metrics.scrollTop, viewport: metrics.viewport });
+  const range = computeWindow({ count, rowHeight: metrics.rowHeight, scrollTop: metrics.scrollTop, viewport: metrics.viewport, inset: metrics.inset });
   const latest = useRef({ metrics, count, header });
   latest.current = { metrics, count, header };
   const reveal = useCallback(
     (index: number) => {
       const el = ref.current;
       const { metrics: m, count: n } = latest.current;
-      if (!el || !(m.rowHeight > 0) || index < 0 || index >= n) return;
-      const target = scrollTopFor({ index, rowHeight: m.rowHeight, scrollTop: el.scrollTop, viewport: m.viewport });
-      if (target !== el.scrollTop) el.scrollTop = target;
+      if (!el || !(m.rowHeight > 0) || index < 0 || index >= n) return false;
+      const target = scrollTopFor({ index, rowHeight: m.rowHeight, scrollTop: el.scrollTop, viewport: m.viewport, inset: m.inset });
+      if (target !== el.scrollTop) {
+        el.scrollTop = target;
+        measure(); // draw the new window now, without waiting for the scroll event
+      }
+      return true;
     },
-    [ref],
+    [ref, measure],
   );
   return { ...range, rowHeight: metrics.rowHeight, reveal };
 }

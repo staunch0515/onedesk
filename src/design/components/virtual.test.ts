@@ -43,6 +43,24 @@ describe("computeWindow", () => {
   });
 });
 
+describe("padding above the rows (inset)", () => {
+  it("the first row starts below the padding: at the very bottom nothing is off by the padding", () => {
+    // 100 rows of 26 px, viewport 260, 4 px padding on top: content is 4 + 2600 high, the last scroll position is 2344.
+    const w = computeWindow({ count: 100, rowHeight: 26, viewport: 260, scrollTop: 4 + 2600 - 260, inset: 4, overscan: 0 });
+    expect(w.end).toBe(100);
+    expect(w.start).toBe(90);
+    // without the inset the same position would claim one row too few at the top
+    expect(computeWindow({ count: 100, rowHeight: 26, viewport: 260, scrollTop: 4 + 2600 - 260, overscan: 0 }).start).toBe(90);
+    const mid = computeWindow({ count: 100, rowHeight: 26, viewport: 260, scrollTop: 4 + 26 * 50 - 1, inset: 4, overscan: 0 });
+    expect(mid.start).toBe(49);
+  });
+
+  it("revealing a row accounts for the padding", () => {
+    expect(scrollTopFor({ index: 99, rowHeight: 26, scrollTop: 0, viewport: 260, inset: 4 })).toBe(4 + 100 * 26 - 260);
+    expect(scrollTopFor({ index: 0, rowHeight: 26, scrollTop: 100, viewport: 260, inset: 4 })).toBe(4);
+  });
+});
+
 describe("scrollTopFor", () => {
   it("leaves the scroll alone when the row is visible and moves the least otherwise", () => {
     const at = (index: number, scrollTop: number) => scrollTopFor({ index, rowHeight: 26, scrollTop, viewport: 520 });

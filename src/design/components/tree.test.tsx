@@ -72,4 +72,30 @@ describe("Tree windowing (D373)", () => {
     fireEvent.keyDown(tree, { key: "End" });
     expect(tree.scrollTop).toBeGreaterThan(26 * 19000);
   });
+
+  it("a `more` row that is still in view after its batch arrived asks again (a batch shorter than the screen)", () => {
+    const onNeedMore = vi.fn();
+    const more = { key: "more:", label: "Reading more…", icon: "ellipsis", depth: 0, expandable: false, more: true } as TreeRow;
+    const props = { label: "t", onActivate: () => undefined, onToggle: () => undefined, onNeedMore };
+    const { rerender } = render(<Tree rows={[...many(3), more]} {...props} />);
+    expect(onNeedMore).toHaveBeenCalledTimes(1);
+    rerender(<Tree rows={[...many(6), more]} {...props} />); // the batch arrived; the row is still in view
+    expect(onNeedMore).toHaveBeenCalledTimes(2);
+    rerender(<Tree rows={[...many(6), more]} {...props} />); // nothing changed: no new request
+    expect(onNeedMore).toHaveBeenCalledTimes(2);
+  });
+
+  it("rows opening above the selected row do not pull the view back to it; a new selection does scroll", () => {
+    const props = { label: "t", onActivate: () => undefined, onToggle: () => undefined };
+    const { container, rerender } = render(<Tree rows={many(500)} selectedKey="k300" {...props} />);
+    const tree = container.querySelector<HTMLElement>(".od-tree")!;
+    expect(tree.scrollTop).toBeGreaterThan(0); // the first selection was revealed
+    tree.scrollTop = 26 * 40; // the user scrolls away
+    fireEvent.scroll(tree);
+    const extra: TreeRow[] = Array.from({ length: 20 }, (_, i) => ({ key: `x${i}`, label: `X ${i}`, icon: "file", depth: 1, expandable: false }));
+    rerender(<Tree rows={[...many(10), ...extra, ...many(500).slice(10)]} selectedKey="k300" {...props} />); // a folder above opened
+    expect(tree.scrollTop).toBe(26 * 40);
+    rerender(<Tree rows={[...many(10), ...extra, ...many(500).slice(10)]} selectedKey="k450" {...props} />);
+    expect(tree.scrollTop).toBeGreaterThan(26 * 400);
+  });
 });
