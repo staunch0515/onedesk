@@ -122,8 +122,15 @@ export interface WorkspaceEntry {
 /** Demo only: tells the user a demo page is not built yet. Never produced by the kernel. */
 export type PlaceholderNode = { type: "placeholder"; id: string; icon: string; message: Label; action?: { label: Label; disabled?: boolean } };
 
+/**
+ * Round 12 (assumed, see round12-shell-done.md): a button on every row of a table. Clicking it sends the page event `event`
+ * with the row's index (`context.row`); the plugin does the rest (remove, move up, move down…).
+ */
+export type RowAction = { event: string; label: Label; icon?: string; danger?: boolean };
+export type TableViewNode = Extract<KernelViewNode, { type: "table" }> & { rowActions?: RowAction[] };
+
 /** The four kernel nodes plus the demo-only placeholder. */
-export type ViewNode = KernelViewNode | PlaceholderNode;
+export type ViewNode = Exclude<KernelViewNode, { type: "table" }> | TableViewNode | PlaceholderNode;
 
 /**
  * What the shell does after a command: the kernel's effects plus two demo-only ones

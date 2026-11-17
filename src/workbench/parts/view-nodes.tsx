@@ -1,5 +1,5 @@
 import { useCallback } from "react";
-import { Button, CodeEditor, DataGrid, EmptyState, MarkdownText, Pane, Text, TextBlock, type DataGridColumn, type ReferenceState } from "../../design";
+import { Button, CodeEditor, DataGrid, EmptyState, IconButton, MarkdownText, Pane, Text, TextBlock, type DataGridColumn, type ReferenceState } from "../../design";
 import { useI18n } from "../i18n";
 import type { OutputCell, ViewNode } from "../protocol";
 import { useQuery, useUi, useWorkbench } from "../state/context";
@@ -37,7 +37,7 @@ function MarkdownNode({ source }: { source: string }) {
 }
 
 /** Draws the read-only view nodes (text, table, link, placeholder). Forms are drawn by the view page. */
-export function ViewNodes({ nodes }: { nodes: ViewNode[] }) {
+export function ViewNodes({ nodes, onRowAction }: { nodes: ViewNode[]; onRowAction?: (event: string, row: number) => void }) {
   const { actions } = useWorkbench();
   const { tx } = useI18n();
   return (
@@ -55,6 +55,32 @@ export function ViewNodes({ nodes }: { nodes: ViewNode[] }) {
             );
           case "table": {
             const columns: Array<DataGridColumn<Indexed>> = node.columns.map((c, i) => ({ key: c.key, header: c.label, numeric: c.numeric, value: (row) => row.cells[i], width: i === 0 ? 320 : 144 }));
+            const rowActions = onRowAction ? (node.rowActions ?? []) : [];
+            if (rowActions.length > 0) {
+              columns.push({
+                key: "__actions",
+                header: "",
+                sortable: false,
+                width: 40 * rowActions.length,
+                render: (row) => (
+                  <Pane direction="row" gap="xs">
+                    {rowActions.map((a) => (
+                      <IconButton
+                        key={a.event}
+                        icon={a.icon ?? "circle"}
+                        size="sm"
+                        label={tx(a.label)}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onRowAction?.(a.event, row.index);
+                        }}
+                        onDoubleClick={(e) => e.stopPropagation()}
+                      />
+                    ))}
+                  </Pane>
+                ),
+              });
+            }
             const targets = node.rowTargets;
             return (
               <DataGrid

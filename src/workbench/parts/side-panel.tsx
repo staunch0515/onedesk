@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { startInstall } from "./install-dialogs";
-import { Badge, Banner, ContextMenu, EmptyState, IconButton, Input, LoadingState, SidePanel, Tree, type MenuEntry, type TreeDropPosition, type TreeRow } from "../../design";
+import { Badge, Banner, ContextMenu, EmptyState, IconButton, Input, LoadingState, SidePanel, Tree, useToast, type MenuEntry, type TreeDropPosition, type TreeRow } from "../../design";
 import { useI18n } from "../i18n";
 import { loadBatch, loadLevel, loadMore, type Level, type MenuCommand, type TreeInfo, type TreeNode } from "../protocol";
 import { useUi, useWorkbench } from "../state/context";
@@ -16,6 +16,9 @@ const FOLLOW_CAP = 20000;
 
 /** Children by parent key, per tree. Kept across activity switches so a tree does not flash empty. */
 const cache = new Map<string, Map<string, Level>>();
+
+/** `dropAny` arrives with the round-12 protocol types; until they are generated it is read as an optional field. */
+type DropAwareNode = TreeNode & { dropAny?: boolean };
 
 /**
  * Rows that are not resources: the "more is being read" row, and a plugin's own nodes (`@<resource>/<key>`, and `!…` for a
@@ -35,6 +38,7 @@ export function menuEntries(commands: MenuCommand[], tx: (l: MenuCommand["label"
 export function TreePanel({ tree }: { tree: TreeInfo }) {
   const { client, store, actions } = useWorkbench();
   const { t, tx, locale, error } = useI18n();
+  const { toast } = useToast();
   const expanded = useUi((s) => s.expanded[tree.id] ?? EMPTY);
   const selected = useUi((s) => s.selected[tree.id] ?? null);
   const renaming = useUi((s) => (s.renaming?.tree === tree.id ? s.renaming.key : null));
@@ -258,13 +262,16 @@ export function TreePanel({ tree }: { tree: TreeInfo }) {
     if (!drag || (targetKey && !target)) return false;
     const container = position === "inside" ? target : target?.parentKey ? index.get(target.parentKey) : null;
     if (!container) return true; // top level of a stored tree
-    if (!container.accepts.includes("*") && !container.accepts.includes(drag.kind)) return false;
     for (let p: TreeNode | undefined = container; p; p = p.parentKey ? index.get(p.parentKey) : undefined) if (p.key === dragKey) return false;
-    return true;
+    // A `dropAny` node (D390) takes any resource node dropped onto it; its plugin decides what that means.
+    if (position === "inside" && (container as DropAwareNode).dropAny) return true;
+    return container.accepts.includes("*") || container.accepts.includes(drag.kind);
   };
 
   const drop = (dragKey: string, targetKey: string | null, position: TreeDropPosition) => {
-    client.tree.move(tree.id, dragKey, targetKey, position).then(() => {
+    client.tree.move(tree.id, dragKey, targetKey, position).then((out) => {
+      // The plugin took the drop itself (a reference was added, nothing moved): show what it said.
+      if (out && out.message !== undefined) toast({ tone: "success", title: tx(out.message) });
       if (position === "inside" && targetKey && !expanded.includes(targetKey)) actions.setExpanded(tree.id, [...expanded, targetKey]);
     }, actions.fail);
   };

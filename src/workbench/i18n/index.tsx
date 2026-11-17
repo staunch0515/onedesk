@@ -99,7 +99,8 @@ function build(locale: Locale, texts?: Record<string, string>): I18n {
       const general = KERNEL_ERRORS[e.code];
       return general ? t(general) : e.message.trim() ? e.message : t(RUN_FALLBACK, { code: e.code });
     },
-    permission: (id) => (PERMISSIONS[id] ? t(PERMISSIONS[id]!) : id),
+    // Ids the kernel table lacks take their words from the shell texts (`permission.<id>`), so a language plugin can translate them.
+    permission: (id) => (PERMISSIONS[id] ? t(PERMISSIONS[id]!) : (table[`permission.${id}`] ?? (enUS as Record<string, string>)[`permission.${id}`] ?? id)),
     operation: (id) => (AUDIT_OPERATIONS[id] ? t(AUDIT_OPERATIONS[id]!) : id),
     dateTime: (at) => dt.format(at),
     time: (at) => tm.format(at),

@@ -1,6 +1,6 @@
 import type { ConnectionState, EventMessage, HelloResult, TreePage } from "../generated";
 import type { ProtocolClient } from "../client";
-import type { ExportResult, ImportPreview, ImportResult, KnownParam, RefInfo, RunExportResult, InstallPreview, InstallRequest, PluginVersionParams, SecretInfo, UndoUpgradeResult, UpgradeResult, PageEventResult, PaletteCommand, PluginDetail, Run, ViewNode, AuditFacets, AuditFilter, AuditRow, EnvOption, EnvView, HistoryEntry, ResolvedParam, SearchHit, CommandContext, CommandEffect, NewItem, PageContext, PageDescriptor, PageSaveResult, PluginGrants, Resource, TreeInfo, TreeNode, WorkspaceInfo, LanguageInfo, ShellTexts } from "../types";
+import type { ExportResult, ImportPreview, ImportResult, KnownParam, RefInfo, RunExportResult, InstallPreview, InstallRequest, PluginVersionParams, SecretInfo, UndoUpgradeResult, UpgradeResult, PageEventResult, PaletteCommand, PluginDetail, Run, ViewNode, Label, AuditFacets, AuditFilter, AuditRow, EnvOption, EnvView, HistoryEntry, ResolvedParam, SearchHit, CommandContext, CommandEffect, NewItem, PageContext, PageDescriptor, PageSaveResult, PluginGrants, Resource, TreeInfo, TreeNode, WorkspaceInfo, LanguageInfo, ShellTexts } from "../types";
 import { EventBus } from "./event-bus";
 import { KernelError } from "../errors";
 import type { Transport } from "./transport";
@@ -107,7 +107,10 @@ export async function createKernelClient(transport: Transport, locale?: () => st
       list: () => call<TreeInfo[]>("tree.list"),
       children: (tree, parent, offset, locale) => call<TreePage>("tree.children", compact({ tree, parent, offset, locale })),
       path: (tree, key) => call<string[]>("tree.path", { tree, key }),
-      move: async (tree, key, target, position) => void (await call("tree.move", compact({ tree, key, target, position }))),
+      move: async (tree, key, target, position) => {
+        const out = await call<{ message?: Label } | null | undefined>("tree.move", compact({ tree, key, target, position }));
+        return out && out.message !== undefined && out.message !== null ? { message: out.message } : undefined;
+      },
       createGroup: (tree, parent, name) => call<TreeNode>("tree.createGroup", compact({ tree, parent, name })),
       rename: async (tree, key, name) => void (await call("tree.rename", { tree, key, name })),
     },
