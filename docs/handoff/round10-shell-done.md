@@ -81,3 +81,17 @@
 - 不是本轮造成的（来自前几轮，旧基准没跟上）：`env`：环境页参数区多了“Add parameter”按钮（过滤框旁）、说明文字换行不同；`plugin`：假数据模式下“Check for updates”“Open plugin folder”按钮隐藏（第九轮）；`sql`、`tasks`、`env` 里的时间、运行记录（“Executing…”进度、结果表有了数据）、历史表的日期是随时间变的（演示数据按“现在”生成），所以每次重跑都不同。
 - 没有看到错位、间距或行高的变化（树、表格、栏的盒子位置都对得上）。dark 版与 light 版的差别同上。
 新基准已提交。
+
+## 审查后的修改（`round10-review.md` 中处理人含“外壳”的条目）
+- **#1**：认 `load-failed`（文字“加载失败”、图标、样式、`frame.tsx` 的表）；测试 `tree-batches.test.tsx`“a node that fails to load is drawn with words”。
+- **#2**：`Tree` 的“更多”行在批次读完、行数变了、行仍在视野里时再要下一批（失败时行数不变，不重试）；测试 `tree.test.tsx`“still in view after its batch arrived”、`tree-batches.test.tsx`“small batches”。
+- **#3（外壳一半）**：`children.ts` 新增 `appendBatch`：空批次、或 `next` 没有超过本批的偏移就当到头；`loadLevel/loadMore/loadChildren` 都走它；测试 `children.test.ts`、`tree-batches.test.tsx`“keeps answering the same next”。
+- **#4（外壳一半）**：行的遍历和过滤带祖先集合和“已画过的键”集合：重复键只画一次，节点不会成为自己的祖先；测试“a key repeated … does not make the tree loop”。
+- **#5**：跟随活动标签页时，沿路径逐层按需读后续批次直到找到目标（到头或 2 万个为止），读到后选中并滚到可见；`load` 不再用较短的第一批覆盖更长的已读层；测试“the node of the active tab is found even when it sits in a later batch”“a node that never turns up stops…”。
+- **#6**：只在选中的键变了（或第一次能量出大小）时滚动；`useVirtualWindow.reveal` 返回是否生效；测试 `tree.test.tsx`“rows opening above the selected row do not pull the view back”。同时修了一个我自己引入的问题：第一次渲染时量不出大小，`reveal` 什么也没做却被记为“已滚动”。
+- **#8**：窗口计算加了容器上内边距（`inset`，取自 `paddingTop`）；测试 `virtual.test.ts`。
+- **#9**：`isSyntheticKey`（`@…`、`!…`、“更多”行）既不能拖、也不是放置目标（前后、里面都不行）；右键“更多”行没有菜单；测试“the placeholder row has no menu … plugin nodes are no drop targets”。
+- `reveal` 在设置滚动位置后立刻重新量，不等 `scroll` 事件。
+- 测试缺口三条：`load-failed` 显示、小批次连续取批、打开第 200 个以后的节点时定位——都在上面。
+
+检查：`pnpm typecheck`、`pnpm lint`、`pnpm test`（50 文件 422 例）通过；假数据模式 `E2E_PORT=1433 … workbench.spec.ts`：23 过、1 跳过、0 失败（本次没有再出现拖放用例的偶发失败）。
