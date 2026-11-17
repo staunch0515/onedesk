@@ -40,14 +40,21 @@ impl HostApi for PluginHost {
 /// Round 11 (D380): what `host.ui.openExternal` may open.
 pub const EXTERNAL_SCHEMES: &[&str] = &["http", "https", "mailto"];
 pub const MAX_EXTERNAL_URL: usize = 2048;
+/// D386: `openExternal` calls one invocation (one run or one page event) may make.
+pub const MAX_EXTERNAL_OPENS: usize = 5;
 
 /// A checked address for `openExternal`, or `invalid/badUrl`.
 pub fn external_url(raw: &str) -> KResult<String> {
     let bad = || invalid("badUrl");
-    if raw.is_empty() || raw.chars().count() > MAX_EXTERNAL_URL {
+    // A cheap bound before parsing; the limit itself applies to the normalized address (what
+    // is sent and opened: non-ASCII is percent-encoded and gets longer).
+    if raw.is_empty() || raw.len() > 4 * MAX_EXTERNAL_URL {
         return Err(bad());
     }
     let u = reqwest::Url::parse(raw).map_err(|_| bad())?;
+    if u.as_str().len() > MAX_EXTERNAL_URL {
+        return Err(bad());
+    }
     if !EXTERNAL_SCHEMES.contains(&u.scheme()) {
         return Err(bad());
     }
@@ -482,6 +489,10 @@ impl Inner {
         }
         let raw = arg_str(args, 0, "url")?;
         let url = external_url(&raw)?;
+        // D386: only valid addresses count; the sixth and later are refused.
+        if info.external_opens.fetch_add(1, std::sync::atomic::Ordering::SeqCst) >= MAX_EXTERNAL_OPENS {
+            return Err(denied("tooMany"));
+        }
         let object = external_object(&url).unwrap_or_default();
         let scheme = url.split(':').next().unwrap_or_default().to_string();
         self.execute(plugin.actor(), Command::Audit { op: "ui.openExternal".into(), object, summary: json!({ "scheme": scheme }) })
