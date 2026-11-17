@@ -23,10 +23,35 @@ async function probe(ctx, context) {
 }
 "#;
 
+/// D393: a page with a table whose rows carry keys, targets and actions; `body.mode` breaks it.
+const SHEET: &str = r#"
+function sheet(host) {
+  host.pages.handle("sheet", {
+    render(ctx) {
+      const b = ctx.resource.body;
+      const targets = b.targets || [];
+      const rows = targets.map((t, i) => ["row " + i]);
+      const table = { type: "table", id: "t", columns: [{ key: "n", label: "N" }], rows, rowTargets: targets,
+        rowKeys: targets.map((_, i) => "k" + i),
+        rowActions: [{ id: "remove", label: "Remove", icon: "x" }, { id: "up", label: { "en-US": "Up" } }] };
+      if (b.mode === "shortTargets") table.rowTargets = targets.slice(1);
+      if (b.mode === "shortKeys") table.rowKeys = [];
+      if (b.mode === "manyActions") table.rowActions = [1, 2, 3, 4, 5].map((i) => ({ id: "a" + i, label: "a" }));
+      if (b.mode === "unknownField") table.rowColor = "red";
+      return { view: [table] };
+    },
+    onEvent(ctx, event) {
+      return { message: { "en-US": event + "@" + (ctx.row === undefined ? "none" : String(ctx.row)) } };
+    },
+  });
+}
+"#;
+
 /// Has `requires.resources`: a `hub` kind that takes drops and supplies children.
 const REACH_MAIN: &str = r#"
 export default {
   activate(host) {
+    sheet(host);
     host.commands.handle("probe", probe);
     host.commands.handle("fill", async (ctx, context) => {
       const n = (context && context.args && context.args.n) || 0;
@@ -68,6 +93,7 @@ export default {
 const BLIND_MAIN: &str = r#"
 export default {
   activate(host) {
+    sheet(host);
     host.commands.handle("probe", probe);
     host.kinds.handle("shelf", {
       children(ctx) {
@@ -98,7 +124,7 @@ fn write_pkg(root: &Path, id: &str, requires: Value, contributes: Value, main: &
     let m = json!({ "id": id, "version": "0.1.0", "apiVersion": "2", "name": "n", "icon": "box",
                     "main": "main.js", "requires": requires, "contributes": contributes });
     std::fs::write(pkg.join("manifest.json"), serde_json::to_vec_pretty(&m).unwrap()).unwrap();
-    std::fs::write(pkg.join("main.js"), format!("{PROBE}\n{main}")).unwrap();
+    std::fs::write(pkg.join("main.js"), format!("{PROBE}\n{SHEET}\n{main}")).unwrap();
 }
 
 fn plugins(dir: &Path) -> PathBuf {
@@ -111,8 +137,13 @@ fn plugins(dir: &Path) -> PathBuf {
         json!({
             "kinds": [
                 { "id": "hub", "label": "hub", "icon": "layers", "tree": "resources", "children": true, "drop": true, "accepts": ["hub"] },
-                { "id": "card", "label": "card", "icon": "box", "tree": "resources", "draggable": true }
+                { "id": "card", "label": "card", "icon": "box", "tree": "resources", "draggable": true },
+                { "id": "loose", "label": "loose", "icon": "box" },
+                { "id": "pin", "label": "pin", "icon": "pin", "tree": "shelf" },
+                { "id": "sheet", "label": "sheet", "icon": "table", "tree": "resources", "page": "sheet" }
             ],
+            "trees": [ { "id": "shelf", "label": "shelf", "icon": "box", "source": "stored" } ],
+            "pages": [ { "id": "sheet" } ],
             "commands": [probe, { "id": "fill", "label": "fill", "icon": "box" }]
         }),
         REACH_MAIN,
@@ -124,8 +155,10 @@ fn plugins(dir: &Path) -> PathBuf {
         json!({
             "kinds": [
                 { "id": "shelf", "label": "shelf", "icon": "box", "tree": "resources", "children": true },
-                { "id": "bin", "label": "bin", "icon": "box", "tree": "resources", "drop": true }
+                { "id": "bin", "label": "bin", "icon": "box", "tree": "resources", "drop": true },
+                { "id": "sheet", "label": "sheet", "icon": "table", "tree": "resources", "page": "sheet" }
             ],
+            "pages": [ { "id": "sheet" } ],
             "commands": [probe]
         }),
         BLIND_MAIN,
@@ -479,4 +512,57 @@ async fn sources_need_no_permission_and_the_drop_kind_of_a_plugin_without_it_wor
     assert_eq!(c.ok("tree.move", mv(&item, &bin)).await["handled"], true);
     assert_eq!(get(&c, &item).await.get("parentId"), None);
     assert_eq!(audits(&c, "tree.drop").await.len(), 1);
+}
+
+/* ------------------------------------------------------------------ review #1 (D393) table rows */
+
+async fn env_root(c: &Client, tree: &str) -> String {
+    c.ok("tree.children", json!({ "tree": tree })).await["nodes"][0]["key"].as_str().unwrap().to_string()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn table_rows_carry_actions_keys_and_checked_targets() {
+    let (_env, c) = world(5000).await;
+    let foreign = create(&c, "test.alpha:item", None, json!({ "name": "F" })).await;
+    let env = env_root(&c, "env").await;
+    let targets = json!([format!("resource:{foreign}"), null, format!("resource:{env}"), "nonsense", "plugin:test.reach"]);
+    let sheet = create(&c, "test.reach:sheet", None, json!({ "body.targets": targets })).await;
+    let p = c.ok("page.resolve", json!({ "target": format!("resource:{sheet}"), "context": {} })).await;
+    let t = &p["view"][0];
+    // With resourcesAll: the foreign resource stays; environments are never targets (D395).
+    assert_eq!(t["rowTargets"], json!([format!("resource:{foreign}"), null, null, null, "plugin:test.reach"]), "{t}");
+    assert_eq!(t["rowKeys"], json!(["k0", "k1", "k2", "k3", "k4"]));
+    assert_eq!(t["rowActions"], json!([{ "id": "remove", "label": "Remove", "icon": "x" }, { "id": "up", "label": { "en-US": "Up" } }]));
+    // Without the permission the foreign resource is not a target.
+    let blind = create(&c, "test.blind:sheet", None, json!({ "body.targets": [format!("resource:{foreign}")] })).await;
+    let p = c.ok("page.resolve", json!({ "target": format!("resource:{blind}"), "context": {} })).await;
+    assert_eq!(p["view"][0]["rowTargets"], json!([null]));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn bad_tables_are_plugin_errors() {
+    let (_env, c) = world(5000).await;
+    let t = json!(["plugin:test.reach", "plugin:test.reach"]);
+    for mode in ["shortTargets", "shortKeys", "manyActions", "unknownField"] {
+        let s = create(&c, "test.reach:sheet", None, json!({ "body.targets": t })).await;
+        c.probe("test.reach", "resources.update", json!([s, { "body.mode": mode }])).await;
+        let e = c.call("page.resolve", json!({ "target": format!("resource:{s}"), "context": {} })).await.unwrap_err();
+        assert_eq!(e.code, ErrorCode::PluginError, "{mode}: {e:?}");
+    }
+    // Exactly 4 row actions are fine.
+    let s = create(&c, "test.reach:sheet", None, json!({ "body.targets": t })).await;
+    c.ok("page.resolve", json!({ "target": format!("resource:{s}"), "context": {} })).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_row_action_event_hands_the_row_to_ctx_row() {
+    let (_env, c) = world(5000).await;
+    let s = create(&c, "test.reach:sheet", None, json!({ "body.targets": ["plugin:test.reach"] })).await;
+    let target = format!("resource:{s}");
+    let r = c.ok("page.event", json!({ "target": target, "event": "remove", "context": { "row": "k0" } })).await;
+    assert_eq!(r["message"], json!({ "en-US": "remove@k0" }));
+    let r = c.ok("page.event", json!({ "target": target, "event": "up", "context": {} })).await;
+    assert_eq!(r["message"], json!({ "en-US": "up@none" }));
+    let e = c.call("page.event", json!({ "target": target, "event": "up", "context": { "row": "x".repeat(1001) } })).await.unwrap_err();
+    assert_eq!(e.code, ErrorCode::InvalidParams);
 }

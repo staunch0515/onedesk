@@ -548,13 +548,32 @@ pub enum ViewNode {
         id: String,
         columns: Vec<OutputColumn>,
         rows: Vec<Vec<Value>>,
-        row_targets: Option<Vec<String>>,
+        /// What clicking a row opens; as long as `rows`. Round 12 (D393): `null` (or a target the
+        /// plugin may not open) = that row opens nothing.
+        row_targets: Option<Vec<Option<String>>>,
+        /// Round 12 (D393): buttons on every row (at most 4). Each sends the page event named by its
+        /// `id`, with the row's key as `context.row`.
+        row_actions: Option<Vec<TableRowAction>>,
+        /// Round 12 (D393): one key per row (as long as `rows`), handed back as `context.row`.
+        row_keys: Option<Vec<String>>,
     },
     Link {
         id: String,
         label: Label,
         target: String,
     },
+}
+
+/// Round 12 (D393): one button on every row of a table.
+#[skip_serializing_none]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[ts(export, optional_fields)]
+pub struct TableRowAction {
+    /// The page event it sends.
+    pub id: String,
+    pub label: Label,
+    pub icon: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -687,6 +706,9 @@ pub struct PageContext {
     /// Round 8 (D358): current values of the page's `param: true` fields (the same map as
     /// `RunStartParams.params`); given to `render`, `onEvent` and recompute as `ctx.params`.
     pub params: Option<BTreeMap<String, String>>,
+    /// Round 12 (D393): with a row action's page event, the key of that row (its `rowKeys`
+    /// entry, else the row number as text); given to `onEvent` as `ctx.row`.
+    pub row: Option<String>,
 }
 
 #[skip_serializing_none]

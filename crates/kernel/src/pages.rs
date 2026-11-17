@@ -334,7 +334,11 @@ impl Inner {
             .call_version(plugin, "pages", page, "render", json!([ctx]), info, None, None)
             .await
             .map_err(|e| e.to_protocol())?;
-        serde_json::from_value::<RenderOut>(out).map_err(|e| bad_output(&plugin.id, e))
+        let mut out = serde_json::from_value::<RenderOut>(out).map_err(|e| bad_output(&plugin.id, e))?;
+        // D393: table rows (lengths, row actions, row targets).
+        let own = ctx["resource"]["id"].as_str().filter(|i| !i.is_empty());
+        self.check_tables(plugin, own, &mut out.view)?;
+        Ok(out)
     }
 
     async fn resolve_resource(
