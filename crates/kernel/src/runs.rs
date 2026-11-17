@@ -251,6 +251,7 @@ impl Inner {
                     let (pl, t) = self.registry.tree(&tree)?;
                     (pl, t.page.clone())
                 }
+                crate::pages::Target::Page { plugin, page } => (self.standalone_page(&plugin, &page)?, Some(page)),
                 _ => return None,
             },
         };
@@ -727,6 +728,10 @@ impl Inner {
                 let page = t.page.clone().ok_or_else(|| not_found("page"))?;
                 Ok((p, page, json!({ "target": target, "node": { "tree": tree, "key": key } })))
             }
+            Target::Page { plugin, page } => {
+                let p = self.standalone_page(&plugin, &page).ok_or_else(|| not_found("page"))?;
+                Ok((p, page, json!({ "target": target })))
+            }
             _ => Err(not_found("page")),
         }
     }
@@ -814,6 +819,7 @@ impl Inner {
                 dependents: Some(vec![]),
                 unmet_exports: Some(vec![]),
                 runtime: Some(PluginRuntime::Idle),
+                legacy_kinds: Some(vec![]),
             }));
         };
         let m = &p.manifest;
@@ -893,6 +899,7 @@ impl Inner {
             dependents: Some(self.dependents_of(id)),
             unmet_exports: Some(self.unmet_exports(p)),
             runtime: Some(if self.runtime_live(id) { PluginRuntime::Live } else { PluginRuntime::Idle }),
+            legacy_kinds: Some(m.legacy_kinds.clone()),
         }))
     }
 

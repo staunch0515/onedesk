@@ -54,4 +54,9 @@ unmetExports?: Array<string>,
  * Round 9 (D365): whether the active version has a runtime now (`idle`: released after a
  * quiet spell, started again when used). Always present from the kernel.
  */
-runtime?: PluginRuntime, };
+runtime?: PluginRuntime, 
+/**
+ * Round 11 (D383): the active version's manifest `legacyKinds` (first-version short kind
+ * names; not taken over yet). Always present from the kernel.
+ */
+legacyKinds?: Array<string>, };

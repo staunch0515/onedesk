@@ -37,6 +37,43 @@ impl HostApi for PluginHost {
     }
 }
 
+/// Round 11 (D380): what `host.ui.openExternal` may open.
+pub const EXTERNAL_SCHEMES: &[&str] = &["http", "https", "mailto"];
+pub const MAX_EXTERNAL_URL: usize = 2048;
+
+/// A checked address for `openExternal`, or `invalid/badUrl`.
+pub fn external_url(raw: &str) -> KResult<String> {
+    let bad = || invalid("badUrl");
+    if raw.is_empty() || raw.chars().count() > MAX_EXTERNAL_URL {
+        return Err(bad());
+    }
+    let u = reqwest::Url::parse(raw).map_err(|_| bad())?;
+    if !EXTERNAL_SCHEMES.contains(&u.scheme()) {
+        return Err(bad());
+    }
+    let ok = match u.scheme() {
+        "mailto" => !u.path().is_empty(),
+        _ => u.host_str().is_some_and(|h| !h.is_empty()),
+    };
+    if !ok {
+        return Err(bad());
+    }
+    Ok(u.to_string())
+}
+
+/// The audit object of an external address: the host name (for `mailto:` the mail domain), never
+/// the path, query or the part before `@`.
+pub fn external_object(raw: &str) -> Option<String> {
+    let u = reqwest::Url::parse(raw.trim()).ok()?;
+    if u.scheme() == "mailto" {
+        let first = u.path().split(',').next().unwrap_or_default();
+        let domain = first.rsplit_once('@').map(|(_, d)| d).unwrap_or_default();
+        let domain = domain.split(['?', '#']).next().unwrap_or_default().to_ascii_lowercase();
+        return Some(domain);
+    }
+    u.host_str().map(|h| h.trim_matches(['[', ']']).to_ascii_lowercase())
+}
+
 fn arg(args: &Value, i: usize) -> Value {
     args.get(i).cloned().unwrap_or(Value::Null)
 }
@@ -71,6 +108,7 @@ impl Inner {
         match cap {
             "resources" => self.host_resources(plugin, info, op, &args).await,
             "files" => self.host_files(plugin, op, &args).await,
+            "ui" if op == "openExternal" => self.host_open_external(plugin, info, &args).await,
             "ui" => self.host_ui(info, op, &args),
             // D336: an event handler does what a page handler does, but no network and no programs.
             "network" if op == "request" && info.event => Err(denied("notInRun")),
@@ -105,7 +143,10 @@ impl Inner {
             // `process.run` and `transfer.*` audit their own refusals and failures.
             if e.code == ErrorCode::Denied && !method.starts_with("process.") && !method.starts_with("transfer.") {
                 // Network calls are audited by host (never by URL, which may carry content).
-                let object = if method == "network.request" {
+                let object = if method == "ui.openExternal" {
+                    // Never the path or query of the address (D380).
+                    args.get(0).and_then(Value::as_str).and_then(external_object).unwrap_or_default()
+                } else if method == "network.request" {
                     args.get(0).and_then(|o| o.get("url")).and_then(Value::as_str).and_then(crate::network::host_of).unwrap_or_default()
                 } else {
                     args.get(0)
@@ -432,6 +473,24 @@ impl Inner {
 
     /* ---------------------------------------------------------------- ui */
 
+    /// Round 11 (D380): only where the user just acted — a run or a page event (like
+    /// `plugins.requestInstall`); render, event handlers, `migrate`, tree handlers and commands
+    /// are `denied/notInteractive`. The kernel only publishes the effect.
+    async fn host_open_external(&self, plugin: &'static Plugin, info: &CallInfo, args: &Value) -> KResult<Value> {
+        if info.pure || info.event || !(info.page_event || info.run_id.is_some()) {
+            return Err(denied("notInteractive"));
+        }
+        let raw = arg_str(args, 0, "url")?;
+        let url = external_url(&raw)?;
+        let object = external_object(&url).unwrap_or_default();
+        let scheme = url.split(':').next().unwrap_or_default().to_string();
+        self.execute(plugin.actor(), Command::Audit { op: "ui.openExternal".into(), object, summary: json!({ "scheme": scheme }) })
+            .await?;
+        let effect = CommandEffect::OpenExternal { url };
+        self.emit(topic::UI, Some(serde_json::to_value(effect).map_err(internal)?), info.client.clone());
+        Ok(Value::Null)
+    }
+
     fn host_ui(&self, info: &CallInfo, op: &str, args: &Value) -> KResult<Value> {
         let effect = match op {
             "open" => {
@@ -450,6 +509,7 @@ impl Inner {
                 CommandEffect::Toast { message, tone }
             }
             "copy" => CommandEffect::Copy { text: arg_str(args, 0, "text")? },
+            // "openExternal" is `host_open_external`.
             _ => return Err(err_p(ErrorCode::UnknownMethod, &[("method", &format!("ui.{op}"))])),
         };
         self.emit(topic::UI, Some(serde_json::to_value(effect).map_err(internal)?), info.client.clone());

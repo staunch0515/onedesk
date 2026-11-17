@@ -57,7 +57,33 @@ pub struct Manifest {
     /// Round 8 (D357): the validated `exports.pages` — short names of its own pages.
     #[serde(skip)]
     pub exported_pages: Vec<String>,
+    /// Round 11 (D383): first-version short kind names this plugin will take over (`badLegacyKinds`);
+    /// see `legacy_kinds`. Only checked, kept and shown this round.
+    #[serde(default, rename = "legacyKinds")]
+    pub legacy_kinds_raw: Option<serde_json::Value>,
+    #[serde(skip)]
+    pub legacy_kinds: Vec<String>,
+    /// Round 11 (D379): the validated `contributes.languages`.
+    #[serde(skip)]
+    pub languages: Vec<LanguageDecl>,
 }
+
+/// One interface language a plugin provides (round 11, D379).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LanguageDecl {
+    pub locale: String,
+    /// The language's own name for itself.
+    pub name: String,
+    /// The shell texts file, relative to the package.
+    pub shell: String,
+}
+
+/// Round 11: limits of `contributes.languages` and `legacyKinds`.
+pub const MAX_LOCALE_LEN: usize = 35;
+pub const MAX_LANGUAGE_NAME: usize = 100;
+pub const MAX_LANGUAGES: usize = 64;
+pub const MAX_LANGUAGE_FILE: u64 = 1024 * 1024;
+pub const MAX_LEGACY_KINDS: usize = 64;
 
 /// One dependency (round 7): another plugin's id and a semver range of its active version.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -219,6 +245,9 @@ pub struct Contributes {
     /// Round 6 (D335): events it subscribes to (`host.events.on` only for these).
     #[serde(default)]
     pub events: Vec<String>,
+    /// Round 11 (D379): `[{ "locale", "name", "shell" }]`, checked by hand (`badLanguages`).
+    #[serde(default, rename = "languages")]
+    pub languages_raw: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -355,6 +384,10 @@ pub struct PageDecl {
     pub recompute: bool,
     #[serde(default)]
     pub uses_env: bool,
+    /// Round 11 (D382): a standalone page (no kind or tree uses it) the shell opens when it starts
+    /// with no tabs. At most one per plugin.
+    #[serde(default)]
+    pub startup: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -981,12 +1014,97 @@ pub fn parse_package(dir: &Path, bytes: &[u8], check_folder: bool) -> Result<Plu
         locales.insert(loc.clone(), table);
     }
 
+    let languages = parse_languages(dir, &m)?;
+    let legacy_kinds = parse_legacy_kinds(dir, &m)?;
+    let mut startups = c.pages.iter().filter(|p| p.startup);
+    if let Some(pg) = startups.next() {
+        if startups.next().is_some() {
+            return Err(reject(dir, "badStartup", "more than one startup page"));
+        }
+        let used = c.kinds.iter().any(|k| k.page.as_deref() == Some(pg.id.as_str()))
+            || c.trees.iter().any(|t| t.page.as_deref() == Some(pg.id.as_str()));
+        if used {
+            return Err(reject(dir, "badStartup", format!("page {} is not standalone", pg.id)));
+        }
+    }
+
     let mut m = m;
+    m.languages = languages;
+    m.legacy_kinds = legacy_kinds;
     m.deps = deps;
     m.exported = exported;
     m.exported_trees = exported_trees;
     m.exported_pages = exported_pages;
     Ok(Plugin { id: m.id.clone(), version: m.version.clone(), dir: dir.to_path_buf(), manifest_hash, manifest: m, locales })
+}
+
+/// A BCP 47 tag as the manifest may write it: letters, digits and `-` (not first, last or twice
+/// in a row), at most 35 characters.
+pub fn valid_locale(l: &str) -> bool {
+    !l.is_empty()
+        && l.len() <= MAX_LOCALE_LEN
+        && l.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+        && !l.starts_with('-')
+        && !l.ends_with('-')
+        && !l.contains("--")
+}
+
+/// Round 11 (D379): `contributes.languages` — `{ "locale", "name", "shell" }` each, nothing else;
+/// `shell` a `.json` file inside the package (links followed); no `locale` twice.
+fn parse_languages(dir: &Path, m: &Manifest) -> Result<Vec<LanguageDecl>, Rejection> {
+    let bad = |why: String| reject(dir, "badLanguages", why);
+    let Some(raw) = &m.contributes.languages_raw else { return Ok(vec![]) };
+    let list = raw.as_array().ok_or_else(|| bad("not a list".into()))?;
+    if list.len() > MAX_LANGUAGES {
+        return Err(bad("too many".into()));
+    }
+    let mut out: Vec<LanguageDecl> = Vec::new();
+    for item in list {
+        let o = item.as_object().ok_or_else(|| bad(format!("not an object: {item}")))?;
+        if let Some(k) = o.keys().find(|k| !matches!(k.as_str(), "locale" | "name" | "shell")) {
+            return Err(bad(format!("unknown field {k}")));
+        }
+        let text = |k: &str| o.get(k).and_then(serde_json::Value::as_str).map(String::from).ok_or_else(|| bad(format!("{k} missing")));
+        let (locale, name, shell) = (text("locale")?, text("name")?, text("shell")?);
+        if !valid_locale(&locale) {
+            return Err(bad(format!("locale {locale}")));
+        }
+        if name.trim().is_empty() || name.chars().count() > MAX_LANGUAGE_NAME {
+            return Err(bad(format!("{locale}: name")));
+        }
+        let ok_file = shell.ends_with(".json") && package_program(dir, &shell).is_some_and(|p| p.is_file());
+        if !ok_file {
+            return Err(bad(format!("{locale}: shell {shell}")));
+        }
+        if out.iter().any(|l| l.locale.eq_ignore_ascii_case(&locale)) {
+            return Err(bad(format!("{locale}: duplicate")));
+        }
+        out.push(LanguageDecl { locale, name, shell });
+    }
+    Ok(out)
+}
+
+/// Round 11 (D383): `legacyKinds` — a list of distinct first-version short kind names
+/// (`[A-Za-z0-9._-]{1,64}`, no `:`).
+fn parse_legacy_kinds(dir: &Path, m: &Manifest) -> Result<Vec<String>, Rejection> {
+    let bad = |why: String| reject(dir, "badLegacyKinds", why);
+    let Some(raw) = &m.legacy_kinds_raw else { return Ok(vec![]) };
+    let list = raw.as_array().ok_or_else(|| bad("not a list".into()))?;
+    if list.len() > MAX_LEGACY_KINDS {
+        return Err(bad("too many".into()));
+    }
+    let mut out: Vec<String> = Vec::new();
+    for item in list {
+        let k = item.as_str().ok_or_else(|| bad(format!("not a string: {item}")))?;
+        if !valid_short(k) {
+            return Err(bad(k.to_string()));
+        }
+        if out.iter().any(|x| x == k) {
+            return Err(bad(format!("{k}: duplicate")));
+        }
+        out.push(k.to_string());
+    }
+    Ok(out)
 }
 
 /// Round 7 (D342): `depends` is a list of `{ "id", "version" }`; not itself, no repeats, a valid range.
@@ -1678,6 +1796,93 @@ mod tests {
         assert_eq!(reason(with(field(json!({ "type": "text", "grants": "network", "secrets": true })), &["requires", "network"], json!({ "fromResources": true }))), "badSecretsField");
         assert_eq!(reason(with(good(), &["contributes", "commands", "0", "palette"], json!(true))), "ok");
         assert_eq!(reason(with(with(good(), &["author"], json!("me")), &["license"], json!("MIT"))), "ok");
+    }
+
+    #[test]
+    fn round11_languages_each_rejection() {
+        let langs = |v: Value| with(good(), &["contributes", "languages"], v);
+        let one = |o: Value| langs(json!([o]));
+        let ok = json!({ "locale": "zh-CN", "name": "简体中文", "shell": "locales/en-US.json" });
+        assert_eq!(reason(one(ok.clone())), "ok");
+        assert_eq!(reason(langs(json!([]))), "ok");
+        assert_eq!(reason(one(json!({ "locale": "zh-Hant-TW", "name": "x", "shell": "./locales/en-US.json" }))), "ok");
+        assert_eq!(reason(one(json!({ "locale": "a".repeat(35), "name": "x", "shell": "locales/en-US.json" }))), "ok");
+        for bad in [
+            langs(json!({ "locale": "zh-CN" })),
+            langs(json!(["zh-CN"])),
+            one(json!({ "locale": "zh-CN", "name": "x", "shell": "locales/en-US.json", "extra": 1 })),
+            one(json!({ "locale": "zh-CN", "name": "x" })),
+            one(json!({ "name": "x", "shell": "locales/en-US.json" })),
+            one(json!({ "locale": "zh-CN", "shell": "locales/en-US.json" })),
+            one(json!({ "locale": 5, "name": "x", "shell": "locales/en-US.json" })),
+            one(json!({ "locale": "zh_CN", "name": "x", "shell": "locales/en-US.json" })),
+            one(json!({ "locale": "zh CN", "name": "x", "shell": "locales/en-US.json" })),
+            one(json!({ "locale": "-zh", "name": "x", "shell": "locales/en-US.json" })),
+            one(json!({ "locale": "zh--CN", "name": "x", "shell": "locales/en-US.json" })),
+            one(json!({ "locale": "", "name": "x", "shell": "locales/en-US.json" })),
+            one(json!({ "locale": "a".repeat(36), "name": "x", "shell": "locales/en-US.json" })),
+            one(json!({ "locale": "zh-CN", "name": " ", "shell": "locales/en-US.json" })),
+            one(json!({ "locale": "zh-CN", "name": "x", "shell": "../en-US.json" })),
+            one(json!({ "locale": "zh-CN", "name": "x", "shell": "/etc/hosts.json" })),
+            one(json!({ "locale": "zh-CN", "name": "x", "shell": "locales/missing.json" })),
+            one(json!({ "locale": "zh-CN", "name": "x", "shell": "main.js" })),
+            one(json!({ "locale": "zh-CN", "name": "x", "shell": "locales" })),
+            langs(json!([ok.clone(), ok.clone()])),
+            langs(json!([ok.clone(), { "locale": "ZH-cn", "name": "y", "shell": "locales/en-US.json" }])),
+        ] {
+            assert_eq!(reason(bad.clone()), "badLanguages", "{bad}");
+        }
+    }
+
+    #[test]
+    fn round11_language_file_through_a_link_out_of_the_package_is_refused() {
+        let tmp = tempfile::tempdir().unwrap();
+        let m = with(good(), &["contributes", "languages"], json!([{ "locale": "zh-CN", "name": "x", "shell": "shell/zh.json" }]));
+        let dir = write(tmp.path(), "test.alpha", "0.1.0", &m);
+        let outside = tmp.path().join("outside.json");
+        std::fs::write(&outside, "{}").unwrap();
+        std::fs::create_dir_all(dir.join("shell")).unwrap();
+        std::os::unix::fs::symlink(&outside, dir.join("shell/zh.json")).unwrap();
+        assert_eq!(load_package(&dir).unwrap_err().reason, "badLanguages");
+    }
+
+    #[test]
+    fn round11_startup_pages_and_legacy_kinds() {
+        let pages = |v: Value| with(good(), &["contributes", "pages"], v);
+        let solo = json!({ "id": "home", "startup": true });
+        assert_eq!(reason(pages(json!([{ "id": "editor" }, solo.clone()]))), "ok");
+        assert_eq!(reason(pages(json!([{ "id": "editor" }, solo.clone(), { "id": "two", "startup": true }]))), "badStartup", "two startup pages");
+        assert_eq!(reason(pages(json!([{ "id": "editor", "startup": true }]))), "badStartup", "a kind's page");
+        let tree_page = with(pages(json!([{ "id": "editor" }, solo.clone()])), &["contributes", "trees", "0", "page"], json!("home"));
+        assert_eq!(reason(tree_page), "badStartup", "a tree's page");
+        assert_eq!(reason(pages(json!([{ "id": "editor", "startup": "yes" }]))), "schema");
+        let p = {
+            let tmp = tempfile::tempdir().unwrap();
+            let dir = write(tmp.path(), "test.alpha", "0.1.0", &pages(json!([{ "id": "editor" }, solo])));
+            load_package(&dir).unwrap()
+        };
+        assert!(p.page("home").unwrap().startup && !p.page("editor").unwrap().startup);
+
+        let legacy = |v: Value| with(good(), &["legacyKinds"], v);
+        assert_eq!(reason(legacy(json!(["note", "http-request", "a.b_c"]))), "ok");
+        assert_eq!(reason(legacy(json!([]))), "ok");
+        let many: Vec<String> = (0..65).map(|i| format!("k{i}")).collect();
+        for bad in [
+            json!("note"),
+            json!({ "note": 1 }),
+            json!([1]),
+            json!([""]),
+            json!(["a:b"]),
+            json!(["a b"]),
+            json!(["x".repeat(65)]),
+            json!(["note", "note"]),
+            json!(many),
+        ] {
+            assert_eq!(reason(legacy(bad.clone())), "badLegacyKinds", "{bad}");
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = write(tmp.path(), "test.alpha", "0.1.0", &legacy(json!(["note", "prompt"])));
+        assert_eq!(load_package(&dir).unwrap().manifest.legacy_kinds, vec!["note".to_string(), "prompt".to_string()]);
     }
 
     #[test]

@@ -186,6 +186,11 @@ pub enum NodeState {
 pub struct WorkspaceInfo {
     pub id: String,
     pub name: String,
+    /// Round 11 (D382): targets `page:<plugin>/<page>` of enabled plugins' startup pages, by
+    /// plugin id. Always present from the kernel (optional only for older peers).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub startup_pages: Option<Vec<String>>,
 }
 
 /* ------------------------------------------------------------------ trees (§5) */
@@ -484,6 +489,8 @@ pub enum ViewNode {
         mono: Option<bool>,
         language: Option<String>,
         tone: Option<Tone>,
+        /// Round 11 (D381): how the shell shows `text`; absent = `plain`.
+        format: Option<TextFormat>,
     },
     Table {
         id: String,
@@ -727,6 +734,11 @@ pub enum CommandEffect {
     /// Copy text to the clipboard.
     Copy { text: String },
     Reload,
+    /// Round 11 (D380): open an `http:`, `https:` or `mailto:` address with the system's default
+    /// handler (the main process checks the scheme again). Tagged `openExternal` as the round 11
+    /// plan names it (the other tags are kebab-case).
+    #[serde(rename = "openExternal")]
+    OpenExternal { url: String },
 }
 
 #[skip_serializing_none]
@@ -1488,6 +1500,11 @@ pub struct PluginDetail {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub runtime: Option<PluginRuntime>,
+    /// Round 11 (D383): the active version's manifest `legacyKinds` (first-version short kind
+    /// names; not taken over yet). Always present from the kernel.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub legacy_kinds: Option<Vec<String>>,
 }
 
 /// Round 9 (D365): `PluginDetail.runtime`.
@@ -1981,6 +1998,68 @@ pub struct InstallAnswerParams {
     pub reason: Option<String>,
 }
 
+/* ================================================================== round 11 (D379–D383)
+   Language plugins (§11), standalone startup pages, the text node's `format`, `host.ui.openExternal`. */
+
+/// Methods of round 11 (D379): which interface languages there are, and one language's texts.
+/// Reading them never activates a plugin.
+pub mod method11 {
+    /// No params → `LanguageInfo[]`.
+    pub const I18N_LANGUAGES: &str = "i18n.languages";
+    /// `I18nShellParams` → `I18nShellResult`.
+    pub const I18N_SHELL: &str = "i18n.shell";
+}
+
+/// Topic of round 11: the languages `i18n.languages` lists changed (payload-less).
+pub mod topic11 {
+    pub const LANGUAGES: &str = "languages";
+}
+
+/// The shell's own language (always first in `i18n.languages`, no plugin).
+pub const SHELL_LOCALE: &str = "en-US";
+
+/// `ViewNode::Text.format` (round 11).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum TextFormat {
+    Plain,
+    /// CommonMark without raw HTML; links only `http`, `https`, `mailto`; `[[name]]` references.
+    Markdown,
+}
+
+/// One entry of `i18n.languages`.
+#[skip_serializing_none]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, optional_fields)]
+pub struct LanguageInfo {
+    /// BCP 47 tag, e.g. `zh-CN`.
+    pub locale: String,
+    /// The language's own name for itself, shown as is (not a text key).
+    pub name: String,
+    /// The plugin that provides it; absent for the shell's own English.
+    pub plugin: Option<String>,
+}
+
+/// `i18n.shell`.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct I18nShellParams {
+    pub locale: String,
+}
+
+/// `i18n.shell`: the language's shell texts (key → text). Empty for `en-US`, for a language no
+/// enabled plugin provides, and when the file cannot be used (too large, not a flat string table).
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct I18nShellResult {
+    pub locale: String,
+    pub texts: BTreeMap<String, String>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2020,6 +2099,21 @@ mod tests {
         assert_eq!(serde_json::to_value(ErrorCode::WorkerGone).unwrap(), json!("workerGone"));
         let label: Label = serde_json::from_value(json!({ "en-US": "Note", "zh-CN": "笔记" })).unwrap();
         assert!(matches!(label, Label::Localized(_)));
+    }
+
+    #[test]
+    fn round11_wire_shapes() {
+        let e = serde_json::to_value(CommandEffect::OpenExternal { url: "https://a.test".into() }).unwrap();
+        assert_eq!(e, json!({ "type": "openExternal", "url": "https://a.test" }));
+        let t: ViewNode = serde_json::from_value(json!({ "type": "text", "id": "t", "text": "# x", "format": "markdown" })).unwrap();
+        assert_eq!(serde_json::to_value(&t).unwrap()["format"], "markdown");
+        assert!(serde_json::from_value::<ViewNode>(json!({ "type": "text", "id": "t", "text": "x", "format": "html" })).is_err());
+        let plain: ViewNode = serde_json::from_value(json!({ "type": "text", "id": "t", "text": "x" })).unwrap();
+        assert!(serde_json::to_value(&plain).unwrap().get("format").is_none());
+        let l = LanguageInfo { locale: SHELL_LOCALE.into(), name: "English".into(), plugin: None };
+        assert_eq!(serde_json::to_value(l).unwrap(), json!({ "locale": "en-US", "name": "English" }));
+        let w: WorkspaceInfo = serde_json::from_value(json!({ "id": "w", "name": "n" })).unwrap();
+        assert!(w.startup_pages.is_none());
     }
 
     #[test]

@@ -119,6 +119,8 @@ pub(crate) struct Inner {
     /// first-sight and active-version passes do not query once per plugin. `None` otherwise.
     pub(crate) state_snapshot: Mutex<Option<HashMap<String, store::Row>>>,
     pub(crate) state_queries: AtomicU64,
+    /// Round 11: the languages last published (`languages` is sent when they change).
+    pub(crate) languages_seen: Mutex<Option<Vec<onedesk_protocol::LanguageInfo>>>,
 }
 
 pub(crate) fn parse<T: DeserializeOwned>(v: Value) -> KResult<T> {
@@ -203,6 +205,7 @@ impl Kernel {
             install_requests: Default::default(),
             state_snapshot: Mutex::new(None),
             state_queries: AtomicU64::new(0),
+            languages_seen: Mutex::new(None),
         });
         // D299 first sight, then each plugin's active version.
         inner.take_state_snapshot();
@@ -210,6 +213,7 @@ impl Kernel {
         inner.take_state_snapshot();
         inner.refresh_active();
         *inner.state_snapshot.lock().unwrap() = None;
+        inner.check_languages();
         // D365: the idle reaper; it holds the kernel weakly and ends with it.
         if let Ok(rt) = tokio::runtime::Handle::try_current() {
             let me = Arc::downgrade(&inner);
@@ -270,7 +274,7 @@ impl Kernel {
     }
 
     pub fn workspace_info(&self) -> WorkspaceInfo {
-        WorkspaceInfo { id: self.inner.ws.id.clone(), name: self.inner.ws.name.clone() }
+        self.inner.info()
     }
 
     /// Plugins whose runtime is currently alive (tests use this to check lazy activation).
@@ -332,7 +336,14 @@ impl Inner {
     }
 
     pub fn emit(&self, topic: impl Into<String>, payload: Option<Value>, client: Option<String>) {
-        let _ = self.events.send(EventMessage { topic: topic.into(), payload, client });
+        let topic = topic.into();
+        let plugins = topic == topic::PLUGINS;
+        let _ = self.events.send(EventMessage { topic, payload, client });
+        // Round 11: enabling, disabling, installing, removing or switching a plugin may change
+        // the languages there are.
+        if plugins {
+            self.check_languages();
+        }
     }
 
     /// Runs a command through the pipeline and publishes its events after commit.
@@ -510,6 +521,9 @@ impl Inner {
                 Ok(Value::Null)
             }
             _ => {
+                if crate::i18n::METHODS.contains(&m) {
+                    return self.handle11(m, params);
+                }
                 if crate::install::METHODS.contains(&m) {
                     return self.handle7(m, params).await;
                 }
@@ -531,7 +545,7 @@ impl Inner {
     }
 
     fn info(&self) -> WorkspaceInfo {
-        WorkspaceInfo { id: self.ws.id.clone(), name: self.ws.name.clone() }
+        WorkspaceInfo { id: self.ws.id.clone(), name: self.ws.name.clone(), startup_pages: Some(self.startup_pages()) }
     }
 
     /* ---------------------------------------------------------------- kinds and rows */
