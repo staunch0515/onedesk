@@ -532,3 +532,151 @@ async fn labels_are_cut_and_oversized_batches_fail() {
     assert_eq!(e.code, ErrorCode::PluginError);
     assert!(format!("{e:?}").contains("more than 1000"), "{e:?}");
 }
+
+/* ------------------------------------------------------------------ round-10 additions (shell walk-through) */
+
+#[tokio::test(flavor = "multi_thread")]
+async fn plugin_batches_up_to_1000_with_a_string_next_are_rebatched_without_gaps() {
+    // The `com.example.nested` fixture answers 500 per batch with `next` as a string.
+    const MAIN: &str = r#"
+export default { activate(host) {
+  host.kinds.handle("shelf", { children(ctx, node, offset) {
+    const count = Number(ctx.resource.body.count) || 0, start = Number(offset) || 0, end = Math.min(count, start + 500);
+    const nodes = [];
+    for (let i = start; i < end; i++) nodes.push({ key: "item-" + (i + 1), label: "Item " + (i + 1), icon: "box" });
+    return end < count ? { nodes, next: String(end) } : { nodes };
+  } });
+  host.trees.handle("t", { children(ctx, parent, offset) {
+    const start = Number(offset) || 0, end = Math.min(20000, start + 1000), nodes = [];
+    for (let i = start; i < end; i++) nodes.push({ key: "n" + i, label: "N" + i, icon: "box" });
+    return end < 20000 ? { nodes, next: String(end) } : { nodes };
+  } });
+} };
+"#;
+    let tmp = tempfile::tempdir().unwrap();
+    let plugins = plugins_with(
+        tmp.path(),
+        &[(
+            "test.big",
+            json!({ "kinds": [ { "id": "shelf", "label": "s", "icon": "box", "tree": "resources", "children": true, "accepts": ["shelf"] } ],
+                    "trees": [ { "id": "t", "label": "t", "icon": "box", "source": "provided" } ] }),
+            MAIN,
+        )],
+    );
+    let env = open_with(tmp, &plugins, config_for(&plugins));
+    let c = Client::in_proc(env.kernel.clone());
+    c.hello().await;
+    // Stored children first (3), then 20 000 from the plugin.
+    let shelf = create(&c, "test.big:shelf", None, json!({ "count": 20000 })).await;
+    for _ in 0..3 {
+        create(&c, "test.big:shelf", Some(&shelf), json!({ "count": 0 })).await;
+    }
+    let (all, calls) = all_kids(&c, &shelf).await;
+    assert_eq!(all.len(), 20003);
+    assert!(all.iter().all(|n| n["state"] == "ok"));
+    let plugin_keys: Vec<String> = all[3..].iter().map(|n| n["key"].as_str().unwrap().to_string()).collect();
+    let want: Vec<String> = (1..=20000).map(|i| format!("@{shelf}/item-{i}")).collect();
+    assert_eq!(plugin_keys, want, "every plugin node once, in order");
+    assert_eq!(calls, 1 + 100);
+    // 501 (the walk-through's case): 200, 200, 101.
+    let s501 = create(&c, "test.big:shelf", None, json!({ "count": 501 })).await;
+    let (all, calls) = all_kids(&c, &s501).await;
+    assert_eq!((all.len(), calls), (501, 3));
+    // A provided tree giving 1000 per batch with a string `next`.
+    let (mut keys, mut offset) = (Vec::new(), 0u32);
+    loop {
+        let p = c.ok("tree.children", json!({ "tree": "test.big:t", "offset": offset })).await;
+        assert!(p["nodes"].as_array().unwrap().len() <= 200);
+        keys.extend(p["nodes"].as_array().unwrap().iter().map(|n| n["key"].as_str().unwrap().to_string()));
+        match p["next"].as_u64() {
+            Some(n) => offset = n as u32,
+            None => break,
+        }
+    }
+    assert_eq!(keys, (0..20000).map(|i| format!("n{i}")).collect::<Vec<_>>());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn table_outputs_keep_up_to_10000_rows_and_export_them_all() {
+    let (env, c) = setup().await;
+    let j = c.ok("page.save", json!({ "target": "new:test.runner:job", "changes": { "name": "J", "body.text": "rows 10000" } })).await;
+    let j = j["page"]["resourceId"].as_str().unwrap().to_string();
+    let run_of = |text: &'static str| {
+        let c = &c;
+        let j = j.clone();
+        async move {
+            c.ok("page.save", json!({ "target": format!("resource:{j}"), "changes": { "body.text": text } })).await;
+            let id = c
+                .ok("run.start", json!({ "action": "test.runner:run", "resourceId": j, "target": format!("resource:{j}"), "tabId": "t1", "input": { "body.text": text } }))
+                .await;
+            for _ in 0..1000 {
+                let r = c.ok("run.get", json!({ "id": id })).await;
+                if r["status"] != "running" {
+                    return r;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            }
+            panic!("run did not finish");
+        }
+    };
+    let r = run_of("rows 10000").await;
+    let out = &r["output"];
+    assert_eq!((out["rows"].as_array().unwrap().len(), out["total"].as_u64(), out["truncated"].as_bool()), (10000, Some(10000), Some(false)), "{}", r["status"]);
+    // The CSV export has every row the run kept: header + 10 000.
+    let dest = tempfile::tempdir().unwrap();
+    let path = dest.path().join("all.csv");
+    c.ok("run.export", json!({ "run": r["id"], "path": path.to_string_lossy(), "format": "csv" })).await;
+    let text = std::fs::read_to_string(&path).unwrap();
+    assert_eq!(text.matches("\r\n").count(), 10001);
+    // More than the limit: cut, marked, with the total.
+    let r = run_of("rows 10500").await;
+    let out = &r["output"];
+    assert_eq!((out["rows"].as_array().unwrap().len(), out["total"].as_u64(), out["truncated"].as_bool()), (10000, Some(10500), Some(true)));
+    drop(env);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_level_of_20000_resources_answers_each_batch_quickly() {
+    let (env, c) = setup().await;
+    // 20 000 items at the top of `resources`, written straight into the database (as many saves
+    // would take minutes); a few have children so `expandable` is computed for real.
+    {
+        let mut conn = db(&env);
+        let tx = conn.transaction().unwrap();
+        for i in 0..20000 {
+            let parent: Option<String> = (i >= 19990).then(|| format!("{:032x}", i - 19990));
+            tx.execute(
+                "INSERT INTO resources (id, kind, plugin_version, tree, parent_id, pos, name, body, rev, created_at, created_by, updated_at, updated_by)
+                 VALUES (?1, 'test.alpha:item', '0.1.0', 'resources', ?2, ?3, ?4, '{\"text\":\"\"}', 1, 0, 'user', 0, 'user')",
+                rusqlite::params![format!("{i:032x}"), parent, i, format!("item {i}")],
+            )
+            .unwrap();
+        }
+        tx.commit().unwrap();
+    }
+    let mut slowest = std::time::Duration::ZERO;
+    let (mut offset, mut seen) = (0u32, 0usize);
+    loop {
+        let t = std::time::Instant::now();
+        let p = c.ok("tree.children", json!({ "tree": "resources", "offset": offset })).await;
+        slowest = slowest.max(t.elapsed());
+        let nodes = p["nodes"].as_array().unwrap();
+        if offset == 0 {
+            assert_eq!(nodes[0]["expandable"], true);
+            assert_eq!(nodes[20]["expandable"], false);
+        }
+        seen += nodes.len();
+        match p["next"].as_u64() {
+            Some(n) => offset = n as u32,
+            None => break,
+        }
+    }
+    assert_eq!(seen, 19990);
+    let t = std::time::Instant::now();
+    c.ok("workspace.info", json!({})).await;
+    let info = t.elapsed();
+    eprintln!("slowest tree.children batch {slowest:?}, workspace.info {info:?}");
+    // Goal 300 ms (debug); a looser bound here so a loaded machine does not fail it.
+    assert!(slowest < std::time::Duration::from_millis(1500), "{slowest:?}");
+    assert!(info < std::time::Duration::from_millis(300), "{info:?}");
+}

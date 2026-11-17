@@ -124,3 +124,44 @@ host.kinds.handle("<kind>", {
 检查（合并后、本次提交的代码上实际跑过）：
 - `cargo test -p onedesk-kernel -p onedesk-worker -p onedesk-protocol`：全部通过（`round10.rs` 18 个）。注意：机器负载 400–460 时 `round6.rs` 的 `review4_queues_are_bounded_and_failures_merge` 连续失败两次（事件队列没被塞满：`dropped: 0`——它依赖处理函数比事件来得慢，属计时敏感）；负载 ~340 时整套重跑（`--no-fail-fast`）全部通过。本次修改不涉及事件队列，合并进来的协调分支也没改 `crates/`。
 - clippy（`-D warnings`）、`sh scripts/gen-types.sh --check`（协议没有改动）、`pnpm lint`：通过。
+
+## 追加：外壳走查发现的三条（`round10-shell-done.md`“缺陷”）
+
+先合并了协调分支 `claude/onedesk-coord-3-f0c048`。
+
+### 1. 插件一批超过 200 个并带 `next` 时整层“加载失败”
+- 原因：夹具 `com.example.nested` 把 `next` 返回成**字符串**（`next: String(end)`），内核按数字解析，整批判为 `pluginError`。（`count` ≤ 500 时没有 `next`，所以正常。）
+- 改动（`kind_children.rs` 的 `parse_batch`，提供树和类型自供子节点共用）：
+  - `next` 接受数字或纯数字字符串；别的仍是错误。
+  - 一批最多 1000 个（审查 #11）；超过 200 个时按插件自己的位置切成 200 个一批，`next` = 本批 offset + 200，下次从那里再问插件。**提供树也改成这样**（之前提供树一批超过 200 个直接报错）。
+  - 先在插件的原始位置上切批、判断 `next`，再去重和截标签——去重不会让位置错开。
+  - 存储的子节点在前时，对外 offset = 存储子节点数 + 插件 offset（之前就是这样，这次加了测试从头取到尾）。
+- 测试 `plugin_batches_up_to_1000_with_a_string_next_are_rebatched_without_gaps`：3 个存储子节点 + 插件 2 万个（每批 500、`next` 为字符串），从头取到尾 20003 个，插件的 2 万个键按顺序各出现一次，共 101 次请求；`count` 501 → 501 个、3 次请求；提供树每批 1000 个、字符串 `next`，2 万个键按顺序不重不漏、每批不超过 200 个。
+
+### 2. 表格输出被截到 1000 行（D377）
+- `runs.rs` 的 `MAX_ROWS` 1000 → 10 000：`run.get` 的 `output.rows` 最多 1 万行，超出仍 `truncated: true` 并给 `total`。
+- **导出 CSV**（`run.export`）写的是运行保存下来的行，即与上限一致：结果不超过 1 万行时是全量，超过时是前 1 万行（与界面看到的相同）。
+- 测试 `table_outputs_keep_up_to_10000_rows_and_export_them_all`：1 万行全给、不截断、导出的 CSV 有表头 + 1 万行；10500 行 → 1 万行、`total` 10500、`truncated`。`round3.rs` 里原来固定“截到 1000 行”的测试改为 10500 → 10000（按 D377）。
+
+### 3. 一层很多资源时每个请求都慢
+- 原因（计时 + `sample`）：
+  1. 每个节点算“有没有子节点”（`store::has_children`）按 `parent_id` 查，唯一的相关索引以 `tree` 开头用不上，**每个节点一次全表扫描**：一批 200 个节点 × 2 万行。
+  2. 每个节点重复查插件状态：`row_meta`（版本是否确认）和 `children_supplier`（插件是否启用）每次都读库，同一种类型的 200 个节点查 200 遍。
+  3. `workspace.info` 本身不读库（单独计时约 0.1–1 ms）；外壳里它慢，是因为排在 `tree.children` 后面（读连接只有一个）。
+- 改动：
+  - 新迁移 `0012_resources_parent.sql`：`CREATE INDEX IF NOT EXISTS resources_parent ON resources (parent_id) WHERE deleted_at IS NULL`；升级测试 `migration_0012_indexes_parents_and_keeps_data`（从 0011 的库升级、数据保留、查询计划用上新索引、版本号 12）。用 `IF NOT EXISTS`，因为 `round5.rs` 的旧测试把版本号退回 7 再重开。
+  - 一批节点里，同一类型（和绑定版本）共有的东西（类型信息、是否自供子节点、依赖插件的动作）只算一次（`NodeMemo`）。
+- 实测（debug，`a_level_of_20000_resources_answers_each_batch_quickly`：根下 2 万个资源，从头读到尾 100 批）：
+
+  | | 机器负载 | 一批 `tree.children` | `workspace.info` |
+  |---|---|---|---|
+  | 改之前 | 高（数百） | 最慢 5.2 s | 1.2 ms（单独调用） |
+  | 只加索引 | ~35 | 约 220–640 ms，最慢 1.1 s | — |
+  | 索引 + 按类型只算一次 | ~30 | 约 70–120 ms，最慢 253 ms | 0.1 ms |
+
+  测试的上限放宽到 1.5 s（一批）和 300 ms（`workspace.info`），免得机器忙时误报；目标 300 ms 在负载 ~30 时达到。
+
+### 检查
+- `cargo clippy … -- -D warnings`：通过（`NodeMemo` 的类型起了别名）。
+- `sh scripts/gen-types.sh --check`、`pnpm lint`：通过（协议没有改动）。
+- `cargo test -p onedesk-kernel -p onedesk-worker -p onedesk-protocol --no-fail-fast`：最后一次整套运行（负载 ~80–170）全部通过，`round10.rs` 21 个，0 失败。过程中负载 ~340 时 `crates/worker/tests/worker.rs` 的 4 个测试因“10 秒内没开始监听”失败一次，单独重跑通过——与本次改动无关（计时敏感）。

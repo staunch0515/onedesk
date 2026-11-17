@@ -6,6 +6,7 @@
 //! (`!<resource id>/<plugin key>`) instead of failing the whole answer.
 
 use onedesk_protocol::*;
+use serde::Deserialize;
 use serde_json::{json, Value};
 
 use crate::kernel::{kernel_cmd, valid_locale, Inner, BATCH};
@@ -52,7 +53,8 @@ impl Inner {
         let stored = if node.is_none() { self.stored_child_count(tree, &row.id)? } else { 0 };
         if offset < stored {
             let rows = self.read(|c| store::children(c, tree, Some(&row.id), offset, BATCH))?;
-            let nodes = rows.iter().map(|r| self.node_for(r)).collect::<KResult<Vec<_>>>()?;
+            let mut memo = crate::kernel::NodeMemo::default();
+            let nodes = rows.iter().map(|r| self.node_memo(r, &mut memo)).collect::<KResult<Vec<_>>>()?;
             let end = offset + nodes.len() as u32;
             // The plugin's batches follow the stored ones.
             return Ok(TreePage { nodes, next: Some(end.max(offset + 1).min(stored)) });
@@ -101,13 +103,7 @@ impl Inner {
     }
 
     fn child_page(&self, plugin: &Plugin, tree: &str, row: &Row, parent_key: &str, offset: u32, out: Value) -> KResult<TreePage> {
-        let mut page = parse_batch(plugin, out, offset, parent_plugin_key(parent_key))?;
-        // A larger batch is cut to ours; the rest is asked for again from where it was cut
-        // (offsets are positions, as for provided trees).
-        if page.nodes.len() > BATCH as usize {
-            page.nodes.truncate(BATCH as usize);
-            page.next = Some(offset + BATCH);
-        }
+        let page = parse_batch(plugin, out, offset, parent_plugin_key(parent_key))?;
         let nodes = page
             .nodes
             .into_iter()
@@ -184,8 +180,28 @@ pub(crate) struct PNode {
 #[serde(deny_unknown_fields)]
 pub(crate) struct PPage {
     pub nodes: Vec<PNode>,
-    #[serde(default)]
+    /// A number, or a string of digits (plugins often hand back offsets as text).
+    #[serde(default, deserialize_with = "next_offset")]
     pub next: Option<u32>,
+}
+
+fn next_offset<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<u32>, D::Error> {
+    use serde::de::Error;
+    match Option::<Value>::deserialize(d)? {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::Number(n)) => n.as_u64().and_then(|n| u32::try_from(n).ok()).map(Some).ok_or_else(|| D::Error::custom("next: not an offset")),
+        Some(Value::String(s)) => s.trim().parse::<u32>().map(Some).map_err(|_| D::Error::custom("next: not an offset")),
+        Some(_) => Err(D::Error::custom("next: not an offset")),
+    }
+}
+
+/// A batch larger than ours is cut to `BATCH`; the rest is asked for again from where it was cut.
+/// Offsets are positions (§5), so the plugin's own `next` is not needed then.
+fn cut_to_batch(page: &mut PPage, offset: u32) {
+    if page.nodes.len() > BATCH as usize {
+        page.nodes.truncate(BATCH as usize);
+        page.next = Some(offset + BATCH);
+    }
 }
 
 /// Most nodes one answer may hold before it is even read (review #11).
@@ -198,7 +214,8 @@ pub const MAX_LABEL: usize = 200;
 /// - labels cut to `MAX_LABEL` characters;
 /// - a key seen earlier in the batch, or equal to the parent's key, is dropped (the kernel only
 ///   knows the direct parent; deeper ancestors are the plugin's own business);
-/// - a `next` that does not move past `offset`, or a `next` on an empty batch, means the end.
+/// - a `next` that does not move past `offset`, or a `next` on an empty batch, means the end;
+/// - more than `BATCH` nodes are cut to `BATCH` and continued at `offset + BATCH`.
 pub(crate) fn parse_batch(plugin: &Plugin, out: Value, offset: u32, parent: Option<&str>) -> KResult<PPage> {
     let out = if out.is_null() { json!({ "nodes": [] }) } else { out };
     let bad = |what: String| err_d(ErrorCode::PluginError, format!("{}: bad tree page: {what}", plugin.id));
@@ -206,15 +223,18 @@ pub(crate) fn parse_batch(plugin: &Plugin, out: Value, offset: u32, parent: Opti
         return Err(bad(format!("more than {MAX_RAW_BATCH} nodes in one batch")));
     }
     let mut page: PPage = serde_json::from_value(out).map_err(|e| bad(e.to_string()))?;
+    // On the plugin's own positions first: a `next` that does not advance, or one on an empty
+    // batch, is the end; a batch larger than ours is cut and continued where it was cut.
+    if page.next.is_some_and(|n| n <= offset) || page.nodes.is_empty() {
+        page.next = None;
+    }
+    cut_to_batch(&mut page, offset);
     let mut seen = std::collections::HashSet::new();
     page.nodes.retain(|n| Some(n.key.as_str()) != parent && seen.insert(n.key.clone()));
     for n in &mut page.nodes {
         if n.label.chars().count() > MAX_LABEL {
             n.label = n.label.chars().take(MAX_LABEL).collect();
         }
-    }
-    if page.next.is_some_and(|n| n <= offset) || page.nodes.is_empty() {
-        page.next = None;
     }
     Ok(page)
 }

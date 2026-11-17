@@ -25,6 +25,7 @@ pub const MIGRATIONS: &[(&str, &str)] = &[
     ("0009_resource_names", include_str!("../migrations/0009_resource_names.sql")),
     ("0010_refs_ever", include_str!("../migrations/0010_refs_ever.sql")),
     ("0011_audit_counts_last", include_str!("../migrations/0011_audit_counts_last.sql")),
+    ("0012_resources_parent", include_str!("../migrations/0012_resources_parent.sql")),
 ];
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -474,6 +475,39 @@ mod tests {
         let row: (i64, Option<String>, i64) =
             conn.query_row("SELECT count, last_summary, failures FROM audit_counts", [], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))).unwrap();
         assert_eq!(row, (3, None, 0));
+    }
+
+    #[test]
+    fn migration_0012_indexes_parents_and_keeps_data() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        let tx = conn.transaction().unwrap();
+        for (_, sql) in &MIGRATIONS[..11] {
+            tx.execute_batch(sql).unwrap();
+        }
+        tx.execute("INSERT INTO meta (key, value) VALUES ('schema_version', '11')", []).unwrap();
+        for (id, parent) in [("p", None), ("c", Some("p"))] {
+            tx.execute(
+                "INSERT INTO resources (id, kind, tree, parent_id, name, rev, created_at, created_by, updated_at, updated_by)
+                 VALUES (?1, 'k', 'resources', ?2, ?1, 1, 0, 'user', 0, 'user')",
+                rusqlite::params![id, parent],
+            )
+            .unwrap();
+        }
+        tx.commit().unwrap();
+        migrate(&mut conn).unwrap();
+        let n: i64 = conn.query_row("SELECT count(*) FROM resources", [], |r| r.get(0)).unwrap();
+        assert_eq!(n, 2);
+        // The "has children" look-up uses the new index instead of scanning the table.
+        let plans: Vec<String> = conn
+            .prepare("EXPLAIN QUERY PLAN SELECT 1 FROM resources WHERE parent_id = 'p' AND deleted_at IS NULL")
+            .unwrap()
+            .query_map([], |r| r.get::<_, String>(3))
+            .unwrap()
+            .map(|r| r.unwrap())
+            .collect();
+        assert!(plans.iter().any(|p| p.contains("resources_parent")), "{plans:?}");
+        let v: String = conn.query_row("SELECT value FROM meta WHERE key = 'schema_version'", [], |r| r.get(0)).unwrap();
+        assert_eq!(v, "12");
     }
 
     #[test]
