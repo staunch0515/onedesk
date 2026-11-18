@@ -76,3 +76,14 @@
 - **#8**：集合页的总数去掉它自己（再按它自己的 id 搜一次，匹配才减一；超出前 200 条也对）；假 host 测试三种情况。
 - **语言插件 JSON**：合并协调分支后 `lang-check` 已通过（8 条），本批无需补；外壳新增的 `badDropAnswer`/`inDrop` 等文字等通知后再补。
 - 结果：`vitest run plugins` 297 通过；`E2E_PORT=1437 playwright test e2e/round12.spec.ts`：26 通过、1 失败（改成 fixme 之前的界面按钮用例）→ 现为 26 通过 + 1 fixme（改动后整套未再完整重跑，只改了该用例的拆分）；`pnpm lint` 通过；`pnpm typecheck` 失败，原因同上（外壳文件）。
+
+
+# 验收修改（D396 等）与补译
+
+- **D396 表格**：综合页与集合页的表格去掉“图标”列；“类型”列把 `kindLabel`（Label）按 `ctx.locale` 取成文字（缺省英语，再缺省类型全名），单元格都是字符串。假 host 测试覆盖（含 `zh-CN`、`de-DE` 回退、纯字符串 Label）；e2e 断言两个页面里没有 `[object Object]` 且类型列是“Note”。
+- **补译**：中、日文件补了 `kernel.label.dropWithoutTree`、`kernel.error.reason.inDrop`、`kernel.error.reason.badDropAnswer`、`kernel.audit.tree.drop`、`kernel.audit.resources.search`、`kernel.permission.resourcesAll`，并删掉了旧的 `permission.resourcesAll`（外壳查的是带 `kernel.` 的键）。e2e：安装确认框（en-US）里有该句；`i18n.shell` 的 zh-CN 是中文原句、ja-JP 是日文。
+- **日语文件**：`org.onedesk.files`、`market`、`sample` 各补 `locales/ja-JP.json`（键与英文一致）并在清单里登记；`plugins/_testing/locale-check.test.ts` 现在检查**所有**内置插件（目录 `org.onedesk.*`）en/zh/ja 键与 {占位符} 一致，且清单列出三个语言文件。
+- **去掉两个 fixme**：round12 的行按钮用例（点击之间先等表格行顺序变化）、round11 的欢迎页换语言用例，均连真内核跑通。
+- **e2e 稳定性**：HTTP 请求页的界面用例改用自己的内核（共用工作区里资源多了，树是虚拟滚动，找不到节点）；`search` 用例自备一条笔记。
+- 结果：`pnpm test` 572 通过；`pnpm lint`、`pnpm typecheck` 通过；`playwright e2e/round12.spec.ts` 27 通过 / 0 跳过 / 0 fixme；`e2e/round11.spec.ts` 单独跑 21 通过。
+- **已知不稳**：round11 + round12 两个文件**一起**跑时，round11 的“有标签页的启动不再开欢迎页”曾失败一次（`Welcome` 标签仍在，单独跑过），没追到原因，疑似与同一次运行里先前用例的残留有关；不属于本轮改动。

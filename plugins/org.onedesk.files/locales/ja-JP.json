@@ -1,0 +1,12 @@
+{
+  "plugin.name": "ファイル",
+  "plugin.description": "許可したフォルダーを参照し、テキストファイルを編集します。",
+  "tree.files": "ファイル",
+  "action.save": "保存",
+  "field.content": "内容",
+  "reason.tooLarge": "このファイルは大きすぎるため、ここでは編集できません（上限 2 MB）。",
+  "reason.notText": "このファイルは UTF-8 テキストではないため、ここでは編集できません。",
+  "reason.denied": "このファイルは許可したフォルダーの外にあります。",
+  "reason.notFound": "このファイルはもう存在しません。",
+  "reason.failed": "このファイルを開けません。"
+}

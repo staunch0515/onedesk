@@ -83,8 +83,18 @@ describe("collection: page", () => {
     const out = await pages.editor.render(ctxOf(host, { text: "plan" }));
     expect(checkView(out.view)).toEqual([]);
     expect(out.view[1].text).toBe("2 result(s)");
-    expect(out.view[2].rows).toEqual([["file-text", "Name a", "org.onedesk.note:note"], ["file-text", "Name b", "org.onedesk.note:note"]]);
+    expect(out.view[2].rows).toEqual([["Name a", "org.onedesk.note:note"], ["Name b", "org.onedesk.note:note"]]);
+    expect(out.view[2].columns.map((c: any) => c.key)).toEqual(["name", "kind"]);
     expect(out.view[2].rowTargets).toEqual(["resource:a", "resource:b"]);
+  });
+  it("kindLabel is a Label: shown as text in the locale, else English, else the kind name — never an object", async () => {
+    const mk = (kindLabel: unknown) => ({ ...info("a"), kindLabel });
+    const host = hostOf((q) => (q.ids ? { items: [], total: 0 } : { items: [mk({ "en-US": "Note", "zh-CN": "笔记" }), mk({ "ja-JP": "メモ" })], total: 2 }));
+    const zh = await pages.editor.render(ctxOf(host, { text: "x" }, { locale: "zh-CN" }));
+    expect(zh.view[2].rows.map((r: string[]) => r[1])).toEqual(["笔记", "org.onedesk.note:note"]);
+    const de = await pages.editor.render(ctxOf(host, { text: "x" }, { locale: "de-DE" }));
+    expect(de.view[2].rows[0][1]).toBe("Note");
+    for (const row of [...zh.view[2].rows, ...de.view[2].rows]) for (const cell of row) expect(typeof cell).toBe("string");
   });
   it("more results than shown say so; zero results show only the total", async () => {
     const many = hostOf(() => ({ items: Array.from({ length: 200 }, (_, i) => info(`i${i}`)), total: 731, next: 200 }));
