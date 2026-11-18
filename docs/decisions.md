@@ -545,3 +545,4 @@
 - **D399** `legacyKinds` 认领在插件启用时进行，宿主接口只增 `kinds.handle` 的 `upgrade(ctx, { body, legacyKind })`，一批认领在一个事务里，任一条出错整批不认领并审计；没被认领的资源不丢，节点显示为没有插件处理的类型。
 - **D400** 多工作区由主进程管理：`app.workspaces`、`app.createWorkspace`、`app.switchWorkspace`、`app.renameWorkspace`、`app.deleteWorkspace`、事件 `app.workspacesChanged`；新建时经内核的 `workspace.settingsSnapshot`（只接受主进程）与新文件夹里的 `init-settings.json` 复制配置树与插件启用状态，不复制数据；切换是本连接改绑，界面整页重载。
 - **D401** 删除工作区不真删：文件夹移到数据目录的 `trash/workspaces/`，钥匙串条目删除；当前的或正被别的连接使用的不能删（`conflict/inUse`）。
+- **D402** `legacyKinds` 的一项可以是字符串（第一版短名与本插件的类型同名，如 `"link"` → `<插件id>:link`）或对象 `{ "name": "<第一版短名>", "kind": "<本插件的类型名>" }`（如 HTTP：`{ "name": "http-request", "kind": "request" }` → `org.onedesk.http:request`）；对象里的 `kind` 必须是本插件声明的类型，否则清单无效。认领时调用的 `upgrade` 是目标类型的。
