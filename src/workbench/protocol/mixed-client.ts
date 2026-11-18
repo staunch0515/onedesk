@@ -190,6 +190,7 @@ export function createMixedClient(kernel: KernelClient, mock: ProtocolClient): P
       },
       get: (id) => runSide(id).run.get(id),
       export: (id, path) => runSide(id).run.export(id, path),
+      rows: (id, offset, limit) => (runSide(id).run.rows ? runSide(id).run.rows!(id, offset, limit) : Promise.reject(new Error("run.rows"))),
       cancel: (id) => runSide(id).run.cancel(id),
       render: (id, tabId) => runSide(id).run.render(id, tabId),
       setKept: (id, kept) => runSide(id).run.setKept(id, kept),

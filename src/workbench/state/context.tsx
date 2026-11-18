@@ -104,8 +104,11 @@ export function WorkbenchProvider({ store, children }: { store: Store; children:
           if (options?.envId) patch.envId = options.envId;
           return { activeTabId: existing.id, tabs: s.tabs.map((t) => (t.id === existing.id ? { ...t, ...patch } : t)) };
         }
-        const tab: TabState = { id: newTabId(), target, title: "", icon: "loader", pinned: false, envId: options?.envId ?? s.lastEnvId, params: options?.params ?? {} };
-        return { tabs: [...s.tabs, tab], activeTabId: tab.id };
+        // A tab for something not yet created takes the initial state as its first draft (D414): the form opens filled in and unsaved.
+        const fresh = target.startsWith("new:");
+        const tab: TabState = { id: newTabId(), target, title: "", icon: "loader", pinned: false, envId: options?.envId ?? s.lastEnvId, params: fresh ? {} : (options?.params ?? {}) };
+        const draft = fresh && options?.params && Object.keys(options.params).length > 0 ? { drafts: { ...s.drafts, [tab.id]: { ...options.params } } } : {};
+        return { tabs: [...s.tabs, tab], activeTabId: tab.id, ...draft };
       });
     };
 
