@@ -90,13 +90,8 @@ export default {
           const info = found.get(id);
           return info ? [info.icon, info.name, info.kindLabel || info.kind] : ["unlink", tr(ctx, "node.missing"), ""];
         });
-        const picked = ctx.params && ctx.params.item;
-        const options = items.map((id, i) => ({ value: id, label: `${i + 1}. ${found.has(id) ? found.get(id).name : tr(ctx, "node.missing")}` }));
-        const field = { name: "item", label: tr(ctx, "field.item"), kind: "enum", param: true, options };
-        if (picked && items.includes(picked)) field.envValue = picked;
         return {
           view: [
-            { type: "form", id: "pick", layout: "strip", fields: [field] },
             {
               type: "table",
               id: "items",
@@ -106,22 +101,28 @@ export default {
                 { key: "kind", label: tr(ctx, "col.kind") },
               ],
               rows,
-              rowTargets: items.map((id) => (found.has(id) ? `resource:${id}` : "")),
+              rowKeys: items,
+              rowTargets: items.map((id) => (found.has(id) ? `resource:${id}` : null)),
+              rowActions: [
+                { id: "up", label: ctx.t("action.up"), icon: "arrow-up" },
+                { id: "down", label: ctx.t("action.down"), icon: "arrow-down" },
+                { id: "remove", label: ctx.t("action.remove"), icon: "trash-2" },
+              ],
             },
           ],
         };
       },
 
-      // Page buttons act on the item chosen in the "item" parameter. They write through the host at once
-      // (a page event may only change bound fields, and the list is not one); removing never deletes the resource.
+      // Row buttons (D393): the event is the action id, `ctx.row` is the row's key (the resource id). They write through the
+      // host at once (a page event may only change bound fields, and the list is not one); removing never deletes the resource.
       async onEvent(ctx, event) {
         if (event !== "remove" && event !== "up" && event !== "down") throw new Error(`unknown event ${event}`);
         const items = currentItems(ctx);
-        const id = ctx.params && ctx.params.item;
+        const id = ctx.row;
         if (!id || !items.includes(id)) return { message: tr(ctx, "message.pick") };
         const next = event === "remove" ? items.filter((x) => x !== id) : move(items, id, event === "up" ? -1 : 1);
         await ctx.host.resources.update(ctx.resource.id, { "body.items": next });
-        return event === "remove" ? { message: tr(ctx, "message.removed"), params: { item: "" } } : {};
+        return event === "remove" ? { message: tr(ctx, "message.removed") } : {};
       },
     });
   },

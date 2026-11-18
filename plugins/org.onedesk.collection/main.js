@@ -69,7 +69,13 @@ export default {
         }
         const res = await ctx.host.resources.search(q);
         const items = (res.items || []).filter((i) => !ctx.resource || i.id !== ctx.resource.id);
-        view.push({ type: "text", id: "total", text: tr(ctx, items.length < res.total ? "page.total.partial" : "page.total", { total: res.total, shown: items.length }), tone: "muted" });
+        // The collection itself is never a result: take it off the total too, even when it is past the first batch.
+        let total = res.total;
+        if (ctx.resource) {
+          const self = await ctx.host.resources.search({ ...q, ids: [ctx.resource.id], limit: 1, offset: 0 });
+          if ((self.items || []).some((i) => i.id === ctx.resource.id && !i.deleted)) total = Math.max(0, total - 1);
+        }
+        view.push({ type: "text", id: "total", text: tr(ctx, items.length < total ? "page.total.partial" : "page.total", { total, shown: items.length }), tone: "muted" });
         if (items.length > 0) {
           view.push({
             type: "table",

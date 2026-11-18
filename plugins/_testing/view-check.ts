@@ -6,7 +6,7 @@ const KINDS = new Set(["text", "longtext", "code", "number", "boolean", "date", 
 const NODE_KEYS: Record<string, string[]> = {
   form: ["type", "id", "layout", "label", "fields"],
   text: ["type", "id", "text", "mono", "language", "tone", "format"],
-  table: ["type", "id", "columns", "rows", "rowTargets"],
+  table: ["type", "id", "columns", "rows", "rowTargets", "rowKeys", "rowActions"],
   link: ["type", "id", "label", "target"],
 };
 
