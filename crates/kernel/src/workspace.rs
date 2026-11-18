@@ -138,6 +138,17 @@ impl Workspace {
         Ok((Workspace { dir: dir.to_path_buf(), id, name }, conn))
     }
 
+    /// The current name: `workspace.json` is re-read because the main process renames a workspace by rewriting
+    /// that file while its worker runs (round 13 review #10). Falls back to the name read at opening.
+    pub fn current_name(&self) -> String {
+        std::fs::read(self.dir.join(INFO_FILE))
+            .ok()
+            .and_then(|b| serde_json::from_slice::<WorkspaceFile>(&b).ok())
+            .map(|f| f.name)
+            .filter(|n| !n.is_empty())
+            .unwrap_or_else(|| self.name.clone())
+    }
+
     pub fn open_reader(&self) -> Result<Connection, String> {
         let conn = Connection::open_with_flags(
             self.dir.join(DB_FILE),

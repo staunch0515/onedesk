@@ -134,12 +134,17 @@ pub fn ancestors(conn: &Connection, row: &Row) -> rusqlite::Result<Vec<Row>> {
 pub fn descendants(conn: &Connection, id: &str) -> rusqlite::Result<Vec<Row>> {
     let mut out = Vec::new();
     let mut queue = vec![id.to_string()];
+    // Round 2 review #14: a cycle in a damaged database must not loop forever.
+    let mut seen = std::collections::HashSet::from([id.to_string()]);
     let mut st = conn.prepare_cached(&format!(
         "SELECT {COLUMNS} FROM resources WHERE parent_id = ?1 AND deleted_at IS NULL ORDER BY pos, id"
     ))?;
     while let Some(p) = queue.pop() {
         for r in st.query_map([&p], from_sql)? {
             let r = r?;
+            if !seen.insert(r.id.clone()) {
+                continue;
+            }
             queue.push(r.id.clone());
             out.push(r);
         }
