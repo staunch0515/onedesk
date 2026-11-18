@@ -11,7 +11,7 @@ describe("note plugin: reading view", () => {
     const { pages } = registry(plugin);
     const out = await pages.editor.render(ctxOf({}));
     expect(out.view.map((n: any) => n.id)).toEqual(["mode", "content"]);
-    expect(out.view[0].fields[0]).toMatchObject({ name: "mode", param: true, kind: "enum" });
+    expect(out.view[0].fields[0]).toMatchObject({ name: "mode", param: true, kind: "enum", envValue: "edit" });
   });
 
   it("read mode renders the unsaved draft as Markdown, not the saved body", async () => {

@@ -34,6 +34,15 @@ describe("link plugin", () => {
     expect(res.summary.message).toBe("summary.opened");
   });
 
+  it("open: the output label and summary are in the run's language (the kernel's link output label is a plain string)", async () => {
+    const host = fakeHost();
+    const texts: Record<string, Record<string, string>> = { "output.label": { "en-US": "Opened {host}", "ja-JP": "{host} を開きました" }, "summary.opened": { "en-US": "Opened {host}", "ja-JP": "{host} を開きました" } };
+    const ctx = ctxOf(host, { locale: "ja-JP", t: (k: string) => texts[k] ?? { "en-US": k } });
+    const res = await registry(plugin).actions.open(ctx, { "body.url": "https://example.com/x" });
+    expect(res.output.label).toBe("example.com を開きました");
+    expect(res.summary.message).toBe("example.com を開きました");
+  });
+
   it("open: mailto is allowed", async () => {
     const host = fakeHost();
     await open(host, { "body.url": "mailto:a@b.com?subject=hi" });

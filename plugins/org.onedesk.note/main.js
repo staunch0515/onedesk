@@ -31,6 +31,7 @@ export default {
               label: ctx.t("field.mode"),
               kind: "enum",
               param: true,
+              envValue: "edit", // the shown value until a mode has been chosen (the page starts in edit mode)
               options: [
                 { value: "edit", label: ctx.t("mode.edit") },
                 { value: "read", label: ctx.t("mode.read") },
