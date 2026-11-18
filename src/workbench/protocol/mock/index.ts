@@ -41,6 +41,7 @@ import type {
 import { type MockAuditRow, DAY, FILE_ROOTS, HOUR, KINDS, ME, MINUTE, OPERATIONS, SEED_FAVORITES, fmtDate, fmtDateTime, generateTable, prng, seedAudit, seedPlugins, seedRows, type FakeFile, type ParamValue, type PluginRow, type Row, type Sim } from "./data";
 
 const DB_KEY = "onedesk.workbench.mock.v3";
+const WORKSPACES_KEY = "onedesk.workbench.mock.workspaces";
 const UI_PREFIX = "onedesk.workbench.ui.";
 
 type OutSpec = { kind: "table"; dataset: string; rows: number; seed: number } | { kind: "text"; text: string };
@@ -207,6 +208,17 @@ export function createMockClient(options: MockOptions = {}): ProtocolClient {
     }, 0);
   };
 
+  /** The demo's two workspaces (D400): only the name and the current one change; the data is the same. */
+  const hash = (text: string) => [...text].reduce((h, c) => (h * 31 + c.charCodeAt(0)) | 0, 7);
+  const workspaces: { items: { id: string; name: string; folder: string; lastOpened?: number }[]; current: string } = {
+    items: [
+      { id: "ws-shop", name: "电商数据 Shop Data", folder: "shop-data", lastOpened: 2 },
+      { id: "ws-personal", name: "个人 Personal", folder: "personal", lastOpened: 1 },
+    ],
+    current: "ws-shop",
+  };
+  const saveWorkspaces = () => write(WORKSPACES_KEY, workspaces);
+
   /* ---------------------------------------------------------------- storage */
   const read = (key: string): unknown => {
     try {
@@ -227,6 +239,16 @@ export function createMockClient(options: MockOptions = {}): ProtocolClient {
     window.clearTimeout(saveTimer);
     saveTimer = window.setTimeout(() => write(DB_KEY, db), 250);
   };
+
+  const savedWorkspaces = options.fresh ? null : (read(WORKSPACES_KEY) as typeof workspaces | null);
+  if (savedWorkspaces?.items?.length) Object.assign(workspaces, savedWorkspaces);
+  // A tab opened with "new window" belongs to that workspace (not saved: the other tabs keep theirs).
+  try {
+    const asked = new URLSearchParams(window.location.search).get("workspace");
+    if (asked && workspaces.items.some((w) => w.id === asked)) workspaces.current = asked;
+  } catch {
+    /* no window.location (tests) */
+  }
 
   function seed(): Db {
     const now = Date.now();
@@ -1568,11 +1590,51 @@ export function createMockClient(options: MockOptions = {}): ProtocolClient {
       },
       async list() {
         await wait();
-        return [
-          { id: "ws-shop", name: "电商数据 Shop Data", current: true },
-          { id: "ws-personal", name: "个人 Personal", current: false },
-          { id: "ws-acme", name: "甲公司 Acme", current: false },
-        ];
+        return [...workspaces.items].sort((x, y) => (y.lastOpened ?? 0) - (x.lastOpened ?? 0)).map((w) => ({ ...w, current: w.id === workspaces.current }));
+      },
+      async create(name) {
+        await wait();
+        const clean = name.trim();
+        if (!clean || [...clean].length > 100) throw new KernelError("invalidParams", {});
+        const entry = { id: `ws-${workspaces.items.length + 1}-${Math.abs(hash(clean))}`, name: clean, folder: clean.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "-").replace(/^-|-$/g, "") || "workspace" };
+        workspaces.items.push(entry);
+        saveWorkspaces();
+        emit("app.workspacesChanged");
+        return { ...entry, current: false };
+      },
+      async switchTo(id) {
+        await wait();
+        const found = workspaces.items.find((w) => w.id === id);
+        if (!found) throw new KernelError("notFound", { what: "workspace" });
+        workspaces.current = id;
+        found.lastOpened = Date.now();
+        saveWorkspaces();
+        return { ...found, current: true };
+      },
+      async rename(id, name) {
+        await wait();
+        const clean = name.trim();
+        if (!clean || [...clean].length > 100) throw new KernelError("invalidParams", {});
+        const found = workspaces.items.find((w) => w.id === id);
+        if (!found) throw new KernelError("notFound", { what: "workspace" });
+        found.name = clean;
+        saveWorkspaces();
+        emit("app.workspacesChanged");
+      },
+      async openWindow(id) {
+        await wait();
+        // The demo has no windows: another tab shows it (the demo state is shared through localStorage).
+        const url = new URL(window.location.href);
+        url.searchParams.set("workspace", id);
+        window.open(url.toString(), "_blank", "noopener");
+      },
+      async remove(id) {
+        await wait();
+        if (id === workspaces.current) throw new KernelError("conflict", { reason: "inUse" });
+        if (!workspaces.items.some((w) => w.id === id)) throw new KernelError("notFound", { what: "workspace" });
+        workspaces.items = workspaces.items.filter((w) => w.id !== id);
+        saveWorkspaces();
+        emit("app.workspacesChanged");
       },
       async startTargets() {
         await wait(2);

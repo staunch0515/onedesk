@@ -24,6 +24,8 @@ http-body = "1"
 bytes = "1"
 # Keychain (D305): macOS native backend only.
 keyring = { version = "3", default-features = false, features = ["apple-native"] }
+# D404: lists the accounts of the keychain service so a deleted workspace's entries can go by prefix (the same package keyring uses; MIT/Apache-2.0).
+security-framework = "3"
 
 [dev-dependencies]
 tempfile.workspace = true

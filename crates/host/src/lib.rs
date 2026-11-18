@@ -11,6 +11,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use onedesk_kernel::secrets::SecretStoreHandle;
 use onedesk_protocol::{
     ConnectionState, ErrorCode, EventMessage, HelloParams, HelloResult, AppInstallParams, PluginFolderRef, PluginVersionParams, ProtocolError, Request, Response,
     PROTOCOL_VERSION,
@@ -27,9 +28,11 @@ pub mod index;
 pub mod install;
 pub mod plugins;
 pub mod process_groups;
+pub mod workspaces;
 pub mod ws;
 
-pub use data_dir::{default_data_dir, resolve_worker_bin, workspace_dir};
+pub use data_dir::{default_data_dir, resolve_worker_bin, workspace_dir, workspace_path};
+pub use workspaces::WorkspaceEntry;
 
 /// How long a request waits for a restarting worker before it gives up with `workerGone`.
 const WAIT_FOR_WORKER: Duration = Duration::from_secs(20);
@@ -45,6 +48,23 @@ pub struct HostConfig {
     pub worker_bin: PathBuf,
     /// Folder with one sub-folder per built-in plugin package; copied into the data dir.
     pub builtin_plugins: Option<PathBuf>,
+    /// Where deleting a workspace removes its secrets from (D401). `None`: `SecretStoreHandle::from_env()` — the keychain,
+    /// or memory with `ONEDESK_SECRET_STORE=memory`. Tests pass a memory store.
+    pub secrets: Option<SecretStoreHandle>,
+}
+
+/// An event of one worker (or of the main process) with the workspace it belongs to; `workspace: None` goes to everyone.
+#[derive(Debug, Clone)]
+pub struct HostEvent {
+    pub workspace: Option<String>,
+    pub event: EventMessage,
+}
+
+impl std::ops::Deref for HostEvent {
+    type Target = EventMessage;
+    fn deref(&self) -> &EventMessage {
+        &self.event
+    }
 }
 
 #[derive(Debug)]
@@ -120,7 +140,7 @@ impl Conn {
     }
 }
 
-async fn read_loop(read: tokio::net::unix::OwnedReadHalf, conn: Arc<Conn>, events: broadcast::Sender<EventMessage>) {
+async fn read_loop(read: tokio::net::unix::OwnedReadHalf, conn: Arc<Conn>, events: broadcast::Sender<HostEvent>, folder: String) {
     let mut lines = BufReader::new(read).lines();
     while let Ok(Some(line)) = lines.next_line().await {
         let Ok(value) = serde_json::from_str::<Value>(&line) else { continue };
@@ -131,7 +151,7 @@ async fn read_loop(read: tokio::net::unix::OwnedReadHalf, conn: Arc<Conn>, event
                 }
             }
         } else if let Ok(ev) = serde_json::from_value::<EventMessage>(value) {
-            let _ = events.send(ev);
+            let _ = events.send(HostEvent { workspace: Some(folder.clone()), event: ev });
         }
     }
     // Worker gone: every request still waiting gets `workerGone` (their senders are dropped).
@@ -161,7 +181,7 @@ struct Started {
 }
 
 async fn spawn_worker(cfg: &HostConfig, shared: &Shared) -> Result<Started, HostError> {
-    let workspace = workspace_dir(&cfg.data_dir);
+    let workspace = workspace_path(&cfg.data_dir, &shared.folder);
     let plugins = cfg.data_dir.join("plugins");
     let socket = socket_path();
     let mut command = tokio::process::Command::new(&cfg.worker_bin);
@@ -177,9 +197,34 @@ async fn spawn_worker(cfg: &HostConfig, shared: &Shared) -> Result<Started, Host
     }
     let mut child = command
         .stdin(Stdio::null())
+        .stderr(Stdio::piped())
         .kill_on_drop(true)
         .spawn()
         .map_err(|e| HostError(format!("cannot start worker {}: {e}", cfg.worker_bin.display())))?;
+    // The worker's own words go on to our stderr; the last of them explain a start that failed (for example why the database could not be opened).
+    let tail = Arc::new(Mutex::new(String::new()));
+    if let Some(stderr) = child.stderr.take() {
+        let tail = tail.clone();
+        tokio::spawn(async move {
+            let mut lines = BufReader::new(stderr).lines();
+            while let Ok(Some(line)) = lines.next_line().await {
+                eprintln!("{line}");
+                let mut t = tail.lock().unwrap();
+                if !t.is_empty() {
+                    t.push('\n');
+                }
+                t.push_str(&line);
+                // Keep the last ~2000 bytes, cut on a character boundary.
+                if t.len() > 2000 {
+                    let mut cut = t.len() - 2000;
+                    while !t.is_char_boundary(cut) {
+                        cut += 1;
+                    }
+                    t.drain(..cut);
+                }
+            }
+        });
+    }
     let deadline = Instant::now() + START_TIMEOUT;
     let stream = loop {
         match UnixStream::connect(&socket).await {
@@ -188,7 +233,11 @@ async fn spawn_worker(cfg: &HostConfig, shared: &Shared) -> Result<Started, Host
                 if let Ok(Some(status)) = child.try_wait() {
                     return Err(HostError(match status.code() {
                         Some(3) => "workspace is locked by another worker (exit 3)".to_string(),
-                        _ => format!("worker exited during start: {status}"),
+                        _ => {
+                            // Give the reader task a moment to deliver the last line.
+                            tokio::time::sleep(Duration::from_millis(50)).await;
+                            format!("worker exited during start: {status}: {}", tail.lock().unwrap().trim())
+                        }
                     }));
                 }
                 if Instant::now() > deadline {
@@ -201,7 +250,7 @@ async fn spawn_worker(cfg: &HostConfig, shared: &Shared) -> Result<Started, Host
     };
     let (read, write) = stream.into_split();
     let conn = Conn::new(write);
-    tokio::spawn(read_loop(read, conn.clone(), shared.events.clone()));
+    tokio::spawn(read_loop(read, conn.clone(), shared.events.clone(), shared.folder.clone()));
     let params = serde_json::to_value(HelloParams { protocol: PROTOCOL_VERSION.to_string() }).expect("hello params");
     let resp = match conn.send(shared.next_id(), "hello", params, None).await {
         Ok(r) => r,
@@ -220,12 +269,14 @@ async fn spawn_worker(cfg: &HostConfig, shared: &Shared) -> Result<Started, Host
 
 /* ---------------------------------------------------------------- host */
 
+/// What one worker process needs: its workspace folder, the shared event channel and its own connection state.
 struct Shared {
+    folder: String,
     next_id: AtomicU64,
-    events: broadcast::Sender<EventMessage>,
+    events: broadcast::Sender<HostEvent>,
     hello: Mutex<Value>,
     /// `<id>@<version>` of the built-in plugins this process copied (D313); the worker may auto-confirm only these.
-    builtin: Mutex<Vec<String>>,
+    builtin: Arc<Mutex<Vec<String>>>,
     current: watch::Sender<Option<Arc<Conn>>>,
     shutdown: watch::Sender<bool>,
 }
@@ -237,7 +288,8 @@ impl Shared {
 
     fn connection_event(&self, state: ConnectionState) {
         let payload = serde_json::to_value(state).expect("state serializes");
-        let _ = self.events.send(EventMessage { topic: onedesk_protocol::topic::CONNECTION.into(), payload: Some(payload), client: None });
+        let event = EventMessage { topic: onedesk_protocol::topic::CONNECTION.into(), payload: Some(payload), client: None };
+        let _ = self.events.send(HostEvent { workspace: Some(self.folder.clone()), event });
     }
 }
 
@@ -250,18 +302,85 @@ fn refresh_index(plugin_root: &Path, builtin: &[String]) {
     }
 }
 
-pub struct Host {
-    data_dir: PathBuf,
-    install_lock: tokio::sync::Mutex<()>,
+/// One running worker: its connection state, restart count and the task that watches it.
+struct Slot {
     shared: Arc<Shared>,
     monitor: Mutex<Option<tokio::task::JoinHandle<()>>>,
     restarts: Arc<std::sync::atomic::AtomicU32>,
 }
 
+impl Slot {
+    /// Closes the worker connection so it can finish its transaction and exit; kills it after a grace period.
+    async fn stop(&self) {
+        self.shared.shutdown.send_replace(true);
+        let handle = self.monitor.lock().unwrap().take();
+        if let Some(h) = handle {
+            let _ = h.await;
+        }
+    }
+
+    /// Sends one request to the worker (waiting for a restarting one).
+    async fn forward(&self, client: Option<&str>, method: &str, params: Value) -> Result<Value, ProtocolError> {
+        let id = self.shared.next_id();
+        let mut rx = self.shared.current.subscribe();
+        let deadline = tokio::time::Instant::now() + WAIT_FOR_WORKER;
+        loop {
+            let live = |c: &Option<Arc<Conn>>| c.as_ref().is_some_and(|c| !c.is_closed());
+            let conn = match tokio::time::timeout_at(deadline, rx.wait_for(live)).await {
+                Ok(Ok(c)) => c.clone().expect("checked by wait_for"),
+                _ => return Err(err(ErrorCode::WorkerGone, "worker is not running")),
+            };
+            match conn.send(id, method, params.clone(), client.map(str::to_string)).await {
+                Ok(resp) => {
+                    return match resp.error {
+                        Some(e) => Err(e),
+                        None => Ok(resp.result.unwrap_or(Value::Null)),
+                    }
+                }
+                Err(SendError::Gone) => return Err(err(ErrorCode::WorkerGone, "worker went away before answering")),
+                Err(SendError::NotSent) => {
+                    // The worker had died already: wait for its successor.
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+            }
+        }
+    }
+}
+
+/// The main process: one worker per workspace that a connection is using (D400). Each connection (`client`) is bound
+/// to one workspace; its requests go to that workspace's worker and it only sees that worker's events.
+pub struct Host {
+    cfg: HostConfig,
+    data_dir: PathBuf,
+    install_lock: tokio::sync::Mutex<()>,
+    builtin: Arc<Mutex<Vec<String>>>,
+    events: broadcast::Sender<HostEvent>,
+    /// Running workers by workspace folder.
+    slots: Mutex<HashMap<String, Arc<Slot>>>,
+    /// Serialises starting a worker so two requests do not start the same workspace twice.
+    start_lock: tokio::sync::Mutex<()>,
+    /// `client` -> folder, set by `app.switchWorkspace`.
+    bindings: Mutex<HashMap<String, String>>,
+    /// The folder a connection without a binding uses: the one opened at start, then the last one switched to.
+    active: Mutex<String>,
+    secrets: SecretStoreHandle,
+}
+
 impl Host {
-    /// Prepares the data directory, copies built-in plugins, starts the worker and says hello.
+    /// Prepares the data directory, copies built-in plugins,
+    /// starts the worker of the most recently opened workspace and says hello.
     pub async fn start(cfg: HostConfig) -> Result<Arc<Host>, HostError> {
-        std::fs::create_dir_all(workspace_dir(&cfg.data_dir)).map_err(|e| HostError(format!("data dir: {e}")))?;
+        std::fs::create_dir_all(&cfg.data_dir).map_err(|e| HostError(format!("data dir: {e}")))?;
+        let first = match workspaces::sorted(workspaces::scan(&cfg.data_dir)).into_iter().next() {
+            Some((folder, _)) => folder,
+            None => {
+                let dir = workspace_dir(&cfg.data_dir);
+                std::fs::create_dir_all(&dir).map_err(|e| HostError(format!("data dir: {e}")))?;
+                let info = workspaces::InfoFile { id: workspaces::new_id(), name: "Default".into(), last_opened_at: 0, window: None };
+                workspaces::write_info(&dir, &info).map_err(|e| HostError(format!("workspace.json: {e}")))?;
+                "default".to_string()
+            }
+        };
         let plugin_root = cfg.data_dir.join("plugins");
         std::fs::create_dir_all(&plugin_root).map_err(|e| HostError(format!("plugins dir: {e}")))?;
         let mut builtin = Vec::new();
@@ -270,26 +389,85 @@ impl Host {
         }
         refresh_index(&plugin_root, &builtin);
         let (events, _) = broadcast::channel(1024);
-        let (current, _) = watch::channel(None);
-        let (shutdown, _) = watch::channel(false);
-        let shared = Arc::new(Shared { next_id: AtomicU64::new(1), events, hello: Mutex::new(Value::Null), builtin: Mutex::new(builtin), current, shutdown });
-        let first = spawn_worker(&cfg, &shared).await?;
+        let secrets = cfg.secrets.clone().unwrap_or_else(SecretStoreHandle::from_env);
+        let host = Arc::new(Host {
+            data_dir: cfg.data_dir.clone(),
+            cfg,
+            install_lock: tokio::sync::Mutex::new(()),
+            builtin: Arc::new(Mutex::new(builtin)),
+            events,
+            slots: Mutex::new(HashMap::new()),
+            start_lock: tokio::sync::Mutex::new(()),
+            bindings: Mutex::new(HashMap::new()),
+            active: Mutex::new(first.clone()),
+            secrets,
+        });
+        host.slot_for(&first).await.map_err(|e| HostError(e.detail.unwrap_or_else(|| format!("{:?}", e.code))))?;
+        host.touch_last_opened(&first);
+        Ok(host)
+    }
+
+    /// Every event of every worker plus the main process's own events; `visible_to` says who gets which.
+    pub fn events(&self) -> broadcast::Receiver<HostEvent> {
+        self.events.subscribe()
+    }
+
+    /// Whether `client` should receive `ev`: addressed to it (or to nobody in particular) and from the workspace it uses.
+    pub fn visible_to(&self, ev: &HostEvent, client: &str) -> bool {
+        if ev.event.client.as_deref().is_some_and(|c| c != client) {
+            return false;
+        }
+        ev.workspace.as_ref().is_none_or(|w| *w == self.bound(Some(client)))
+    }
+
+    /// The folders whose workers are running.
+    pub fn running_workspaces(&self) -> Vec<String> {
+        let mut v: Vec<String> = self.slots.lock().unwrap().keys().cloned().collect();
+        v.sort();
+        v
+    }
+
+    /// How many times workers were restarted so far.
+    pub fn restart_count(&self) -> u32 {
+        self.slots.lock().unwrap().values().map(|s| s.restarts.load(Ordering::SeqCst)).sum()
+    }
+
+    /// The folder `client` uses.
+    fn bound(&self, client: Option<&str>) -> String {
+        client
+            .and_then(|c| self.bindings.lock().unwrap().get(c).cloned())
+            .unwrap_or_else(|| self.active.lock().unwrap().clone())
+    }
+
+    /// The running worker of a folder, starting it if needed.
+    async fn slot_for(&self, folder: &str) -> Result<Arc<Slot>, ProtocolError> {
+        if let Some(s) = self.slots.lock().unwrap().get(folder) {
+            return Ok(s.clone());
+        }
+        let _one_start = self.start_lock.lock().await;
+        if let Some(s) = self.slots.lock().unwrap().get(folder) {
+            return Ok(s.clone());
+        }
+        let shared = Arc::new(Shared {
+            folder: folder.to_string(),
+            next_id: AtomicU64::new(1),
+            events: self.events.clone(),
+            hello: Mutex::new(Value::Null),
+            builtin: self.builtin.clone(),
+            current: watch::channel(None).0,
+            shutdown: watch::channel(false).0,
+        });
+        // The kernel rewrites `workspace.json` when it opens the workspace; the window position is ours to keep.
+        let window = workspaces::read_info(&workspace_path(&self.data_dir, folder)).and_then(|i| i.window);
+        let first = spawn_worker(&self.cfg, &shared).await.map_err(|e| err(ErrorCode::WorkerGone, e.0))?;
+        self.set_window_bounds(folder, window);
         *shared.hello.lock().unwrap() = first.hello.clone();
         shared.current.send_replace(Some(first.conn.clone()));
         let restarts = Arc::new(std::sync::atomic::AtomicU32::new(0));
-        let data_dir = cfg.data_dir.clone();
-        let monitor = tokio::spawn(monitor(cfg, shared.clone(), first, restarts.clone()));
-        Ok(Arc::new(Host { data_dir, install_lock: tokio::sync::Mutex::new(()), shared, monitor: Mutex::new(Some(monitor)), restarts }))
-    }
-
-    /// Every event of the worker plus the main process's own `connection` events.
-    pub fn events(&self) -> broadcast::Receiver<EventMessage> {
-        self.shared.events.subscribe()
-    }
-
-    /// How many times the worker was restarted so far.
-    pub fn restart_count(&self) -> u32 {
-        self.restarts.load(Ordering::SeqCst)
+        let monitor = tokio::spawn(monitor(self.cfg.clone(), shared.clone(), first, restarts.clone()));
+        let slot = Arc::new(Slot { shared, monitor: Mutex::new(Some(monitor)), restarts });
+        self.slots.lock().unwrap().insert(folder.to_string(), slot.clone());
+        Ok(slot)
     }
 
     /// Forwards one request. `client` identifies the window or browser (§9.2).
@@ -303,12 +481,19 @@ impl Host {
                     detail: None,
                 });
             }
-            return Ok(self.shared.hello.lock().unwrap().clone());
+            let slot = self.slot_for(&self.bound(client)).await?;
+            let hello = slot.shared.hello.lock().unwrap().clone();
+            return Ok(hello);
         }
         match method {
             "app.inspectPlugin" => return self.inspect_plugin(client, params).await,
             "app.installPlugin" => return self.install_plugin(client, params).await,
             "app.removePlugin" => return self.remove_plugin(client, params).await,
+            "app.workspaces" => return self.list_workspaces(client),
+            "app.createWorkspace" => return self.create_workspace(client, params).await,
+            "app.switchWorkspace" => return self.switch_workspace(client, params).await,
+            "app.renameWorkspace" => return self.rename_workspace(params),
+            "app.deleteWorkspace" => return self.delete_workspace(client, params),
             // A client's rescan (a package copied in by hand) takes the same road as ours: refresh the index, add the
             // built-in list. Its own parameters are ignored; only the main process knows what is built in.
             "plugin.rescan" => return self.rescan(client).await,
@@ -325,7 +510,7 @@ impl Host {
 
     /// `plugin.rescan` with the built-in list (D313).
     async fn rescan(&self, client: Option<&str>) -> Result<Value, ProtocolError> {
-        let builtin = self.shared.builtin.lock().unwrap().clone();
+        let builtin = self.builtin.lock().unwrap().clone();
         refresh_index(&self.data_dir.join("plugins"), &builtin);
         self.forward(client, "plugin.rescan", json!({ "builtin": builtin })).await
     }
@@ -411,52 +596,32 @@ impl Host {
         }
         // A removed built-in version is no longer the main process's own copy.
         let key = format!("{}@{}", p.plugin, p.version);
-        self.shared.builtin.lock().unwrap().retain(|b| *b != key);
+        self.builtin.lock().unwrap().retain(|b| *b != key);
         self.rescan(client).await?;
         Ok(Value::Null)
     }
 
-    /// Sends one request to the worker (waiting for a restarting one).
+    /// Sends one request to the worker of the workspace `client` uses.
     async fn forward(&self, client: Option<&str>, method: &str, params: Value) -> Result<Value, ProtocolError> {
-        let id = self.shared.next_id();
-        let mut rx = self.shared.current.subscribe();
-        let deadline = tokio::time::Instant::now() + WAIT_FOR_WORKER;
-        loop {
-            let live = |c: &Option<Arc<Conn>>| c.as_ref().is_some_and(|c| !c.is_closed());
-            let conn = match tokio::time::timeout_at(deadline, rx.wait_for(live)).await {
-                Ok(Ok(c)) => c.clone().expect("checked by wait_for"),
-                _ => return Err(err(ErrorCode::WorkerGone, "worker is not running")),
-            };
-            match conn.send(id, method, params.clone(), client.map(str::to_string)).await {
-                Ok(resp) => {
-                    return match resp.error {
-                        Some(e) => Err(e),
-                        None => Ok(resp.result.unwrap_or(Value::Null)),
-                    }
-                }
-                Err(SendError::Gone) => return Err(err(ErrorCode::WorkerGone, "worker went away before answering")),
-                Err(SendError::NotSent) => {
-                    // The worker had died already: wait for its successor.
-                    tokio::time::sleep(Duration::from_millis(10)).await;
-                }
-            }
-        }
+        let slot = self.slot_for(&self.bound(client)).await?;
+        slot.forward(client, method, params).await
     }
 
-    /// Closes the worker connection so it can finish its transaction and exit; kills it after a grace period.
+    /// Closes every worker connection so they can finish their transactions and exit; kills them after a grace period.
     pub async fn shutdown(&self) {
-        self.shared.shutdown.send_replace(true);
-        let handle = self.monitor.lock().unwrap().take();
-        if let Some(h) = handle {
-            let _ = h.await;
+        let slots: Vec<Arc<Slot>> = self.slots.lock().unwrap().drain().map(|(_, s)| s).collect();
+        for s in slots {
+            s.stop().await;
         }
     }
 }
 
 impl Drop for Host {
     fn drop(&mut self) {
-        // The monitor owns the child with kill_on_drop; make it stop restarting.
-        self.shared.shutdown.send_replace(true);
+        // The monitors own the children with kill_on_drop; make them stop restarting.
+        for s in self.slots.lock().unwrap().values() {
+            s.shared.shutdown.send_replace(true);
+        }
     }
 }
 
@@ -476,12 +641,12 @@ async fn monitor(cfg: HostConfig, shared: Arc<Shared>, first: Started, restarts:
                 }
                 let _ = std::fs::remove_file(&started.socket);
                 // A worker that was killed (by us or from outside) cannot end its programs itself (D340).
-                process_groups::cleanup_recorded(&workspace_dir(&cfg.data_dir));
+                process_groups::cleanup_recorded(&workspace_path(&cfg.data_dir, &shared.folder));
                 return;
             }
         }
         let _ = std::fs::remove_file(&started.socket);
-        process_groups::cleanup_recorded(&workspace_dir(&cfg.data_dir));
+        process_groups::cleanup_recorded(&workspace_path(&cfg.data_dir, &shared.folder));
         shared.current.send_replace(None);
         shared.connection_event(ConnectionState::Lost);
         quick_failures = if began.elapsed() < Duration::from_secs(10) { quick_failures + 1 } else { 0 };
@@ -505,3 +670,188 @@ async fn monitor(cfg: HostConfig, shared: Arc<Shared>, first: Started, restarts:
     }
 }
 
+
+/* ---------------------------------------------------------------- workspaces (D400, D401) */
+
+#[derive(serde::Deserialize)]
+struct NameParams {
+    name: String,
+}
+
+#[derive(serde::Deserialize)]
+struct IdParams {
+    id: String,
+}
+
+#[derive(serde::Deserialize)]
+struct RenameParams {
+    id: String,
+    name: String,
+}
+
+fn in_use() -> ProtocolError {
+    ProtocolError { code: ErrorCode::Conflict, params: [("reason".to_string(), "inUse".to_string())].into(), detail: None }
+}
+
+fn not_found(what: &str) -> ProtocolError {
+    ProtocolError { code: ErrorCode::NotFound, params: [("what".to_string(), what.to_string())].into(), detail: None }
+}
+
+impl Host {
+    /// The workspace folders as the main process sees them right now.
+    fn scanned(&self) -> Vec<(String, workspaces::InfoFile)> {
+        workspaces::sorted(workspaces::scan(&self.data_dir))
+    }
+
+    fn find(&self, id: &str) -> Result<(String, workspaces::InfoFile), ProtocolError> {
+        self.scanned().into_iter().find(|(f, i)| workspaces::entry(f, i, false).id == id).ok_or_else(|| not_found("workspace"))
+    }
+
+    /// Like `find`, but refuses a workspace whose id is still pending (no `workspace.json` yet): renaming or deleting it
+    /// would need the id (D404). Opening it once lets the kernel write the file.
+    fn find_with_id(&self, id: &str) -> Result<(String, workspaces::InfoFile), ProtocolError> {
+        let found = self.find(id)?;
+        if found.1.id.is_empty() {
+            return Err(ProtocolError { code: ErrorCode::Conflict, params: [("reason".to_string(), "idPending".to_string())].into(), detail: None });
+        }
+        Ok(found)
+    }
+
+    fn changed(&self) {
+        let event = EventMessage { topic: "app.workspacesChanged".into(), payload: None, client: None };
+        let _ = self.events.send(HostEvent { workspace: None, event });
+    }
+
+    /// The window position and size remembered for a workspace folder (D403).
+    pub fn window_bounds(&self, folder: &str) -> Option<workspaces::WindowBounds> {
+        workspaces::read_info(&workspace_path(&self.data_dir, folder)).and_then(|i| i.window)
+    }
+
+    /// Remembers (or, with `None`, keeps) the window position and size in the workspace's `workspace.json`.
+    pub fn set_window_bounds(&self, folder: &str, bounds: Option<workspaces::WindowBounds>) {
+        let dir = workspace_path(&self.data_dir, folder);
+        if let (Some(b), Some(mut info)) = (bounds, workspaces::read_info(&dir)) {
+            info.window = Some(b);
+            let _ = workspaces::write_info(&dir, &info);
+        }
+    }
+
+    /// The workspace folder a window or tab (`client`) uses now.
+    pub fn client_folder(&self, client: &str) -> String {
+        self.bound(Some(client))
+    }
+
+    /// Binds a new window or tab to a workspace without changing the default for others (D403). Starts the
+    /// workspace's worker if needed.
+    pub async fn bind_client(&self, client: &str, workspace_id: &str) -> Result<WorkspaceEntry, ProtocolError> {
+        let (folder, info) = self.find(workspace_id)?;
+        self.slot_for(&folder).await?;
+        self.touch_last_opened(&folder);
+        let old = self.bound(Some(client));
+        self.bindings.lock().unwrap().insert(client.to_string(), folder.clone());
+        if old != folder {
+            self.release(&old).await;
+        }
+        let info = workspaces::read_info(&workspace_path(&self.data_dir, &folder)).unwrap_or(info);
+        Ok(workspaces::entry(&folder, &info, true))
+    }
+
+    /// A window or tab went away: its worker stops when nobody else uses it (and it is not the default).
+    pub async fn unbind_client(&self, client: &str) {
+        let old = self.bindings.lock().unwrap().remove(client);
+        if let Some(folder) = old {
+            self.release(&folder).await;
+        }
+    }
+
+    fn touch_last_opened(&self, folder: &str) {
+        let dir = workspace_path(&self.data_dir, folder);
+        if let Some(mut info) = workspaces::read_info(&dir) {
+            info.last_opened_at = workspaces::now_ms();
+            let _ = workspaces::write_info(&dir, &info);
+        }
+    }
+
+    /// `app.workspaces` → `{ items: WorkspaceEntry[] }`, newest `lastOpened` first.
+    fn list_workspaces(&self, client: Option<&str>) -> Result<Value, ProtocolError> {
+        let mine = self.bound(client);
+        let items: Vec<WorkspaceEntry> = self.scanned().iter().map(|(f, i)| workspaces::entry(f, i, *f == mine)).collect();
+        Ok(json!({ "items": items }))
+    }
+
+    /// `app.createWorkspace { name }`: a new folder with the current workspace's settings to apply at its first open.
+    /// Nothing is switched.
+    async fn create_workspace(&self, client: Option<&str>, params: Value) -> Result<Value, ProtocolError> {
+        let name = workspaces::valid_name(&parse::<NameParams>(params)?.name).ok_or_else(|| err(ErrorCode::InvalidParams, "name must be 1 to 100 characters"))?;
+        // The kernel gives the configuration tree values and plugin enablement (no data). A kernel without the method
+        // yields an empty workspace.
+        let snapshot = match self.forward(client, "workspace.settingsSnapshot", Value::Null).await {
+            Ok(v) => Some(v),
+            Err(e) if e.code == ErrorCode::UnknownMethod => None,
+            Err(e) => return Err(e),
+        };
+        let (folder, info) = workspaces::create(&self.data_dir, &name, snapshot.as_ref()).map_err(|e| err(ErrorCode::Internal, e))?;
+        self.changed();
+        Ok(serde_json::to_value(workspaces::entry(&folder, &info, false)).expect("entry serializes"))
+    }
+
+    /// `app.switchWorkspace { id }`: binds this connection to the workspace (starting its worker if needed). The
+    /// worker left behind stops when no connection uses it any more.
+    async fn switch_workspace(&self, client: Option<&str>, params: Value) -> Result<Value, ProtocolError> {
+        let (folder, info) = self.find(&parse::<IdParams>(params)?.id)?;
+        self.slot_for(&folder).await?;
+        self.touch_last_opened(&folder);
+        let old = self.bound(client);
+        self.bindings.lock().unwrap().insert(client.unwrap_or_default().to_string(), folder.clone());
+        *self.active.lock().unwrap() = folder.clone();
+        if old != folder {
+            self.release(&old).await;
+        }
+        let info = workspaces::read_info(&workspace_path(&self.data_dir, &folder)).unwrap_or(info);
+        Ok(serde_json::to_value(workspaces::entry(&folder, &info, true)).expect("entry serializes"))
+    }
+
+    /// Stops the worker of `folder` unless a connection (or the default for new ones) still uses it.
+    async fn release(&self, folder: &str) {
+        let used = *self.active.lock().unwrap() == folder || self.bindings.lock().unwrap().values().any(|f| f == folder);
+        if used {
+            return;
+        }
+        let slot = self.slots.lock().unwrap().remove(folder);
+        if let Some(slot) = slot {
+            slot.stop().await;
+        }
+    }
+
+    /// `app.renameWorkspace { id, name }`: changes the name in `workspace.json`.
+    fn rename_workspace(&self, params: Value) -> Result<Value, ProtocolError> {
+        let p = parse::<RenameParams>(params)?;
+        let name = workspaces::valid_name(&p.name).ok_or_else(|| err(ErrorCode::InvalidParams, "name must be 1 to 100 characters"))?;
+        let (folder, mut info) = self.find_with_id(&p.id)?;
+        info.name = name;
+        workspaces::write_info(&workspace_path(&self.data_dir, &folder), &info).map_err(|e| err(ErrorCode::Internal, format!("workspace.json: {e}")))?;
+        self.changed();
+        Ok(Value::Null)
+    }
+
+    /// `app.deleteWorkspace { id }`: not the one in use; the folder moves to `trash/workspaces/` and its keychain
+    /// entries are deleted.
+    fn delete_workspace(&self, client: Option<&str>, params: Value) -> Result<Value, ProtocolError> {
+        let (folder, info) = self.find_with_id(&parse::<IdParams>(params)?.id)?;
+        let used = self.bound(client) == folder
+            || *self.active.lock().unwrap() == folder
+            || self.bindings.lock().unwrap().values().any(|f| *f == folder)
+            || self.slots.lock().unwrap().contains_key(&folder);
+        if used {
+            return Err(in_use());
+        }
+        let trashed = workspaces::move_to_trash(&self.data_dir, &folder).map_err(|e| err(ErrorCode::Internal, e))?;
+        // The keychain accounts are `<workspace id>/<name>`: all of them go, without opening the database (D404).
+        if let Err(e) = self.secrets.0.delete_prefix(&format!("{}/", info.id)) {
+            eprintln!("onedesk-host: could not delete the keychain entries of workspace {}: {e}", info.id);
+        }
+        let _ = trashed;
+        self.changed();
+        Ok(Value::Null)
+    }
+}

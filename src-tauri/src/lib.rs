@@ -5,10 +5,11 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use onedesk_host::workspaces::WindowBounds;
 use onedesk_host::{default_data_dir, resolve_worker_bin, Host, HostConfig};
 use onedesk_protocol::{ErrorCode, ProtocolError};
 use serde_json::Value;
-use tauri::{Emitter, Manager, RunEvent, WebviewWindow};
+use tauri::{Emitter, Manager, RunEvent, WebviewUrl, WebviewWindow, WebviewWindowBuilder, WindowEvent};
 use tauri_plugin_dialog::DialogExt;
 
 /// Either the running host or the reason it could not start (shown by the interface).
@@ -83,6 +84,41 @@ async fn open_external(url: String) -> Result<(), String> {
         .map_err(|e| e.to_string())?
 }
 
+/// "New window" (D403): opens another window bound to a workspace (several windows may share one workspace; a window
+/// belongs to one workspace at a time). Its position and size come from that workspace's `workspace.json`.
+#[tauri::command]
+async fn open_window(app: tauri::AppHandle, state: tauri::State<'_, HostState>, workspace: String) -> Result<(), ProtocolError> {
+    static NEXT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(1);
+    let Some(host) = &state.host else {
+        return Err(ProtocolError { code: ErrorCode::WorkerGone, params: Default::default(), detail: state.start_error.clone() });
+    };
+    let label = format!("win-{}", NEXT.fetch_add(1, std::sync::atomic::Ordering::SeqCst));
+    // Bound before the window loads, so its first `hello` already belongs to that workspace.
+    let entry = host.bind_client(&label, &workspace).await?;
+    let mut builder = WebviewWindowBuilder::new(&app, &label, WebviewUrl::App("workbench.html".into())).title("OneDesk").min_inner_size(1100.0, 720.0);
+    builder = match host.window_bounds(&entry.folder) {
+        // A little offset so a second window on the same workspace does not hide the first.
+        Some(b) => builder.position(b.x + 24.0, b.y + 24.0).inner_size(b.width, b.height),
+        None => builder.inner_size(1440.0, 900.0),
+    };
+    if let Err(e) = builder.build() {
+        host.unbind_client(&label).await;
+        return Err(ProtocolError { code: ErrorCode::Internal, params: Default::default(), detail: Some(e.to_string()) });
+    }
+    Ok(())
+}
+
+/// Remembers where a window is, in the `workspace.json` of the workspace it shows.
+fn remember_bounds(window: &tauri::Window, host: &Host) {
+    let (Ok(pos), Ok(size)) = (window.outer_position(), window.inner_size()) else { return };
+    let scale = window.scale_factor().unwrap_or(1.0);
+    let (pos, size) = (pos.to_logical::<f64>(scale), size.to_logical::<f64>(scale));
+    if size.width < 200.0 || size.height < 200.0 {
+        return;
+    }
+    host.set_window_bounds(&host.client_folder(window.label()), Some(WindowBounds { x: pos.x, y: pos.y, width: size.width, height: size.height }));
+}
+
 pub fn run() {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
@@ -92,21 +128,38 @@ pub fn run() {
             }
         }))
         .plugin(tauri_plugin_dialog::init())
-        .invoke_handler(tauri::generate_handler![protocol_request, pick_folder, pick_save_file, open_external])
+        .invoke_handler(tauri::generate_handler![protocol_request, pick_folder, pick_save_file, open_external, open_window])
+        .on_window_event(|window, event| {
+            let Some(state) = window.try_state::<HostState>() else { return };
+            let Some(host) = state.host.clone() else { return };
+            match event {
+                // The position is saved when the window is closed; a crash loses at most the last move.
+                WindowEvent::CloseRequested { .. } => remember_bounds(window, &host),
+                // Its workspace's worker stops when this was the last window using it.
+                WindowEvent::Destroyed => {
+                    let label = window.label().to_string();
+                    tauri::async_runtime::spawn(async move { host.unbind_client(&label).await });
+                }
+                _ => {}
+            }
+        })
         .setup(|app| {
-            let cfg = HostConfig { data_dir: default_data_dir(), worker_bin: resolve_worker_bin(), builtin_plugins: builtin_plugins_dir() };
+            let cfg = HostConfig { data_dir: default_data_dir(), worker_bin: resolve_worker_bin(), builtin_plugins: builtin_plugins_dir(), secrets: None };
             let state = match tauri::async_runtime::block_on(Host::start(cfg)) {
                 Ok(host) => {
                     let handle = app.handle().clone();
                     let mut events = host.events();
+                    let events_host = host.clone();
                     tauri::async_runtime::spawn(async move {
                         loop {
                             match events.recv().await {
                                 Ok(ev) => {
-                                    let _ = match &ev.client {
-                                        Some(label) => handle.emit_to(label.as_str(), "protocol-event", &ev),
-                                        None => handle.emit("protocol-event", &ev),
-                                    };
+                                    // Each window sees the events of the workspace it uses (D400).
+                                    for label in handle.webview_windows().keys() {
+                                        if events_host.visible_to(&ev, label) {
+                                            let _ = handle.emit_to(label.as_str(), "protocol-event", &ev.event);
+                                        }
+                                    }
                                 }
                                 Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
                                 Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
@@ -120,6 +173,13 @@ pub fn run() {
                     HostState { host: None, start_error: Some(e.to_string()) }
                 }
             };
+            // The first window opens where the workspace it shows was last (D403).
+            if let (Some(host), Some(window)) = (&state.host, app.get_webview_window("main")) {
+                if let Some(b) = host.window_bounds(&host.client_folder("main")) {
+                    let _ = window.set_size(tauri::LogicalSize::new(b.width, b.height));
+                    let _ = window.set_position(tauri::LogicalPosition::new(b.x, b.y));
+                }
+            }
             app.manage(state);
             Ok(())
         })

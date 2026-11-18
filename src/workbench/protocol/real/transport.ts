@@ -12,6 +12,8 @@ export interface Transport {
   pickSaveFile?(name?: string): Promise<string | null>;
   /** Opens an address with the system's default browser (desktop only; the main process checks the protocol). */
   openExternal?(url: string): Promise<void>;
+  /** Opens a window (desktop) or a browser tab for a workspace (D403); the new one belongs to that workspace. */
+  openWindow?(workspaceId: string): Promise<void>;
   close(): void;
 }
 

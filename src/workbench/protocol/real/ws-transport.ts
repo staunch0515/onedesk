@@ -3,8 +3,9 @@ import { KernelError, toKernelError } from "../errors";
 import type { Transport } from "./transport";
 
 /** Browser against `onedesk-devhost` (D266): `?kernel=ws://127.0.0.1:<port>&token=<token>`. */
-export function createWsTransport(base: string, token: string, client: string): Promise<Transport> {
-  const url = `${base}${base.includes("?") ? "&" : "?"}token=${encodeURIComponent(token)}&client=${encodeURIComponent(client)}`;
+export function createWsTransport(base: string, token: string, client: string, workspace?: string | null): Promise<Transport> {
+  // `workspace`: this tab was opened for a workspace ("new window", D403); the main process binds the connection to it.
+  const url = `${base}${base.includes("?") ? "&" : "?"}token=${encodeURIComponent(token)}&client=${encodeURIComponent(client)}${workspace ? `&workspace=${encodeURIComponent(workspace)}` : ""}`;
   let socket: WebSocket;
   let nextId = 1;
   let closed = false;

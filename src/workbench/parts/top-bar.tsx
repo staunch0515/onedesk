@@ -5,12 +5,14 @@ import { SECRETS_TARGET } from "../pages/secrets-page";
 import { startExport, startImport } from "./transfer-dialogs";
 import type { SearchHit } from "../protocol";
 import { useQuery, useUi, useWorkbench } from "../state/context";
+import { switchWorkspace, WorkspaceDialogs, type WorkspaceDialog } from "./workspace-dialogs";
 
 export function TopBarPart({ onSettings }: { onSettings: () => void }) {
   const { client, store, actions } = useWorkbench();
   const { t, tx } = useI18n();
   const { toast } = useToast();
-  const workspaces = useQuery((c) => c.workspace.list(), []);
+  const workspaces = useQuery((c) => c.workspace.list(), [], ["app.workspacesChanged"]);
+  const [workspaceDialog, setWorkspaceDialog] = useState<WorkspaceDialog>(null);
   const newItems = useQuery((c) => c.command.newItems(), []);
   const [query, setQuery] = useState("");
   const [hits, setHits] = useState<SearchHit[]>([]);
@@ -43,10 +45,13 @@ export function TopBarPart({ onSettings }: { onSettings: () => void }) {
   }, [query, client, actions]);
 
   const current = workspaces.data?.find((w) => w.current);
-  // Switching, creating and opening another workspace in a new window are not built yet (next round, D372): they are not offered.
-  const workspaceMenu: MenuEntry[] = [
+    const workspaceMenu: MenuEntry[] = [
     { type: "label", key: "label", label: t("topbar.workspaces") },
-    ...(workspaces.data ?? []).filter((w) => w.current).map((w): MenuEntry => ({ key: w.id, label: w.name, icon: "check", onSelect: () => undefined })),
+    ...(workspaces.data ?? []).map((w): MenuEntry => ({ key: w.id, label: w.name, icon: w.current ? "check" : undefined, onSelect: () => (w.current ? undefined : void switchWorkspace(client, w.id).catch(actions.fail)) })),
+    { type: "separator", key: "sep-workspaces" },
+    { key: "new-workspace", label: t("topbar.newWorkspace"), icon: "plus", onSelect: () => setWorkspaceDialog({ kind: "create" }) },
+    { key: "new-window", label: t("topbar.openInNewWindow"), icon: "app-window", onSelect: () => setWorkspaceDialog({ kind: "manage" }) },
+    { key: "manage-workspaces", label: t("topbar.manageWorkspaces"), icon: "settings", onSelect: () => setWorkspaceDialog({ kind: "manage" }) },
   ];
 
   const newMenu: MenuEntry[] = (newItems.data ?? []).flatMap((item): MenuEntry[] => [
@@ -67,6 +72,8 @@ export function TopBarPart({ onSettings }: { onSettings: () => void }) {
   }));
 
   return (
+    <>
+    <WorkspaceDialogs dialog={workspaceDialog} setDialog={setWorkspaceDialog} />
     <TopBar
       start={
         <DropdownMenu
@@ -118,5 +125,6 @@ export function TopBarPart({ onSettings }: { onSettings: () => void }) {
         </>
       }
     />
+    </>
   );
 }

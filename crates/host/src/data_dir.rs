@@ -3,7 +3,7 @@
 use std::path::{Path, PathBuf};
 
 /// `ONEDESK_DATA_DIR` wins; otherwise `~/Library/Application Support/onedesk/` for release
-/// builds and `…/onedesk-dev/` for debug builds. The old first-version `onedesk.db` is never touched.
+/// builds and `…/onedesk-dev/` for debug builds. A first-version `onedesk.db` in it is never touched or moved (D403).
 pub fn default_data_dir() -> PathBuf {
     if let Some(dir) = std::env::var_os("ONEDESK_DATA_DIR").filter(|d| !d.is_empty()) {
         return PathBuf::from(dir);
@@ -13,9 +13,14 @@ pub fn default_data_dir() -> PathBuf {
     home.join("Library").join("Application Support").join(name)
 }
 
-/// Week 1 has exactly one workspace.
+/// The folder every installation starts with (and where the first-version database is moved to).
 pub fn workspace_dir(data_dir: &Path) -> PathBuf {
-    data_dir.join("workspaces").join("default")
+    workspace_path(data_dir, "default")
+}
+
+/// `<data dir>/workspaces/<folder>`.
+pub fn workspace_path(data_dir: &Path, folder: &str) -> PathBuf {
+    data_dir.join("workspaces").join(folder)
 }
 
 /// `ONEDESK_WORKER_BIN`, else `onedesk-worker` next to the running executable.

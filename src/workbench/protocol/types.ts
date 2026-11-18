@@ -113,10 +113,17 @@ export type PageDescriptor = Omit<KernelPageDescriptor, "view" | "values"> & { v
 
 export type PageSaveResult = { page: PageDescriptor };
 
-/** Demo only: the workspace switcher list (the kernel has one workspace in week 1). */
+/** One row of `app.workspaces` (D400). Same shape from the main process and the demo. */
 export interface WorkspaceEntry {
   id: string;
   name: string;
+  /** True while the workspace has no `workspace.json` yet (id `pending:<folder>`): it can be opened, not renamed or deleted (D404). */
+  idPending?: boolean;
+  /** The folder under `workspaces/`; the demo has none. */
+  folder?: string;
+  /** Milliseconds since the epoch; absent when never opened. */
+  lastOpened?: number;
+  /** The one this connection uses. */
   current: boolean;
 }
 

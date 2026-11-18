@@ -87,7 +87,8 @@ function ConnectionNotices({ startupError }: { startupError?: string }) {
   const live = useRef({ toast, t });
   live.current = { toast, t };
   useEffect(() => {
-    if (startupError) live.current.toast({ tone: "warning", title: live.current.t("startup.failed", { reason: startupError }) });
+    if (!startupError) return;
+    live.current.toast({ tone: "warning", title: live.current.t("startup.failed", { reason: startupError }) });
   }, [startupError]);
   useEffect(
     () =>

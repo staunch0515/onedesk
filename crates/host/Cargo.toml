@@ -17,6 +17,7 @@ path = "src/bin/onedesk-devhost.rs"
 
 [dependencies]
 onedesk-protocol.workspace = true
+onedesk-kernel.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true

@@ -26,7 +26,7 @@ async fn main() {
         let default = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../plugins");
         default.is_dir().then_some(default)
     });
-    let cfg = HostConfig { data_dir: PathBuf::from(data_dir), worker_bin: resolve_worker_bin(), builtin_plugins: builtin };
+    let cfg = HostConfig { data_dir: PathBuf::from(data_dir), worker_bin: resolve_worker_bin(), builtin_plugins: builtin, secrets: None };
     let host = match Host::start(cfg).await {
         Ok(h) => h,
         Err(e) => {

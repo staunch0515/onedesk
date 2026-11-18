@@ -106,8 +106,13 @@ export function createMixedClient(kernel: KernelClient, mock: ProtocolClient): P
     workspace: {
       ...mock.workspace,
       info: () => kernel.workspace.info(),
-      // One workspace this round: the switcher lists the kernel's, and no demo tabs are opened on first start.
-      list: async () => [{ ...(await kernel.workspace.info()), current: true }],
+      // The main process manages the workspaces (D400); no demo tabs are opened on first start.
+      list: () => kernel.workspace.list(),
+      create: (name) => kernel.workspace.create(name),
+      switchTo: (id) => kernel.workspace.switchTo(id),
+      rename: (id, name) => kernel.workspace.rename(id, name),
+      remove: (id) => kernel.workspace.remove(id),
+      openWindow: (id) => kernel.workspace.openWindow(id),
       startTargets: async () => [], getConfig: (name) => kernel.workspace.getConfig(name), setConfig: (name, value) => kernel.workspace.setConfig(name, value),
       export: (folder) => kernel.workspace.export(folder),
       importPreview: (folder) => kernel.workspace.importPreview(folder),

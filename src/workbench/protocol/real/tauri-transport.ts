@@ -33,6 +33,13 @@ export async function createTauriTransport(): Promise<Transport> {
     async openExternal(url) {
       await invoke("open_external", { url });
     },
+    async openWindow(workspaceId) {
+      try {
+        await invoke("open_window", { workspace: workspaceId });
+      } catch (error) {
+        throw toKernelError(error);
+      }
+    },
     close() {
       unlisten();
       handlers.clear();

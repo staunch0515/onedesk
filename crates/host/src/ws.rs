@@ -60,6 +60,8 @@ pub async fn serve(host: Arc<Host>, listener: TcpListener, token: String) {
 
 async fn connection(host: Arc<Host>, stream: TcpStream, token: String, anon: u64) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let mut client = format!("ws-{anon}");
+    // `workspace=<id>`: a new tab for that workspace ("new window" in a browser, D403).
+    let mut workspace: Option<String> = None;
     #[allow(clippy::result_large_err)] // the callback type is fixed by tungstenite
     let check = |req: &HttpRequest, resp: HttpResponse| -> Result<HttpResponse, ErrorResponse> {
         let uri = req.uri().to_string();
@@ -71,9 +73,14 @@ async fn connection(host: Arc<Host>, stream: TcpStream, token: String, anon: u64
         if let Some(c) = query_param(&uri, "client").filter(|c| !c.is_empty()) {
             client = c;
         }
+        workspace = query_param(&uri, "workspace").filter(|w| !w.is_empty());
         Ok(resp)
     };
     let ws = tokio_tungstenite::accept_hdr_async(stream, check).await?;
+    if let Some(id) = &workspace {
+        // An unknown id leaves the tab on the default workspace; the interface then shows that one.
+        let _ = host.bind_client(&client, id).await;
+    }
     let (mut sink, mut source) = ws.split();
     let (tx, mut rx) = mpsc::unbounded_channel::<String>();
     let writer = tokio::spawn(async move {
@@ -84,13 +91,13 @@ async fn connection(host: Arc<Host>, stream: TcpStream, token: String, anon: u64
         }
     });
     let mut events = host.events();
-    let (etx, own) = (tx.clone(), client.clone());
+    let (etx, own, pusher_host) = (tx.clone(), client.clone(), host.clone());
     let pusher = tokio::spawn(async move {
         loop {
             match events.recv().await {
                 Ok(ev) => {
-                    if ev.client.as_deref().is_none_or(|c| c == own) {
-                        let _ = etx.send(serde_json::to_string(&ev).expect("event serializes"));
+                    if pusher_host.visible_to(&ev, &own) {
+                        let _ = etx.send(serde_json::to_string(&ev.event).expect("event serializes"));
                     }
                 }
                 Err(broadcast::error::RecvError::Lagged(_)) => continue,
@@ -117,6 +124,8 @@ async fn connection(host: Arc<Host>, stream: TcpStream, token: String, anon: u64
     }
     pusher.abort();
     writer.abort();
+    // The tab is gone: its workspace's worker stops if nobody else uses it.
+    host.unbind_client(&client).await;
     Ok(())
 }
 

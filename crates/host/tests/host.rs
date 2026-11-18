@@ -22,14 +22,14 @@ fn write_plugin(root: &Path, id: &str, version: &str) {
 async fn start(tmp: &Path) -> Arc<Host> {
     let builtin = tmp.join("builtin");
     write_plugin(&builtin, "org.test.alpha", "0.1.0");
-    Host::start(HostConfig { data_dir: tmp.join("data"), worker_bin: fake_worker(), builtin_plugins: Some(builtin) }).await.unwrap()
+    Host::start(HostConfig { data_dir: tmp.join("data"), worker_bin: fake_worker(), builtin_plugins: Some(builtin), secrets: Some(onedesk_kernel::secrets::SecretStoreHandle::memory().0) }).await.unwrap()
 }
 
-async fn next_connection(rx: &mut tokio::sync::broadcast::Receiver<onedesk_protocol::EventMessage>) -> ConnectionState {
+async fn next_connection(rx: &mut tokio::sync::broadcast::Receiver<onedesk_host::HostEvent>) -> ConnectionState {
     loop {
         let ev = tokio::time::timeout(Duration::from_secs(10), rx.recv()).await.expect("event in time").unwrap();
         if ev.topic == "connection" {
-            return serde_json::from_value(ev.payload.unwrap()).unwrap();
+            return serde_json::from_value(ev.payload.clone().unwrap()).unwrap();
         }
     }
 }
@@ -115,7 +115,7 @@ async fn worker_events_are_broadcast() {
 #[tokio::test]
 async fn start_fails_when_the_worker_cannot_run() {
     let tmp = tempfile::tempdir().unwrap();
-    let cfg = HostConfig { data_dir: tmp.path().join("data"), worker_bin: tmp.path().join("missing-worker"), builtin_plugins: None };
+    let cfg = HostConfig { data_dir: tmp.path().join("data"), worker_bin: tmp.path().join("missing-worker"), builtin_plugins: None, secrets: Some(onedesk_kernel::secrets::SecretStoreHandle::memory().0) };
     assert!(Host::start(cfg).await.is_err());
 }
 
@@ -403,5 +403,332 @@ async fn a_client_rescan_refreshes_the_index_first_and_carries_the_builtin_list(
     let log = calls(tmp.path());
     let last = log.iter().rev().find(|l| l.starts_with("plugin.rescan")).unwrap();
     assert!(last.contains("org.test.alpha@0.1.0") && !last.contains("evil"), "{last}");
+    host.shutdown().await;
+}
+
+/* ---------------------------------------------------------------- workspaces (round 13) */
+
+fn memory_store() -> (onedesk_kernel::secrets::SecretStoreHandle, Arc<onedesk_kernel::secrets::MemoryStore>) {
+    onedesk_kernel::secrets::SecretStoreHandle::memory()
+}
+
+async fn start_with(tmp: &Path, secrets: onedesk_kernel::secrets::SecretStoreHandle) -> Arc<Host> {
+    Host::start(HostConfig { data_dir: tmp.join("data"), worker_bin: fake_worker(), builtin_plugins: None, secrets: Some(secrets) }).await.unwrap()
+}
+
+async fn list(host: &Host, client: &str) -> Vec<Value> {
+    host.request(Some(client), "app.workspaces", Value::Null).await.unwrap()["items"].as_array().unwrap().clone()
+}
+
+async fn next_topic(rx: &mut tokio::sync::broadcast::Receiver<onedesk_host::HostEvent>, topic: &str) {
+    loop {
+        let ev = tokio::time::timeout(Duration::from_secs(10), rx.recv()).await.expect("event in time").unwrap();
+        if ev.topic == topic {
+            return;
+        }
+    }
+}
+
+#[tokio::test]
+async fn a_fresh_data_dir_has_one_default_workspace_that_is_current() {
+    let tmp = tempfile::tempdir().unwrap();
+    let host = start(tmp.path()).await;
+    let items = list(&host, "w").await;
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0]["folder"], "default");
+    assert_eq!(items[0]["name"], "Default");
+    assert_eq!(items[0]["current"], true);
+    assert!(items[0]["id"].as_str().unwrap().len() >= 16);
+    assert!(items[0]["lastOpened"].as_i64().unwrap() > 0, "opening it was recorded");
+    host.shutdown().await;
+}
+
+#[tokio::test]
+async fn create_makes_a_folder_with_the_current_settings_and_does_not_switch() {
+    let tmp = tempfile::tempdir().unwrap();
+    let host = start(tmp.path()).await;
+    let mut events = host.events();
+    let made = host.request(Some("w"), "app.createWorkspace", json!({ "name": "  Team Notes " })).await.unwrap();
+    assert_eq!(made["name"], "Team Notes");
+    assert_eq!(made["folder"], "team-notes");
+    assert_eq!(made["current"], false);
+    next_topic(&mut events, "app.workspacesChanged").await;
+    let dir = tmp.path().join("data/workspaces/team-notes");
+    let info: Value = serde_json::from_slice(&std::fs::read(dir.join("workspace.json")).unwrap()).unwrap();
+    assert_eq!((info["id"].clone(), info["name"].clone()), (made["id"].clone(), json!("Team Notes")));
+    let init: Value = serde_json::from_slice(&std::fs::read(dir.join("init-settings.json")).unwrap()).unwrap();
+    assert_eq!(init, json!({ "from": "default" }), "the snapshot came from the workspace the client uses");
+    assert_eq!(host.running_workspaces(), ["default"], "no worker was started for it");
+    // The same name again gets another folder.
+    let again = host.request(Some("w"), "app.createWorkspace", json!({ "name": "Team Notes" })).await.unwrap();
+    assert_eq!(again["folder"], "team-notes-2");
+    // Names are 1 to 100 characters.
+    for bad in ["", "   ", &"x".repeat(101)] {
+        let e = host.request(Some("w"), "app.createWorkspace", json!({ "name": bad })).await.unwrap_err();
+        assert_eq!(e.code, ErrorCode::InvalidParams);
+    }
+    assert_eq!(list(&host, "w").await.len(), 3);
+    host.shutdown().await;
+}
+
+#[tokio::test]
+async fn switch_binds_only_this_connection_and_stops_a_worker_nobody_uses() {
+    let tmp = tempfile::tempdir().unwrap();
+    let host = start(tmp.path()).await;
+    let team = host.request(Some("a"), "app.createWorkspace", json!({ "name": "team" })).await.unwrap();
+    // Connection b is explicitly on the default workspace.
+    let default_id = list(&host, "b").await[0]["id"].clone();
+    host.request(Some("b"), "app.switchWorkspace", json!({ "id": default_id })).await.unwrap();
+    let switched = host.request(Some("a"), "app.switchWorkspace", json!({ "id": team["id"] })).await.unwrap();
+    assert_eq!(switched["folder"], "team");
+    assert_eq!(switched["current"], true);
+    assert!(host.request(Some("a"), "args", Value::Null).await.unwrap()["workspace"].as_str().unwrap().ends_with("data/workspaces/team"));
+    assert!(host.request(Some("b"), "args", Value::Null).await.unwrap()["workspace"].as_str().unwrap().ends_with("data/workspaces/default"));
+    let current = |items: &[Value]| items.iter().filter(|i| i["current"] == true).map(|i| i["folder"].as_str().unwrap().to_string()).collect::<Vec<_>>();
+    assert_eq!(current(&list(&host, "a").await), ["team"]);
+    assert_eq!(current(&list(&host, "b").await), ["default"]);
+    assert_eq!(host.running_workspaces(), ["default", "team"], "b still uses default");
+    // The newest `lastOpened` comes first.
+    assert_eq!(list(&host, "a").await[0]["folder"], "team");
+    // Now b leaves too: the default worker stops, nobody uses it.
+    host.request(Some("b"), "app.switchWorkspace", json!({ "id": team["id"] })).await.unwrap();
+    assert_eq!(host.running_workspaces(), ["team"]);
+    // And can come back (the lock was released).
+    host.request(Some("b"), "app.switchWorkspace", json!({ "id": default_id })).await.unwrap();
+    assert_eq!(host.running_workspaces(), ["default", "team"]);
+    let unknown = host.request(Some("b"), "app.switchWorkspace", json!({ "id": "nope" })).await.unwrap_err();
+    assert_eq!(unknown.code, ErrorCode::NotFound);
+    host.shutdown().await;
+}
+
+#[tokio::test]
+async fn events_reach_only_the_connections_using_that_workspace() {
+    let tmp = tempfile::tempdir().unwrap();
+    let host = start(tmp.path()).await;
+    let team = host.request(Some("a"), "app.createWorkspace", json!({ "name": "team" })).await.unwrap();
+    let default_id = list(&host, "b").await[0]["id"].clone();
+    host.request(Some("b"), "app.switchWorkspace", json!({ "id": default_id })).await.unwrap();
+    host.request(Some("a"), "app.switchWorkspace", json!({ "id": team["id"] })).await.unwrap();
+    let mut events = host.events();
+    host.request(Some("a"), "emit", Value::Null).await.unwrap();
+    let ev = tokio::time::timeout(Duration::from_secs(5), events.recv()).await.unwrap().unwrap();
+    assert_eq!(ev.topic, "tree:t");
+    assert!(host.visible_to(&ev, "a"));
+    assert!(!host.visible_to(&ev, "b"));
+    // The main process's own events go to everyone.
+    host.request(Some("a"), "app.renameWorkspace", json!({ "id": team["id"], "name": "Team" })).await.unwrap();
+    next_topic(&mut events, "app.workspacesChanged").await;
+    host.shutdown().await;
+}
+
+#[tokio::test]
+async fn rename_changes_the_name_in_workspace_json_and_the_list() {
+    let tmp = tempfile::tempdir().unwrap();
+    let host = start(tmp.path()).await;
+    let mut events = host.events();
+    let id = list(&host, "w").await[0]["id"].clone();
+    assert_eq!(host.request(Some("w"), "app.renameWorkspace", json!({ "id": id, "name": " Work " })).await.unwrap(), Value::Null);
+    next_topic(&mut events, "app.workspacesChanged").await;
+    assert_eq!(list(&host, "w").await[0]["name"], "Work");
+    let file: Value = serde_json::from_slice(&std::fs::read(tmp.path().join("data/workspaces/default/workspace.json")).unwrap()).unwrap();
+    assert_eq!(file["name"], "Work");
+    assert_eq!(list(&host, "w").await[0]["folder"], "default", "the folder keeps its name");
+    let empty = host.request(Some("w"), "app.renameWorkspace", json!({ "id": id, "name": "" })).await.unwrap_err();
+    assert_eq!(empty.code, ErrorCode::InvalidParams);
+    let long = host.request(Some("w"), "app.renameWorkspace", json!({ "id": id, "name": "y".repeat(101) })).await.unwrap_err();
+    assert_eq!(long.code, ErrorCode::InvalidParams);
+    let gone = host.request(Some("w"), "app.renameWorkspace", json!({ "id": "nope", "name": "x" })).await.unwrap_err();
+    assert_eq!(gone.code, ErrorCode::NotFound);
+    host.shutdown().await;
+}
+
+#[tokio::test]
+async fn delete_refuses_the_workspace_in_use_and_moves_the_rest_to_trash_with_its_secrets() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (store, memory) = memory_store();
+    let host = start_with(tmp.path(), store.clone()).await;
+    let mut events = host.events();
+    let made = host.request(Some("a"), "app.createWorkspace", json!({ "name": "scratch" })).await.unwrap();
+    let id = made["id"].as_str().unwrap().to_string();
+    for name in ["token", "key"] {
+        store.0.set(&format!("{id}/{name}"), "value").unwrap();
+    }
+    // Another workspace's entries, one whose id merely starts the same way, and a database file that is not even SQLite.
+    store.0.set("other-workspace/token", "value").unwrap();
+    store.0.set(&format!("{id}0/token"), "value").unwrap();
+    let dir = tmp.path().join("data/workspaces/scratch");
+    std::fs::write(dir.join("workspace.db"), b"the main process never opens this").unwrap();
+    // In use: the current one, and one another connection is on.
+    let current = list(&host, "a").await[0]["id"].clone();
+    let e = host.request(Some("a"), "app.deleteWorkspace", json!({ "id": current })).await.unwrap_err();
+    assert_eq!((e.code, e.params.get("reason").map(String::as_str)), (ErrorCode::Conflict, Some("inUse")));
+    host.request(Some("b"), "app.switchWorkspace", json!({ "id": id })).await.unwrap();
+    let e = host.request(Some("a"), "app.deleteWorkspace", json!({ "id": id })).await.unwrap_err();
+    assert_eq!(e.code, ErrorCode::Conflict);
+    assert!(dir.exists());
+    // b leaves; now it can go.
+    host.request(Some("b"), "app.switchWorkspace", json!({ "id": current })).await.unwrap();
+    host.request(Some("a"), "app.switchWorkspace", json!({ "id": current })).await.unwrap();
+    assert_eq!(host.request(Some("a"), "app.deleteWorkspace", json!({ "id": id })).await.unwrap(), Value::Null);
+    next_topic(&mut events, "app.workspacesChanged").await;
+    assert!(!dir.exists());
+    let trash: Vec<String> = std::fs::read_dir(tmp.path().join("data/trash/workspaces")).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
+    assert_eq!(trash.len(), 1);
+    assert!(trash[0].starts_with("scratch-20"), "{trash:?}");
+    assert!(tmp.path().join("data/trash/workspaces").join(&trash[0]).join("workspace.db").is_file(), "moved, not deleted");
+    assert_eq!(memory.accounts(), [format!("{id}0/token"), "other-workspace/token".to_string()], "only this workspace's keychain entries went");
+    assert_eq!(list(&host, "a").await.len(), 1);
+    let gone = host.request(Some("a"), "app.deleteWorkspace", json!({ "id": id })).await.unwrap_err();
+    assert_eq!(gone.code, ErrorCode::NotFound);
+    host.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_first_version_onedesk_db_is_not_touched() {
+    let tmp = tempfile::tempdir().unwrap();
+    let data = tmp.path().join("data");
+    std::fs::create_dir_all(&data).unwrap();
+    std::fs::write(data.join("onedesk.db"), b"first version").unwrap();
+    let host = start(tmp.path()).await;
+    assert_eq!(std::fs::read(data.join("onedesk.db")).unwrap(), b"first version");
+    assert!(!data.join("workspaces/default/workspace.db").exists());
+    assert!(!data.join("workspaces/default/backups").exists());
+    host.shutdown().await;
+}
+
+#[tokio::test]
+async fn workspace_methods_work_over_the_websocket_and_the_change_event_reaches_every_connection() {
+    let tmp = tempfile::tempdir().unwrap();
+    let host = start(tmp.path()).await;
+    let port = ws_server(host.clone(), "t").await;
+    let (mut a, _) = tokio_tungstenite::connect_async(format!("ws://127.0.0.1:{port}/?token=t&client=a")).await.unwrap();
+    let (mut b, _) = tokio_tungstenite::connect_async(format!("ws://127.0.0.1:{port}/?token=t&client=b")).await.unwrap();
+    a.send(Message::text(json!({ "id": 1, "method": "app.createWorkspace", "params": { "name": "Two" } }).to_string())).await.unwrap();
+    let reply: Value = serde_json::from_str(a.next().await.unwrap().unwrap().to_text().unwrap()).unwrap();
+    assert_eq!(reply["result"]["folder"], "two");
+    for socket in [&mut a, &mut b] {
+        let ev: Value = tokio::time::timeout(Duration::from_secs(5), async { serde_json::from_str(socket.next().await.unwrap().unwrap().to_text().unwrap()).unwrap() }).await.unwrap();
+        assert_eq!(ev["topic"], "app.workspacesChanged");
+    }
+    host.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_worker_that_fails_to_start_explains_itself_with_its_last_words() {
+    use std::os::unix::fs::PermissionsExt;
+    let tmp = tempfile::tempdir().unwrap();
+    let script = tmp.path().join("worker.sh");
+    std::fs::write(&script, "#!/bin/sh\necho 'worker says why' >&2\nexit 1\n").unwrap();
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let cfg = HostConfig { data_dir: tmp.path().join("data"), worker_bin: script, builtin_plugins: None, secrets: Some(memory_store().0) };
+    let e = Host::start(cfg).await.err().expect("start fails");
+    assert!(e.0.contains("worker says why"), "{}", e.0);
+}
+
+/* ---------------------------------------------------------------- several windows (D403) */
+
+#[tokio::test]
+async fn windows_of_different_workspaces_run_side_by_side_and_the_last_one_out_stops_the_worker() {
+    let tmp = tempfile::tempdir().unwrap();
+    let host = start(tmp.path()).await;
+    let team = host.request(Some("main"), "app.createWorkspace", json!({ "name": "team" })).await.unwrap();
+    let id = team["id"].as_str().unwrap();
+    // Two windows on the same new workspace; the main window stays on the default one.
+    host.bind_client("win-1", id).await.unwrap();
+    host.bind_client("win-2", id).await.unwrap();
+    assert_eq!(host.running_workspaces(), ["default", "team"]);
+    assert!(host.request(Some("win-1"), "args", Value::Null).await.unwrap()["workspace"].as_str().unwrap().ends_with("workspaces/team"));
+    assert!(host.request(Some("main"), "args", Value::Null).await.unwrap()["workspace"].as_str().unwrap().ends_with("workspaces/default"));
+    // One window of two closes: the worker stays; deleting is refused while any window uses it.
+    host.unbind_client("win-1").await;
+    assert_eq!(host.running_workspaces(), ["default", "team"]);
+    let e = host.request(Some("main"), "app.deleteWorkspace", json!({ "id": id })).await.unwrap_err();
+    assert_eq!((e.code, e.params.get("reason").map(String::as_str)), (ErrorCode::Conflict, Some("inUse")));
+    // The last one closes: the worker stops and the workspace can be deleted.
+    host.unbind_client("win-2").await;
+    assert_eq!(host.running_workspaces(), ["default"]);
+    host.request(Some("main"), "app.deleteWorkspace", json!({ "id": id })).await.unwrap();
+    // Binding to a workspace that does not exist is refused.
+    assert_eq!(host.bind_client("win-3", "nope").await.unwrap_err().code, ErrorCode::NotFound);
+    host.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_new_window_does_not_change_which_workspace_other_windows_get() {
+    let tmp = tempfile::tempdir().unwrap();
+    let host = start(tmp.path()).await;
+    let team = host.request(Some("main"), "app.createWorkspace", json!({ "name": "team" })).await.unwrap();
+    host.bind_client("win-1", team["id"].as_str().unwrap()).await.unwrap();
+    let items = list(&host, "win-1").await;
+    assert_eq!(items.iter().filter(|i| i["current"] == true).map(|i| i["folder"].as_str().unwrap()).collect::<Vec<_>>(), ["team"]);
+    let items = list(&host, "main").await;
+    assert_eq!(items.iter().filter(|i| i["current"] == true).map(|i| i["folder"].as_str().unwrap()).collect::<Vec<_>>(), ["default"]);
+    // A window that switches inside itself leaves its old workspace's worker running only if another window uses it.
+    let default_id = items.iter().find(|i| i["folder"] == "default").unwrap()["id"].clone();
+    host.request(Some("win-1"), "app.switchWorkspace", json!({ "id": default_id })).await.unwrap();
+    assert_eq!(host.running_workspaces(), ["default"]);
+    host.shutdown().await;
+}
+
+#[tokio::test]
+async fn the_window_position_is_kept_in_workspace_json_across_restarts_of_the_worker() {
+    let tmp = tempfile::tempdir().unwrap();
+    let host = start(tmp.path()).await;
+    let b = onedesk_host::workspaces::WindowBounds { x: 10.0, y: 20.0, width: 1200.0, height: 800.0 };
+    host.set_window_bounds("default", Some(b));
+    assert_eq!(host.window_bounds("default"), Some(b));
+    let file: Value = serde_json::from_slice(&std::fs::read(tmp.path().join("data/workspaces/default/workspace.json")).unwrap()).unwrap();
+    assert_eq!(file["window"]["width"], 1200.0);
+    assert_eq!(file["name"], "Default", "the rest of the file is kept");
+    host.shutdown().await;
+    // A second host on the same data directory still has it.
+    let again = start(tmp.path()).await;
+    assert_eq!(again.window_bounds("default"), Some(b));
+    again.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_browser_tab_opened_with_a_workspace_parameter_is_bound_and_released_on_close() {
+    let tmp = tempfile::tempdir().unwrap();
+    let host = start(tmp.path()).await;
+    let team = host.request(None, "app.createWorkspace", json!({ "name": "team" })).await.unwrap();
+    let port = ws_server(host.clone(), "t").await;
+    let id = team["id"].as_str().unwrap();
+    let (mut tab, _) = tokio_tungstenite::connect_async(format!("ws://127.0.0.1:{port}/?token=t&client=tab-x&workspace={id}")).await.unwrap();
+    tab.send(Message::text(json!({ "id": 1, "method": "args" }).to_string())).await.unwrap();
+    let reply: Value = serde_json::from_str(tab.next().await.unwrap().unwrap().to_text().unwrap()).unwrap();
+    assert!(reply["result"]["workspace"].as_str().unwrap().ends_with("workspaces/team"), "{reply}");
+    assert_eq!(host.running_workspaces(), ["default", "team"]);
+    tab.close(None).await.unwrap();
+    drop(tab);
+    for _ in 0..50 {
+        if host.running_workspaces() == ["default"] {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert_eq!(host.running_workspaces(), ["default"]);
+    host.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_folder_without_workspace_json_is_listed_switchable_and_not_deletable_until_its_worker_has_run() {
+    let tmp = tempfile::tempdir().unwrap();
+    let host = start(tmp.path()).await;
+    let dir = tmp.path().join("data/workspaces/copied-in");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("workspace.db"), b"x").unwrap();
+    let items = list(&host, "w").await;
+    let pending = items.iter().find(|i| i["folder"] == "copied-in").expect("listed");
+    assert_eq!((pending["name"].clone(), pending["id"].clone(), pending["idPending"].clone()), (json!("copied-in"), json!("pending:copied-in"), json!(true)));
+    assert!(!dir.join("workspace.json").exists(), "the main process writes nothing for it");
+    for method in ["app.deleteWorkspace", "app.renameWorkspace"] {
+        let e = host.request(Some("w"), method, json!({ "id": "pending:copied-in", "name": "x" })).await.unwrap_err();
+        assert_eq!((e.code, e.params.get("reason").map(String::as_str)), (ErrorCode::Conflict, Some("idPending")));
+    }
+    // It can be switched to; the (real) kernel then writes workspace.json with the id. The fake worker does not, so
+    // the entry stays pending here; what matters is that the switch works.
+    let switched = host.request(Some("w"), "app.switchWorkspace", json!({ "id": "pending:copied-in" })).await.unwrap();
+    assert_eq!(switched["folder"], "copied-in");
     host.shutdown().await;
 }
