@@ -820,5 +820,13 @@
   "kernel.error.conflict.idPending": "请先打开一次这个工作区，之后才能重命名或删除。",
   "kernel.error.conflict.inUse": "这个工作区正在使用，不能删除。请先切换到别的工作区。",
   "kernel.audit.workspace.initSettings": "从其他工作区复制了设置",
-  "kernel.error.reason.mainProcessOnly": "只有应用本身可以这样做。"
+  "kernel.error.reason.mainProcessOnly": "只有应用本身可以这样做。",
+  "kernel.label.ui.theme": "外观",
+  "kernel.label.ui.density": "密度",
+  "kernel.label.network.allow": "允许访问的网络主机",
+  "kernel.label.process.allow": "允许运行的程序",
+  "kernel.label.protection.readonly": "只读保护",
+  "kernel.label.protection.no_export": "禁止导出保护",
+  "kernel.error.reason.readonly|layerName": "已开启只读保护（protection.readonly，由“{layerName}”设置），不能做任何修改。请到“{layerName}”里关闭。",
+  "kernel.error.reason.noExport|layerName": "已开启禁止导出（protection.no_export，由“{layerName}”设置），不能导出。请到“{layerName}”里关闭。"
 }
