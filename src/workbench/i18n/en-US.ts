@@ -709,6 +709,8 @@ export const enUS = {
   "kernel.error.reason.readonly|layerName": "Read-only protection is on (protection.readonly, set by “{layerName}”), so nothing can be changed. Turn it off in “{layerName}”.",
   "kernel.error.reason.noExport|layerName": "Export protection is on (protection.no_export, set by “{layerName}”), so nothing can be exported. Turn it off in “{layerName}”.",
   "kernel.error.reason.calleeFailed": "The action another plugin provides failed.",
+  "kernel.error.reason.ownPrograms": "A plugin cannot read or write its own bin/ folder this way; that folder holds its programs.",
+  "kernel.error.reason.wrongKind": "That action works on another kind of resource than the one given.",
   "kernel.error.reason.callDepth": "Plugins called each other too deeply, so the action was stopped.",
   "kernel.error.reason.noExport": "Export protection is on (protection.no_export), so nothing can be exported. Turn it off in the workspace configuration or the environment that sets it.",
   "kernel.error.reason.notExport": "This folder is not an OneDesk export.",

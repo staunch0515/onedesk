@@ -183,6 +183,8 @@ export const KERNEL_ERRORS: Table = {
   "reason.readonly": "kernel.error.reason.readonly",
   "reason.noExport": "kernel.error.reason.noExport",
   "reason.callDepth": "kernel.error.reason.callDepth",
+  "reason.ownPrograms": "kernel.error.reason.ownPrograms",
+  "reason.wrongKind": "kernel.error.reason.wrongKind",
   "reason.notOwnResource": "kernel.error.reason.notOwnResource",
   "reason.calleeFailed": "kernel.error.reason.calleeFailed",
   "reason.readonly|layerName": "kernel.error.reason.readonly|layerName",
