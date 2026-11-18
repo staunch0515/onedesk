@@ -2,7 +2,14 @@
 
 上一个协调会话和三个开发会话的上下文都快满了，用户要求换新会话。这份文件是接手所需的全部；不需要之前的对话。
 
-## 0. 最新（第四个协调会话，2026-11-18 深夜）
+## 00. 最新（第四个协调会话交给第五个，2026-11-19）——用户额度快用完：**只把第十五轮做完、合并、推送，然后停**，不开第十六轮
+
+- 协调分支：`claude/onedesk-coord-4-3ac9ba`（新协调会话从它切出；`main` 在 `67db30c`，第十四轮）。
+- 第十五轮（数据源与保存的 SQL，`round15-plan.md`，D412–D417，审查 `round15-review.md`）：内核（`r15-kernel`，最后 `2302776`）和外壳（`r15-shell`，最后 `36baaec`）**全部做完并已合并**到协调分支。只差插件与测试 `r15-tests`（`local_b935474c-397c-40ad-aa7f-d9aee685db5f`，分支 `claude/r15-tests-6af415`）：在做审查 #1–#9、#16、#20（D416）＋第二阶段 `e2e/round15.spec.ts`（临时 PostgreSQL：`/Library/PostgreSQL/15/bin`，initdb 到临时目录）＋中日译文（含 `kernel.error.reason.ownPrograms`、`wrongKind`；现在 lang-check 有 4 条失败就是缺这两个键），正在跑全部 e2e，交回后会发消息（分支、提交号）。
+- 剩下的步骤：① 合并 `r15-tests` 的分支（`git merge --no-ff`；核对只改了 `plugins/**`、`e2e/**`、`scripts/check-*.mjs`、`docs/`）；② 亲自验收（devhost＋临时 PostgreSQL；按 `sqlpool-parity.md` B、C、D、F 抽查：新建数据源测试连接、写带 `:name` 参数的 SQL 运行、>1 万行结果分页与导出、`\gexec`/`; COMMIT` 被拒）；③ 后台跑完整 `pnpm check`（`E2E_PORT=1434`；期间不要 `git add docs`；跑完 `git checkout -- docs/screenshots` 只保留 round15 新截图）；④ 写 `round15-acceptance.md`；⑤ `git -C /Users/zhongpingxue/onedesk/repo merge --ff-only <协调分支>` 再 `push origin main`；⑥ 删掉第十五轮各工作树的 `target/`；⑦ 停。不通过就让对应会话修（内核 `local_409128d6-855d-4ccf-8f9b-28ac97d7422d`、外壳 `local_8680c71a-2299-4dbb-9f53-c69479600e2d`），不合并。
+- 第十六轮及以后（D412 分轮、AI 接口已获用户确认 D415）等用户下次说再开。
+
+## 0. 第十四轮后（第四个协调会话，2026-11-18 深夜）
 
 - 第十四轮“日常可用版本收尾”已验收、完整检查通过，合并到 main 并推送（`713491c`）。阶段 4、5 的验收项都已对过（`round14-acceptance.md`）。
 - 用户 2026-11-19 说直接开始阶段 6（实机检查之后再做）。第十五轮已开：`r15-kernel`（`local_409128d6-855d-4ccf-8f9b-28ac97d7422d`）、`r15-shell`（`local_8680c71a-2299-4dbb-9f53-c69479600e2d`）、`r15-tests`（`local_b935474c-397c-40ad-aa7f-d9aee685db5f`）；阶段 6 分轮见 D412、`round15-plan.md`。AI 接口（MCP）的设计由协调会话写、用户确认后才开发。
