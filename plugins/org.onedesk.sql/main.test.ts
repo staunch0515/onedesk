@@ -261,11 +261,9 @@ describe("sql: run action", () => {
     expect(host.actions.call).not.toHaveBeenCalled();
   });
 
-  it("a failure of the data source is the run's error, with its code", async () => {
-    const err = hostError("failed");
-    err.message = 'ERROR: relation "x" does not exist';
-    const host = fakeHost({ actions: { call: vi.fn(async () => { throw err; }) } });
-    await expect(run(host, { "body.sql": "SELECT * FROM x", "body.source": "s1" })).rejects.toBe(err);
+  it("a failure of the data source (handed back as text) is the run's error with that text", async () => {
+    const host = fakeHost({ actions: { call: vi.fn(async () => ({ error: 'ERROR: relation "x" does not exist' })) } });
+    await expect(run(host, { "body.sql": "SELECT * FROM x", "body.source": "s1" })).rejects.toThrow('relation "x" does not exist');
   });
 
   it("a data source that returns no table is an error", async () => {

@@ -21,8 +21,9 @@ export function tr(ctx, key, vars) {
   return text;
 }
 
-function fail(ctx, key, vars, code) {
-  return Object.assign(new Error(tr(ctx, key, vars)), code ? { code } : {});
+// A plain Error: one that carries a host code ("invalid", "notFound", …) reaches the user as that code without the text.
+function fail(ctx, key, vars) {
+  return new Error(tr(ctx, key, vars));
 }
 
 // Letters, digits and `._-@:` only, no leading '-' (it would read as an option of ssh or psql).
@@ -307,7 +308,7 @@ function runError(ctx, err) {
 async function timeoutOf(ctx, given) {
   if (given === undefined || given === null) return numSetting(ctx, "statementTimeoutMs", DEFAULT_TIMEOUT_MS);
   const n = positiveInt(given, MAX_TIMEOUT_MS);
-  if (n === null) throw fail(ctx, "error.badTimeout", {}, "invalid");
+  if (n === null) throw fail(ctx, "error.badTimeout", {});
   return n;
 }
 
@@ -323,13 +324,13 @@ async function numSetting(ctx, name, fallback) {
 export async function runReadonly(ctx, c, sql, opts) {
   const o = opts || {};
   const bad = checkConnection(c);
-  if (bad) throw fail(ctx, "error.badField", { field: bad }, "invalid");
-  if (!String(sql || "").trim()) throw fail(ctx, "error.emptySql", {}, "invalid");
+  if (bad) throw fail(ctx, "error.badField", { field: bad });
+  if (!String(sql || "").trim()) throw fail(ctx, "error.emptySql", {});
   const why = refuse(sql);
-  if (why) throw fail(ctx, `error.${why}`, {}, "invalid");
+  if (why) throw fail(ctx, `error.${why}`, {});
   const timeoutMs = await timeoutOf(ctx, o.timeoutMs);
   const maxRows = o.maxRows === undefined ? DEFAULT_MAX_ROWS : positiveInt(o.maxRows, 100000);
-  if (maxRows === null) throw fail(ctx, "error.badTimeout", {}, "invalid");
+  if (maxRows === null) throw fail(ctx, "error.badTimeout", {});
   const started = Date.now();
   let res;
   try {
@@ -359,10 +360,10 @@ let captureSeq = 0;
 export async function captureReadonly(ctx, c, sql, opts) {
   const o = opts || {};
   const bad = checkConnection(c);
-  if (bad) throw fail(ctx, "error.badField", { field: bad }, "invalid");
-  if (!String(sql || "").trim()) throw fail(ctx, "error.emptySql", {}, "invalid");
+  if (bad) throw fail(ctx, "error.badField", { field: bad });
+  if (!String(sql || "").trim()) throw fail(ctx, "error.emptySql", {});
   const why = refuse(sql);
-  if (why) throw fail(ctx, `error.${why}`, {}, "invalid");
+  if (why) throw fail(ctx, `error.${why}`, {});
   const timeoutMs = await timeoutOf(ctx, o.timeoutMs);
   const file = `tmp/q-${Date.now()}-${++captureSeq}.csv`;
   let res;
@@ -447,10 +448,16 @@ export default {
     // this plugin's memory. The kernel keeps at most 10,000 rows in the run and counts all of them.
     host.actions.handle("query", async (ctx, input) => {
       const i = input || {};
-      if (!ctx.resource) throw fail(ctx, "error.noSource", {}, "notFound");
+      if (!ctx.resource) throw fail(ctx, "error.noSource", {});
       const started = Date.now();
-      const file = await captureReadonly(ctx, connectionOf(ctx.resource.body), i.sql, { timeoutMs: i.timeoutMs });
-      return { output: { type: "table", file, header: true }, summary: { message: tr(ctx, "summary.ran", { ms: Date.now() - started }) } };
+      try {
+        const file = await captureReadonly(ctx, connectionOf(ctx.resource.body), i.sql, { timeoutMs: i.timeoutMs });
+        return { output: { type: "table", file, header: true }, summary: { message: tr(ctx, "summary.ran", { ms: Date.now() - started }) } };
+      } catch (err) {
+        // A failure of the callee reaches the caller as a bare `pluginError` without its text, so the text (the
+        // database's own message, already in the user's language where it is ours) is handed back as data.
+        return { error: String((err && err.message) || err) };
+      }
     });
   },
 };

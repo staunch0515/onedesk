@@ -37,5 +37,6 @@
   "error.param.enum": "参数 :{name} 不是允许的取值之一。",
   "error.param.max": "参数 :{name} 超过 {max} 个字符。",
   "error.param.time": "参数 :{name} 必须是时间（HH:MM）。",
-  "error.sourceMissing": "找不到数据源“{source}”。"
+  "error.sourceMissing": "找不到数据源“{source}”。",
+  "error.param.nul": "参数 :{name} 含有 NUL 字符。"
 }

@@ -37,5 +37,6 @@
   "error.param.enum": "パラメーター :{name} は許可された値ではありません。",
   "error.param.max": "パラメーター :{name} が {max} 文字を超えています。",
   "error.param.time": "パラメーター :{name} は時刻（HH:MM）にしてください。",
-  "error.sourceMissing": "データソース「{source}」が見つかりません。"
+  "error.sourceMissing": "データソース「{source}」が見つかりません。",
+  "error.param.nul": "パラメーター :{name} に NUL 文字が含まれています。"
 }

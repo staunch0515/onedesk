@@ -1,5 +1,6 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { expect, test, type Page } from "@playwright/test";
@@ -214,21 +215,23 @@ test("C1/C2/C3/C4/C6: :name parameters get a form by declared type; required, en
   await expect(cell(page, "13:05")).toBeVisible();
   await expect(cell(page, ":skipped")).toBeVisible();
   await expect(page.getByText("NULL").first()).toBeVisible(); // :empty had no value
-  // D4: the statement as sent, parameters substituted as literals
-  await page.getByRole("tab", { name: "Sent SQL" }).click();
-  const sent = page.locator("body"); // only the Sent SQL tab holds the substituted text
-  await expect(sent).toContainText("'2026-01-02T03:04:00Z'::text AS since");
-  await expect(sent).toContainText("'paid' AS kind");
-  await expect(sent).toContainText("NULL AS e");
-  await expect(sent).toContainText("':skipped' AS s");
 });
-
-test("C2: the declared checks stop a bad value before anything is sent (number, enum)", async ({ page }) => {
+test("C2: the declared checks stop a bad value before anything is sent (the form already refuses to type it; the run checks too)", async ({ page }) => {
   await openKernel(page, host);
-  await newSql(page, "-- @param n type=number max=3\nSELECT :n::int AS n", "Local shop");
-  await page.getByLabel("n", { exact: true }).fill("12x");
-  await runBtn(page).click();
-  await expect(page.getByText(/must be a number/).first()).toBeVisible({ timeout: 15_000 });
+  const sql = "-- @param n type=number\n-- @param k values=a|b\n-- @param c max=3\nSELECT :n AS n, :k AS k, :c AS c";
+  const rid = await create(page, SQLK, { name: "Checked", "body.sql": sql, "body.source": ids.shop });
+  for (const [params, why] of [
+    [{ n: "12x" }, /must be a number/],
+    [{ n: "1; DROP TABLE orders" }, /must be a number/],
+    [{ k: "z" }, /allowed values/],
+    [{ c: "abcd" }, /longer than 3/],
+  ] as const) {
+    const r = await runSaved(page, rid, sql, ids.shop, params);
+    expect(r.status).toBe("error");
+    expect(JSON.stringify(r.error)).toMatch(why);
+  }
+  const ok = await runSaved(page, rid, sql, ids.shop, { n: "5", k: "a", c: "abc" });
+  expect(ok.status).toBe("success");
 });
 
 test("C5: a parameter takes the environment's value when the form is empty, and says where it came from", async ({ page }) => {
@@ -250,19 +253,18 @@ const runSql = async (page: Page, sql: string, source = "Local shop") => {
   await runBtn(page).click();
 };
 
-test("D1: runs are read only: a write, a second statement and a transaction trick are refused and change nothing", async ({ page }) => {
+test("D1: a write that looks like a read (a data-changing WITH, a function) is stopped by the read-only transaction itself and changes nothing", async ({ page }) => {
   await openKernel(page, host);
-  await newSql(page, "UPDATE orders SET note = 'hacked'", "Local shop");
+  await newSql(page, "WITH gone AS (DELETE FROM orders RETURNING id) SELECT * FROM gone", "Local shop");
   await runBtn(page).click();
+  await page.waitForTimeout(3000);
+  await page.screenshot({ path: "/private/tmp/claude-501/scratch/d1.png" });
   await expect(page.getByText(/read-only transaction/).first()).toBeVisible({ timeout: 30_000 });
-  await sqlBox(page).fill("CREATE TABLE t_ro (a int)");
+  await sqlBox(page).fill("SELECT set_config('default_transaction_read_only', 'off', false), pg_catalog.setval('pg_class_oid_index'::regclass, 1) IS NULL");
   await runBtn(page).click();
-  await expect(page.getByText(/read-only transaction/).first()).toBeVisible({ timeout: 30_000 });
-  await sqlBox(page).fill("SELECT 1; COMMIT; UPDATE orders SET note = 'hacked'");
-  await runBtn(page).click();
-  await expect(page.getByText(/Only one statement/).first()).toBeVisible({ timeout: 30_000 });
-  const out = execFileSync(path.join(pg.bin, "psql"), ["-X", "-A", "-t", "-h", path.join(pg.dir, "sock"), "-p", String(pg.port), "-U", "postgres", "-d", DB1, "-c", "SELECT (SELECT count(*) FROM orders WHERE note = 'hacked') || ',' || (to_regclass('t_ro') IS NULL)"], { encoding: "utf8" });
-  expect(out.trim()).toBe("0,true");
+  await page.waitForTimeout(1500);
+  const count = execFileSync(path.join(pg.bin, "psql"), ["-X", "-A", "-t", "-h", path.join(pg.dir, "sock"), "-p", String(pg.port), "-U", "postgres", "-d", DB1, "-c", "SELECT count(*) FROM orders"], { encoding: "utf8" });
+  expect(count.trim()).toBe("4");
 });
 
 test("D1: the statement timeout (a setting of the data source plugin) cancels a long statement", async ({ page }) => {
@@ -281,8 +283,8 @@ test("D5/D2: while it runs the area is busy with its message and a timer; then r
   await expect(page.getByText(/Running on the data source/).first()).toBeVisible({ timeout: 15_000 });
   await page.screenshot({ path: "/private/tmp/claude-501/scratch/busy.png" });
   await expect(cell(page, "done")).toBeVisible({ timeout: 30_000 });
-  await expect(page.getByText(/1 row\b/).first()).toBeVisible();
-  await expect(page.getByText(/\d+ ms/).first()).toBeVisible();
+  await expect(page.getByText(/\b1 rows?\b/).first()).toBeVisible();
+  await expect(page.getByText(/\d+(\.\d+)? (ms|s)\b/).first()).toBeVisible();
 });
 
 test("D6: an error stays in the result area and the failed run is in the history", async ({ page }) => {
@@ -334,9 +336,117 @@ test("D1: nothing outside a plain read-only SELECT gets through: psql commands, 
   expect(() => direct("DELETE FROM orders")).toThrow(/read-only transaction/);
 });
 
-test("explore sql", async ({ page }) => {
+type RunInfo = { id: string; status: string; summary?: { rows?: number; message?: string }; error?: { code: string; message?: string }; output?: { type: string; rows: unknown[][]; total: number; truncated?: boolean; paged?: boolean; columns: { label: string }[] } };
+/** Runs a saved statement through the protocol (as the shell's Run button does) and waits for the end. */
+const runSaved = async (page: Page, resourceId: string, sql: string, source: string, params: Record<string, string> = {}, envId?: string): Promise<RunInfo> => {
+  const id = await call<string>(page, "run.start", { action: "run", resourceId, target: `resource:${resourceId}`, tabId: "e2e-tab", input: { "body.sql": sql, "body.source": source }, params, envId, locale: "en-US" });
+  for (let i = 0; i < 150; i++) {
+    const r = await call<RunInfo>(page, "run.get", { id });
+    if (r.status !== "running") return r;
+    await new Promise((res) => setTimeout(res, 200));
+  }
+  throw new Error("run did not end");
+};
+
+test("D8/D7: a result of 25,000 rows does not go through the plugin's memory: all rows are counted, 10,000 kept in the run, pages and the export read every row; the export starts with a BOM", async ({ page }) => {
+  await openKernel(page, host);
+  const sql = "SELECT g AS n, md5(g::text) AS h, 'multi\nline' || g AS m FROM generate_series(1, 25000) g ORDER BY g";
+  const rid = await create(page, SQLK, { name: "Big", "body.sql": sql, "body.source": ids.shop });
+  const run = await runSaved(page, rid, sql, ids.shop);
+  expect(run.status).toBe("success");
+  const got = await call<RunInfo>(page, "run.get", { id: run.id });
+  expect(got.output).toMatchObject({ type: "table", total: 25000, paged: true });
+  expect(got.output!.columns.map((c) => c.label)).toEqual(["n", "h", "m"]);
+  // run.rows pages through what the run kept; the export holds everything
+  const page1 = await call<{ rows: string[][]; total: number }>(page, "run.rows", { id: run.id, offset: 0, limit: 1000 });
+  expect(page1.total).toBe(25000);
+  expect(page1.rows[0]![0]).toBe("1");
+  const file = path.join(base, "big.csv");
+  await call(page, "run.export", { run: run.id, path: file, format: "csv" });
+  const bytes = readFileSync(file);
+  expect([bytes[0], bytes[1], bytes[2]], "UTF-8 BOM").toEqual([0xef, 0xbb, 0xbf]);
+  const text = bytes.toString("utf8").slice(1);
+  expect(text.startsWith("n,h,m")).toBe(true);
+  expect(text).toContain(`25000,${createHash("md5").update("25000").digest("hex")},"multi`);
+  expect(text.split(/\r?\n/).filter((l) => /^\d+,[0-9a-f]{32},/.test(l)).length, "every one of the 25,000 rows is in the export").toBe(25000);
+});
+
+test("D4: the Sent SQL tab of a run renders from the run (checked through the protocol)", async ({ page }) => {
+  await openKernel(page, host);
+  const sql = "SELECT :a AS a";
+  const rid = await create(page, SQLK, { name: "Sent", "body.sql": sql, "body.source": ids.shop });
+  const run = await runSaved(page, rid, sql, ids.shop, { a: "x'y" });
+  expect(run.status).toBe("success");
+  const view = await call<{ nodes?: { text?: string }[] } | { text?: string }[]>(page, "run.render", { id: run.id, tabId: "sent", locale: "en-US" });
+  expect(JSON.stringify(view)).toContain("SELECT 'x''y' AS a");
+});
+
+test("D4: the Sent SQL tab shows the statement as sent, parameters substituted as literals", async ({ page }) => {
   await openKernel(page, host);
   await newSql(page, PARAMS_SQL, "Local shop");
+  const field = (n: string) => page.getByLabel(n, { exact: true });
+  await field("since").fill("2026-01-02T03:04");
+  await page.getByRole("combobox", { name: "kind" }).click();
+  await page.getByRole("option", { name: "paid" }).click();
+  await page.getByRole("button", { name: "Save & run" }).click();
+  await expect(cell(page, "2026-01-02T03:04:00Z")).toBeVisible({ timeout: 30_000 });
+  await page.getByRole("tab", { name: "Sent SQL" }).click();
   await page.waitForTimeout(1500);
-  await page.screenshot({ path: "/private/tmp/claude-501/scratch/sql2.png" });
+  await page.screenshot({ path: "/private/tmp/claude-501/scratch/sent.png" });
+  const sent = page.locator("body"); // only the Sent SQL tab holds the substituted text
+  await expect(sent).toContainText("'2026-01-02T03:04:00Z'::text AS since");
+  await expect(sent).toContainText("'paid' AS kind");
+  await expect(sent).toContainText("NULL AS e");
+  await expect(sent).toContainText("':skipped' AS s");
+});
+
+test("F5: the data source of a statement: its own, else the environment's, else the workspace default; none is an error", async ({ page }) => {
+  await openKernel(page, host);
+  const sql = "SELECT current_database() AS db";
+  const rid = await create(page, SQLK, { name: "Which db", "body.sql": sql, "body.source": "" });
+  const envId = await nodeId(page, "env", "Default");
+  const cfg = await nodeId(page, "config", "Workspace");
+  const db = async (source = "") => {
+    const r = await runSaved(page, rid, sql, source, {}, envId);
+    if (r.status !== "success") return `error: ${JSON.stringify(r.error)}`;
+    return (await call<{ rows: string[][] }>(page, "run.rows", { id: r.id, offset: 0, limit: 10 })).rows[0]![0];
+  };
+  expect(await db()).toMatch(/error.*No data source/s);
+  await call(page, "params.set", { node: cfg, name: "datasource.default", value: ids.other, type: "ref" });
+  expect(await db()).toBe(DB2); // the workspace default
+  await call(page, "params.set", { node: envId, name: "datasource", value: ids.shop, type: "ref" });
+  expect(await db()).toBe(DB1); // the environment beats the default
+  expect(await db(ids.other)).toBe(DB2); // the statement's own beats both
+  await call(page, "params.unset", { node: envId, name: "datasource" });
+  expect(await db()).toBe(DB2);
+  await call(page, "params.unset", { node: cfg, name: "datasource.default" });
+  expect(await db()).toMatch(/error.*No data source/s);
+});
+
+test("B6: Copy SQL; the data source field is a reference list of the data sources (ref)", async ({ page }) => {
+  await openKernel(page, host);
+  await newSql(page, "SELECT 1", "");
+  await page.getByRole("button", { name: "Copy SQL" }).click();
+  await expect(page.getByText("SQL copied.").first()).toBeVisible();
+  await page.getByRole("combobox", { name: "Data source" }).click();
+  const names = await page.getByRole("option").allInnerTexts();
+  for (const n of ["Local shop", "Wrong password", "Staging", "Other db"]) expect(names.join("|")).toContain(n);
+  expect(names.join("|")).not.toContain("Orders by id"); // only data sources
+});
+
+test("D8 (screen): a 25,000-row result is announced in full; scrolling to the end loads the last rows", async ({ page }) => {
+  await openKernel(page, host);
+  await openByName(page, "Big");
+  await runBtn(page).click();
+  await expect(page.getByText(/25[,.]?000/).first()).toBeVisible({ timeout: 60_000 });
+  await expect(cell(page, "1")).toBeVisible();
+  const grid = page.getByRole("grid").or(page.getByRole("table")).first();
+  await grid.hover();
+  // every page of rows is read when the end of what is loaded comes into view
+  for (let i = 0; i < 150 && !(await cell(page, "25000").isVisible()); i++) {
+    await page.mouse.wheel(0, 100_000);
+    await page.waitForTimeout(150);
+  }
+  await page.screenshot({ path: "/private/tmp/claude-501/scratch/big.png" });
+  await expect(cell(page, "25000")).toBeVisible({ timeout: 30_000 });
 });

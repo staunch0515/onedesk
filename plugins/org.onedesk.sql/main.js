@@ -136,7 +136,7 @@ export function declOf(decls, name) {
 export function sqlLiteral(value) {
   if (value === null || value === undefined) return "NULL";
   const v = String(value);
-  if (v.includes("\0")) throw Object.assign(new Error("NUL"), { code: "invalid" });
+  if (v.includes("\0")) throw new Error("NUL");
   return `'${v.replace(/'/g, "''")}'`;
 }
 
@@ -226,10 +226,10 @@ export async function pickSource(ctx, given) {
     const def = await ctx.host.params.config("datasource.default");
     if (def && def.found && String(def.value).trim()) wanted = String(def.value).trim();
   }
-  if (!wanted) throw Object.assign(new Error(tr(ctx, "error.noSource")), { code: "notFound" });
+  if (!wanted) throw new Error(tr(ctx, "error.noSource"));
   const list = await sourceList(ctx);
   const hit = list.find((r) => r.id === wanted) || list.find((r) => r.name === wanted);
-  if (!hit) throw Object.assign(new Error(tr(ctx, "error.sourceMissing", { source: wanted })), { code: "notFound" });
+  if (!hit) throw new Error(tr(ctx, "error.sourceMissing", { source: wanted }));
   return hit.id;
 }
 
@@ -324,7 +324,7 @@ export default {
 
     host.actions.handle("run", async (ctx, input) => {
       const sql = String((input && input["body.sql"]) || "");
-      if (!sql.trim()) throw Object.assign(new Error(tr(ctx, "error.empty")), { code: "invalid" });
+      if (!sql.trim()) throw new Error(tr(ctx, "error.empty"));
 
       const decls = declarations(sql);
       const values = {};
@@ -336,7 +336,8 @@ export default {
           if (found.found && found.value !== "") value = String(found.value);
         }
         const problem = checkValue(declOf(decls, name), value);
-        if (problem) throw Object.assign(new Error(tr(ctx, `error.param.${problem}`, { name, max: declOf(decls, name).max })), { code: "invalid" });
+        if (problem) throw new Error(tr(ctx, `error.param.${problem}`, { name, max: declOf(decls, name).max }));
+        if (value !== null && value.includes("\0")) throw new Error(tr(ctx, "error.param.nul", { name }));
         values[name] = value;
       }
       const rendered = renderSql(sql, values, decls);
@@ -346,6 +347,7 @@ export default {
       const sourceId = await pickSource(ctx, String((input && input["body.source"]) || ""));
       ctx.progress(undefined, tr(ctx, "step.running"));
       const res = await ctx.host.actions.call(`${DATASOURCE}:query`, { sql: rendered }, { resource: sourceId });
+      if (res && typeof res.error === "string") throw new Error(res.error); // the data source's own message
       if (!res || !res.output || (res.output.type !== "table")) throw new Error(tr(ctx, "error.noResult"));
       return { output: res.output, summary: res.summary };
     });

@@ -37,5 +37,6 @@
   "error.param.enum": "The parameter :{name} is not one of the allowed values.",
   "error.param.max": "The parameter :{name} is longer than {max} characters.",
   "error.param.time": "The parameter :{name} must be a time (HH:MM).",
-  "error.sourceMissing": "Data source “{source}” was not found."
+  "error.sourceMissing": "Data source “{source}” was not found.",
+  "error.param.nul": "The parameter :{name} contains a NUL character."
 }

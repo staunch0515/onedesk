@@ -298,7 +298,10 @@ describe("datasource: page and actions", () => {
     expect(res.summary.message).toMatch(/^Ran in \d+ ms$/);
     expect(host.transfer.capture.mock.calls[0]![0]).toMatchObject({ program: "ssh" });
     await expect(actions.query(ctxOf(host), { sql: "SELECT 1" })).rejects.toThrow("No data source");
-    await expect(actions.query(ctxOf(host, { resource: SOURCE }), { sql: "" })).rejects.toThrow();
+    // a failure is returned as text: across plugins the thrown message would be lost
+    expect(await actions.query(ctxOf(host, { resource: SOURCE }), { sql: "" })).toEqual({ error: "There is nothing to run." });
+    const failing = fakeHost({ transfer: { capture: vi.fn(async () => ({ code: 1, signal: "", stderr: "psql:<stdin>:3: ERROR:  cannot execute DELETE in a read-only transaction\n", truncated: false })) } });
+    expect(await actions.query(ctxOf(failing, { resource: SOURCE }), { sql: "WITH g AS (DELETE FROM t RETURNING 1) SELECT * FROM g" })).toEqual({ error: "ERROR:  cannot execute DELETE in a read-only transaction" });
   });
 });
 
