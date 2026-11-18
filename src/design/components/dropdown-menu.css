@@ -48,6 +48,12 @@
   color: var(--fg-muted);
 }
 
+.od-menu__icon--empty {
+  display: inline-block;
+  width: var(--icon-md);
+  flex: none;
+}
+
 .od-menu__check {
   display: inline-flex;
   width: var(--icon-md);

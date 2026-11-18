@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { ActivityBar, Button, CommandPalette, Dialog, Sized, Splitter, WorkbenchFrame, WorkbenchMain, useTheme, useToast, type CommandGroup } from "../design";
 import { useI18n } from "./i18n";
 import { loadChildren, type LanguageInfo } from "./protocol";
@@ -74,6 +74,17 @@ export function Workbench({ settings, languages, onSetting: storeSetting }: Work
       client.page.resolve(tab.target, { envId: tab.envId }).then((d) => actions.updateTab(tab.id, { title: d.title, icon: d.icon, usesEnv: d.usesEnv, missing: !d.found }), () => undefined);
     }
   }, [client, store, actions, tabs.length]);
+
+  // Switching the interface language renames the tabs in the background too (they keep the old language until activated otherwise).
+  const firstLocale = useRef(locale);
+  useEffect(() => {
+    if (firstLocale.current === locale) return;
+    firstLocale.current = locale;
+    for (const tab of store.get().tabs) {
+      if (tab.id === store.get().activeTabId) continue;
+      client.page.resolve(tab.target, { envId: tab.envId }).then((d) => actions.updateTab(tab.id, { title: d.title, icon: d.icon, missing: !d.found }), () => undefined);
+    }
+  }, [client, store, actions, locale]);
 
   // Tabs in the background follow renames and deletions of their resource.
   const resourceTargets = tabs.filter((x) => x.target.startsWith("resource:")).map((x) => x.target).join("|");
