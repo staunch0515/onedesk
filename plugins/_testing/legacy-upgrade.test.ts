@@ -31,7 +31,7 @@ describe("manifests claim the first-version short kinds", () => {
     ["org.onedesk.link", ["link"]],
     ["org.onedesk.note", ["note"]],
     ["org.onedesk.prompt", ["prompt"]],
-    ["org.onedesk.http", ["http-request"]],
+    ["org.onedesk.http", [{ name: "http-request", kind: "request" }]],
     ["org.onedesk.collection", ["collection"]],
   ])("%s", (dir, legacy) => {
     expect(manifest(dir).legacyKinds).toEqual(legacy);
