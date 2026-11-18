@@ -42,3 +42,9 @@ Rust 测试、clippy 没跑；Playwright 只跑了 round13.spec.ts（没重跑 w
   2. **浏览器“新窗口”**开新标签页、地址带 `workspace=<id>`（审查 #7）。现状点按钮无反应。
 - 占用中的删除被拒：已有用例（第 8 条，`conflict/inUse`）。
 - 结果：10 过、2 fixme；typecheck、lint 通过。仍未跑 Rust/旧 Playwright 用例。
+
+## 最终（合并协调分支 9af3798 后）
+- 补了最后两个键的中日译文（`kernel.audit.workspace.initSettings`、`kernel.error.reason.mainProcessOnly`）。
+- 两处 `test.fixme` 已去掉（D406、浏览器“新窗口”）；协调分支原样（重新 `cargo build -p onedesk-worker -p onedesk-host`）下 `round13.spec.ts` 12 条全过，无 fixme、无本地补丁。
+- `pnpm test` 66 文件 579 条全过，typecheck、lint 通过。
+- 没做：删除与切换并发的用例（可选，未写）；没跑 Rust 测试、clippy、旧 Playwright 用例。

@@ -818,5 +818,7 @@
   "workspace.manageTitle": "ワークスペース",
   "workspace.manageBody": "新しいワークスペースは、このワークスペースの設定を引き継いだ空の状態で始まります。切り替えるとウィンドウが再読み込みされます。どれかのウィンドウで開いているワークスペースは削除できません。",
   "kernel.error.conflict.idPending": "先にこのワークスペースを一度開いてください。そのあと名前の変更や削除ができます。",
-  "kernel.error.conflict.inUse": "このワークスペースは使用中のため削除できません。先に別のワークスペースへ切り替えてください。"
+  "kernel.error.conflict.inUse": "このワークスペースは使用中のため削除できません。先に別のワークスペースへ切り替えてください。",
+  "kernel.audit.workspace.initSettings": "別のワークスペースから設定をコピーしました",
+  "kernel.error.reason.mainProcessOnly": "アプリ本体だけが行えます。"
 }

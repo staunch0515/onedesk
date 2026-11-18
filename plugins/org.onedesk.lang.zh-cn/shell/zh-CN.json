@@ -818,5 +818,7 @@
   "workspace.manageTitle": "工作区",
   "workspace.manageBody": "新工作区是空的，沿用当前工作区的设置。切换会重新载入窗口。任何窗口里打开着的工作区都不能删除。",
   "kernel.error.conflict.idPending": "请先打开一次这个工作区，之后才能重命名或删除。",
-  "kernel.error.conflict.inUse": "这个工作区正在使用，不能删除。请先切换到别的工作区。"
+  "kernel.error.conflict.inUse": "这个工作区正在使用，不能删除。请先切换到别的工作区。",
+  "kernel.audit.workspace.initSettings": "从其他工作区复制了设置",
+  "kernel.error.reason.mainProcessOnly": "只有应用本身可以这样做。"
 }

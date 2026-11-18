@@ -229,8 +229,7 @@ test("switch: the connection moves to the other workspace and sees different con
   await c.closeAndWait();
 });
 
-// FIXME until the shell session lands D406 (review #2): today an unbound connection follows the global default.
-test.fixme("D406: a connection without workspace= is not carried along when another connection switches", async () => {
+test("D406: a connection without workspace= is not carried along when another connection switches", async () => {
   const a = await Conn.connect("e2e-d406-a"); // unbound: bound to the default at its first appearance
   const home = (await info(a)).id;
   const b = await Conn.connect("e2e-d406-b");
@@ -372,8 +371,7 @@ test("UI: the workspace menu creates, renames, switches and deletes; a second pa
   await until(async () => !(await byName(main, "UI space 2")), "deleted through the UI");
 });
 
-// FIXME until the shell session lands review #7: the browser transport has no openWindow yet (the button does nothing).
-test.fixme("UI: \"Open in a new window\" in a browser opens a new tab bound to that workspace", async ({ page, context }) => {
+test("UI: \"Open in a new window\" in a browser opens a new tab bound to that workspace", async ({ page, context }) => {
   await openKernel(page, host);
   await menu(page, mainWs.name).click();
   await page.getByRole("menuitem", { name: "Manage workspaces…" }).click();
