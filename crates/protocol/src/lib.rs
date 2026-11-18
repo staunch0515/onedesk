@@ -493,6 +493,11 @@ pub struct ViewField {
     pub env_value: Option<String>,
     pub env_source: Option<String>,
     pub read_only: Option<bool>,
+    /// Round 15 (X4, sqlpool C2): the field must have a value; the shell marks it and refuses
+    /// to run (or save) while it is empty. The kernel does not check it.
+    pub required: Option<bool>,
+    /// Round 15 (sqlpool C2): most characters the shell lets the user type (text fields).
+    pub max_length: Option<u32>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -2284,6 +2289,8 @@ mod tests {
                 env_value: None,
                 env_source: None,
                 read_only: None,
+                required: None,
+                max_length: None,
             }],
         };
         assert_eq!(

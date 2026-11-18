@@ -210,6 +210,8 @@ fn param_form(r: &Row) -> (Vec<ViewNode>, JsonMap) {
             env_value: None,
             env_source: None,
             read_only: None,
+            required: None,
+            max_length: None,
         });
     }
     (vec![ViewNode::Form { id: "params".into(), layout: FormLayout::Stack, label: None, fields }], values)
