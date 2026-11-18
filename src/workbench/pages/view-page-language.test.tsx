@@ -23,3 +23,19 @@ describe("a plugin page and the interface language (round 11 leftover)", () => {
     expect(reloads()).toBe(1);
   });
 });
+
+describe("a table row button on a plugin page (D393)", () => {
+  it("sends the page event with the row key in the context", async () => {
+    const { fireEvent, screen, waitFor } = await import("@testing-library/react");
+    const { vi } = await import("vitest");
+    const event = vi.fn(async () => ({}));
+    const base = kernelLikeClient(createMockClient({ fresh: true, quiet: true }), {});
+    const client = { ...base, page: { ...base.page, event } };
+    const withTable = { ...descriptor, view: [{ type: "table", id: "items", columns: [{ key: "n", label: "N" }], rows: [["A"], ["B"]], rowKeys: ["ka", "kb"], rowActions: [{ id: "up", label: "Move up", icon: "arrow-up" }] }] } as unknown as PageDescriptor;
+    const { store } = renderInShell(client, <ViewPage tab={tab} descriptor={withTable} />);
+    store.set({ tabs: [tab], activeTabId: "t1" });
+    fireEvent.click(screen.getAllByLabelText("Move up")[1]!);
+    await waitFor(() => expect(event).toHaveBeenCalled());
+    expect(event.mock.calls[0]).toEqual(["resource:r1", "up", expect.objectContaining({ row: "kb" })]);
+  });
+});

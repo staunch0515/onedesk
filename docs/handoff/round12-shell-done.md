@@ -56,3 +56,8 @@
 - **原因码 `inDrop`**：`kernel-texts.ts` 映射 + `en-US.ts` 键 `kernel.error.reason.inDrop`，`kernel-texts.test.ts` 列表补上（`badDropAnswer` 之前已有）。语言插件要补 `kernel.error.reason.inDrop`（及 `badDropAnswer` 等，见 lang-check 输出）。
 - **第十一轮遗留：语言切换后页面文字不变**：`view-page.tsx` 在界面语言变化时把标签的 `reload` +1，重新取页面。测试 `pages/view-page-language.test.tsx`（`renderInShell` 的 `rerender` 新增可选语言参数）。**已对着真内核验证**：把 `e2e/round11.spec.ts` 的 `test.fixme` 临时改成 `test` 跑（不入库），欢迎页中、日、英切换通过——测试会话可以去掉 fixme。
 - 结果：typecheck、lint 通过；`pnpm test` 仅 `lang-check` 4 条失败（等译文）；`workbench.spec.ts` 23 通过、截图未变。
+
+### 验收后补的修改（行按钮的 `row` 没到插件）
+- 原因：`real-client.ts` 的 `pageContext()` 只挑 `envId/draft/params/locale`，把 `row` 丢了（`view-page` 本来就传了）。已修；测试：`real-client.test.ts`「sends the row of a row action with page.event」（抓得到这个问题：丢掉 `row` 就失败），以及 `view-page-language.test.tsx` 里从行按钮到 `client.page.event` 的一条。
+- 顺带加固：行键随行数据走（`view-nodes.tsx` 的 `Indexed.key`），按钮不再在点击时回头查 `node.rowKeys`，避免表格刷新时按钮拿到旧行键。
+- 真内核：把 `e2e/round12.spec.ts` 的行按钮用例临时改成 `test` 跑（不入库）。上移/下移/移除**能工作**（加等待后稳定通过）；但该用例原样跑会不稳定——它在 `items()` 轮询看到已保存后**立刻**点下一行按钮，此时页面还没按新顺序重新取（保存与页面刷新之间有几十到几百毫秒），点到的仍是旧顺序的行。**用例需要在每次点击之间等表格行顺序变成新的**（例如 `expect(rows.nth(1)).toContainText("One")`）再点下一个；这是用例的竞态，不是协议或外壳丢参数。

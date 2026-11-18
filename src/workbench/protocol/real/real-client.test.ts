@@ -59,6 +59,13 @@ describe("kernel client", () => {
     expect(calls[2]?.params).toEqual({ target: "plugin:x", event: "go", context: { params: { pkg: "/a" } } });
   });
 
+  it("sends the row of a row action with page.event (D393)", async () => {
+    const { transport, calls } = fakeTransport({ hello, "page.event": () => ({}) });
+    const client = await createKernelClient(transport, () => "zh-CN");
+    await client.page.event("resource:c", "up", { row: "abc" });
+    expect(calls[1]?.params).toEqual({ target: "resource:c", event: "up", context: { row: "abc", locale: "zh-CN" } });
+  });
+
   it("passes kernel errors through with their code", async () => {
     const { transport } = fakeTransport({ hello, "page.save": () => new KernelError("conflict", { field: "name" }) });
     const client = await createKernelClient(transport);

@@ -5,7 +5,8 @@ import type { OutputCell, ViewNode } from "../protocol";
 import { useQuery, useUi, useWorkbench } from "../state/context";
 import { TOKENIZERS } from "./sql-tokens";
 
-type Indexed = { cells: OutputCell[]; index: number };
+/** `key` travels with the row (not looked up when a button is clicked) so a button always acts on the row it was drawn for. */
+type Indexed = { cells: OutputCell[]; index: number; key: string };
 
 /**
  * A text node with `format: "markdown"` (D381). `[[name]]` is resolved with the references of the resource the
@@ -72,7 +73,7 @@ export function ViewNodes({ nodes, onRowAction }: { nodes: ViewNode[]; onRowActi
                         label={tx(a.label)}
                         onClick={(e) => {
                           e.stopPropagation();
-                          onRowAction?.(a.id, node.rowKeys?.[row.index] ?? String(row.index));
+                          onRowAction?.(a.id, row.key);
                         }}
                         onDoubleClick={(e) => e.stopPropagation()}
                       />
@@ -87,7 +88,7 @@ export function ViewNodes({ nodes, onRowAction }: { nodes: ViewNode[]; onRowActi
                 key={node.id}
                 label={node.id}
                 columns={columns}
-                rows={node.rows.map((cells, index) => ({ cells: cells as OutputCell[], index }))}
+                rows={node.rows.map((cells, index) => ({ cells: cells as OutputCell[], index, key: node.rowKeys?.[index] ?? String(index) }))}
                 getRowKey={(row) => String(row.index)}
                 nullText=""
                 onRowSelect={targets ? () => undefined : undefined}
