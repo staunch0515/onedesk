@@ -32,6 +32,8 @@ export interface DropdownMenuProps {
 }
 
 export function DropdownMenu({ trigger, items, align = "start", side = "bottom", open, onOpenChange }: DropdownMenuProps) {
+  // When some entry has an icon, the ones without keep an empty slot so the texts stay aligned.
+  const anyIcon = items.some((e) => !e.type && Boolean(e.icon));
   return (
     <MenuPrimitive.Root open={open} onOpenChange={onOpenChange}>
       <MenuPrimitive.Trigger asChild>{trigger}</MenuPrimitive.Trigger>
@@ -73,7 +75,7 @@ export function DropdownMenu({ trigger, items, align = "start", side = "bottom",
                     disabled={entry.disabled}
                     onSelect={entry.onSelect}
                   >
-                    {entry.icon && <Icon name={entry.icon} size="md" className="od-menu__icon" />}
+                    {entry.icon ? <Icon name={entry.icon} size="md" className="od-menu__icon" /> : anyIcon ? <span className="od-menu__icon od-menu__icon--empty" aria-hidden="true" /> : null}
                     <span className="od-menu__text">{entry.label}</span>
                     {entry.shortcut && <Kbd keys={entry.shortcut} className="od-menu__shortcut" />}
                   </MenuPrimitive.Item>
