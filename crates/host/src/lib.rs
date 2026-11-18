@@ -792,7 +792,12 @@ impl Host {
         let _one_at_a_time = self.ops.lock().await;
         let old = self.bindings.lock().unwrap().remove(client);
         if let Some(folder) = old {
-            self.release(&folder).await;
+            // A connection that merely ends (a short rpc connection, a page reload) does not stop the worker of the
+            // workspace new connections start in: the next one would pay a restart and could cut a run short. A
+            // worker stops when its connections moved elsewhere or when its workspace is not the default.
+            if *self.active.lock().unwrap() != folder {
+                self.release(&folder).await;
+            }
         }
     }
 
@@ -846,6 +851,14 @@ impl Host {
         if used {
             return;
         }
+        self.stop_slot(folder).await;
+    }
+
+    /// Stops the worker of `folder` and waits until it has exited (and released the workspace lock). Nobody starts a
+    /// worker for any workspace meanwhile, so a connection that arrives now waits instead of starting a second worker
+    /// for the same folder.
+    async fn stop_slot(&self, folder: &str) {
+        let _no_start_meanwhile = self.start_lock.lock().await;
         let slot = self.slots.lock().unwrap().remove(folder);
         if let Some(slot) = slot {
             slot.stop().await;
@@ -870,16 +883,18 @@ impl Host {
         let _one_at_a_time = self.ops.lock().await;
         let (folder, info) = self.find_with_id(&parse::<WorkspaceIdParams>(params)?.id)?;
         let mine = self.bound(client);
-        let used = mine == folder || self.bindings.lock().unwrap().values().any(|f| *f == folder) || self.slots.lock().unwrap().contains_key(&folder);
-        if used {
+        if mine == folder || self.bindings.lock().unwrap().values().any(|f| *f == folder) {
             return Err(in_use());
         }
         // New connections must not start in a workspace that is going away.
-        let mut active = self.active.lock().unwrap();
-        if *active == folder {
-            *active = mine;
+        {
+            let mut active = self.active.lock().unwrap();
+            if *active == folder {
+                *active = mine;
+            }
         }
-        drop(active);
+        // An idle worker (nobody is bound to it) goes first, so the folder is not moved under a running process.
+        self.stop_slot(&folder).await;
         let trashed = workspaces::move_to_trash(&self.data_dir, &folder).map_err(|e| err(ErrorCode::Internal, e))?;
         // The keychain accounts are `<workspace id>/<name>`: all of them go, without opening the database (D404).
         if let Err(e) = self.secrets.0.delete_prefix(&format!("{}/", info.id)) {

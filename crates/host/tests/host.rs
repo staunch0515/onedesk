@@ -892,3 +892,50 @@ async fn the_window_position_survives_a_worker_crash_and_restart() {
     assert_eq!(host.window_bounds("default"), Some(b));
     host.shutdown().await;
 }
+
+#[tokio::test]
+async fn short_connections_opening_and_closing_do_not_stop_or_duplicate_the_worker() {
+    let tmp = tempfile::tempdir().unwrap();
+    let host = start(tmp.path()).await;
+    let port = ws_server(host.clone(), "t").await;
+    let pid = host.request(Some("page"), "pid", Value::Null).await.unwrap();
+    // The e2e pattern: a page stays, rpc connections come and go, and so does a page reload (same client id).
+    for i in 0..8 {
+        let (mut rpc, _) = tokio_tungstenite::connect_async(format!("ws://127.0.0.1:{port}/?token=t&client=rpc-{i}")).await.unwrap();
+        rpc.send(Message::text(json!({ "id": 1, "method": "pid" }).to_string())).await.unwrap();
+        let reply: Value = serde_json::from_str(rpc.next().await.unwrap().unwrap().to_text().unwrap()).unwrap();
+        assert_eq!(reply["result"], pid, "round {i}: the same worker answers");
+        rpc.close(None).await.unwrap();
+    }
+    // Even with every connection gone, the worker of the default workspace keeps running, so the next one finds it.
+    host.unbind_client("page").await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert_eq!(host.running_workspaces(), ["default"]);
+    assert_eq!(host.request(Some("page"), "pid", Value::Null).await.unwrap(), pid);
+    assert_eq!(host.restart_count(), 0);
+    host.shutdown().await;
+}
+
+#[tokio::test]
+async fn leaving_and_coming_back_at_once_never_starts_a_second_worker_for_a_folder() {
+    let tmp = tempfile::tempdir().unwrap();
+    let host = start(tmp.path()).await;
+    let team = host.request(Some("a"), "app.createWorkspace", json!({ "name": "team" })).await.unwrap();
+    let default_id = list(&host, "a").await[0]["id"].clone();
+    // Both directions at the same moment: the worker being stopped must be gone before a new one for the folder starts.
+    for _ in 0..4 {
+        let (x, y) = tokio::join!(
+            host.request(Some("a"), "app.switchWorkspace", json!({ "id": team["id"] })),
+            host.request(Some("b"), "app.switchWorkspace", json!({ "id": default_id })),
+        );
+        x.unwrap();
+        y.unwrap();
+        let (x, y) = tokio::join!(
+            host.request(Some("a"), "app.switchWorkspace", json!({ "id": default_id })),
+            host.request(Some("b"), "app.switchWorkspace", json!({ "id": team["id"] })),
+        );
+        x.unwrap();
+        y.unwrap();
+    }
+    host.shutdown().await;
+}

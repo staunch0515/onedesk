@@ -96,3 +96,10 @@
 结果：`cargo test -p onedesk-host` 34 单元 + 44 集成全过；clippy（host、src-tauri）过；typecheck、lint 过；`src/workbench` 的 vitest 179 全过；真工作进程脚本全过。**没重跑**全量 `pnpm test`、Playwright；桌面窗口仍没运行过。
 
 仍属他人/记录：#8、#9、内核 `workspace.info` 改名后的旧名与重复 id 的新 id 分配（内核）；#11、#13 的 e2e（测试会话）。
+
+## 合并前 e2e 回归的修复
+
+原因：D406 的“首次出现即绑定”让短 rpc 连接（`client=e2e-rpc`）绑到默认工作区，它一关闭，那个工作区没有别的绑定，`unbind_client` 就停掉了空闲的工作进程——运行被打断（`interrupted`/`error`）；下一个连接马上又起新的，而旧的还没退出、没释放工作区锁（`exit 3`）。
+修复：① 连接结束（`unbind_client`）不停“新连接默认工作区”的工作进程（页面重载、短连接都不再触发重启）；换走（切换）或非默认工作区的最后一个连接关闭仍停；② 停止工作进程时持有启动锁直到进程退出，期间别的连接等待，不会对同一文件夹起第二个；③ 删除工作区前先停掉它空闲的工作进程。
+测试：`short_connections_opening_and_closing_do_not_stop_or_duplicate_the_worker`、`leaving_and_coming_back_at_once_never_starts_a_second_worker_for_a_folder`。
+结果：`cargo test -p onedesk-host` 34+46 过；**全部 e2e（`pnpm exec playwright test`）217 过、1 跳过（原本就跳过）**。
