@@ -87,7 +87,10 @@ function ConnectionNotices({ startupError }: { startupError?: string }) {
   const live = useRef({ toast, t });
   live.current = { toast, t };
   useEffect(() => {
-    if (startupError) live.current.toast({ tone: "warning", title: live.current.t("startup.failed", { reason: startupError }) });
+    if (!startupError) return;
+    // The main process or the worker said why the first-version data could not be brought over (D398): say that, not "unreachable".
+    const key = startupError.includes("legacyMoveFailed") ? "startup.legacyMoveFailed" : startupError.includes("legacyUpgradeFailed") ? "startup.legacyUpgradeFailed" : "startup.failed";
+    live.current.toast({ tone: "warning", title: live.current.t(key, { reason: startupError }) });
   }, [startupError]);
   useEffect(
     () =>

@@ -1,6 +1,6 @@
 import type { ConnectionState, EventMessage, HelloResult, TreePage } from "../generated";
 import type { ProtocolClient } from "../client";
-import type { ExportResult, ImportPreview, ImportResult, KnownParam, RefInfo, RunExportResult, InstallPreview, InstallRequest, PluginVersionParams, SecretInfo, UndoUpgradeResult, UpgradeResult, PageEventResult, PaletteCommand, PluginDetail, Run, ViewNode, TreeMoveResult, AuditFacets, AuditFilter, AuditRow, EnvOption, EnvView, HistoryEntry, ResolvedParam, SearchHit, CommandContext, CommandEffect, NewItem, PageContext, PageDescriptor, PageSaveResult, PluginGrants, Resource, TreeInfo, TreeNode, WorkspaceInfo, LanguageInfo, ShellTexts } from "../types";
+import type { ExportResult, ImportPreview, ImportResult, KnownParam, RefInfo, RunExportResult, InstallPreview, InstallRequest, PluginVersionParams, SecretInfo, UndoUpgradeResult, UpgradeResult, PageEventResult, PaletteCommand, PluginDetail, Run, ViewNode, TreeMoveResult, AuditFacets, AuditFilter, AuditRow, EnvOption, EnvView, HistoryEntry, ResolvedParam, SearchHit, CommandContext, CommandEffect, NewItem, PageContext, PageDescriptor, PageSaveResult, PluginGrants, Resource, TreeInfo, TreeNode, WorkspaceEntry, WorkspaceInfo, LanguageInfo, ShellTexts } from "../types";
 import { EventBus } from "./event-bus";
 import { KernelError } from "../errors";
 import type { Transport } from "./transport";
@@ -12,7 +12,7 @@ export const PROTOCOL_VERSION = "1";
 export interface KernelClient {
   readonly hello: HelloResult;
   readonly transport: Transport;
-  workspace: Pick<ProtocolClient["workspace"], "info" | "getConfig" | "setConfig" | "export" | "importPreview" | "import">;
+  workspace: Pick<ProtocolClient["workspace"], "info" | "list" | "create" | "switchTo" | "rename" | "remove" | "getConfig" | "setConfig" | "export" | "importPreview" | "import">;
   params: ProtocolClient["params"];
   refs: ProtocolClient["refs"];
   search: ProtocolClient["search"];
@@ -69,6 +69,11 @@ export async function createKernelClient(transport: Transport, locale?: () => st
     transport,
     workspace: {
       info: () => call<WorkspaceInfo>("workspace.info"),
+      list: async () => (await call<{ items: WorkspaceEntry[] }>("app.workspaces")).items,
+      create: (name) => call<WorkspaceEntry>("app.createWorkspace", { name }),
+      switchTo: (id) => call<WorkspaceEntry>("app.switchWorkspace", { id }),
+      rename: async (id, name) => void (await call("app.renameWorkspace", { id, name })),
+      remove: async (id) => void (await call("app.deleteWorkspace", { id })),
       getConfig: async (name) => ((await call<string | null>("workspace.getConfig", { name })) ?? null),
       setConfig: async (name, value) => void (await call("workspace.setConfig", { name, value })),
       export: (folder) => call<ExportResult>("workspace.export", { folder }),

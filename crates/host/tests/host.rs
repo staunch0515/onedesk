@@ -631,3 +631,15 @@ async fn workspace_methods_work_over_the_websocket_and_the_change_event_reaches_
     }
     host.shutdown().await;
 }
+
+#[tokio::test]
+async fn a_worker_that_fails_to_start_explains_itself_with_its_last_words() {
+    use std::os::unix::fs::PermissionsExt;
+    let tmp = tempfile::tempdir().unwrap();
+    let script = tmp.path().join("worker.sh");
+    std::fs::write(&script, "#!/bin/sh\necho 'legacyUpgradeFailed table=resources' >&2\nexit 1\n").unwrap();
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let cfg = HostConfig { data_dir: tmp.path().join("data"), worker_bin: script, builtin_plugins: None, secrets: Some(memory_store().0) };
+    let e = Host::start(cfg).await.err().expect("start fails");
+    assert!(e.0.contains("legacyUpgradeFailed table=resources"), "{}", e.0);
+}

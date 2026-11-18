@@ -93,8 +93,15 @@ export interface ProtocolClient {
 
   workspace: {
     info(): Promise<WorkspaceInfo>;
-    /** Demo only (no kernel method yet): the workspace switcher. */
+    /** The workspaces, newest first (`app.workspaces`, D400); refresh on the `app.workspacesChanged` event. */
     list(): Promise<WorkspaceEntry[]>;
+    /** A new empty workspace with this one's settings; does not switch. `invalidParams` for a name that is empty or over 100 characters. */
+    create(name: string): Promise<WorkspaceEntry>;
+    /** Binds this connection to the workspace. The caller reloads the interface afterwards. */
+    switchTo(id: string): Promise<WorkspaceEntry>;
+    rename(id: string, name: string): Promise<void>;
+    /** Moves the workspace to the data directory's `trash/`. `conflict/inUse` for one a connection uses. */
+    remove(id: string): Promise<void>;
     /** Targets to open the first time this client connects (the welcome set, D196). */
     startTargets(): Promise<string[]>;
     /** Workspace-level configuration parameter by name (§6.2), e.g. `ui.language`. */

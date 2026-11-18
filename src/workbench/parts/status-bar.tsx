@@ -17,7 +17,7 @@ export function StatusBarPart({ settings, languages, onSetting, resolvedTheme }:
   const tasksOpen = useUi((s) => s.tasksOpen);
   const noticesOpen = useUi((s) => s.noticesOpen);
   const unread = useUi((s) => unreadCount(s.notices));
-  const workspaces = useQuery((c) => c.workspace.list(), []);
+  const workspaces = useQuery((c) => c.workspace.list(), [], ["app.workspacesChanged"]);
   const tasks = useQuery((c) => c.run.tasks(), [], ["runs"]);
   const envId = tab?.usesEnv ? tab.envId : null;
   const envs = useQuery((c) => c.params.envOptions(), [], ["env", "tree:environments"]);

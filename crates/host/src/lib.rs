@@ -197,9 +197,34 @@ async fn spawn_worker(cfg: &HostConfig, shared: &Shared) -> Result<Started, Host
     }
     let mut child = command
         .stdin(Stdio::null())
+        .stderr(Stdio::piped())
         .kill_on_drop(true)
         .spawn()
         .map_err(|e| HostError(format!("cannot start worker {}: {e}", cfg.worker_bin.display())))?;
+    // The worker's own words go on to our stderr; the last of them explain a start that failed (for example `legacyUpgradeFailed`).
+    let tail = Arc::new(Mutex::new(String::new()));
+    if let Some(stderr) = child.stderr.take() {
+        let tail = tail.clone();
+        tokio::spawn(async move {
+            let mut lines = BufReader::new(stderr).lines();
+            while let Ok(Some(line)) = lines.next_line().await {
+                eprintln!("{line}");
+                let mut t = tail.lock().unwrap();
+                if !t.is_empty() {
+                    t.push('\n');
+                }
+                t.push_str(&line);
+                // Keep the last ~2000 bytes, cut on a character boundary.
+                if t.len() > 2000 {
+                    let mut cut = t.len() - 2000;
+                    while !t.is_char_boundary(cut) {
+                        cut += 1;
+                    }
+                    t.drain(..cut);
+                }
+            }
+        });
+    }
     let deadline = Instant::now() + START_TIMEOUT;
     let stream = loop {
         match UnixStream::connect(&socket).await {
@@ -208,7 +233,11 @@ async fn spawn_worker(cfg: &HostConfig, shared: &Shared) -> Result<Started, Host
                 if let Ok(Some(status)) = child.try_wait() {
                     return Err(HostError(match status.code() {
                         Some(3) => "workspace is locked by another worker (exit 3)".to_string(),
-                        _ => format!("worker exited during start: {status}"),
+                        _ => {
+                            // Give the reader task a moment to deliver the last line.
+                            tokio::time::sleep(Duration::from_millis(50)).await;
+                            format!("worker exited during start: {status}: {}", tail.lock().unwrap().trim())
+                        }
                     }));
                 }
                 if Instant::now() > deadline {
