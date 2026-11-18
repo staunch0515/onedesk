@@ -1,6 +1,6 @@
 /**
  * Round 11 against the REAL kernel: language plugins, links (openExternal), prompts ({{params}} and copy), the note
- * reading view (Markdown), the welcome page (startup page) and `legacyKinds`.
+ * reading view (Markdown), and the welcome page (startup page).
  * devhost always runs with ONEDESK_SECRET_STORE=memory and a temp data directory (kernel-host.ts): the real keychain and
  * ~/Library/Application Support/onedesk* are never touched. Nothing opens a real browser: `window.open` and the clipboard
  * are replaced in the page before it starts. Screenshots: docs/screenshots/round11-*.png.
@@ -121,7 +121,7 @@ async function keyLike(page: Page): Promise<string[]> {
   return [...new Set(text.match(/\b[a-z][a-zA-Z]+(?:\.[a-zA-Z][a-zA-Z0-9]*){1,3}\b/g) ?? [])].filter((s) => /^(common|install|plugin|secrets|state|info|page|tabs|tree|status|palette|result|run|env|history|audit|deleted|refs|transfer|params|restrict|link|topbar|notices|kind|action|field|empty|close|merge|welcome|entry|mode|message|summary|error|demo|connection|startup|activity|main|side|tasks|panel|folder|confirm|copy|default|delete)\./.test(s));
 }
 
-/* ------------------------------------------------------------------ protocol: languages and legacyKinds */
+/* ------------------------------------------------------------------ protocol: languages */
 
 test("protocol: i18n.languages is English, Japanese, Chinese; i18n.shell has texts for the two plugin languages and none for English", async ({ page }) => {
   await page.goto("/workbench.html?reset&quiet");

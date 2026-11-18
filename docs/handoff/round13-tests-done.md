@@ -33,3 +33,18 @@
 
 ## 没验证
 Rust 测试、clippy 没跑；Playwright 只跑了 round13.spec.ts（没重跑 workbench.spec.ts 等旧用例）。
+
+## 审查补充（#11、#13）
+- #11：`e2e/round11.spec.ts` 注释里的 `legacyKinds` 已去掉。
+- 合并协调分支（含 ea8a194 的 createWorkspace 修复）后，原样主进程下真内核新建工作区成功，`round13.spec.ts` 10 条通过；不再需要本地补丁。
+- 新增两条 `test.fixme`（外壳修完后去掉 fixme）：
+  1. **D406**：不带 `workspace=` 的连接不会因另一个连接切换而被带走（审查 #2）。现状实测失败：A 被带走。
+  2. **浏览器“新窗口”**开新标签页、地址带 `workspace=<id>`（审查 #7）。现状点按钮无反应。
+- 占用中的删除被拒：已有用例（第 8 条，`conflict/inUse`）。
+- 结果：10 过、2 fixme；typecheck、lint 通过。仍未跑 Rust/旧 Playwright 用例。
+
+## 最终（合并协调分支 9af3798 后）
+- 补了最后两个键的中日译文（`kernel.audit.workspace.initSettings`、`kernel.error.reason.mainProcessOnly`）。
+- 两处 `test.fixme` 已去掉（D406、浏览器“新窗口”）；协调分支原样（重新 `cargo build -p onedesk-worker -p onedesk-host`）下 `round13.spec.ts` 12 条全过，无 fixme、无本地补丁。
+- `pnpm test` 66 文件 579 条全过，typecheck、lint 通过。
+- 没做：删除与切换并发的用例（可选，未写）；没跑 Rust 测试、clippy、旧 Playwright 用例。
