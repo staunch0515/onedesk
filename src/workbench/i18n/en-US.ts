@@ -232,6 +232,7 @@ export const enUS = {
   "result.empty": "Run to see the result here",
   "result.gone": "The result of this run is no longer kept",
   "result.running": "Running…",
+  "result.elapsed": "Elapsed time",
   "result.liveOutput": "Output so far",
   "result.cancel": "Cancel run",
   "result.cancelled": "This run was cancelled",

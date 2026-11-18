@@ -89,7 +89,7 @@ describe("result export", () => {
     await act(async () => startRunExport(client, store, { fail: () => undefined }, "run2", "r.csv", vi.fn()));
     expect(pickFolder).toHaveBeenCalledTimes(1);
     expect(exportFn).toHaveBeenCalledTimes(2);
-    expect(exportFn.mock.calls[1][1]).toMatch(/^\/tmp\/out\/r-\d{6}\.csv$/);
+    expect(exportFn.mock.calls[1]?.[1]).toMatch(/^\/tmp\/out\/r-\d{6}\.csv$/);
   });
 
   it("says why a refused export was refused", async () => {
