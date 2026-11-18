@@ -12,6 +12,11 @@ use serde_json::{json, Value};
 
 const MAIN: &str = r#"
 export default { activate(host) {
+  host.pages.handle("p", { async render(ctx) { return { view: [{ type: "form", id: "f", layout: "stack", fields: [
+    { name: "src", label: "Source", kind: "ref", kinds: ["src"] },
+    { name: "at", label: "At", kind: "time", presets: [{ value: "00:00", label: "Midnight" }] },
+    { name: "fixed", label: "Fixed", kind: "ref", kinds: ["src"], options: [{ value: "x", label: "X" }] }
+  ] }] }; } });
   host.actions.handle("cfg", async (ctx, input) =>
     ({ output: { type: "text", text: JSON.stringify(await ctx.host.params.config(input.name)) } }));
   host.actions.handle("cap", async (ctx, input) => {
@@ -31,7 +36,10 @@ fn pkg(root: &Path) {
     let m = json!({
         "id": "t.data", "version": "0.1.0", "apiVersion": "2", "name": "data", "icon": "box", "main": "main.js",
         "requires": { "programs": [{ "name": "sh", "source": "system" }, { "name": "seq", "source": "system" }] },
-        "contributes": { "actions": [
+        "contributes": {
+          "kinds": [{ "id": "src", "label": "S", "icon": "box", "tree": "resources", "page": "p", "newName": "s" }],
+          "pages": [{ "id": "p" }],
+          "actions": [
             { "id": "cap", "label": "Cap", "output": "table" },
             { "id": "direct", "label": "Direct", "output": "table" },
             { "id": "text", "label": "Text", "output": "text" },
@@ -98,7 +106,11 @@ async fn a_long_result_is_cut_in_the_run_and_exported_whole() {
     assert_eq!(r["status"], "success", "{r}");
     let o = &r["output"];
     assert_eq!((o["total"].as_u64(), o["truncated"].as_bool()), (Some(10005), Some(true)));
-    assert_eq!(o["rows"].as_array().unwrap().len(), 10_000);
+    // The run stores 10,000 rows (D377) and sends the first 200 (D414).
+    assert_eq!(o["rows"].as_array().unwrap().len(), 200);
+    let stored: String = rusqlite::Connection::open(env.kernel.db_path()).unwrap()
+        .query_row("SELECT output FROM runs WHERE id = ?1", [r["id"].as_str().unwrap()], |x| x.get(0)).unwrap();
+    assert_eq!(serde_json::from_str::<Value>(&stored).unwrap()["rows"].as_array().unwrap().len(), 10_000);
     let to = env.path().join("export.csv");
     let e = c.ok("run.export", json!({ "run": r["id"], "path": to.display().to_string(), "format": "csv" })).await;
     assert_eq!(e["rows"], 10005);
@@ -106,6 +118,18 @@ async fn a_long_result_is_cut_in_the_run_and_exported_whole() {
     assert!(text.starts_with("\u{feff}n\r\n1\r\n"));
     assert!(text.ends_with("10005\r\n"));
     assert_eq!(text.lines().count(), 10006);
+    // D414: the run carries the first 200 rows; `run.rows` reads every row, from the kept file.
+    let g = c.ok("run.get", json!({ "id": r["id"] })).await;
+    assert_eq!((g["output"]["paged"].as_bool(), g["output"]["rows"].as_array().unwrap().len()), (Some(true), 200));
+    let page = c.ok("run.rows", json!({ "id": r["id"], "offset": 10_000, "limit": 1000 })).await;
+    assert_eq!(page["total"], 10005);
+    assert_eq!(page["rows"], json!([["10001"], ["10002"], ["10003"], ["10004"], ["10005"]]));
+    let page = c.ok("run.rows", json!({ "id": r["id"], "offset": 0, "limit": 2 })).await;
+    assert_eq!(page["rows"], json!([["1"], ["2"]]));
+    for limit in [0, 1001] {
+        let e = c.call("run.rows", json!({ "id": r["id"], "offset": 0, "limit": limit })).await.unwrap_err();
+        assert_eq!(e.code, onedesk_protocol::ErrorCode::InvalidParams, "{limit}");
+    }
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -140,4 +164,24 @@ async fn a_plugin_reads_a_workspace_configuration_value() {
     let r = run(&c, "cfg", json!({ "name": "default.source" })).await;
     let v: Value = serde_json::from_str(r["output"]["text"].as_str().unwrap()).unwrap();
     assert_eq!((v["found"].as_bool(), v["value"].as_str()), (Some(true), Some("r-123")), "{v}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn small_paged_tables_read_from_the_run_and_ref_fields_list_their_kinds() {
+    let (_env, c) = world().await;
+    let r = run(&c, "direct", json!({ "script": "printf 'a,b\\n1,x\\n2,\\n3,z\\n' > tmp/s.csv", "file": "tmp/s.csv" })).await;
+    assert_eq!(r["output"]["paged"], true, "{r}");
+    let page = c.ok("run.rows", json!({ "id": r["id"], "offset": 1, "limit": 5 })).await;
+    assert_eq!(page, json!({ "rows": [["2", null], ["3", "z"]], "total": 3 }));
+    // A `ref` field with kinds and no options gets the resources of those kinds, by name.
+    for n in ["beta", "alpha"] {
+        c.ok("page.save", json!({ "target": "new:t.data:src", "changes": { "name": n } })).await;
+    }
+    let first = c.ok("page.save", json!({ "target": "new:t.data:src", "changes": { "name": "gamma" } })).await;
+    let page = c.ok("page.resolve", json!({ "target": first["page"]["target"] })).await;
+    let fields = &page["view"][0]["fields"];
+    let labels: Vec<&str> = fields[0]["options"].as_array().unwrap().iter().map(|o| o["label"].as_str().unwrap()).collect();
+    assert_eq!(labels, ["alpha", "beta", "gamma"], "{page}");
+    assert_eq!(fields[1]["kind"], "time");
+    assert_eq!(fields[2]["options"], json!([{ "value": "x", "label": "X" }]));
 }

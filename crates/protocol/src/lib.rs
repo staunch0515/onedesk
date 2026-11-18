@@ -457,6 +457,11 @@ pub enum FieldKind {
     Datetime,
     Enum,
     Secret,
+    /// Round 15 (D414): a time of day (`HH:MM` or `HH:MM:SS`, UTC), with `presets`.
+    Time,
+    /// Round 15 (D414): a reference to a resource; the value is its id. Choices are `options`; for
+    /// a field with `kinds` and no `options` the kernel lists the resources of those kinds.
+    Ref,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -498,6 +503,9 @@ pub struct ViewField {
     pub required: Option<bool>,
     /// Round 15 (sqlpool C2): most characters the shell lets the user type (text fields).
     pub max_length: Option<u32>,
+    /// Round 15 (D414): for a `ref` field, the kinds it may point at (full `<pluginId>:<kind>`, or
+    /// the page's own plugin's short name).
+    pub kinds: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -1263,6 +1271,9 @@ pub enum RunOutput {
         /// Rows the action produced; `rows` may hold fewer (see `truncated`).
         total: u64,
         truncated: bool,
+        /// Round 15 (D414): the result came as a data file. `rows` carries only the first
+        /// `PAGED_FIRST_ROWS`; the rest is read with `run.rows`.
+        paged: Option<bool>,
     },
     Text {
         text: String,
@@ -2018,6 +2029,37 @@ pub struct RunExportResult {
     pub rows: u32,
 }
 
+/// Methods of round 15 (D414).
+pub mod method15 {
+    /// `RunRowsParams` → `RunRowsResult`: a page of a finished run's table (all rows of a `paged`
+    /// one, as far as the run keeps them).
+    pub const RUN_ROWS: &str = "run.rows";
+}
+
+/// Round 15 (D414): rows of a `paged` table sent with the run.
+pub const PAGED_FIRST_ROWS: usize = 200;
+/// Round 15 (D414): most rows one `run.rows` returns.
+pub const RUN_ROWS_MAX_LIMIT: u32 = 1000;
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct RunRowsParams {
+    pub id: String,
+    pub offset: u64,
+    /// 1–1000.
+    pub limit: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct RunRowsResult {
+    pub rows: Vec<Vec<Value>>,
+    /// All rows of the table.
+    pub total: u64,
+}
+
 /// Methods of round 7 (D345): install requests made by plugins, answered by the interface.
 /// `plugin.checkRemove` (`PluginVersionParams`) lets the main process ask before removing a
 /// version: `conflict/dependents` when enabled plugins depend on it (D344).
@@ -2291,6 +2333,7 @@ mod tests {
                 read_only: None,
                 required: None,
                 max_length: None,
+                kinds: None,
             }],
         };
         assert_eq!(

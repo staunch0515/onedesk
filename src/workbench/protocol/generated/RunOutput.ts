@@ -10,4 +10,9 @@ export type RunOutput = { "type": "table", columns: Array<OutputColumn>, rows: A
 /**
  * Rows the action produced; `rows` may hold fewer (see `truncated`).
  */
-total: number, truncated: boolean, } | { "type": "text", text: string, } | { "type": "link", label: string, target: string, } | { "type": "none" };
+total: number, truncated: boolean, 
+/**
+ * Round 15 (D414): the result came as a data file. `rows` carries only the first
+ * `PAGED_FIRST_ROWS`; the rest is read with `run.rows`.
+ */
+paged?: boolean, } | { "type": "text", text: string, } | { "type": "link", label: string, target: string, } | { "type": "none" };

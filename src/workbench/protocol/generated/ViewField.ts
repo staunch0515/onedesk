@@ -34,4 +34,9 @@ required?: boolean,
 /**
  * Round 15 (sqlpool C2): most characters the shell lets the user type (text fields).
  */
-maxLength?: number, };
+maxLength?: number, 
+/**
+ * Round 15 (D414): for a `ref` field, the kinds it may point at (full `<pluginId>:<kind>`, or
+ * the page's own plugin's short name).
+ */
+kinds?: Array<string>, };

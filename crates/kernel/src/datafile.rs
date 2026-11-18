@@ -216,7 +216,7 @@ pub fn read(path: &Path, o: &Map<String, Value>) -> Result<FromFile, String> {
                     })
                     .collect(),
             };
-            Ok(FromFile { output: RunOutput::Table { columns, rows, total, truncated: cut }, cut })
+            Ok(FromFile { output: RunOutput::Table { columns, rows, total, truncated: cut, paged: Some(true) }, cut })
         }
         other => Err(bad(format!("output type {other:?} cannot come from a file"))),
     }
@@ -289,7 +289,7 @@ mod tests {
         let p = d.path().join("r.csv");
         std::fs::write(&p, "id,name\n1,ann\n2,\n10,\"\"\n").unwrap();
         let r = read(&p, &o(json!({ "type": "table" }))).unwrap();
-        let RunOutput::Table { columns, rows, total, truncated } = r.output else { panic!() };
+        let RunOutput::Table { columns, rows, total, truncated, .. } = r.output else { panic!() };
         assert_eq!(total, 3);
         assert!(!truncated && !r.cut);
         assert_eq!(columns[0].label, "id");

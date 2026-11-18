@@ -105,6 +105,8 @@ export type * from "./RunIdParams";
 export type * from "./RunOutput";
 export type * from "./RunProgress";
 export type * from "./RunRenderParams";
+export type * from "./RunRowsParams";
+export type * from "./RunRowsResult";
 export type * from "./RunSetKeptParams";
 export type * from "./RunStartParams";
 export type * from "./RunStatus";
