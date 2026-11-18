@@ -1,0 +1,152 @@
+{
+  "id": "org.onedesk.datasource",
+  "version": "0.1.0",
+  "apiVersion": "2",
+  "name": "plugin.name",
+  "description": "plugin.description",
+  "icon": "database",
+  "main": "main.js",
+  "author": "OneDesk",
+  "license": "MIT",
+  "homepage": "https://onedesk.example.com/plugins/datasource",
+  "requires": {
+    "files": false,
+    "secrets": {
+      "names": [],
+      "plaintext": false
+    },
+    "programs": [
+      { "name": "psql", "source": "plugin", "path": "bin/psql" },
+      { "name": "ssh", "source": "system" }
+    ]
+  },
+  "exports": {
+    "kinds": [
+      { "id": "source", "actions": true, "read": true }
+    ]
+  },
+  "contributes": {
+    "kinds": [
+      {
+        "id": "source",
+        "label": "kind.source",
+        "icon": "database",
+        "tree": "resources",
+        "page": "editor",
+        "newName": "kind.source.new",
+        "defaults": {
+          "mode": "direct",
+          "host": "localhost",
+          "port": "5432",
+          "database": "",
+          "user": "",
+          "sshHost": "",
+          "container": ""
+        },
+        "fields": {
+          "password": {
+            "type": "secret"
+          }
+        },
+        "draggable": true,
+        "accepts": []
+      }
+    ],
+    "actions": [
+      {
+        "id": "test",
+        "label": "action.test",
+        "icon": "plug-zap",
+        "kinds": ["source"],
+        "output": "text",
+        "saveFirst": false,
+        "confirm": null
+      },
+      {
+        "id": "query",
+        "label": "action.query",
+        "icon": "table",
+        "output": "table",
+        "saveFirst": false,
+        "confirm": null
+      },
+      {
+        "id": "list",
+        "label": "action.list",
+        "icon": "list",
+        "output": "table",
+        "saveFirst": false,
+        "confirm": null
+      }
+    ],
+    "pages": [
+      {
+        "id": "editor",
+        "recompute": false,
+        "usesEnv": false,
+        "actions": [
+          {
+            "id": "test",
+            "role": "run",
+            "action": "test",
+            "label": "action.test",
+            "icon": "plug-zap",
+            "primary": true,
+            "shortcut": ["Mod", "Enter"]
+          },
+          {
+            "id": "save",
+            "role": "save",
+            "label": "action.save",
+            "icon": "save",
+            "shortcut": ["Mod", "S"]
+          },
+          {
+            "id": "import",
+            "role": "event",
+            "label": "action.import",
+            "icon": "link"
+          }
+        ],
+        "resultTabs": [
+          {
+            "id": "response",
+            "type": "output",
+            "label": "tab.result",
+            "icon": "file-text"
+          },
+          {
+            "id": "history",
+            "type": "history",
+            "label": "tab.history",
+            "icon": "history"
+          }
+        ]
+      }
+    ],
+    "settings": [
+      {
+        "name": "statementTimeoutMs",
+        "label": "setting.timeout",
+        "type": "number",
+        "default": "30000",
+        "hint": "setting.timeout.hint"
+      },
+      {
+        "name": "maxRows",
+        "label": "setting.maxRows",
+        "type": "number",
+        "default": "1000",
+        "hint": "setting.maxRows.hint"
+      }
+    ],
+    "menus": {
+      "new": ["source"]
+    },
+    "locales": {
+      "en-US": "locales/en-US.json",
+      "zh-CN": "locales/zh-CN.json",
+      "ja-JP": "locales/ja-JP.json"
+    }
+  }
+}
