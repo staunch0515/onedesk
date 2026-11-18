@@ -5,13 +5,13 @@
 // doubled; an empty value is NULL), the way the old sqlpool did; nothing is bound by a driver.
 //
 // Parameter declarations are optional comment lines at any place in the text:
-//   -- @param NAME [type=text|number|date|datetime|enum] [required] [max=N] [values=a|b|c] [-- description]
+//   -- @param NAME [type=text|number|date|datetime|time|enum] [required] [max=N] [values=a|b|c] [-- description]
 // Without one a parameter is a text field. Sandbox rules: no console, timers or fetch.
 
 export const SOURCE_KIND = "org.onedesk.datasource:source";
 export const DATASOURCE = "org.onedesk.datasource";
 const SENT_KEY = "lastSent";
-const TYPES = ["text", "number", "date", "datetime", "enum"];
+const TYPES = ["text", "number", "date", "datetime", "time", "enum"];
 const MAX_LEN_DEFAULT = 0;
 
 /* ---------------------------------------------------------------- helpers */
@@ -23,8 +23,12 @@ export function tr(ctx, key, vars) {
   return text;
 }
 
-// Splits SQL into pieces: raw text and parameters. Strings, quoted names, dollar-quoted text and comments
-// are raw; so is the `::` of a cast.
+const IDENT_CHAR = /[A-Za-z0-9_$\u0080-\uffff]/;
+const DOLLAR = /^\$([A-Za-z_\u0080-\uffff][A-Za-z0-9_\u0080-\uffff]*)?\$/;
+
+// Splits SQL into pieces: raw text and parameters. Strings (E'…' with backslash escapes), quoted names,
+// dollar-quoted text (a `$` inside a name does not start one), comments (block comments nest, as in
+// PostgreSQL) are raw; so is the `::` of a cast. The data source plugin reads the text the same way.
 export function tokenize(sql) {
   const out = [];
   let raw = "";
@@ -38,8 +42,13 @@ export function tokenize(sql) {
     const c = s[i];
     const next = s[i + 1];
     if (c === "'" || c === '"') {
+      const escapes = c === "'" && i > 0 && /[eE]/.test(s[i - 1]) && !(i > 1 && IDENT_CHAR.test(s[i - 2]));
       let j = i + 1;
       while (j < s.length) {
+        if (escapes && s[j] === "\\") {
+          j += 2;
+          continue;
+        }
         if (s[j] === c) {
           if (s[j + 1] === c) {
             j += 2;
@@ -51,27 +60,27 @@ export function tokenize(sql) {
       }
       raw += s.slice(i, j + 1);
       i = j + 1;
-    } else if (c === "$") {
-      const m = /^\$([A-Za-z_][A-Za-z0-9_]*)?\$/.exec(s.slice(i, i + 80));
-      if (m) {
-        const end = s.indexOf(m[0], i + m[0].length);
-        const stop = end < 0 ? s.length : end + m[0].length;
-        raw += s.slice(i, stop);
-        i = stop;
-      } else {
-        raw += c;
-        i++;
-      }
+    } else if (c === "$" && !(i > 0 && IDENT_CHAR.test(s[i - 1])) && DOLLAR.test(s.slice(i, i + 140))) {
+      const tag = DOLLAR.exec(s.slice(i, i + 140))[0];
+      const end = s.indexOf(tag, i + tag.length);
+      const stop = end < 0 ? s.length : end + tag.length;
+      raw += s.slice(i, stop);
+      i = stop;
     } else if (c === "-" && next === "-") {
       let j = i;
       while (j < s.length && s[j] !== "\n") j++;
       raw += s.slice(i, j);
       i = j;
     } else if (c === "/" && next === "*") {
-      const end = s.indexOf("*/", i + 2);
-      const stop = end < 0 ? s.length : end + 2;
-      raw += s.slice(i, stop);
-      i = stop;
+      let depth = 1;
+      let j = i + 2;
+      while (j < s.length && depth > 0) {
+        if (s[j] === "/" && s[j + 1] === "*") (depth++, (j += 2));
+        else if (s[j] === "*" && s[j + 1] === "/") (depth--, (j += 2));
+        else j++;
+      }
+      raw += s.slice(i, j);
+      i = j;
     } else if (c === ":" && next === ":") {
       raw += "::";
       i += 2;
@@ -127,7 +136,7 @@ export function declOf(decls, name) {
 export function sqlLiteral(value) {
   if (value === null || value === undefined) return "NULL";
   const v = String(value);
-  if (v.includes("\0")) throw Object.assign(new Error("NUL"), { code: "invalid" });
+  if (v.includes("\0")) throw new Error("NUL");
   return `'${v.replace(/'/g, "''")}'`;
 }
 
@@ -145,6 +154,7 @@ export function checkValue(decl, value) {
   if (value === null) return decl.required ? "required" : null;
   if (decl.type === "number" && !/^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$/.test(value.trim())) return "number";
   if (decl.type === "date" && !/^\d{4}-\d{2}-\d{2}$/.test(value)) return "date";
+  if (decl.type === "time" && !/^\d{2}:\d{2}(:\d{2})?$/.test(value)) return "time";
   if (decl.type === "datetime" && !/^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d\d:\d\d)?$/.test(value)) return "datetime";
   if (decl.type === "enum" && decl.values.length > 0 && !decl.values.includes(value)) return "enum";
   if (decl.max > 0 && value.length > decl.max) return "max";
@@ -204,15 +214,35 @@ async function sourceList(ctx) {
   }
 }
 
+// The data source of a run: the statement's own, else the environment's `datasource`, else the workspace's
+// `datasource.default`. A value is a resource id (a name is accepted too). Returns the id.
+export async function pickSource(ctx, given) {
+  let wanted = String(given || "").trim();
+  if (!wanted) {
+    const env = await ctx.host.params.get("datasource");
+    if (env && env.found && String(env.value).trim()) wanted = String(env.value).trim();
+  }
+  if (!wanted) {
+    const def = await ctx.host.params.config("datasource.default");
+    if (def && def.found && String(def.value).trim()) wanted = String(def.value).trim();
+  }
+  if (!wanted) throw new Error(tr(ctx, "error.noSource"));
+  const list = await sourceList(ctx);
+  const hit = list.find((r) => r.id === wanted) || list.find((r) => r.name === wanted);
+  if (!hit) throw new Error(tr(ctx, "error.sourceMissing", { source: wanted }));
+  return hit.id;
+}
+
 function paramField(ctx, name, decl, now) {
-  const kind = decl.type === "number" ? "number" : decl.type === "date" ? "date" : decl.type === "datetime" ? "datetime" : decl.type === "enum" ? "enum" : "text";
+  const kind = decl.type === "text" ? "text" : decl.type;
   const field = { name, label: name, kind, param: true };
   if (kind === "enum") field.options = decl.values.map((v) => ({ value: v, label: v }));
   if (kind === "datetime") field.presets = timePresets(ctx, now);
+  if (kind === "time") field.presets = [{ value: "00:00", label: "00:00" }, { value: "12:00", label: "12:00" }];
+  if (decl.required) field.required = true;
+  if (decl.max > 0 && kind === "text") field.maxLength = decl.max;
   const hints = [];
   if (decl.description) hints.push(decl.description);
-  if (decl.required) hints.push(tr(ctx, "hint.required"));
-  if (decl.max > 0) hints.push(tr(ctx, "hint.max", { max: decl.max }));
   if (kind === "datetime") hints.push(tr(ctx, "hint.utc"));
   if (hints.length > 0) field.hint = hints.join(" · ");
   return field;
@@ -237,7 +267,7 @@ export default {
           type: "form",
           id: "source",
           layout: "strip",
-          fields: [{ name: "source", label: ctx.t("field.source"), kind: "enum", bind: "body.source", options, hint: ctx.t("field.source.hint"), ...ro }],
+          fields: [{ name: "source", label: ctx.t("field.source"), kind: "ref", kinds: [SOURCE_KIND], bind: "body.source", options, hint: tr(ctx, "field.source.hint"), ...ro }],
         });
 
         if (names.length > 0) {
@@ -278,8 +308,7 @@ export default {
 
       async renderResultTab(ctx, tabId) {
         if (tabId !== "sent") throw new Error(`unknown result tab ${tabId}`);
-        const id = (ctx.run && ctx.run.resourceId) || "-";
-        const raw = await ctx.host.storage.get(`${SENT_KEY}:${id}`);
+        const raw = await ctx.host.storage.get(`${SENT_KEY}:${(ctx.run && ctx.run.id) || "-"}`);
         if (!raw) return [{ type: "text", id: "none", text: tr(ctx, "sent.none"), tone: "muted" }];
         return [{ type: "text", id: "sent", text: raw, mono: true, language: "sql" }];
       },
@@ -295,8 +324,7 @@ export default {
 
     host.actions.handle("run", async (ctx, input) => {
       const sql = String((input && input["body.sql"]) || "");
-      const source = String((input && input["body.source"]) || "");
-      if (!sql.trim()) throw Object.assign(new Error(tr(ctx, "error.empty")), { code: "invalid" });
+      if (!sql.trim()) throw new Error(tr(ctx, "error.empty"));
 
       const decls = declarations(sql);
       const values = {};
@@ -308,18 +336,20 @@ export default {
           if (found.found && found.value !== "") value = String(found.value);
         }
         const problem = checkValue(declOf(decls, name), value);
-        if (problem) throw Object.assign(new Error(tr(ctx, `error.param.${problem}`, { name, max: declOf(decls, name).max })), { code: "invalid" });
+        if (problem) throw new Error(tr(ctx, `error.param.${problem}`, { name, max: declOf(decls, name).max }));
+        if (value !== null && value.includes("\0")) throw new Error(tr(ctx, "error.param.nul", { name }));
         values[name] = value;
       }
       const rendered = renderSql(sql, values, decls);
-      const id = (ctx.resource && ctx.resource.id) || "-";
-      await ctx.host.storage.set(`${SENT_KEY}:${id}`, rendered);
+      // the statement as sent belongs to this run (not to the resource: a statement not saved yet has none)
+      await ctx.host.storage.set(`${SENT_KEY}:${ctx.runId || "-"}`, rendered);
 
+      const sourceId = await pickSource(ctx, String((input && input["body.source"]) || ""));
       ctx.progress(undefined, tr(ctx, "step.running"));
-      const res = await ctx.host.actions.call(`${DATASOURCE}:query`, { source, sql: rendered });
-      const out = res && res.output;
-      if (!out || out.type !== "table") throw new Error(tr(ctx, "error.noResult"));
-      return { output: out, summary: res.summary || { rows: out.rows.length } };
+      const res = await ctx.host.actions.call(`${DATASOURCE}:query`, { sql: rendered }, { resource: sourceId });
+      if (res && typeof res.error === "string") throw new Error(res.error); // the data source's own message
+      if (!res || !res.output || (res.output.type !== "table")) throw new Error(tr(ctx, "error.noResult"));
+      return { output: res.output, summary: res.summary };
     });
   },
 };

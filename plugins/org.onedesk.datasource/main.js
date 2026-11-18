@@ -1,7 +1,7 @@
 // Data source plugin: PostgreSQL, reached directly (psql) or on a server over ssh (`ssh HOST docker exec … psql`).
-// One kind ("source"), a test-connection action, a read-only `query` and a `list` that other plugins call
-// (exports.actions), and a default data source taken from the parameters `datasource` (environment) and
-// `datasource.default` (workspace configuration).
+// One kind ("source"), a test-connection action and a read-only `query` that other plugins call
+// (exports.actions, D413). Which data source a statement uses (its own, the environment's `datasource`, the
+// workspace's `datasource.default`) is the caller's choice; `query` runs on the resource it is given.
 // The password is a secret field: the framework keeps it in the keychain; here it is only ever written as
 // {{secret:name}} into the environment of the program, which the host fills in.
 // Sandbox rules: no console, timers or fetch; programs run through ctx.host.process.
@@ -9,8 +9,7 @@
 export const KIND = "source";
 export const DEFAULT_TIMEOUT_MS = 30000;
 export const DEFAULT_MAX_ROWS = 1000;
-const ENV_PARAM = "datasource";
-const DEFAULT_PARAM = "datasource.default";
+export const MAX_TIMEOUT_MS = 3600000;
 const CONNECT_TIMEOUT_S = 10;
 
 /* ---------------------------------------------------------------- helpers */
@@ -22,8 +21,9 @@ export function tr(ctx, key, vars) {
   return text;
 }
 
-function fail(ctx, key, vars, code) {
-  return Object.assign(new Error(tr(ctx, key, vars)), code ? { code } : {});
+// A plain Error: one that carries a host code ("invalid", "notFound", …) reaches the user as that code without the text.
+function fail(ctx, key, vars) {
+  return new Error(tr(ctx, key, vars));
 }
 
 // Letters, digits and `._-@:` only, no leading '-' (it would read as an option of ssh or psql).
@@ -69,54 +69,109 @@ export function checkConnection(c) {
 }
 
 // The script that runs a statement read-only: one transaction, always rolled back. The newline before the
-// statement and after it protects against a `--` comment on either end.
+// statement and after it protects against a `--` comment on either end; `standard_conforming_strings` is forced
+// on because the SQL plugin writes values as '…' literals with only the quote doubled (D416).
 export function readonlyScript(sql, timeoutMs) {
   const body = String(sql).trim().replace(/;+\s*$/, "");
-  return `BEGIN READ ONLY;\nSET LOCAL statement_timeout = ${timeoutMs};\n${body}\n;\nROLLBACK;\n`;
+  return `BEGIN READ ONLY;\nSET LOCAL statement_timeout = ${timeoutMs};\nSET LOCAL standard_conforming_strings = on;\n${body}\n;\nROLLBACK;\n`;
 }
 
-// True when, outside strings, comments and quoted names, more than one statement is written.
-// ("a;" is one statement; "a; b" and "a; -- x\n b" are two.)
-export function hasSeveralStatements(sql) {
-  let i = 0;
-  let sawSemicolon = false;
+const IDENT_CHAR = /[A-Za-z0-9_$\u0080-\uffff]/;
+
+// Reads the text the way PostgreSQL (and psql) do: '…' (and E'…' where a backslash escapes), "…", $tag$…$tag$
+// (only where a `$` cannot be part of a name), -- and nested /* */ comments. Returns what the read-only check needs:
+//   statements  how many statements are written (a final `;` does not make another),
+//   backslash   a backslash outside strings, quoted names and comments — a psql meta-command (D416),
+//   first       the first word of the first statement (leading parentheses skipped), upper-case.
+export function scanSql(sql) {
   const s = String(sql);
+  let i = 0;
+  let statements = 0;
+  let open = false; // a statement has started and not ended with `;`
+  let backslash = false;
+  let first = "";
+  const begin = () => {
+    if (!open) {
+      open = true;
+      statements++;
+    }
+  };
   while (i < s.length) {
     const c = s[i];
-    const next = s[i + 1];
-    if (c === "'" || c === '"') {
-      if (sawSemicolon) return true;
+    const n = s[i + 1];
+    if (c === "-" && n === "-") {
+      while (i < s.length && s[i] !== "\n") i++;
+    } else if (c === "/" && n === "*") {
+      let depth = 1;
+      i += 2;
+      while (i < s.length && depth > 0) {
+        if (s[i] === "/" && s[i + 1] === "*") (depth++, (i += 2));
+        else if (s[i] === "*" && s[i + 1] === "/") (depth--, (i += 2));
+        else i++;
+      }
+    } else if (c === "'") {
+      begin();
+      const escapes = i > 0 && /[eE]/.test(s[i - 1]) && !(i > 1 && IDENT_CHAR.test(s[i - 2]));
       i++;
       while (i < s.length) {
-        if (s[i] === c) {
-          if (s[i + 1] === c) {
-            i += 2;
-            continue;
-          }
-          break;
-        }
-        i++;
+        if (escapes && s[i] === "\\") i += 2;
+        else if (s[i] === "'") {
+          if (s[i + 1] === "'") i += 2;
+          else break;
+        } else i++;
       }
       i++;
-    } else if (c === "$" && /^\$([A-Za-z_][A-Za-z0-9_]*)?\$/.test(s.slice(i))) {
-      if (sawSemicolon) return true;
-      const tag = /^\$([A-Za-z_][A-Za-z0-9_]*)?\$/.exec(s.slice(i))[0];
+    } else if (c === '"') {
+      begin();
+      i++;
+      while (i < s.length) {
+        if (s[i] === '"') {
+          if (s[i + 1] === '"') i += 2;
+          else break;
+        } else i++;
+      }
+      i++;
+    } else if (c === "$" && !(i > 0 && IDENT_CHAR.test(s[i - 1])) && /^\$([A-Za-z_\u0080-\uffff][A-Za-z0-9_\u0080-\uffff]*)?\$/.test(s.slice(i, i + 140))) {
+      begin();
+      const tag = /^\$([A-Za-z_\u0080-\uffff][A-Za-z0-9_\u0080-\uffff]*)?\$/.exec(s.slice(i, i + 140))[0];
       const end = s.indexOf(tag, i + tag.length);
       i = end < 0 ? s.length : end + tag.length;
-    } else if (c === "-" && next === "-") {
-      while (i < s.length && s[i] !== "\n") i++;
-    } else if (c === "/" && next === "*") {
-      const end = s.indexOf("*/", i + 2);
-      i = end < 0 ? s.length : end + 2;
     } else if (c === ";") {
-      sawSemicolon = true;
+      open = false;
+      i++;
+    } else if (c === "\\") {
+      backslash = true;
+      i++;
+    } else if (/\s/.test(c)) {
       i++;
     } else {
-      if (sawSemicolon && !/\s/.test(c)) return true;
+      begin();
+      if (statements === 1 && first === "" && c !== "(") {
+        const m = /^[A-Za-z]+/.exec(s.slice(i, i + 32));
+        first = m ? m[0].toUpperCase() : "?";
+      }
       i++;
     }
   }
-  return false;
+  return { statements, backslash, first };
+}
+
+// Words a statement may start with. A read-only transaction stops writes; this stops what it cannot
+// (COPY … TO PROGRAM, CALL, DO …), and is part of the same check.
+export const READ_WORDS = ["SELECT", "WITH", "VALUES", "TABLE", "EXPLAIN", "SHOW"];
+
+// null when `sql` may run, else the reason key.
+export function refuse(sql) {
+  const r = scanSql(sql);
+  if (r.backslash) return "backslash";
+  if (r.statements > 1) return "severalStatements";
+  if (r.statements === 1 && !READ_WORDS.includes(r.first)) return "notRead";
+  return null;
+}
+
+// A positive whole number of at most `max`, else null.
+export function positiveInt(v, max) {
+  return typeof v === "number" && Number.isInteger(v) && v > 0 && v <= max ? v : null;
 }
 
 // CSV as psql writes it: an unquoted empty field is NULL, "" is an empty string.
@@ -178,7 +233,7 @@ export function parseConnectionUrl(text) {
   const url = String(text || "").trim();
   const ssh = /^ssh:\/\/([^/?]*)\/([^?]*)(?:\?(.*))?$/.exec(url);
   if (ssh) {
-    let user = "postgres";
+    let user = "";
     let database = "";
     for (const pair of (ssh[3] || "").split("&").filter(Boolean)) {
       const i = pair.indexOf("=");
@@ -211,14 +266,16 @@ export function parseConnectionUrl(text) {
   return { connection: c, hadPassword };
 }
 
-// What `ctx.host.process.run` gets for one script on one data source.
+// What `ctx.host.process.run` gets for one script on one data source. Besides the script's own read-only
+// transaction the session is read-only and times out by itself (PGOPTIONS), and psql reads no psqlrc (-X).
 export function processSpec(c, script, timeoutMs) {
   const procTimeout = timeoutMs + (CONNECT_TIMEOUT_S + 5) * 1000;
+  const options = `-c default_transaction_read_only=on -c statement_timeout=${timeoutMs}`;
   if (c.mode === "ssh") {
-    const remote = `docker exec -i ${c.container} psql -X -q --csv -v ON_ERROR_STOP=1 -U ${c.user} -d ${c.database} -f -`;
+    const remote = `docker exec -i -e 'PGOPTIONS=${options}' ${c.container} psql -X -q --csv -v ON_ERROR_STOP=1 -U ${c.user} -d ${c.database} -f -`;
     return { program: "ssh", args: ["-o", "BatchMode=yes", "-o", `ConnectTimeout=${CONNECT_TIMEOUT_S}`, c.sshHost, remote], stdin: script, timeoutMs: procTimeout };
   }
-  const env = { PGCONNECT_TIMEOUT: String(CONNECT_TIMEOUT_S) };
+  const env = { PGCONNECT_TIMEOUT: String(CONNECT_TIMEOUT_S), PGOPTIONS: options };
   if (c.secret) env.PGPASSWORD = `{{secret:${c.secret}}}`;
   return {
     program: "psql",
@@ -240,10 +297,25 @@ export function errorText(res) {
   return res.signal ? `signal ${res.signal}` : `exit ${res.code}`;
 }
 
+function runError(ctx, err) {
+  const reason = err && err.params && err.params.reason ? `/${err.params.reason}` : "";
+  const program = err && err.params && err.params.program ? ` ${err.params.program}` : "";
+  return Object.assign(new Error(`${tr(ctx, "error.cannotRun")}${program} (${(err && err.code) || "error"}${reason})`), { code: err && err.code, params: err && err.params });
+}
+
+// The caller's own timeout must be a positive whole number of milliseconds (it is written into the script);
+// without one, the setting.
+async function timeoutOf(ctx, given) {
+  if (given === undefined || given === null) return numSetting(ctx, "statementTimeoutMs", DEFAULT_TIMEOUT_MS);
+  const n = positiveInt(given, MAX_TIMEOUT_MS);
+  if (n === null) throw fail(ctx, "error.badTimeout", {});
+  return n;
+}
+
 async function numSetting(ctx, name, fallback) {
   const raw = await ctx.host.settings.get(name);
   const n = Number(raw);
-  return raw !== null && raw !== undefined && raw !== "" && Number.isFinite(n) && n > 0 ? Math.floor(n) : fallback;
+  return raw !== null && raw !== undefined && raw !== "" && Number.isInteger(n) && n > 0 && n <= MAX_TIMEOUT_MS ? n : fallback;
 }
 
 /* ---------------------------------------------------------------- running */
@@ -252,19 +324,19 @@ async function numSetting(ctx, name, fallback) {
 export async function runReadonly(ctx, c, sql, opts) {
   const o = opts || {};
   const bad = checkConnection(c);
-  if (bad) throw fail(ctx, "error.badField", { field: bad }, "invalid");
-  if (!String(sql || "").trim()) throw fail(ctx, "error.emptySql", {}, "invalid");
-  if (hasSeveralStatements(sql)) throw fail(ctx, "error.severalStatements", {}, "invalid");
-  const timeoutMs = o.timeoutMs || (await numSetting(ctx, "statementTimeoutMs", DEFAULT_TIMEOUT_MS));
-  const maxRows = o.maxRows || (await numSetting(ctx, "maxRows", DEFAULT_MAX_ROWS));
+  if (bad) throw fail(ctx, "error.badField", { field: bad });
+  if (!String(sql || "").trim()) throw fail(ctx, "error.emptySql", {});
+  const why = refuse(sql);
+  if (why) throw fail(ctx, `error.${why}`, {});
+  const timeoutMs = await timeoutOf(ctx, o.timeoutMs);
+  const maxRows = o.maxRows === undefined ? DEFAULT_MAX_ROWS : positiveInt(o.maxRows, 100000);
+  if (maxRows === null) throw fail(ctx, "error.badTimeout", {});
   const started = Date.now();
   let res;
   try {
     res = await ctx.host.process.run(processSpec(c, readonlyScript(sql, timeoutMs), timeoutMs));
   } catch (err) {
-    const reason = err && err.params && err.params.reason ? `/${err.params.reason}` : "";
-    const program = err && err.params && err.params.program ? ` ${err.params.program}` : "";
-    throw Object.assign(new Error(`${tr(ctx, "error.cannotRun")}${program} (${(err && err.code) || "error"}${reason})`), { code: err && err.code, params: err && err.params });
+    throw runError(ctx, err);
   }
   if (res.code !== 0) throw Object.assign(new Error(errorText(res)), { code: "failed" });
   const records = parseCsv(String(res.stdout || ""));
@@ -282,39 +354,30 @@ export async function runReadonly(ctx, c, sql, opts) {
   return { columns: header, rows, total: rows.length + (truncated ? 1 : 0), ms: Date.now() - started, truncated };
 }
 
+let captureSeq = 0;
+
+// Like runReadonly, but psql's CSV goes straight into a file in the plugin's own folder (returned, relative).
+export async function captureReadonly(ctx, c, sql, opts) {
+  const o = opts || {};
+  const bad = checkConnection(c);
+  if (bad) throw fail(ctx, "error.badField", { field: bad });
+  if (!String(sql || "").trim()) throw fail(ctx, "error.emptySql", {});
+  const why = refuse(sql);
+  if (why) throw fail(ctx, `error.${why}`, {});
+  const timeoutMs = await timeoutOf(ctx, o.timeoutMs);
+  const file = `tmp/q-${Date.now()}-${++captureSeq}.csv`;
+  let res;
+  try {
+    res = await ctx.host.transfer.capture({ ...processSpec(c, readonlyScript(sql, timeoutMs), timeoutMs), to: file, overwrite: true });
+  } catch (err) {
+    throw runError(ctx, err);
+  }
+  if (res.code !== 0) throw Object.assign(new Error(errorText(res)), { code: "failed" });
+  return file;
+}
+
 export function tableOutput(result) {
   return { type: "table", columns: result.columns.map((name, i) => ({ key: `c${i}`, label: name })), rows: result.rows, total: result.total };
-}
-
-/* ---------------------------------------------------------------- choosing a source */
-
-async function bodyOfSource(ctx, id) {
-  const r = await ctx.host.resources.get(id);
-  if (!r || r.kind !== KIND && !String(r.kind).endsWith(`:${KIND}`)) return null;
-  return r;
-}
-
-// "" → the environment's `datasource`, else the workspace's `datasource.default`. A value is an id or a name.
-export async function pickSource(ctx, given) {
-  let wanted = String(given || "").trim();
-  if (!wanted) {
-    for (const name of [ENV_PARAM, DEFAULT_PARAM]) {
-      const found = await ctx.host.params.get(name);
-      if (found && found.found && String(found.value).trim()) {
-        wanted = String(found.value).trim();
-        break;
-      }
-    }
-  }
-  if (!wanted) throw fail(ctx, "error.noSource", {}, "notFound");
-  let res = await bodyOfSource(ctx, wanted);
-  if (!res) {
-    const all = (await ctx.host.resources.list({ kind: KIND })) || [];
-    const list = Array.isArray(all) ? all : all.items || [];
-    res = list.find((r) => r.name === wanted) || null;
-  }
-  if (!res) throw fail(ctx, "error.sourceMissing", { source: wanted }, "notFound");
-  return res;
 }
 
 /* ---------------------------------------------------------------- plugin */
@@ -328,6 +391,7 @@ export default {
         const mode = (typeof draft["body.mode"] === "string" ? draft["body.mode"] : b.mode) === "ssh" ? "ssh" : "direct";
         const ro = ctx.run ? { readOnly: true } : {};
         const f = (name, kind, extra) => ({ name, label: ctx.t(`field.${name}`), kind, bind: `body.${name}`, ...ro, ...(extra || {}) });
+        const req = (field) => (ctx.run ? field : { ...field, required: true });
         const view = [
           { type: "form", id: "mode", layout: "strip", fields: [f("mode", "enum", { options: [{ value: "direct", label: ctx.t("mode.direct") }, { value: "ssh", label: ctx.t("mode.ssh") }] })] },
         ];
@@ -336,17 +400,18 @@ export default {
             type: "form",
             id: "server",
             layout: "strip",
-            fields: [f("sshHost", "text", { placeholder: ctx.t("field.sshHost.placeholder") }), f("container", "text", { placeholder: ctx.t("field.container.placeholder") })],
+            fields: [req(f("sshHost", "text", { placeholder: ctx.t("field.sshHost.placeholder") })), req(f("container", "text", { placeholder: ctx.t("field.container.placeholder") }))],
           });
         } else {
-          view.push({ type: "form", id: "server", layout: "strip", fields: [f("host", "text"), f("port", "text")] });
+          view.push({ type: "form", id: "server", layout: "strip", fields: [req(f("host", "text")), req(f("port", "text", { maxLength: 5 }))] });
         }
-        view.push({ type: "form", id: "database", layout: "strip", fields: [f("database", "text"), f("user", "text")] });
+        view.push({ type: "form", id: "database", layout: "strip", fields: [req(f("database", "text")), req(f("user", "text"))] });
         if (mode === "direct") {
           view.push({ type: "form", id: "auth", layout: "strip", fields: [f("password", "secret", { hint: ctx.t("field.password.hint") })] });
         } else {
           view.push({ type: "text", id: "sshNote", text: tr(ctx, "note.ssh"), tone: "muted" });
         }
+        view.push({ type: "text", id: "readonly", text: tr(ctx, "note.readonly"), tone: "muted" });
         if (!ctx.run) {
           view.push({
             type: "form",
@@ -378,38 +443,21 @@ export default {
       return { output: { type: "text", text }, summary: { message: tr(ctx, "summary.test", { ms: r.ms }) } };
     });
 
-    // Called by other plugins (exports.actions): { source?, sql, timeoutMs?, maxRows? } → a table.
+    // Called by other plugins (exports.actions) on one data source (`ctx.resource`, chosen by the caller):
+    // { sql, timeoutMs? } → a table in a data file the kernel reads (X2), so a big result never passes through
+    // this plugin's memory. The kernel keeps at most 10,000 rows in the run and counts all of them.
     host.actions.handle("query", async (ctx, input) => {
       const i = input || {};
-      const res = await pickSource(ctx, i.source);
-      const r = await runReadonly(ctx, connectionOf(res.body), i.sql, { timeoutMs: i.timeoutMs, maxRows: i.maxRows });
-      return {
-        output: tableOutput(r),
-        summary: { rows: r.rows.length, message: tr(ctx, r.truncated ? "summary.rowsTruncated" : "summary.rows", { rows: r.rows.length, ms: r.ms }) },
-      };
-    });
-
-    // The data sources, for pickers in other plugins: id, name, mode, whether it is the default one.
-    host.actions.handle("list", async (ctx) => {
-      const all = (await ctx.host.resources.list({ kind: KIND })) || [];
-      const list = Array.isArray(all) ? all : all.items || [];
-      const def = await ctx.host.params.get(DEFAULT_PARAM);
-      const defValue = def && def.found ? String(def.value) : "";
-      const rows = list.map((r) => [r.id, r.name, (r.body && r.body.mode) === "ssh" ? "ssh" : "direct", defValue !== "" && (defValue === r.id || defValue === r.name) ? "default" : ""]);
-      return {
-        output: {
-          type: "table",
-          columns: [
-            { key: "id", label: "id" },
-            { key: "name", label: "name" },
-            { key: "mode", label: "mode" },
-            { key: "default", label: "default" },
-          ],
-          rows,
-          total: rows.length,
-        },
-        summary: { rows: rows.length },
-      };
+      if (!ctx.resource) throw fail(ctx, "error.noSource", {});
+      const started = Date.now();
+      try {
+        const file = await captureReadonly(ctx, connectionOf(ctx.resource.body), i.sql, { timeoutMs: i.timeoutMs });
+        return { output: { type: "table", file, header: true }, summary: { message: tr(ctx, "summary.ran", { ms: Date.now() - started }) } };
+      } catch (err) {
+        // A failure of the callee reaches the caller as a bare `pluginError` without its text, so the text (the
+        // database's own message, already in the user's language where it is ours) is handed back as data.
+        return { error: String((err && err.message) || err) };
+      }
     });
   },
 };

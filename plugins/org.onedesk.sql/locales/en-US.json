@@ -17,8 +17,6 @@
   "source.default": "Environment / default",
   "field.sql": "SQL",
   "field.sql.placeholder": "SELECT * FROM orders WHERE created_at >= :since",
-  "hint.required": "required",
-  "hint.max": "at most {max} characters",
   "hint.utc": "UTC",
   "preset.now": "Now",
   "preset.today": "Today 00:00",
@@ -30,12 +28,15 @@
   "step.running": "Running on the data source…",
   "summary.created": "Created.",
   "error.empty": "There is nothing to run.",
-  "error.noSource": "Open this on a data source.",
+  "error.noSource": "No data source: pick one on the statement, in the environment, or set the default.",
   "error.noResult": "The data source returned no table.",
   "error.param.required": "The parameter :{name} is required.",
   "error.param.number": "The parameter :{name} must be a number.",
   "error.param.date": "The parameter :{name} must be a date (YYYY-MM-DD).",
   "error.param.datetime": "The parameter :{name} must be a date and time (YYYY-MM-DDTHH:MM, UTC).",
   "error.param.enum": "The parameter :{name} is not one of the allowed values.",
-  "error.param.max": "The parameter :{name} is longer than {max} characters."
+  "error.param.max": "The parameter :{name} is longer than {max} characters.",
+  "error.param.time": "The parameter :{name} must be a time (HH:MM).",
+  "error.sourceMissing": "Data source “{source}” was not found.",
+  "error.param.nul": "The parameter :{name} contains a NUL character."
 }

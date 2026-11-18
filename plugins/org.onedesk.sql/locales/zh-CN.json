@@ -17,8 +17,6 @@
   "source.default": "环境 / 默认",
   "field.sql": "SQL",
   "field.sql.placeholder": "SELECT * FROM orders WHERE created_at >= :since",
-  "hint.required": "必填",
-  "hint.max": "最多 {max} 个字符",
   "hint.utc": "UTC",
   "preset.now": "现在",
   "preset.today": "今天 00:00",
@@ -30,12 +28,15 @@
   "step.running": "正在数据源上运行…",
   "summary.created": "已创建。",
   "error.empty": "没有可运行的内容。",
-  "error.noSource": "请在数据源上打开。",
+  "error.noSource": "没有数据源：请在语句上选一个、在环境里指定，或设置默认数据源。",
   "error.noResult": "数据源没有返回表格。",
   "error.param.required": "参数 :{name} 必填。",
   "error.param.number": "参数 :{name} 必须是数字。",
   "error.param.date": "参数 :{name} 必须是日期（YYYY-MM-DD）。",
   "error.param.datetime": "参数 :{name} 必须是日期和时间（YYYY-MM-DDTHH:MM，UTC）。",
   "error.param.enum": "参数 :{name} 不是允许的取值之一。",
-  "error.param.max": "参数 :{name} 超过 {max} 个字符。"
+  "error.param.max": "参数 :{name} 超过 {max} 个字符。",
+  "error.param.time": "参数 :{name} 必须是时间（HH:MM）。",
+  "error.sourceMissing": "找不到数据源“{source}”。",
+  "error.param.nul": "参数 :{name} 含有 NUL 字符。"
 }
