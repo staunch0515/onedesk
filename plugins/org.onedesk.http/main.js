@@ -144,8 +144,44 @@ function bodyOf(ctx) {
 
 /* ---------------------------------------------------------------- plugin */
 
+// A first-version body field as text: strings as they are, numbers and booleans as written, anything else empty.
+function legacyText(value) {
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  return "";
+}
+
+function legacyRest(body, used) {
+  const rest = {};
+  for (const k of Object.keys(body)) if (!used.includes(k)) rest[k] = body[k];
+  return rest;
+}
+
+const LEGACY_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"];
+
+// First-version body { method, url, headers, body } has the same field names; the new fields `query` and `token`
+// start empty. The method is upper-cased (unknown or missing → GET). Bad values become empty text; other keys are kept.
+export function upgradeBody(body) {
+  const old = body && typeof body === "object" && !Array.isArray(body) ? body : {};
+  const method = legacyText(old.method).trim().toUpperCase();
+  return {
+    ...legacyRest(old, ["method", "url", "query", "headers", "body", "token"]),
+    method: LEGACY_METHODS.includes(method) ? method : "GET",
+    url: legacyText(old.url).trim(),
+    query: legacyText(old.query),
+    headers: legacyText(old.headers),
+    body: legacyText(old.body),
+    token: legacyText(old.token),
+  };
+}
+
 export default {
   activate(host) {
+    host.kinds.handle("request", {
+      upgrade(ctx, args) {
+        return { body: upgradeBody(args && args.body) };
+      },
+    });
     host.pages.handle("editor", {
       async render(ctx) {
         const req = bodyOf(ctx);

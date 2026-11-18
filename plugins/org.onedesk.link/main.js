@@ -32,8 +32,32 @@ function pick(ctx, key) {
   return b && typeof b[key] === "string" ? b[key] : "";
 }
 
+// A first-version body field as text: strings as they are, numbers and booleans as written, anything else empty.
+function legacyText(value) {
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  return "";
+}
+
+function legacyRest(body, used) {
+  const rest = {};
+  for (const k of Object.keys(body)) if (!used.includes(k)) rest[k] = body[k];
+  return rest;
+}
+
+// First-version body { url, profile }: same field names. Bad values become empty text; other keys are kept.
+export function upgradeBody(body) {
+  const old = body && typeof body === "object" && !Array.isArray(body) ? body : {};
+  return { ...legacyRest(old, ["url", "profile"]), url: legacyText(old.url).trim(), profile: legacyText(old.profile).trim() };
+}
+
 export default {
   activate(host) {
+    host.kinds.handle("link", {
+      upgrade(ctx, args) {
+        return { body: upgradeBody(args && args.body) };
+      },
+    });
     host.pages.handle("editor", {
       async render(ctx) {
         const ro = ctx.run ? { readOnly: true } : {};

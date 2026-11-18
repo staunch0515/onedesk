@@ -34,8 +34,37 @@ function textOf(ctx, input) {
   return b && typeof b.text === "string" ? b.text : "";
 }
 
+// A first-version body field as text: strings as they are, numbers and booleans as written, anything else empty.
+function legacyText(value) {
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  return "";
+}
+
+function legacyRest(body, used) {
+  const rest = {};
+  for (const k of Object.keys(body)) if (!used.includes(k)) rest[k] = body[k];
+  return rest;
+}
+
+// First-version body { template, parameters: [{ name, label?, default?, required? }] } becomes { text }.
+// The old syntax allowed spaces inside the braces ({{ name }}); this plugin's does not, so they are removed.
+// Parameter definitions have no field any more (the page lists the placeholders itself): they stay in the body
+// as `parameters` so nothing is lost, unused by this plugin.
+export function upgradeBody(body) {
+  const old = body && typeof body === "object" && !Array.isArray(body) ? body : {};
+  const source = typeof old.text === "string" ? old.text : legacyText(old.template);
+  const text = source.replace(/\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}\}/g, "{{$1}}");
+  return { ...legacyRest(old, ["template", "text"]), text };
+}
+
 export default {
   activate(host) {
+    host.kinds.handle("prompt", {
+      upgrade(ctx, args) {
+        return { body: upgradeBody(args && args.body) };
+      },
+    });
     host.pages.handle("editor", {
       async render(ctx) {
         const text = textOf(ctx);
