@@ -47,7 +47,7 @@ export function FieldControl({ field, value, onChange, size, readOnly, id, secre
   const locked = readOnly || Boolean(field.readOnly);
   if (LANGUAGE_PARAM.test(field.bind ?? field.name) && field.kind === "text") return <LanguageSelect id={id} size={size} label={label} value={value} disabled={locked} onChange={onChange} />;
   // D414: `ref` (a reference to a resource; the page lists the choices as `options`) is drawn like an enum, and `time` like text with presets.
-  const kind = (field.kind as string) === "ref" ? "enum" : field.kind;
+  const kind = field.kind === "ref" ? "enum" : field.kind;
   switch (kind) {
     case "boolean":
       return <Switch id={id} aria-label={label} checked={(value || field.envValue) === "true"} disabled={locked} onCheckedChange={(on) => onChange(on ? "true" : "false")} />;
@@ -65,14 +65,14 @@ export function FieldControl({ field, value, onChange, size, readOnly, id, secre
         />
       );
     case "longtext":
-      return <Textarea id={id} aria-label={label} rows={4} value={value} readOnly={locked} placeholder={placeholder} onChange={(e) => onChange(e.target.value)} />;
+      return <Textarea id={id} aria-label={label} rows={4} value={value} readOnly={locked} maxLength={field.maxLength} placeholder={placeholder} onChange={(e) => onChange(e.target.value)} />;
     case "code":
       return <CodeEditor label={label} height="auto" framed value={value} readOnly={locked} tokenize={field.language ? TOKENIZERS[field.language] : undefined} onChange={onChange} />;
     case "secret":
       if (secret) return <Input id={id} size={size} aria-label={label} icon="key-round" mono type="password" autoComplete="off" value={value} readOnly={locked} placeholder={secret.saved ? t("field.secretSaved") : t("field.secretUnset")} onChange={(e) => onChange(e.target.value)} />;
       return <Input id={id} size={size} aria-label={label} icon="key-round" mono value={value} readOnly placeholder={t("field.secretUnset")} />;
     default: {
-      const time = (field.kind as string) === "time";
+      const time = field.kind === "time";
       const type = field.kind === "date" ? "date" : field.kind === "datetime" ? "datetime-local" : "text";
       const input = (
         <Input
@@ -83,6 +83,8 @@ export function FieldControl({ field, value, onChange, size, readOnly, id, secre
           inputMode={field.kind === "number" ? "decimal" : undefined}
           value={locked && !value ? (field.envValue ?? "") : value}
           readOnly={locked}
+          maxLength={field.maxLength}
+          required={field.required || undefined}
           placeholder={placeholder ?? (time ? t("field.timePlaceholder") : undefined)}
           onChange={(e) => onChange(e.target.value)}
         />
@@ -251,6 +253,18 @@ export function ViewPage({ tab, descriptor: initial }: { tab: TabState; descript
       return;
     }
     const now = latest.current;
+    // A required field left empty stops a save or a run (D414); the value may come from the environment or a saved value.
+    if (action.role === "save" || action.role === "save-run" || action.role === "run") {
+      const missing = now.descriptor.view.flatMap((n) => (n.type === "form" ? n.fields : [])).filter((f) => {
+        if (!f.required) return false;
+        const v = f.param ? ((store.get().tabs.find((x) => x.id === tab.id) ?? now.tab).params[f.name] ?? f.envValue ?? "") : String(f.bind && f.bind in now.draft ? now.draft[f.bind] : (now.descriptor.values[f.bind ?? f.name] ?? ""));
+        return v.trim() === "";
+      });
+      if (missing.length > 0) {
+        toast({ tone: "danger", title: t("field.requiredMissing", { fields: missing.map((f) => tx(f.label)).join(", ") }) });
+        return;
+      }
+    }
     const context = { envId: now.tab.envId, draft: typedAll({ ...now.descriptor.values, ...now.draft }), params: pageParams(now.tab.params) };
     try {
       setBusy(action.id);
@@ -348,7 +362,8 @@ export function ViewPage({ tab, descriptor: initial }: { tab: TabState; descript
                 label={tx(f.label)}
                 hint={f.hint ? tx(f.hint) : undefined}
                 source={f.param && f.envSource && !tab.params[f.name] ? t("field.fromEnv", { name: f.envSource }) : undefined}
-                wide={f.kind === "date" || f.kind === "datetime"}
+                wide={f.kind === "date" || f.kind === "datetime" || f.kind === "time"}
+                required={f.required}
                 fill={f.fill}
                 htmlFor={id}
               >
@@ -381,7 +396,7 @@ export function ViewPage({ tab, descriptor: initial }: { tab: TabState; descript
         {rest.length > 0 && (
           <Pane grow={!fill && !stacked} scroll={!stacked} pad="lg" gap="md" width="form">
             {rest.map((f) => (
-              <FormField key={f.name} label={tx(f.label)} description={f.hint ? tx(f.hint) : undefined}>
+              <FormField key={f.name} label={tx(f.label)} required={f.required} requiredMark="*" description={f.hint ? tx(f.hint) : undefined}>
                 <FieldControl field={f} size="md" readOnly={readOnly} value={fieldValue(f)} secret={secretOf(f)} onChange={(v) => setBound(f.bind ?? f.name, v)} />
               </FormField>
             ))}

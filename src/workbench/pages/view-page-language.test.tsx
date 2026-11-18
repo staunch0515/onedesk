@@ -39,3 +39,29 @@ describe("a table row button on a plugin page (D393)", () => {
     expect(event.mock.calls[0]).toEqual(["resource:r1", "up", expect.objectContaining({ row: "kb" })]);
   });
 });
+
+describe("required parameter fields (D414)", () => {
+  it("marks the label and stops a run while a required value is empty; runs once it is filled", async () => {
+    const { fireEvent, screen, waitFor } = await import("@testing-library/react");
+    const { vi } = await import("vitest");
+    const start = vi.fn(async () => "run1");
+    const base = kernelLikeClient(createMockClient({ fresh: true, quiet: true }), {});
+    const client = { ...base, run: { ...base.run, start } };
+    const page = {
+      ...descriptor,
+      view: [{ type: "form", id: "p", layout: "strip", label: "Parameters", fields: [{ name: "id", label: "Id", kind: "text", param: true, required: true, maxLength: 5 }] }],
+      actions: [{ id: "run", label: "Run", role: "run", action: "p:run", primary: true }],
+    } as unknown as PageDescriptor;
+    const { store } = renderInShell(client, <ViewPage tab={tab} descriptor={page} />);
+    store.set({ tabs: [tab], activeTabId: "t1" });
+    expect(screen.getByText("Id", { exact: false }).textContent).toContain("*");
+    const box = screen.getByLabelText("Id") as HTMLInputElement;
+    expect(box.maxLength).toBe(5);
+    fireEvent.click(screen.getByRole("button", { name: /Run/ }));
+    await waitFor(() => expect(screen.getByText("Fill in: Id")).toBeTruthy());
+    expect(start).not.toHaveBeenCalled();
+    fireEvent.change(box, { target: { value: "7" } });
+    fireEvent.click(screen.getByRole("button", { name: /Run/ }));
+    await waitFor(() => expect(start).toHaveBeenCalled());
+  });
+});

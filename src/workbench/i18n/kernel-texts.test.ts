@@ -79,7 +79,7 @@ describe("every key the kernel emits has words", () => {
     // Audit operations and protocol method names also contain these prefixes.
     const notCommands = new Set(["run.start", "run.end", "run.clearFinished", "run.progress", "run.export", "run.ended"]);
     for (const key of commandKeys) if (!notCommands.has(key)) expect(LABELS, `kernel emits "${key}": add words to kernel-texts.ts and this list`).toContain(key);
-    const ignored = new Set(["resource.meta", "workspace.json", "workspace.db", "params.get", "resource.changed", "resource.saved"]);
+    const ignored = new Set(["resource.meta", "workspace.json", "workspace.db", "params.get", "resource.changed", "resource.saved", "params.config"]);
     const opKeys = new Set([...src.matchAll(/"((?:resource|params|workspace)\.[A-Za-z]+)"/g)].map((m) => m[1]!));
     for (const key of opKeys) if (!ignored.has(key)) expect(OPERATIONS, `kernel emits "${key}": add an audit operation name and this list`).toContain(key);
   });
