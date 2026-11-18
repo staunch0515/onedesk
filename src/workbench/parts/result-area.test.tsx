@@ -42,14 +42,37 @@ describe("resultText with all rows", () => {
 });
 
 describe("usePagedRows (D414)", () => {
-  it("reads the rest of a paged table a page at a time", async () => {
+  it("reads the next page only when asked (scrolling near the end), keeps what it read, and does not overlap reads", async () => {
     const rows = vi.fn(async (_id: string, offset: number, limit: number) => ({ rows: Array.from({ length: Math.min(limit, 2500 - offset) }, (_, i) => [offset + i, "x"] as Array<string | number | null>), total: 2500 }));
     const base = createMockClient({ fresh: true, quiet: true });
     const client = kernelLikeClient(base, { run: { ...base.run, rows } });
     const run = { id: "r1", output: { type: "table", paged: true, total: 2500, truncated: false, columns: [{ key: "a", label: "a" }, { key: "b", label: "b" }], rows: [[0, "x"]] } } as unknown as Run;
-    const Probe = () => <span>{usePagedRows(run)?.length}</span>;
+    let more: () => void = () => undefined;
+    const Probe = () => {
+      const p = usePagedRows(run);
+      more = p.more;
+      return <span>{p.rows?.length}</span>;
+    };
     renderInShell(client, <Probe />);
-    await waitFor(() => expect(screen.getByText("2500")).toBeTruthy());
-    expect(rows.mock.calls.map((c) => [c[1], c[2]])).toEqual([[1, 1000], [1001, 1000], [2001, 1000]]);
+    expect(rows).not.toHaveBeenCalled();
+    await act(async () => {
+      more();
+      more();
+    });
+    await waitFor(() => expect(screen.getByText("1001")).toBeTruthy());
+    expect(rows).toHaveBeenCalledTimes(1);
+    await act(async () => more());
+    await waitFor(() => expect(screen.getByText("2001")).toBeTruthy());
+    expect(rows.mock.calls.map((c) => [c[1], c[2]])).toEqual([[1, 1000], [1001, 1000]]);
+  });
+
+  it("is called before any early return: the hook order does not change when the output turns into a table", () => {
+    const base = createMockClient({ fresh: true, quiet: true });
+    const client = kernelLikeClient(base, {});
+    const none = { id: "r1", output: { type: "none" } } as unknown as Run;
+    const whole = { id: "r1", output: { type: "table", total: 1, truncated: false, columns: [], rows: [[1]] } } as unknown as Run;
+    const Probe = ({ run }: { run: Run }) => <span>{String(usePagedRows(run).rows)}</span>;
+    const { rerender } = renderInShell(client, <Probe run={none} />);
+    expect(() => rerender(<Probe run={whole} />)).not.toThrow();
   });
 });
