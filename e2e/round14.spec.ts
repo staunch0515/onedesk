@@ -385,11 +385,8 @@ for (const theme of ["light", "dark"] as const) {
     writeFileSync(path.join(ROOT, `test-results/round14-contrast-${theme}.txt`), strict.join("\n") + "\n");
   });
 
-  test(`D5 ${theme}: contrast meets D411 (4.5:1 text, 3:1 large and disabled)`, async ({}, info) => {
+  test(`D5 ${theme}: contrast meets D411 (4.5:1 text, 3:1 large and disabled)`, async () => {
     const found = strictProblems[theme] ?? [];
-    // Known failures wait for the shell to change the tokens; the test turns itself on when there are none left.
-    info.annotations.push({ type: "found", description: found.join("\n") });
-    test.fixme(found.length > 0, `${found.length} text(s) under the D411 contrast need in ${theme}; see round14-tests-done.md, "审查后的修改"`);
     expect(found).toEqual([]);
   });
 }
