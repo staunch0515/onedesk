@@ -828,5 +828,7 @@
   "kernel.label.protection.readonly": "読み取り専用保護",
   "kernel.label.protection.no_export": "エクスポート禁止保護",
   "kernel.error.reason.readonly|layerName": "読み取り専用保護（protection.readonly、設定元：「{layerName}」）がオンのため、何も変更できません。「{layerName}」でオフにしてください。",
-  "kernel.error.reason.noExport|layerName": "エクスポート禁止保護（protection.no_export、設定元：「{layerName}」）がオンのため、エクスポートできません。「{layerName}」でオフにしてください。"
+  "kernel.error.reason.noExport|layerName": "エクスポート禁止保護（protection.no_export、設定元：「{layerName}」）がオンのため、エクスポートできません。「{layerName}」でオフにしてください。",
+  "field.timePlaceholder": "HH:MM（UTC）",
+  "result.elapsed": "所要時間"
 }

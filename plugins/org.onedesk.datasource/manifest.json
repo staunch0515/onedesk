@@ -16,13 +16,32 @@
       "plaintext": false
     },
     "programs": [
-      { "name": "psql", "source": "plugin", "path": "bin/psql" },
-      { "name": "ssh", "source": "system" }
+      {
+        "name": "psql",
+        "source": "system",
+        "searchPaths": [
+          "/Library/PostgreSQL/*/bin",
+          "/opt/homebrew/opt/libpq/bin",
+          "/opt/homebrew/bin",
+          "/usr/local/bin"
+        ]
+      },
+      {
+        "name": "ssh",
+        "source": "system"
+      }
     ]
   },
   "exports": {
     "kinds": [
-      { "id": "source", "actions": true, "read": true }
+      {
+        "id": "source",
+        "actions": true,
+        "read": true
+      }
+    ],
+    "actions": [
+      "query"
     ]
   },
   "contributes": {
@@ -57,7 +76,9 @@
         "id": "test",
         "label": "action.test",
         "icon": "plug-zap",
-        "kinds": ["source"],
+        "kinds": [
+          "source"
+        ],
         "output": "text",
         "saveFirst": false,
         "confirm": null
@@ -66,14 +87,6 @@
         "id": "query",
         "label": "action.query",
         "icon": "table",
-        "output": "table",
-        "saveFirst": false,
-        "confirm": null
-      },
-      {
-        "id": "list",
-        "label": "action.list",
-        "icon": "list",
         "output": "table",
         "saveFirst": false,
         "confirm": null
@@ -92,14 +105,20 @@
             "label": "action.test",
             "icon": "plug-zap",
             "primary": true,
-            "shortcut": ["Mod", "Enter"]
+            "shortcut": [
+              "Mod",
+              "Enter"
+            ]
           },
           {
             "id": "save",
             "role": "save",
             "label": "action.save",
             "icon": "save",
-            "shortcut": ["Mod", "S"]
+            "shortcut": [
+              "Mod",
+              "S"
+            ]
           },
           {
             "id": "import",
@@ -131,17 +150,12 @@
         "type": "number",
         "default": "30000",
         "hint": "setting.timeout.hint"
-      },
-      {
-        "name": "maxRows",
-        "label": "setting.maxRows",
-        "type": "number",
-        "default": "1000",
-        "hint": "setting.maxRows.hint"
       }
     ],
     "menus": {
-      "new": ["source"]
+      "new": [
+        "source"
+      ]
     },
     "locales": {
       "en-US": "locales/en-US.json",

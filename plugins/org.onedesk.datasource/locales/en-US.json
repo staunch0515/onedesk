@@ -5,15 +5,12 @@
   "kind.source.new": "Untitled data source",
   "action.test": "Test connection",
   "action.query": "Run a read-only query",
-  "action.list": "List data sources",
   "action.save": "Save",
   "action.import": "Import connection string",
   "tab.result": "Result",
   "tab.history": "History",
   "setting.timeout": "Statement timeout (ms)",
   "setting.timeout.hint": "A statement running longer is cancelled by the database.",
-  "setting.maxRows": "Row limit",
-  "setting.maxRows.hint": "More rows than this are cut off and the result is marked as truncated.",
   "field.mode": "Connection",
   "mode.direct": "Direct",
   "mode.ssh": "Through ssh (docker exec psql)",
@@ -42,5 +39,6 @@
   "error.severalStatements": "Only one statement can run at a time.",
   "error.cannotRun": "Cannot run the program",
   "error.noSource": "No data source: pick one on the statement, in the environment, or set the default.",
-  "error.sourceMissing": "Data source “{source}” was not found."
+  "error.sourceMissing": "Data source “{source}” was not found.",
+  "summary.ran": "Ran in {ms} ms"
 }

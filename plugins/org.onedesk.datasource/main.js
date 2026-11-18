@@ -1,7 +1,7 @@
 // Data source plugin: PostgreSQL, reached directly (psql) or on a server over ssh (`ssh HOST docker exec … psql`).
-// One kind ("source"), a test-connection action, a read-only `query` and a `list` that other plugins call
-// (exports.actions), and a default data source taken from the parameters `datasource` (environment) and
-// `datasource.default` (workspace configuration).
+// One kind ("source"), a test-connection action and a read-only `query` that other plugins call
+// (exports.actions, D413). Which data source a statement uses (its own, the environment's `datasource`, the
+// workspace's `datasource.default`) is the caller's choice; `query` runs on the resource it is given.
 // The password is a secret field: the framework keeps it in the keychain; here it is only ever written as
 // {{secret:name}} into the environment of the program, which the host fills in.
 // Sandbox rules: no console, timers or fetch; programs run through ctx.host.process.
@@ -9,8 +9,6 @@
 export const KIND = "source";
 export const DEFAULT_TIMEOUT_MS = 30000;
 export const DEFAULT_MAX_ROWS = 1000;
-const ENV_PARAM = "datasource";
-const DEFAULT_PARAM = "datasource.default";
 const CONNECT_TIMEOUT_S = 10;
 
 /* ---------------------------------------------------------------- helpers */
@@ -240,6 +238,12 @@ export function errorText(res) {
   return res.signal ? `signal ${res.signal}` : `exit ${res.code}`;
 }
 
+function runError(ctx, err) {
+  const reason = err && err.params && err.params.reason ? `/${err.params.reason}` : "";
+  const program = err && err.params && err.params.program ? ` ${err.params.program}` : "";
+  return Object.assign(new Error(`${tr(ctx, "error.cannotRun")}${program} (${(err && err.code) || "error"}${reason})`), { code: err && err.code, params: err && err.params });
+}
+
 async function numSetting(ctx, name, fallback) {
   const raw = await ctx.host.settings.get(name);
   const n = Number(raw);
@@ -256,15 +260,13 @@ export async function runReadonly(ctx, c, sql, opts) {
   if (!String(sql || "").trim()) throw fail(ctx, "error.emptySql", {}, "invalid");
   if (hasSeveralStatements(sql)) throw fail(ctx, "error.severalStatements", {}, "invalid");
   const timeoutMs = o.timeoutMs || (await numSetting(ctx, "statementTimeoutMs", DEFAULT_TIMEOUT_MS));
-  const maxRows = o.maxRows || (await numSetting(ctx, "maxRows", DEFAULT_MAX_ROWS));
+  const maxRows = o.maxRows || DEFAULT_MAX_ROWS;
   const started = Date.now();
   let res;
   try {
     res = await ctx.host.process.run(processSpec(c, readonlyScript(sql, timeoutMs), timeoutMs));
   } catch (err) {
-    const reason = err && err.params && err.params.reason ? `/${err.params.reason}` : "";
-    const program = err && err.params && err.params.program ? ` ${err.params.program}` : "";
-    throw Object.assign(new Error(`${tr(ctx, "error.cannotRun")}${program} (${(err && err.code) || "error"}${reason})`), { code: err && err.code, params: err && err.params });
+    throw runError(ctx, err);
   }
   if (res.code !== 0) throw Object.assign(new Error(errorText(res)), { code: "failed" });
   const records = parseCsv(String(res.stdout || ""));
@@ -282,39 +284,29 @@ export async function runReadonly(ctx, c, sql, opts) {
   return { columns: header, rows, total: rows.length + (truncated ? 1 : 0), ms: Date.now() - started, truncated };
 }
 
+let captureSeq = 0;
+
+// Like runReadonly, but psql's CSV goes straight into a file in the plugin's own folder (returned, relative).
+export async function captureReadonly(ctx, c, sql, opts) {
+  const o = opts || {};
+  const bad = checkConnection(c);
+  if (bad) throw fail(ctx, "error.badField", { field: bad }, "invalid");
+  if (!String(sql || "").trim()) throw fail(ctx, "error.emptySql", {}, "invalid");
+  if (hasSeveralStatements(sql)) throw fail(ctx, "error.severalStatements", {}, "invalid");
+  const timeoutMs = o.timeoutMs || (await numSetting(ctx, "statementTimeoutMs", DEFAULT_TIMEOUT_MS));
+  const file = `tmp/q-${Date.now()}-${++captureSeq}.csv`;
+  let res;
+  try {
+    res = await ctx.host.transfer.capture({ ...processSpec(c, readonlyScript(sql, timeoutMs), timeoutMs), to: file, overwrite: true });
+  } catch (err) {
+    throw runError(ctx, err);
+  }
+  if (res.code !== 0) throw Object.assign(new Error(errorText(res)), { code: "failed" });
+  return file;
+}
+
 export function tableOutput(result) {
   return { type: "table", columns: result.columns.map((name, i) => ({ key: `c${i}`, label: name })), rows: result.rows, total: result.total };
-}
-
-/* ---------------------------------------------------------------- choosing a source */
-
-async function bodyOfSource(ctx, id) {
-  const r = await ctx.host.resources.get(id);
-  if (!r || r.kind !== KIND && !String(r.kind).endsWith(`:${KIND}`)) return null;
-  return r;
-}
-
-// "" → the environment's `datasource`, else the workspace's `datasource.default`. A value is an id or a name.
-export async function pickSource(ctx, given) {
-  let wanted = String(given || "").trim();
-  if (!wanted) {
-    for (const name of [ENV_PARAM, DEFAULT_PARAM]) {
-      const found = await ctx.host.params.get(name);
-      if (found && found.found && String(found.value).trim()) {
-        wanted = String(found.value).trim();
-        break;
-      }
-    }
-  }
-  if (!wanted) throw fail(ctx, "error.noSource", {}, "notFound");
-  let res = await bodyOfSource(ctx, wanted);
-  if (!res) {
-    const all = (await ctx.host.resources.list({ kind: KIND })) || [];
-    const list = Array.isArray(all) ? all : all.items || [];
-    res = list.find((r) => r.name === wanted) || null;
-  }
-  if (!res) throw fail(ctx, "error.sourceMissing", { source: wanted }, "notFound");
-  return res;
 }
 
 /* ---------------------------------------------------------------- plugin */
@@ -328,6 +320,7 @@ export default {
         const mode = (typeof draft["body.mode"] === "string" ? draft["body.mode"] : b.mode) === "ssh" ? "ssh" : "direct";
         const ro = ctx.run ? { readOnly: true } : {};
         const f = (name, kind, extra) => ({ name, label: ctx.t(`field.${name}`), kind, bind: `body.${name}`, ...ro, ...(extra || {}) });
+        const req = (field) => (ctx.run ? field : { ...field, required: true });
         const view = [
           { type: "form", id: "mode", layout: "strip", fields: [f("mode", "enum", { options: [{ value: "direct", label: ctx.t("mode.direct") }, { value: "ssh", label: ctx.t("mode.ssh") }] })] },
         ];
@@ -336,12 +329,12 @@ export default {
             type: "form",
             id: "server",
             layout: "strip",
-            fields: [f("sshHost", "text", { placeholder: ctx.t("field.sshHost.placeholder") }), f("container", "text", { placeholder: ctx.t("field.container.placeholder") })],
+            fields: [req(f("sshHost", "text", { placeholder: ctx.t("field.sshHost.placeholder") })), req(f("container", "text", { placeholder: ctx.t("field.container.placeholder") }))],
           });
         } else {
-          view.push({ type: "form", id: "server", layout: "strip", fields: [f("host", "text"), f("port", "text")] });
+          view.push({ type: "form", id: "server", layout: "strip", fields: [req(f("host", "text")), req(f("port", "text", { maxLength: 5 }))] });
         }
-        view.push({ type: "form", id: "database", layout: "strip", fields: [f("database", "text"), f("user", "text")] });
+        view.push({ type: "form", id: "database", layout: "strip", fields: [req(f("database", "text")), req(f("user", "text"))] });
         if (mode === "direct") {
           view.push({ type: "form", id: "auth", layout: "strip", fields: [f("password", "secret", { hint: ctx.t("field.password.hint") })] });
         } else {
@@ -378,38 +371,15 @@ export default {
       return { output: { type: "text", text }, summary: { message: tr(ctx, "summary.test", { ms: r.ms }) } };
     });
 
-    // Called by other plugins (exports.actions): { source?, sql, timeoutMs?, maxRows? } → a table.
+    // Called by other plugins (exports.actions) on one data source (`ctx.resource`, chosen by the caller):
+    // { sql, timeoutMs? } → a table in a data file the kernel reads (X2), so a big result never passes through
+    // this plugin's memory. The kernel keeps at most 10,000 rows in the run and counts all of them.
     host.actions.handle("query", async (ctx, input) => {
       const i = input || {};
-      const res = await pickSource(ctx, i.source);
-      const r = await runReadonly(ctx, connectionOf(res.body), i.sql, { timeoutMs: i.timeoutMs, maxRows: i.maxRows });
-      return {
-        output: tableOutput(r),
-        summary: { rows: r.rows.length, message: tr(ctx, r.truncated ? "summary.rowsTruncated" : "summary.rows", { rows: r.rows.length, ms: r.ms }) },
-      };
-    });
-
-    // The data sources, for pickers in other plugins: id, name, mode, whether it is the default one.
-    host.actions.handle("list", async (ctx) => {
-      const all = (await ctx.host.resources.list({ kind: KIND })) || [];
-      const list = Array.isArray(all) ? all : all.items || [];
-      const def = await ctx.host.params.get(DEFAULT_PARAM);
-      const defValue = def && def.found ? String(def.value) : "";
-      const rows = list.map((r) => [r.id, r.name, (r.body && r.body.mode) === "ssh" ? "ssh" : "direct", defValue !== "" && (defValue === r.id || defValue === r.name) ? "default" : ""]);
-      return {
-        output: {
-          type: "table",
-          columns: [
-            { key: "id", label: "id" },
-            { key: "name", label: "name" },
-            { key: "mode", label: "mode" },
-            { key: "default", label: "default" },
-          ],
-          rows,
-          total: rows.length,
-        },
-        summary: { rows: rows.length },
-      };
+      if (!ctx.resource) throw fail(ctx, "error.noSource", {}, "notFound");
+      const started = Date.now();
+      const file = await captureReadonly(ctx, connectionOf(ctx.resource.body), i.sql, { timeoutMs: i.timeoutMs });
+      return { output: { type: "table", file, header: true }, summary: { message: tr(ctx, "summary.ran", { ms: Date.now() - started }) } };
     });
   },
 };

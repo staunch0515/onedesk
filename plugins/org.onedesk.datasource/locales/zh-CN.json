@@ -5,15 +5,12 @@
   "kind.source.new": "未命名数据源",
   "action.test": "测试连接",
   "action.query": "只读查询",
-  "action.list": "列出数据源",
   "action.save": "保存",
   "action.import": "导入连接串",
   "tab.result": "结果",
   "tab.history": "历史",
   "setting.timeout": "语句超时（毫秒）",
   "setting.timeout.hint": "超过这个时间的语句会被数据库取消。",
-  "setting.maxRows": "行数上限",
-  "setting.maxRows.hint": "超过的行会被截掉，结果标为“已截断”。",
   "field.mode": "连接方式",
   "mode.direct": "直连",
   "mode.ssh": "经 ssh（docker exec psql）",
@@ -42,5 +39,6 @@
   "error.severalStatements": "一次只能运行一条语句。",
   "error.cannotRun": "无法运行程序",
   "error.noSource": "没有数据源：请在语句上选一个、在环境里指定，或设置默认数据源。",
-  "error.sourceMissing": "找不到数据源“{source}”。"
+  "error.sourceMissing": "找不到数据源“{source}”。",
+  "summary.ran": "耗时 {ms} 毫秒"
 }

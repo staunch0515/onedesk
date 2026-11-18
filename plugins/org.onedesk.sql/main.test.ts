@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 // @ts-ignore plain JS module, no types
-import plugin, { checkValue, declarations, paramNames, renderSql, sqlLiteral, timePresets, tokenize, toSqlValue } from "./main.js";
+import plugin, { checkValue, pickSource, declarations, paramNames, renderSql, sqlLiteral, timePresets, tokenize, toSqlValue } from "./main.js";
 import { RENDER_KEYS, checkActionResult, checkView, hostError, onlyKeys, registry } from "../_testing/view-check";
 
 const load = (f: string) => JSON.parse(readFileSync(new URL(`./locales/${f}.json`, import.meta.url), "utf8")) as Record<string, string>;
@@ -20,10 +20,10 @@ const table = { type: "table", columns: [{ key: "c0", label: "n" }], rows: [["1"
 function fakeHost(over: Host = {}): Host {
   const store = new Map<string, string>();
   return {
-    params: { get: vi.fn(async () => ({ found: false, value: "", sourceName: "" })) },
+    params: { get: vi.fn(async () => ({ found: false, value: "", sourceName: "" })), config: vi.fn(async () => ({ found: false, value: "", sourceName: "" })) },
     storage: { get: vi.fn(async (k: string) => store.get(k) ?? null), set: vi.fn(async (k: string, v: string) => void store.set(k, v)) },
     resources: { list: vi.fn(async () => SOURCES), create: vi.fn(async (r: any) => ({ id: "new1", name: r.name })) },
-    actions: { call: vi.fn(async () => ({ output: table, summary: { rows: 2, message: "2 rows · 5 ms" } })) },
+    actions: { call: vi.fn(async () => ({ output: table, summary: { message: "Ran in 5 ms" } })) },
     ui: { copy: vi.fn(async () => undefined) },
     ...over,
   };
@@ -123,7 +123,7 @@ describe("sql: page", () => {
     expect(onlyKeys(out, RENDER_KEYS)).toEqual([]);
     expect(out.view.map((n: any) => n.id)).toEqual(["source", "editor"]);
     const pick = out.view[0].fields[0];
-    expect(pick).toMatchObject({ kind: "enum", bind: "body.source" });
+    expect(pick).toMatchObject({ kind: "ref", kinds: ["org.onedesk.datasource:source"], bind: "body.source" });
     expect(pick.options.map((o: any) => o.value)).toEqual(["", "s1", "s2"]);
     expect(out.view[1].fields[0]).toMatchObject({ kind: "code", bind: "body.sql", fill: true, language: "sql" });
   });
@@ -137,13 +137,15 @@ describe("sql: page", () => {
   it("render: a parameter field per :name by declared type, with environment values, presets, options and hints; the unsaved draft counts", async () => {
     const { pages } = registry(plugin);
     const host = fakeHost({ params: { get: vi.fn(async (n: string) => (n === "limit_n" ? { found: true, value: "50", sourceName: "Prod" } : { found: false, value: "", sourceName: "" })) } });
-    const sql = "-- @param since type=datetime required -- from when\n-- @param kind values=a|b\n-- @param day type=date\nSELECT :since, :kind, :day, :limit_n, :note";
+    const sql = "-- @param since type=datetime required -- from when\n-- @param kind values=a|b\n-- @param day type=date\n-- @param at type=time\n-- @param code max=4\nSELECT :since, :kind, :day, :at, :code, :limit_n, :note";
     const out = await pages.editor.render(ctxOf(host, { ...resourceOf({ sql: "SELECT 1", source: "" }), draft: { "body.sql": sql } }));
     expect(checkView(out.view)).toEqual([]);
     const strip = out.view.find((n: any) => n.id === "params");
     const byName = Object.fromEntries(strip.fields.map((f: any) => [f.name, f]));
-    expect(Object.keys(byName)).toEqual(["since", "kind", "day", "limit_n", "note"]);
-    expect(byName.since).toMatchObject({ kind: "datetime", param: true, hint: "from when · required · UTC" });
+    expect(Object.keys(byName)).toEqual(["since", "kind", "day", "at", "code", "limit_n", "note"]);
+    expect(byName.since).toMatchObject({ kind: "datetime", param: true, required: true, hint: "from when · UTC" });
+    expect(byName.at).toMatchObject({ kind: "time" });
+    expect(byName.code).toMatchObject({ kind: "text", maxLength: 4 });
     expect(byName.since.presets).toHaveLength(5);
     expect(byName.kind).toMatchObject({ kind: "enum", options: [{ value: "a", label: "a" }, { value: "b", label: "b" }] });
     expect(byName.day.kind).toBe("date");
@@ -181,7 +183,7 @@ describe("sql: page", () => {
     const host = fakeHost();
     const none = await pages.editor.renderResultTab(ctxOf(host, { run: { id: "r", resourceId: "r1" } }), "sent");
     expect(none).toEqual([{ type: "text", id: "none", text: "Nothing has been run yet.", tone: "muted" }]);
-    await run(host, { "body.sql": "SELECT :a", "body.source": "" }, { params: { a: "x'y" } });
+    await run(host, { "body.sql": "SELECT :a", "body.source": "s1" }, { params: { a: "x'y" } });
     const view = await pages.editor.renderResultTab(ctxOf(host, { run: { id: "r", resourceId: "r1" } }), "sent");
     expect(checkView(view)).toEqual([]);
     expect(view[0]).toMatchObject({ type: "text", text: "SELECT 'x''y'", mono: true, language: "sql" });
@@ -190,34 +192,62 @@ describe("sql: page", () => {
 });
 
 describe("sql: run action", () => {
-  it("renders the parameters and calls the data source's query; the table comes back unchanged", async () => {
+  it("renders the parameters and calls the data source's query on the chosen data source; the output comes back unchanged", async () => {
     const host = fakeHost();
     const res = await run(host, { "body.sql": "SELECT * FROM t WHERE id = :id", "body.source": "s2" }, { params: { id: "42" } });
-    expect(host.actions.call).toHaveBeenCalledWith("org.onedesk.datasource:query", { source: "s2", sql: "SELECT * FROM t WHERE id = '42'" });
+    expect(host.actions.call).toHaveBeenCalledWith("org.onedesk.datasource:query", { sql: "SELECT * FROM t WHERE id = '42'" }, { resource: "s2" });
     expect(checkActionResult(res)).toEqual([]);
     expect(res.output).toEqual(table);
-    expect(res.summary).toEqual({ rows: 2, message: "2 rows · 5 ms" });
+    expect(res.summary).toEqual({ message: "Ran in 5 ms" });
+  });
+
+  it("a data file from the data source is the run's own output", async () => {
+    const out = { type: "table", file: "tmp/call-1.csv", header: true };
+    const host = fakeHost({ actions: { call: vi.fn(async () => ({ output: out, summary: { message: "Ran in 1 ms" } })) } });
+    const res = await run(host, { "body.sql": "SELECT 1", "body.source": "s1" });
+    expect(checkActionResult(res)).toEqual([]);
+    expect(res.output).toEqual(out);
+  });
+
+  describe("which data source", () => {
+    const cfg = (v: string) => ({ params: { get: vi.fn(async () => ({ found: false, value: "", sourceName: "" })), config: vi.fn(async () => ({ found: true, value: v, sourceName: "Workspace" })) } });
+    it("the statement's own, then the environment's datasource, then the workspace default; a name works too", async () => {
+      const own = fakeHost();
+      expect(await pickSource(ctxOf(own), "s2")).toBe("s2");
+      expect(own.params.get).not.toHaveBeenCalled();
+      const env = fakeHost({ params: { get: vi.fn(async (n: string) => (n === "datasource" ? { found: true, value: "s2", sourceName: "Prod" } : { found: false })), config: vi.fn(async () => ({ found: true, value: "s1" })) } });
+      expect(await pickSource(ctxOf(env), "")).toBe("s2");
+      expect(env.params.config).not.toHaveBeenCalled();
+      const def = fakeHost(cfg("Local"));
+      expect(await pickSource(ctxOf(def), "")).toBe("s1");
+      expect(def.params.config).toHaveBeenCalledWith("datasource.default");
+    });
+    it("says so when there is none or the named one is gone", async () => {
+      await expect(pickSource(ctxOf(fakeHost()), "")).rejects.toThrow("No data source");
+      await expect(pickSource(ctxOf(fakeHost()), "ghost")).rejects.toThrow("“ghost” was not found");
+    });
   });
 
   it("a parameter not typed takes the environment's value; an empty one is NULL", async () => {
     const host = fakeHost({ params: { get: vi.fn(async (n: string) => (n === "a" ? { found: true, value: "env-a", sourceName: "Prod" } : { found: false, value: "", sourceName: "" })) } });
-    await run(host, { "body.sql": "SELECT :a, :b, :c", "body.source": "" }, { params: { c: "typed" } });
+    await run(host, { "body.sql": "SELECT :a, :b, :c", "body.source": "s1" }, { params: { c: "typed" } });
     expect(host.actions.call.mock.calls[0]![1].sql).toBe("SELECT 'env-a', NULL, 'typed'");
   });
 
   it("a typed value wins over the environment's and the environment is not asked", async () => {
     const host = fakeHost();
-    await run(host, { "body.sql": "SELECT :a", "body.source": "" }, { params: { a: "typed" } });
+    await run(host, { "body.sql": "SELECT :a", "body.source": "s1" }, { params: { a: "typed" } });
     expect(host.params.get).not.toHaveBeenCalled();
   });
 
   it("declared types are checked before anything is sent", async () => {
     const host = fakeHost();
-    await expect(run(host, { "body.sql": "-- @param n type=number\nSELECT :n", "body.source": "" }, { params: { n: "1; DROP" } })).rejects.toThrow("must be a number");
-    await expect(run(host, { "body.sql": "-- @param n required\nSELECT :n", "body.source": "" })).rejects.toThrow(":n is required");
-    await expect(run(host, { "body.sql": "-- @param k values=a|b\nSELECT :k", "body.source": "" }, { params: { k: "c" } })).rejects.toThrow("allowed values");
-    await expect(run(host, { "body.sql": "-- @param k max=2\nSELECT :k", "body.source": "" }, { params: { k: "abc" } })).rejects.toThrow("longer than 2");
-    await expect(run(host, { "body.sql": "   ", "body.source": "" })).rejects.toThrow("nothing to run");
+    await expect(run(host, { "body.sql": "-- @param n type=number\nSELECT :n", "body.source": "s1" }, { params: { n: "1; DROP" } })).rejects.toThrow("must be a number");
+    await expect(run(host, { "body.sql": "-- @param n required\nSELECT :n", "body.source": "s1" })).rejects.toThrow(":n is required");
+    await expect(run(host, { "body.sql": "-- @param at type=time\nSELECT :at", "body.source": "s1" }, { params: { at: "noon" } })).rejects.toThrow("must be a time");
+    await expect(run(host, { "body.sql": "-- @param k values=a|b\nSELECT :k", "body.source": "s1" }, { params: { k: "c" } })).rejects.toThrow("allowed values");
+    await expect(run(host, { "body.sql": "-- @param k max=2\nSELECT :k", "body.source": "s1" }, { params: { k: "abc" } })).rejects.toThrow("longer than 2");
+    await expect(run(host, { "body.sql": "   ", "body.source": "s1" })).rejects.toThrow("nothing to run");
     expect(host.actions.call).not.toHaveBeenCalled();
   });
 
@@ -225,18 +255,18 @@ describe("sql: run action", () => {
     const err = hostError("failed");
     err.message = 'ERROR: relation "x" does not exist';
     const host = fakeHost({ actions: { call: vi.fn(async () => { throw err; }) } });
-    await expect(run(host, { "body.sql": "SELECT * FROM x", "body.source": "" })).rejects.toBe(err);
+    await expect(run(host, { "body.sql": "SELECT * FROM x", "body.source": "s1" })).rejects.toBe(err);
   });
 
   it("a data source that returns no table is an error", async () => {
     const host = fakeHost({ actions: { call: vi.fn(async () => ({ output: { type: "none" } })) } });
-    await expect(run(host, { "body.sql": "SELECT 1", "body.source": "" })).rejects.toThrow("no table");
+    await expect(run(host, { "body.sql": "SELECT 1", "body.source": "s1" })).rejects.toThrow("no table");
   });
 
   it("reports progress and remembers the SQL it sent (per statement)", async () => {
     const host = fakeHost();
     const ctx = ctxOf(host, resourceOf({}));
-    await registry(plugin).actions.run(ctx, { "body.sql": "SELECT 1", "body.source": "" });
+    await registry(plugin).actions.run(ctx, { "body.sql": "SELECT 1", "body.source": "s1" });
     expect(ctx.progress).toHaveBeenCalledWith(undefined, "Running on the data source…");
     expect(host.storage.set).toHaveBeenCalledWith("lastSent:r1", "SELECT 1");
   });

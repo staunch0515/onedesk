@@ -5,13 +5,13 @@
 // doubled; an empty value is NULL), the way the old sqlpool did; nothing is bound by a driver.
 //
 // Parameter declarations are optional comment lines at any place in the text:
-//   -- @param NAME [type=text|number|date|datetime|enum] [required] [max=N] [values=a|b|c] [-- description]
+//   -- @param NAME [type=text|number|date|datetime|time|enum] [required] [max=N] [values=a|b|c] [-- description]
 // Without one a parameter is a text field. Sandbox rules: no console, timers or fetch.
 
 export const SOURCE_KIND = "org.onedesk.datasource:source";
 export const DATASOURCE = "org.onedesk.datasource";
 const SENT_KEY = "lastSent";
-const TYPES = ["text", "number", "date", "datetime", "enum"];
+const TYPES = ["text", "number", "date", "datetime", "time", "enum"];
 const MAX_LEN_DEFAULT = 0;
 
 /* ---------------------------------------------------------------- helpers */
@@ -145,6 +145,7 @@ export function checkValue(decl, value) {
   if (value === null) return decl.required ? "required" : null;
   if (decl.type === "number" && !/^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$/.test(value.trim())) return "number";
   if (decl.type === "date" && !/^\d{4}-\d{2}-\d{2}$/.test(value)) return "date";
+  if (decl.type === "time" && !/^\d{2}:\d{2}(:\d{2})?$/.test(value)) return "time";
   if (decl.type === "datetime" && !/^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d\d:\d\d)?$/.test(value)) return "datetime";
   if (decl.type === "enum" && decl.values.length > 0 && !decl.values.includes(value)) return "enum";
   if (decl.max > 0 && value.length > decl.max) return "max";
@@ -204,15 +205,35 @@ async function sourceList(ctx) {
   }
 }
 
+// The data source of a run: the statement's own, else the environment's `datasource`, else the workspace's
+// `datasource.default`. A value is a resource id (a name is accepted too). Returns the id.
+export async function pickSource(ctx, given) {
+  let wanted = String(given || "").trim();
+  if (!wanted) {
+    const env = await ctx.host.params.get("datasource");
+    if (env && env.found && String(env.value).trim()) wanted = String(env.value).trim();
+  }
+  if (!wanted) {
+    const def = await ctx.host.params.config("datasource.default");
+    if (def && def.found && String(def.value).trim()) wanted = String(def.value).trim();
+  }
+  if (!wanted) throw Object.assign(new Error(tr(ctx, "error.noSource")), { code: "notFound" });
+  const list = await sourceList(ctx);
+  const hit = list.find((r) => r.id === wanted) || list.find((r) => r.name === wanted);
+  if (!hit) throw Object.assign(new Error(tr(ctx, "error.sourceMissing", { source: wanted })), { code: "notFound" });
+  return hit.id;
+}
+
 function paramField(ctx, name, decl, now) {
-  const kind = decl.type === "number" ? "number" : decl.type === "date" ? "date" : decl.type === "datetime" ? "datetime" : decl.type === "enum" ? "enum" : "text";
+  const kind = decl.type === "text" ? "text" : decl.type;
   const field = { name, label: name, kind, param: true };
   if (kind === "enum") field.options = decl.values.map((v) => ({ value: v, label: v }));
   if (kind === "datetime") field.presets = timePresets(ctx, now);
+  if (kind === "time") field.presets = [{ value: "00:00", label: "00:00" }, { value: "12:00", label: "12:00" }];
+  if (decl.required) field.required = true;
+  if (decl.max > 0 && kind === "text") field.maxLength = decl.max;
   const hints = [];
   if (decl.description) hints.push(decl.description);
-  if (decl.required) hints.push(tr(ctx, "hint.required"));
-  if (decl.max > 0) hints.push(tr(ctx, "hint.max", { max: decl.max }));
   if (kind === "datetime") hints.push(tr(ctx, "hint.utc"));
   if (hints.length > 0) field.hint = hints.join(" · ");
   return field;
@@ -237,7 +258,7 @@ export default {
           type: "form",
           id: "source",
           layout: "strip",
-          fields: [{ name: "source", label: ctx.t("field.source"), kind: "enum", bind: "body.source", options, hint: ctx.t("field.source.hint"), ...ro }],
+          fields: [{ name: "source", label: ctx.t("field.source"), kind: "ref", kinds: [SOURCE_KIND], bind: "body.source", options, hint: tr(ctx, "field.source.hint"), ...ro }],
         });
 
         if (names.length > 0) {
@@ -295,7 +316,6 @@ export default {
 
     host.actions.handle("run", async (ctx, input) => {
       const sql = String((input && input["body.sql"]) || "");
-      const source = String((input && input["body.source"]) || "");
       if (!sql.trim()) throw Object.assign(new Error(tr(ctx, "error.empty")), { code: "invalid" });
 
       const decls = declarations(sql);
@@ -315,11 +335,11 @@ export default {
       const id = (ctx.resource && ctx.resource.id) || "-";
       await ctx.host.storage.set(`${SENT_KEY}:${id}`, rendered);
 
+      const sourceId = await pickSource(ctx, String((input && input["body.source"]) || ""));
       ctx.progress(undefined, tr(ctx, "step.running"));
-      const res = await ctx.host.actions.call(`${DATASOURCE}:query`, { source, sql: rendered });
-      const out = res && res.output;
-      if (!out || out.type !== "table") throw new Error(tr(ctx, "error.noResult"));
-      return { output: out, summary: res.summary || { rows: out.rows.length } };
+      const res = await ctx.host.actions.call(`${DATASOURCE}:query`, { sql: rendered }, { resource: sourceId });
+      if (!res || !res.output || (res.output.type !== "table")) throw new Error(tr(ctx, "error.noResult"));
+      return { output: res.output, summary: res.summary };
     });
   },
 };

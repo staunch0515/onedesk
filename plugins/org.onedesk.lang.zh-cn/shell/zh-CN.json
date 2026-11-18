@@ -828,5 +828,7 @@
   "kernel.label.protection.readonly": "只读保护",
   "kernel.label.protection.no_export": "禁止导出保护",
   "kernel.error.reason.readonly|layerName": "已开启只读保护（protection.readonly，由“{layerName}”设置），不能做任何修改。请到“{layerName}”里关闭。",
-  "kernel.error.reason.noExport|layerName": "已开启禁止导出（protection.no_export，由“{layerName}”设置），不能导出。请到“{layerName}”里关闭。"
+  "kernel.error.reason.noExport|layerName": "已开启禁止导出（protection.no_export，由“{layerName}”设置），不能导出。请到“{layerName}”里关闭。",
+  "field.timePlaceholder": "HH:MM（UTC）",
+  "result.elapsed": "耗时"
 }

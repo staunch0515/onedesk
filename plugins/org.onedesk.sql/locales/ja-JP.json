@@ -17,8 +17,6 @@
   "source.default": "環境 / 既定",
   "field.sql": "SQL",
   "field.sql.placeholder": "SELECT * FROM orders WHERE created_at >= :since",
-  "hint.required": "必須",
-  "hint.max": "最大 {max} 文字",
   "hint.utc": "UTC",
   "preset.now": "今",
   "preset.today": "今日 00:00",
@@ -30,12 +28,14 @@
   "step.running": "データソースで実行中…",
   "summary.created": "作成しました。",
   "error.empty": "実行する内容がありません。",
-  "error.noSource": "データソースで開いてください。",
+  "error.noSource": "データソースがありません。文で選ぶか、環境で指定するか、既定のデータソースを設定してください。",
   "error.noResult": "データソースが表を返しませんでした。",
   "error.param.required": "パラメーター :{name} は必須です。",
   "error.param.number": "パラメーター :{name} は数値にしてください。",
   "error.param.date": "パラメーター :{name} は日付（YYYY-MM-DD）にしてください。",
   "error.param.datetime": "パラメーター :{name} は日時（YYYY-MM-DDTHH:MM、UTC）にしてください。",
   "error.param.enum": "パラメーター :{name} は許可された値ではありません。",
-  "error.param.max": "パラメーター :{name} が {max} 文字を超えています。"
+  "error.param.max": "パラメーター :{name} が {max} 文字を超えています。",
+  "error.param.time": "パラメーター :{name} は時刻（HH:MM）にしてください。",
+  "error.sourceMissing": "データソース「{source}」が見つかりません。"
 }

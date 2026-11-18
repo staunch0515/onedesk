@@ -1,8 +1,8 @@
 /** Test helper (not a plugin): mirrors the kernel's strict ViewNode validation. */
 import type { ViewNode } from "../../src/workbench/protocol/generated";
 
-const FIELD_KEYS = new Set(["name", "label", "kind", "bind", "param", "options", "presets", "fill", "language", "hint", "placeholder", "envValue", "envSource", "readOnly"]);
-const KINDS = new Set(["text", "longtext", "code", "number", "boolean", "date", "datetime", "enum", "secret"]);
+const FIELD_KEYS = new Set(["name", "label", "kind", "bind", "param", "options", "presets", "fill", "language", "hint", "placeholder", "envValue", "envSource", "readOnly", "required", "maxLength", "kinds"]);
+const KINDS = new Set(["text", "longtext", "code", "number", "boolean", "date", "datetime", "enum", "secret", "time", "ref"]);
 const NODE_KEYS: Record<string, string[]> = {
   form: ["type", "id", "layout", "label", "fields"],
   text: ["type", "id", "text", "mono", "language", "tone", "format"],
@@ -86,7 +86,7 @@ export const TREE_NODE_KEYS = ["key", "label", "icon", "expandable", "target", "
 /** Mirrors the action result validation in crates/kernel (round 3): output is a RunOutput without `truncated`. */
 export const ACTION_RESULT_KEYS = ["output", "summary"];
 export const SUMMARY_KEYS = ["rows", "message"];
-export const OUTPUT_KEYS: Record<string, string[]> = { table: ["type", "columns", "rows", "total"], text: ["type", "text"], link: ["type", "label", "target"], none: ["type"] };
+export const OUTPUT_KEYS: Record<string, string[]> = { table: ["type", "columns", "rows", "total", "file", "header"], text: ["type", "text", "file"], link: ["type", "label", "target"], none: ["type"] };
 export const EVENT_RESULT_KEYS = ["changes", "params", "message"];
 
 export function checkActionResult(res: Record<string, any>): string[] {
@@ -96,6 +96,6 @@ export function checkActionResult(res: Record<string, any>): string[] {
   if (!keys) return [...errs, `unknown output type ${String(out.type)}`];
   errs.push(...onlyKeys(out, keys));
   if (res.summary) errs.push(...onlyKeys(res.summary, SUMMARY_KEYS));
-  if (out.type === "table") for (const c of out.columns) errs.push(...onlyKeys(c, ["key", "label", "numeric"]));
+  if (out.type === "table") for (const c of out.columns ?? []) errs.push(...onlyKeys(c, ["key", "label", "numeric"]));
   return errs;
 }

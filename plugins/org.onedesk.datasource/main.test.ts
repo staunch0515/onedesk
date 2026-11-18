@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 // @ts-ignore plain JS module, no types
-import plugin, { checkConnection, connectionOf, errorText, hasSeveralStatements, parseConnectionUrl, parseCsv, pickSource, processSpec, readonlyScript, runReadonly, safePart } from "./main.js";
+import plugin, { captureReadonly, checkConnection, connectionOf, errorText, hasSeveralStatements, parseConnectionUrl, parseCsv, processSpec, readonlyScript, runReadonly, safePart } from "./main.js";
 import { RENDER_KEYS, checkActionResult, checkView, hostError, onlyKeys, registry } from "../_testing/view-check";
 
 const load = (f: string) => JSON.parse(readFileSync(new URL(`./locales/${f}.json`, import.meta.url), "utf8")) as Record<string, string>;
@@ -22,6 +22,7 @@ function fakeHost(over: Host = {}): Host {
     settings: { get: vi.fn(async () => null) },
     resources: { get: vi.fn(async (id: string) => sources[id] ?? null), list: vi.fn(async () => [SOURCE, SSH]) },
     process: { run: vi.fn(async () => csv("a,b\n1,x\n2,\n")) },
+    transfer: { capture: vi.fn(async () => ({ code: 0, signal: "", stderr: "", truncated: false, bytes: 10, path: "x" })) },
     ...over,
   };
 }
@@ -126,9 +127,9 @@ describe("datasource: running", () => {
     expect(call.stdin).toContain("BEGIN READ ONLY;\nSET LOCAL statement_timeout = 30000;\nSELECT a, b FROM t\n;\nROLLBACK;");
   });
 
-  it("cuts at the row limit (the setting, or the call's own) and says it was truncated", async () => {
-    const host = fakeHost({ process: { run: vi.fn(async () => csv("n\n1\n2\n3\n4\n")) }, settings: { get: vi.fn(async (k: string) => (k === "maxRows" ? "2" : null)) } });
-    const r = await runReadonly(ctxOf(host), conn, "SELECT n");
+  it("cuts at the row limit (the call's own; the in-memory path is only for the connection test) and says it was truncated", async () => {
+    const host = fakeHost({ process: { run: vi.fn(async () => csv("n\n1\n2\n3\n4\n")) } });
+    const r = await runReadonly(ctxOf(host), conn, "SELECT n", { maxRows: 2 });
     expect(r.rows).toEqual([["1"], ["2"]]);
     expect(r).toMatchObject({ truncated: true, total: 3 });
     const r1 = await runReadonly(ctxOf(host), conn, "SELECT n", { maxRows: 3 });
@@ -162,23 +163,26 @@ describe("datasource: running", () => {
   });
 });
 
-describe("datasource: choosing a source", () => {
-  it("a given id wins; else the environment's datasource; else the workspace default; a name works too", async () => {
+describe("datasource: capturing to a file", () => {
+  const conn = connectionOf(SOURCE.body);
+  it("psql writes its CSV into a file in the plugin's own folder; the path is returned, the script is the same read-only one", async () => {
     const host = fakeHost();
-    expect((await pickSource(ctxOf(host), "s2")).id).toBe("s2");
-    expect(host.params.get).not.toHaveBeenCalled();
-
-    const env = fakeHost({ params: { get: vi.fn(async (n: string) => (n === "datasource" ? { found: true, value: "s2", sourceName: "Prod" } : { found: true, value: "s1", sourceName: "" })) } });
-    expect((await pickSource(ctxOf(env), "")).id).toBe("s2");
-
-    const onlyDefault = fakeHost({ params: { get: vi.fn(async (n: string) => (n === "datasource.default" ? { found: true, value: "Local", sourceName: "" } : { found: false, value: "", sourceName: "" })) } });
-    expect((await pickSource(ctxOf(onlyDefault), "")).id).toBe("s1");
-    expect(onlyDefault.params.get.mock.calls.map((c: any[]) => c[0])).toEqual(["datasource", "datasource.default"]);
+    const file = await captureReadonly(ctxOf(host), conn, "SELECT n FROM t");
+    expect(file).toMatch(/^tmp\/q-\d+-\d+\.csv$/);
+    const call = host.transfer.capture.mock.calls[0]![0];
+    expect(call).toMatchObject({ program: "psql", to: file, overwrite: true });
+    expect(call.stdin).toContain("BEGIN READ ONLY;\nSET LOCAL statement_timeout = 30000;\nSELECT n FROM t\n;\nROLLBACK;");
+    expect(host.process.run).not.toHaveBeenCalled();
   });
-
-  it("says so when there is none, or the named one is gone", async () => {
-    await expect(pickSource(ctxOf(fakeHost()), "")).rejects.toThrow("No data source");
-    await expect(pickSource(ctxOf(fakeHost()), "ghost")).rejects.toThrow("“ghost” was not found");
+  it("refuses the same things before any program starts, and turns a failing psql into the error", async () => {
+    const host = fakeHost();
+    await expect(captureReadonly(ctxOf(host), conn, "")).rejects.toThrow("nothing to run");
+    await expect(captureReadonly(ctxOf(host), conn, "SELECT 1; SELECT 2")).rejects.toThrow("one statement");
+    expect(host.transfer.capture).not.toHaveBeenCalled();
+    const failing = fakeHost({ transfer: { capture: vi.fn(async () => ({ code: 1, signal: "", stderr: "psql:<stdin>:3: ERROR:  relation \"x\" does not exist\n", truncated: false })) } });
+    await expect(captureReadonly(ctxOf(failing), conn, "SELECT * FROM x")).rejects.toThrow('relation "x" does not exist');
+    const missing = fakeHost({ transfer: { capture: vi.fn(async () => { throw hostError("notFound", { what: "program", program: "psql" }); }) } });
+    await expect(captureReadonly(ctxOf(missing), conn, "SELECT 1")).rejects.toThrow("Cannot run the program psql (notFound)");
   });
 });
 
@@ -186,7 +190,7 @@ describe("datasource: page and actions", () => {
   it("registers what the manifest declares", () => {
     const r = registry(plugin);
     expect(Object.keys(r.pages)).toEqual(["editor"]);
-    expect(Object.keys(r.actions).sort()).toEqual(["list", "query", "test"]);
+    expect(Object.keys(r.actions).sort()).toEqual(["query", "test"]);
   });
 
   it("render: direct shows host, port, database, user and the secret password; ssh shows ssh host and container and no password", async () => {
@@ -197,6 +201,8 @@ describe("datasource: page and actions", () => {
     expect(direct.view.map((n: any) => n.id)).toEqual(["mode", "server", "database", "auth", "import"]);
     expect(direct.view[3].fields[0]).toMatchObject({ kind: "secret", bind: "body.password" });
     expect(direct.view[1].fields.map((f: any) => f.name)).toEqual(["host", "port"]);
+    expect(direct.view[1].fields.every((f: any) => f.required === true)).toBe(true);
+    expect(direct.view[1].fields[1].maxLength).toBe(5);
 
     const ssh = await pages.editor.render(ctxOf(fakeHost(), { resource: SSH }));
     expect(checkView(ssh.view)).toEqual([]);
@@ -244,34 +250,29 @@ describe("datasource: page and actions", () => {
     await expect(actions.test(ctxOf(host, { resource: SOURCE }), {})).rejects.toThrow("Connection refused");
   });
 
-  it("query action: the other plugins' entry; table output with total above the rows when truncated", async () => {
+  it("query action: runs on the resource it is given and returns the table as a data file (header on)", async () => {
     const { actions } = registry(plugin);
-    const host = fakeHost({ process: { run: vi.fn(async () => csv("n\n1\n2\n3\n")) } });
-    const res = await actions.query(ctxOf(host), { source: "s1", sql: "SELECT n", maxRows: 2 });
+    const host = fakeHost();
+    const res = await actions.query(ctxOf(host, { resource: SSH }), { sql: "SELECT n" });
     expect(checkActionResult(res)).toEqual([]);
-    expect(res.output).toMatchObject({ type: "table", columns: [{ key: "c0", label: "n" }], rows: [["1"], ["2"]], total: 3 });
-    expect(res.summary).toMatchObject({ rows: 2 });
-    expect(res.summary.message).toMatch(/\(truncated\)/);
-    await expect(actions.query(ctxOf(host), { source: "s1", sql: "" })).rejects.toThrow();
-  });
-
-  it("list action: id, name, mode and which one is the default", async () => {
-    const { actions } = registry(plugin);
-    const host = fakeHost({ params: { get: vi.fn(async (n: string) => (n === "datasource.default" ? { found: true, value: "s2", sourceName: "" } : { found: false, value: "", sourceName: "" })) } });
-    const res = await actions.list(ctxOf(host), {});
-    expect(checkActionResult(res)).toEqual([]);
-    expect(res.output.rows).toEqual([["s1", "Local", "direct", ""], ["s2", "Staging", "ssh", "default"]]);
+    expect(res.output).toEqual({ type: "table", file: expect.stringMatching(/^tmp\/q-/), header: true });
+    expect(res.summary.message).toMatch(/^Ran in \d+ ms$/);
+    expect(host.transfer.capture.mock.calls[0]![0]).toMatchObject({ program: "ssh" });
+    await expect(actions.query(ctxOf(host), { sql: "SELECT 1" })).rejects.toThrow("No data source");
+    await expect(actions.query(ctxOf(host, { resource: SOURCE }), { sql: "" })).rejects.toThrow();
   });
 });
 
 describe("datasource: manifest", () => {
   const m = JSON.parse(readFileSync(new URL("./manifest.json", import.meta.url), "utf8"));
-  it("declares both programs, the password as a secret field and no network access", () => {
-    expect(m.requires.programs.map((p: any) => `${p.name}:${p.source}`)).toEqual(["psql:plugin", "ssh:system"]);
+  it("declares both programs as the system's (psql also looked for where PostgreSQL installers put it), the password as a secret field and no network access", () => {
+    expect(m.requires.programs.map((p: any) => `${p.name}:${p.source}`)).toEqual(["psql:system", "ssh:system"]);
+    expect(m.requires.programs[0].searchPaths).toContain("/Library/PostgreSQL/*/bin");
+    expect(m.exports.actions).toEqual(["query"]);
     expect(m.requires.network).toBeUndefined();
     expect(m.contributes.kinds[0].fields.password).toEqual({ type: "secret" });
   });
   it("every action the plugin handles is declared", () => {
-    expect(m.contributes.actions.map((a: any) => a.id).sort()).toEqual(["list", "query", "test"]);
+    expect(m.contributes.actions.map((a: any) => a.id).sort()).toEqual(["query", "test"]);
   });
 });

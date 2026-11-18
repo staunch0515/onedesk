@@ -13,7 +13,10 @@
     "files": false
   },
   "depends": [
-    { "id": "org.onedesk.datasource", "version": ">=0.1.0, <1.0.0" }
+    {
+      "id": "org.onedesk.datasource",
+      "version": ">=0.1.0, <1.0.0"
+    }
   ],
   "contributes": {
     "kinds": [
@@ -37,9 +40,14 @@
         "id": "run",
         "label": "action.run",
         "icon": "play",
-        "kinds": ["query"],
+        "kinds": [
+          "query"
+        ],
         "output": "table",
-        "shortcut": ["Mod", "Enter"],
+        "shortcut": [
+          "Mod",
+          "Enter"
+        ],
         "saveFirst": false,
         "confirm": null
       },
@@ -47,7 +55,9 @@
         "id": "newHere",
         "label": "action.newHere",
         "icon": "file-plus",
-        "kinds": ["org.onedesk.datasource:source"],
+        "kinds": [
+          "org.onedesk.datasource:source"
+        ],
         "output": "link",
         "saveFirst": false,
         "confirm": null
@@ -66,14 +76,20 @@
             "label": "action.run",
             "icon": "play",
             "primary": true,
-            "shortcut": ["Mod", "Enter"]
+            "shortcut": [
+              "Mod",
+              "Enter"
+            ]
           },
           {
             "id": "save",
             "role": "save",
             "label": "action.save",
             "icon": "save",
-            "shortcut": ["Mod", "S"]
+            "shortcut": [
+              "Mod",
+              "S"
+            ]
           },
           {
             "id": "save-run",
@@ -112,7 +128,9 @@
       }
     ],
     "menus": {
-      "new": ["query"]
+      "new": [
+        "query"
+      ]
     },
     "locales": {
       "en-US": "locales/en-US.json",

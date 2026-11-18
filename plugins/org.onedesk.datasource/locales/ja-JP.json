@@ -5,15 +5,12 @@
   "kind.source.new": "無題のデータソース",
   "action.test": "接続テスト",
   "action.query": "読み取り専用クエリ",
-  "action.list": "データソース一覧",
   "action.save": "保存",
   "action.import": "接続文字列をインポート",
   "tab.result": "結果",
   "tab.history": "履歴",
   "setting.timeout": "ステートメントのタイムアウト（ミリ秒）",
   "setting.timeout.hint": "これより長く実行された文はデータベースが取り消します。",
-  "setting.maxRows": "行数の上限",
-  "setting.maxRows.hint": "超えた行は切り捨てられ、結果は「切り捨て」と表示されます。",
   "field.mode": "接続方法",
   "mode.direct": "直接",
   "mode.ssh": "ssh 経由（docker exec psql）",
@@ -42,5 +39,6 @@
   "error.severalStatements": "一度に実行できる文は 1 つだけです。",
   "error.cannotRun": "プログラムを実行できません",
   "error.noSource": "データソースがありません。文で選ぶか、環境で指定するか、既定のデータソースを設定してください。",
-  "error.sourceMissing": "データソース「{source}」が見つかりません。"
+  "error.sourceMissing": "データソース「{source}」が見つかりません。",
+  "summary.ran": "{ms} ms で実行"
 }
