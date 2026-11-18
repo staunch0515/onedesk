@@ -547,3 +547,4 @@
 - **D401** 删除工作区不真删：文件夹移到数据目录的 `trash/workspaces/`，钥匙串条目删除；当前的或正被别的连接使用的不能删（`conflict/inUse`）。
 - **D402** `legacyKinds` 的一项可以是字符串（第一版短名与本插件的类型同名，如 `"link"` → `<插件id>:link`）或对象 `{ "name": "<第一版短名>", "kind": "<本插件的类型名>" }`（如 HTTP：`{ "name": "http-request", "kind": "request" }` → `org.onedesk.http:request`）；对象里的 `kind` 必须是本插件声明的类型，否则清单无效。认领时调用的 `upgrade` 是目标类型的。
 - **D403** 用户决定（2026-11-18）：第一版旧库里没有可用数据，**不做第一版旧库升级**。取代 D383、D398、D399、D402，并修改 D397：清单字段 `legacyKinds` 去掉（内核解析、插件详情、内置插件清单、相关测试）；主进程不移动、不备份、也不读 `onedesk.db`，数据目录里有它就原样留着；`kernel-design.md` §3.1 里旧库移入与 `legacyKinds` 的两句、`dev-plan.md` 阶段 1 验收里的“第一版旧库升级不丢数据”作废。空出的量把多窗口并入第十三轮（一个窗口同一时间只属于一个工作区，同一工作区可在多个窗口；窗口位置记在该工作区的 `workspace.json`；浏览器下“新窗口”是新开一个标签页连接）。
+- **D404** 主进程仍然不打开工作区数据库（§2.1、D228）。多工作区里 `workspace.json` 缺失时，id 等那个工作区的工作进程打开库、重写 `workspace.json` 后再读回；删除工作区时，钥匙串条目按账户前缀 `<工作区 id>/` 删除，不读 `secret_names`。主进程依赖 `onedesk-kernel` 只为共用密钥库（`SecretStoreHandle`）和时间戳，不用其数据库部分；不依赖 `rusqlite`。
