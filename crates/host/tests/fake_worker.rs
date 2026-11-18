@@ -51,7 +51,17 @@ async fn main() {
             let ok = |result: Value| tx.send(json!({ "id": id, "result": result }).to_string()).ok();
             match req["method"].as_str().unwrap_or("") {
                 "hello" => {
+                    // Like the kernel opening a workspace: it rewrites workspace.json without what is not its own.
+                    let file = std::path::Path::new(&workspace).join("workspace.json");
+                    if let Some(mut info) = std::fs::read(&file).ok().and_then(|b| serde_json::from_slice::<Value>(&b).ok()) {
+                        info.as_object_mut().map(|o| o.remove("window"));
+                        let _ = std::fs::write(&file, serde_json::to_vec(&info).unwrap());
+                    }
                     ok(json!({ "protocol": "1", "workspace": { "id": "ws-fake", "name": "Fake" } }));
+                }
+                "workspace.settingsSnapshot" if !req["client"].is_null() => {
+                    // Like the kernel: only the main process itself may ask (a request that carries a client is refused).
+                    tx.send(json!({ "id": id, "error": { "code": "denied", "params": { "reason": "mainProcessOnly" } } }).to_string()).ok();
                 }
                 "workspace.settingsSnapshot" => {
                     // The settings the kernel would hand over; the folder name shows which workspace answered.
