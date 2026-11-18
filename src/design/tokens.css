@@ -161,6 +161,7 @@
   --list-max-height: 320px;
   --search-box-width: 420px;
   --grid-rownum-width: 48px;
+  --grid-action-width: 32px;
   --code-gutter-width: 48px;
   --code-tab-size: 2;
   --drag-ghost-offset: 14px;

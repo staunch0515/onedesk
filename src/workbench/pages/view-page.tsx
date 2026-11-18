@@ -132,7 +132,7 @@ function blockedByProtection(descriptor: PageDescriptor, action: ActionDecl): bo
  */
 export function ViewPage({ tab, descriptor: initial }: { tab: TabState; descriptor: PageDescriptor }) {
   const { client, store, actions } = useWorkbench();
-  const { t, tx } = useI18n();
+  const { t, tx, locale } = useI18n();
   const { toast } = useToast();
   const draft = useUi((s) => s.drafts[tab.id]) ?? EMPTY;
   const [descriptor, setDescriptor] = useState(initial);
@@ -143,6 +143,14 @@ export function ViewPage({ tab, descriptor: initial }: { tab: TabState; descript
   const isRunning = running.data?.status === "running";
 
   useEffect(() => setDescriptor(initial), [initial]);
+
+  // The plugin resolves its own words (title, intro, labels) in the interface language, so a language change means asking for the page again.
+  const seenLocale = useRef(locale);
+  useEffect(() => {
+    if (seenLocale.current === locale) return;
+    seenLocale.current = locale;
+    actions.updateTab(tab.id, { reload: (store.get().tabs.find((x) => x.id === tab.id)?.reload ?? 0) + 1 });
+  }, [locale, tab.id, actions, store]);
 
   // The saved values changed elsewhere (another client, a plugin) while this page was open (§9.3, D374): fields not typed
   // here just show the new value; a field typed here that was changed to something else asks the user (bar below).
@@ -278,7 +286,7 @@ export function ViewPage({ tab, descriptor: initial }: { tab: TabState; descript
     }
   };
   /** A row button of a table (round 12): the page event goes out with the row's index; the plugin's answer is applied like any page event. */
-  const rowEvent = async (event: string, row: number) => {
+  const rowEvent = async (event: string, row: string) => {
     const now = latest.current;
     const context = { envId: now.tab.envId, draft: typedAll({ ...now.descriptor.values, ...now.draft }), params: pageParams(now.tab.params), row };
     try {

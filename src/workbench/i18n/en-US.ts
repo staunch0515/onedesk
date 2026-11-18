@@ -650,6 +650,7 @@ export const enUS = {
   "kernel.error.reason.blockedByPolicy": "A workspace or environment setting (network.allow for addresses, process.allow for programs) does not allow this.",
   "kernel.error.reason.undeclaredProgram": "The plugin did not declare that program in its manifest.",
   "kernel.error.reason.notInRun": "Programs can only be run and files transferred while an action is running, not while rendering or handling events.",
+  "kernel.error.reason.inDrop": "A plugin is handling a drop right now; it may only change the item it was dropped on.",
   "kernel.error.reason.badDropAnswer": "The plugin answered a drop in a form the kernel does not understand; nothing was moved.",
   "kernel.error.reason.notExported": "The plugin that owns {export} does not offer it to other plugins, so this cannot be created.",
   "kernel.error.reason.notExecutable": "That program file is not executable.",

@@ -14,11 +14,12 @@ export function kernelLikeClient(mock: ProtocolClient, overrides: Partial<Protoc
 }
 
 /** Renders `ui` inside the same providers the app uses. `rerender` shows other content in the same providers (state is kept). */
-export function renderInShell(client: ProtocolClient, ui: ReactNode, locale: string = "en-US"): { store: Store; rerender: (ui: ReactNode) => void } {
+export function renderInShell(client: ProtocolClient, ui: ReactNode, locale: string = "en-US"): { store: Store; rerender: (ui: ReactNode, locale?: string) => void } {
   const store = createStore(null, () => undefined);
+  let current = locale;
   const wrap = (content: ReactNode) => (
     <ProtocolProvider client={client}>
-      <I18nProvider locale={locale} texts={DEMO_LANGUAGES.find((l) => l.locale === locale)?.texts}>
+      <I18nProvider locale={current} texts={DEMO_LANGUAGES.find((l) => l.locale === current)?.texts}>
         <ToastProvider closeLabel="Close" viewportLabel="Notifications" duration={1000} onToast={noticeKeeper(store)}>
           <WorkbenchProvider store={store}>{content}</WorkbenchProvider>
         </ToastProvider>
@@ -26,5 +27,9 @@ export function renderInShell(client: ProtocolClient, ui: ReactNode, locale: str
     </ProtocolProvider>
   );
   const view = render(wrap(ui));
-  return { store, rerender: (next) => view.rerender(wrap(next)) };
+  return { store, rerender: (next, nextLocale) => {
+      if (nextLocale) current = nextLocale;
+      view.rerender(wrap(next));
+    },
+  };
 }

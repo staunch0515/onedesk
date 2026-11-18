@@ -136,6 +136,7 @@ export const KERNEL_ERRORS: Table = {
   "reason.foreignKind": "kernel.error.reason.foreignKind",
   "reason.notRequested": "kernel.error.reason.notRequested",
   "reason.badDropAnswer": "kernel.error.reason.badDropAnswer",
+  "reason.inDrop": "kernel.error.reason.inDrop",
   "reason.outsideGrant": "kernel.error.reason.outsideGrant",
   "reason.undeclaredSetting": "kernel.error.reason.undeclaredSetting",
   "reason.threw": "kernel.error.reason.threw",

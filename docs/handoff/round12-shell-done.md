@@ -48,3 +48,11 @@
 4. 综合页打开着时删除被引用的资源，页面表格没有刷新（仍显示已删的行），重新打开才对；没查是外壳缓存还是内核没推事件——未定位。
 
 **没做/没验证**：拖到综合节点的**前/后**（普通规则）没在真内核上走；集合页的“至少填一项条件”文字；`resourcesAll` 在安装确认对话框里的实际画面（只核对了协议返回，对话框文字由单元测试覆盖）；中文、日文界面。
+
+## 审查后的修改（合并 `claude/onedesk-coord-4-3ac9ba` 之后）
+- **#1 行动作（D393）**：外壳自定的 `RowAction{event}` / `TableViewNode` 删掉，改用生成的 `TableRowAction {id,label,icon?}`；点按钮发页面事件 `id`，`context.row` = `rowKeys[行]`，没有 `rowKeys` 时是行号文字；点行按 `rowTargets`（可为 `null`，null 的行不打开）。测试：`round12.test.tsx`（按 rowKeys 回调、无 rowKeys 回行号文字、null 目标不开、按钮点击不触发打开行）。
+- **#5 locale**：`tree.move` 带当前语言（`real-client`、`mixed-client`、`side-panel`），测试断言 move 调用带语言串。
+- **#10 列宽**：行按钮列不再写像素：`DataGridColumn.actionCount`，宽度由网格按按钮数 × token `--grid-action-width`（32px，新增于 `tokens.css`）算出。
+- **原因码 `inDrop`**：`kernel-texts.ts` 映射 + `en-US.ts` 键 `kernel.error.reason.inDrop`，`kernel-texts.test.ts` 列表补上（`badDropAnswer` 之前已有）。语言插件要补 `kernel.error.reason.inDrop`（及 `badDropAnswer` 等，见 lang-check 输出）。
+- **第十一轮遗留：语言切换后页面文字不变**：`view-page.tsx` 在界面语言变化时把标签的 `reload` +1，重新取页面。测试 `pages/view-page-language.test.tsx`（`renderInShell` 的 `rerender` 新增可选语言参数）。**已对着真内核验证**：把 `e2e/round11.spec.ts` 的 `test.fixme` 临时改成 `test` 跑（不入库），欢迎页中、日、英切换通过——测试会话可以去掉 fixme。
+- 结果：typecheck、lint 通过；`pnpm test` 仅 `lang-check` 4 条失败（等译文）；`workbench.spec.ts` 23 通过、截图未变。
