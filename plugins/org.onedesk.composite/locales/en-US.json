@@ -10,5 +10,10 @@
   "col.name": "Name",
   "col.kind": "Type",
   "message.added": "Added {n} item(s)",
-  "message.removed": "Removed from this composite"
+  "message.removed": "Removed from this composite",
+  "action.up": "Move up",
+  "action.down": "Move down",
+  "action.remove": "Remove",
+  "field.item": "Item",
+  "message.pick": "Pick an item first."
 }

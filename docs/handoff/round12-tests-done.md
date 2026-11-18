@@ -38,3 +38,31 @@
 - 两个新插件和 http 的新页面在真内核、真界面里的样子（拖放、展开、图标、行按钮、保存草稿）。
 - `requires.resources` 进安装确认与指纹、`resourcesAll` 权限文字（内核和外壳的活）。
 - 本轮内核/外壳合并后的集成：留给第二阶段 `e2e/round12.spec.ts`。
+
+
+# 第二阶段（`e2e/round12.spec.ts` 连真内核）
+
+## 结果
+- `E2E_PORT=1437 pnpm exec playwright test e2e/round12.spec.ts`：**27 通过、0 跳过、0 fixme**（连真内核；devhost 用内存密钥库和临时目录）。（协调会话说 1436 端口；我这边被一次中断的运行占着，换了 1437，无影响。）
+- `pnpm lint` 通过；`pnpm typecheck` 通过（修了 spec 里一处类型）；`vitest run plugins`：291 通过、4 失败——都是 `plugins/_testing/lang-check.test.ts`，即协调会话说的“`en-US.ts` 新键两个语言插件还没补”，**按指示没动**，等第十一轮 `kernel.*` 补完合并后再补本轮的 `permission.resourcesAll` 等键（中文：读取本工作区所有内容的名称、类型和位置（不含正文））。
+- 截图 `docs/screenshots/round12-*.png` 留在工作树里未提交（`git checkout -- docs/screenshots` 已执行，不影响已跟踪文件）。
+
+## 覆盖
+- 综合（协议）：`dropAny` 在综合节点上、笔记没有；移动笔记/网址到综合 → `handled`、提示“Added 1 item(s)”、父节点不变、`items` 增加；重复拖不重复（提示 0 项）；审计 `tree.drop`（来源 plugin、目标名称、摘要含 sources）；`children` 带 `target` 的节点；被引用资源删除后节点“(no longer exists)”、无 target，还原后恢复；综合拖进综合是真移动；嵌套综合里再放引用。
+- 综合（页面按钮）：`page.event` 的上移/下移/移除，移除不删资源；没选时提示。
+- 综合（界面）：合成指针拖放后出现提示、展开看到引用、点开是原笔记；综合页的列表与“Item”下拉 + 上移/移除按钮。
+- 集合：按类型、标签（都含有）、文字、组合；新建符合条件的资源后重新展开出现、改标签后消失；三项都空不列节点且页面提示；页面总数与结果表；230 条分 200 + 30 两批（这条放在最后，免得 230 条笔记把别的条目挤出虚拟滚动的树）。
+- 权限：`app.inspectPlugin` 对 peek 列出 `resourcesAll`（detail 为空）、nopeek 没有；`plugin.get` 里综合插件含 `resourcesAll`；`search` 结果没有 `body`/说明、`limit`/`next`/`total`、`ids`（不存在的不出现、已删除的标 `deleted`）；没声明的夹具 → `denied/notRequested`。
+- HTTP：GET/POST/PUT/PATCH/DELETE 都到达服务器，GET 不带正文；查询参数拼接与编码；请求头；JSON 排版；状态页签（状态码+文字、耗时、大小）与响应头表；HEAD 无正文；404 仍是成功的运行并显示 404 Not Found；非本机地址 → `denied`；空地址 → 明确错误；页面上点“Send”后看到结果。
+
+## 这一阶段改了什么（相对第一阶段）
+- **综合页的按钮做法变了**：第一阶段按“行事件 `remove:<id>`”写，对真内核不成立——内核只放行改“页面上绑定了的字段”的 `changes`，而且表格视图节点没有行内动作。改成：页面里一个参数下拉“Item”（`param: true` 的枚举）选条目，页面动作“Move up / Move down / Remove”（`role: event`）经 `ctx.host.resources.update` 直接写 `body.items`。
+- `e2e/fixtures/plugins/com.example.peek`（声明 `requires.resources`）、`com.example.nopeek`（没声明）；`e2e/fixtures/transfer-server.mjs` 加了 `/echo`。
+- 重建了 `target/debug/onedesk-worker`（devhost 用的是它，不是 devhost 里的内核；旧二进制不认 `drop`/`legacyKinds`）。
+
+## 发现的、需要别人决定的问题（没有 fixme，因为不影响通过）
+1. **外壳的 `rowActions` / `context.row` 与内核不通**：外壳（`round12-shell-done.md` §5）自定了表格节点的 `rowActions` 和事件上下文 `row`，但内核的 `ViewNode::Table`（`deny_unknown_fields`）没有 `rowActions`，`PageContext` 也没有 `row`；插件一返回 `rowActions` 内核就拒绝。要么内核只增这两个字段（并记入 decisions.md），要么外壳删掉。在那之前，行内按钮没有可用路径，综合页用上面的“下拉 + 页面按钮”。
+2. 自供子节点没有“状态”字段，失效节点只能靠名称“(no longer exists)”、`unlink` 图标和没有 `target` 表达；外壳里 `state: "broken"` 的样式对它不起作用。
+3. `run.get` 的状态是 `success`/`error`（不是 `done`/`failed`）。
+4. 审计里 `tree.drop` 的 `target` 是资源名称，不是 id。
+5. 第一阶段假设 3（`items` 数组可写、可存、可默认）在真内核里成立；假设 5（`message` 为纯字符串）成立（返回 `Added N item(s)`，内核按 Label 原样给出）。

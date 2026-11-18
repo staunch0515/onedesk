@@ -8,6 +8,8 @@
 //   PUT|POST /sink[/name]  reads the whole body, remembers the byte count, answers 200 {"name","bytes"} (text)
 //   GET  /received         JSON list of what the sink got: [{ name, method, bytes, headers }]
 //   POST /reset            forgets the sink records
+//   ANY  /echo[/…]         answers 200 compact JSON {method, path, query, headers, body}: the query as an object (repeated names -> array),
+//                          all request headers (lower-case names), the body as text. Header `x-echo: yes`. HEAD gets the same headers, no body.
 // Used as a module too: `startServer({ port?, host? })` resolves to { port, url, received, close }.
 import { createServer } from "node:http";
 import { fileURLToPath } from "node:url";
@@ -92,6 +94,20 @@ export function startServer({ port = 0, host = HOST } = {}) {
         for (const k of ["content-type", "content-length", "authorization", "x-test"]) if (req.headers[k] !== undefined) headers[k] = req.headers[k];
         received.push({ name, method: req.method, bytes, headers });
         send(res, 200, JSON.stringify({ name, bytes }), "application/json");
+      });
+      req.on("error", () => res.destroy());
+      return;
+    }
+
+    if (head === "echo") {
+      const chunks = [];
+      req.on("data", (d) => chunks.push(d));
+      req.on("end", () => {
+        const query = {};
+        for (const [k, v] of url.searchParams) query[k] = k in query ? [].concat(query[k], v) : v;
+        const text = JSON.stringify({ method: req.method, path: url.pathname, query, headers: req.headers, body: Buffer.concat(chunks).toString("utf8") });
+        res.writeHead(200, { "content-type": "application/json", "content-length": Buffer.byteLength(text), "x-echo": "yes" });
+        res.end(req.method === "HEAD" ? undefined : text);
       });
       req.on("error", () => res.destroy());
       return;

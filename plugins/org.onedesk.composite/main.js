@@ -46,7 +46,6 @@ export function move(items, id, delta) {
 }
 
 export function currentItems(ctx) {
-  if (ctx.draft && Array.isArray(ctx.draft["body.items"])) return itemsOf(ctx.draft["body.items"]);
   return itemsOf(ctx.resource && ctx.resource.body && ctx.resource.body.items);
 }
 
@@ -91,8 +90,13 @@ export default {
           const info = found.get(id);
           return info ? [info.icon, info.name, info.kindLabel || info.kind] : ["unlink", tr(ctx, "node.missing"), ""];
         });
+        const picked = ctx.params && ctx.params.item;
+        const options = items.map((id, i) => ({ value: id, label: `${i + 1}. ${found.has(id) ? found.get(id).name : tr(ctx, "node.missing")}` }));
+        const field = { name: "item", label: tr(ctx, "field.item"), kind: "enum", param: true, options };
+        if (picked && items.includes(picked)) field.envValue = picked;
         return {
           view: [
+            { type: "form", id: "pick", layout: "strip", fields: [field] },
             {
               type: "table",
               id: "items",
@@ -108,17 +112,16 @@ export default {
         };
       },
 
-      // Row events are named `<verb>:<resource id>`; the new list is a change to the unsaved draft.
+      // Page buttons act on the item chosen in the "item" parameter. They write through the host at once
+      // (a page event may only change bound fields, and the list is not one); removing never deletes the resource.
       async onEvent(ctx, event) {
-        const i = String(event).indexOf(":");
-        const verb = i < 0 ? String(event) : String(event).slice(0, i);
-        const id = i < 0 ? "" : String(event).slice(i + 1);
+        if (event !== "remove" && event !== "up" && event !== "down") throw new Error(`unknown event ${event}`);
         const items = currentItems(ctx);
-        if (!items.includes(id)) throw new Error(`unknown item ${id}`);
-        if (verb === "remove") return { changes: { "body.items": items.filter((x) => x !== id) }, message: tr(ctx, "message.removed") };
-        if (verb === "up") return { changes: { "body.items": move(items, id, -1) } };
-        if (verb === "down") return { changes: { "body.items": move(items, id, 1) } };
-        throw new Error(`unknown event ${event}`);
+        const id = ctx.params && ctx.params.item;
+        if (!id || !items.includes(id)) return { message: tr(ctx, "message.pick") };
+        const next = event === "remove" ? items.filter((x) => x !== id) : move(items, id, event === "up" ? -1 : 1);
+        await ctx.host.resources.update(ctx.resource.id, { "body.items": next });
+        return event === "remove" ? { message: tr(ctx, "message.removed"), params: { item: "" } } : {};
       },
     });
   },
