@@ -76,7 +76,9 @@ function build(locale: Locale, texts?: Record<string, string>): I18n {
       const reason = known?.params.reason;
       const what = known?.params.what;
       const pick = (table: Record<string, MessageKey>): MessageKey | undefined => (known && reason ? (table[`${known.code}.${reason}`] ?? table[`reason.${reason}`] ?? KERNEL_LABELS[reason]) : undefined) ?? (known && what ? table[`${known.code}.${what}`] : undefined) ?? (known ? table[known.code] : undefined);
-      const key = known && pick(KERNEL_ERRORS);
+      // A refusal that names the layer which forbids ("reason|layerName") says which one to change.
+      const named = known && reason && known.params.layerName ? KERNEL_ERRORS[`reason.${reason}|layerName`] : undefined;
+      const key = named ?? (known && pick(KERNEL_ERRORS));
       if (known && key) return t(key, known.params);
       return error instanceof Error ? error.message : String(error);
     },

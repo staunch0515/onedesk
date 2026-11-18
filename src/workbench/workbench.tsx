@@ -15,6 +15,7 @@ import { TaskPanel } from "./parts/task-panel";
 import { TopBarPart } from "./parts/top-bar";
 import { useResize } from "./parts/hooks";
 import { useQuery, useUi, useWorkbench } from "./state/context";
+import { isSelfNamed, tabFieldsFromPage } from "./state/tab-fields";
 
 export interface WorkbenchProps {
   settings: Settings;
@@ -70,8 +71,8 @@ export function Workbench({ settings, languages, onSetting: storeSetting }: Work
   // Restored tabs get their name and icon without having to be activated first.
   useEffect(() => {
     for (const tab of store.get().tabs) {
-      if (tab.title) continue;
-      client.page.resolve(tab.target, { envId: tab.envId }).then((d) => actions.updateTab(tab.id, { title: d.title, icon: d.icon, usesEnv: d.usesEnv, missing: !d.found }), () => undefined);
+      if (tab.title || isSelfNamed(tab.target)) continue;
+      client.page.resolve(tab.target, { envId: tab.envId, locale }).then((d) => actions.updateTab(tab.id, tabFieldsFromPage(d)), () => undefined);
     }
   }, [client, store, actions, tabs.length]);
 
@@ -82,8 +83,11 @@ export function Workbench({ settings, languages, onSetting: storeSetting }: Work
     firstLocale.current = locale;
     for (const tab of store.get().tabs) {
       if (tab.id === store.get().activeTabId) continue;
-      client.page.resolve(tab.target, { envId: tab.envId }).then((d) => actions.updateTab(tab.id, { title: d.title, icon: d.icon, missing: !d.found }), () => undefined);
+      // The secrets page names itself; the plugin page too (it shows the plugin's name): they are not asked.
+      if (tab.target === SECRETS_TARGET) actions.updateTab(tab.id, { title: t("secrets.title") });
+      else if (!isSelfNamed(tab.target)) client.page.resolve(tab.target, { envId: tab.envId, locale }).then((d) => actions.updateTab(tab.id, tabFieldsFromPage(d)), () => undefined);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [client, store, actions, locale]);
 
   // Tabs in the background follow renames and deletions of their resource.
@@ -94,11 +98,11 @@ export function Workbench({ settings, languages, onSetting: storeSetting }: Work
       client.events.subscribe(target, () => {
         const tab = store.get().tabs.find((x) => x.target === target);
         if (!tab || tab.id === store.get().activeTabId) return;
-        client.page.resolve(target, { envId: tab.envId }).then((d) => actions.updateTab(tab.id, { title: d.title, icon: d.icon, missing: !d.found }), () => undefined);
+        client.page.resolve(target, { envId: tab.envId, locale }).then((d) => actions.updateTab(tab.id, tabFieldsFromPage(d)), () => undefined);
       }),
     );
     return () => offs.forEach((off) => off());
-  }, [client, store, actions, resourceTargets]);
+  }, [client, store, actions, resourceTargets, locale]);
 
   // Global shortcuts (ui-spec §6).
   useEffect(() => {

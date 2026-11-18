@@ -182,6 +182,8 @@ export const KERNEL_ERRORS: Table = {
   "reason.changedSinceInspect": "kernel.error.reason.changedSinceInspect",
   "reason.readonly": "kernel.error.reason.readonly",
   "reason.noExport": "kernel.error.reason.noExport",
+  "reason.readonly|layerName": "kernel.error.reason.readonly|layerName",
+  "reason.noExport|layerName": "kernel.error.reason.noExport|layerName",
   "reason.notExport": "kernel.error.reason.notExport",
   "reason.badVersion": "kernel.error.reason.badVersion",
   "reason.unreadable": "kernel.error.reason.unreadable",
