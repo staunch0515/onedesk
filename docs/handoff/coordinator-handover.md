@@ -5,7 +5,7 @@
 ## 0. 最新（第四个协调会话，2026-11-18）
 
 - 第十一、十二轮已验收、完整检查通过，合并到 main 并推送（`6b7890c`）。记录：`round11-acceptance.md`、`round12-acceptance.md`。
-- 第十三轮（旧库升级 + 多工作区；D397–D401）的计划与三份任务书已写好：`round13-plan.md`、`round13-kernel.md`、`round13-shell.md`、`round13-tests.md`。**还没开会话**：要在用户发消息的回合里一次开三个（内核 Opus、外壳 Sonnet、插件与测试 Sonnet），工作树从协调分支 `claude/onedesk-coord-4-3ac9ba` 切出。
+- 第十三轮（旧库升级 + 多工作区；D397–D401）的计划与三份任务书已写好：`round13-plan.md`、`round13-kernel.md`、`round13-shell.md`、`round13-tests.md`。已开三个会话（2026-11-18，从协调分支 `claude/onedesk-coord-4-3ac9ba` 切出）：`r13-kernel`（`local_2a6d18a4-2a50-4555-809a-bde6c073ef6f`）、`r13-shell`（`local_bb780405-d340-40c4-a40b-5537147e835e`）、`r13-tests`（`local_a1a7a415-6376-443c-96e8-bbc3a9f252f2`）。
 - 下面 §1 是第三个协调会话交接时的状态，已过时，只作背景。
 
 ## 1. 现在的位置（2026-11-18，第三个协调会话交给第四个）
