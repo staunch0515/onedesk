@@ -5,10 +5,13 @@
 ## 做了什么
 
 **主进程（`crates/host`）**
-- `data_dir.rs::move_legacy_db`：数据目录只有 `onedesk.db`、且 `workspaces/` 下没有任何含 `workspace.db` 的文件夹时，先把 `onedesk.db`（及 `-wal`、`-shm`）**复制**到 `workspaces/default/backups/v1-onedesk.db`（同样的后缀），再把原文件**移动**为 `workspace.db`（及 `-wal`、`-shm`）。复制失败不移动；移动中途失败把已移动的放回。失败时 `Host::start` 返回 `HostError("legacyMoveFailed: …")`，不启动工作进程。已有带数据库的工作区时不碰 `onedesk.db`。
+- **D403：不做第一版旧库升级。** 先前写的“移动并备份 `onedesk.db`”（`move_legacy_db`、`legacyMoveFailed`）及界面上的升级失败/未认领类型显示已全部删除；数据目录里有 `onedesk.db` 也完全不碰（有测试：`a_first_version_onedesk_db_is_not_touched`）。这些提交（f413e33、3dab0b9）里的相应部分已被后面的提交撤回。
+- **多窗口（D403）**：`Host::bind_client(client, workspaceId)`（新窗口/新标签绑定到某工作区，不改变其他连接的默认）、`unbind_client(client)`（窗口关闭：没有别的连接/默认在用就停掉那个工作区的工作进程）、`window_bounds` / `set_window_bounds`（逻辑像素 `{x,y,width,height}`，存在该工作区 `workspace.json` 的 `window` 字段；内核每次打开工作区会重写 `workspace.json`，所以主进程在工作进程启动后把 `window` 写回）。
+- 桌面：Tauri 命令 `open_window { workspace }` 建 `win-N` 窗口（先绑定再建窗，首个 `hello` 就属于该工作区），位置大小取自该工作区的 `window`（偏移 24 像素），没有就 1440×900；窗口 `CloseRequested` 时记位置大小，`Destroyed` 时 `unbind_client`；主窗口启动时按默认工作区的 `window` 恢复位置。`capabilities/default.json` 的 windows 增加 `win-*`。
+- 浏览器/devhost：WebSocket 地址参数 `workspace=<id>`，握手后绑定，断开时解绑。外壳“新窗口”= `window.open(当前地址 + workspace=<id>, noopener)`（noopener 使新标签有新的 client id）；该标签里切换工作区时外壳把 `workspace` 参数从地址里去掉再重新载入。
 - 多工作区：`Host` 现在是“每个有连接在用的工作区一个工作进程”（`Slot`：自己的连接、重启监视、重启计数）。每个连接（`client`）绑定一个工作区文件夹；没有绑定的连接用“当前默认”（启动时是 `lastOpened` 最近的那个，之后是最后一次切换到的）。请求转给连接所绑定工作区的工作进程；`hello` 返回那个工作进程的 hello。
 - 事件：内部事件带工作区（`HostEvent { workspace, event }`，`Deref` 到 `EventMessage`）。`Host::visible_to(&ev, client)`：事件只发给绑定在该工作区的连接，`workspace: None` 的（`app.workspacesChanged`）发给所有人。`ws.rs`（devhost）与 `src-tauri/src/lib.rs` 都用它。`Host::events()` 的返回类型因此变成 `Receiver<HostEvent>`。
-- 工作进程启动失败时，把它 stderr 的最后约 2000 字节拼进错误（例如内核的 `legacyUpgradeFailed …`），外壳据此显示原因。
+- 工作进程启动失败时，把它 stderr 的最后约 2000 字节拼进错误（例如打不开数据库的原因）。
 - 新增 `workspaces.rs`：扫描、`workspace.json` 读写、建、移到 trash、读密钥名字。
 - 新依赖：`crates/host` 依赖 `onedesk-kernel`（只用 `secrets::SecretStoreHandle` 与 `workspace::stamp`）和 `rusqlite`（只读打开待删工作区的库读 `meta.workspace_id` 与 `secret_names`）。两者都已是工作区内依赖/已在 decisions 的白名单里，没有新的第三方包；**请协调会话在 decisions.md 补一行**（规则 9）。
 - `HostConfig` 增加 `secrets: Option<SecretStoreHandle>`（`None` = 按环境：钥匙串或 `ONEDESK_SECRET_STORE=memory`）。测试一律传内存库。
@@ -17,7 +20,7 @@
 - 标题栏工作区菜单：列出全部（当前的打勾，点别的就切换并整页重新载入）、“New workspace…”、“Manage workspaces…”；“新窗口”仍隐藏。
 - 对话框（`parts/workspace-dialogs.tsx`）：新建、改名（1–100 字符，空/过长即时提示）、管理列表（名称、文件夹、改名、删除，当前的删除按钮禁用）、删除确认（写明移到数据目录的 trash 文件夹、钥匙串条目一并删除）。`workspacesChanged` 时标题栏、状态栏、管理列表刷新。
 - `ProtocolClient.workspace` 增加 `create / switchTo / rename / remove`，`list` 现在返回 `WorkspaceEntry { id, name, folder?, lastOpened?, current }`；真实客户端调 `app.*`，混合客户端委托给内核客户端，假数据客户端有 2 个工作区的演示（电商数据 Shop Data、个人 Personal；状态存 localStorage，`?reset` 回到初始）。
-- 升级失败与未认领类型：启动失败文字里含 `legacyMoveFailed` / `legacyUpgradeFailed` 时用各自的说明（`startup.legacyMoveFailed`、`startup.legacyUpgradeFailed`）。树节点 `state` 为 `"unknownKind"`（内核若用它）或沿用已有的 `missing-plugin` 时，显示为“没有插件处理的类型”（`tree.unknownKind`）。
+- 标题栏菜单“Open a workspace in a new window…”打开管理列表，每行有“在新窗口中打开”按钮（`client.workspace.openWindow(id)`）。
 
 ## 主进程方法与事件的确切形状
 
@@ -34,20 +37,22 @@
 ## 文件夹命名与 trash 规则
 
 - 文件夹由名称生成：字母数字（含中日文）保留并转小写，空白/`-`/`_`/`.` 变成单个 `-`，其余丢弃，最多 40 字符，空则 `workspace`；已存在则加 `-2`、`-3`…。`workspace.json` 的 id 是 32 位随机十六进制（与内核同形），不等于文件夹名。
-- 一个文件夹算工作区：含 `workspace.json` 或 `workspace.db`。没有可读 `workspace.json` 的（例如刚移过来的旧库）由主进程补写：id 取库里的 `meta.workspace_id`，没有就新生成，名称取文件夹名（`default` 例外：新装与旧库升级的默认工作区都叫 `Default`）。
+- 一个文件夹算工作区：含 `workspace.json` 或 `workspace.db`。没有可读 `workspace.json` 的（例如刚移过来的旧库）由主进程补写：id 取库里的 `meta.workspace_id`，没有就新生成，名称取文件夹名（新装时主进程自己建的默认工作区叫 `Default`）。
 - 删除：先读库里的 `secret_names` 和 `meta.workspace_id`，把文件夹移到 `<数据目录>/trash/workspaces/<文件夹>-<YYYY-MM-DD-HHMMSS>`（UTC，重名加 `-2`），再删钥匙串账户 `<工作区id>/<名字>`；钥匙串删除失败只记日志。不会自动清空 trash。
 - 新建：`workspace.json` + 工作进程回答的 `workspace.settingsSnapshot` 写成 `init-settings.json`（内容原样，主进程不解释）。内核没有该方法（`unknownMethod`）时建空工作区、不写 `init-settings.json`。
 
 ## 测试结果
 
-- `cargo test -p onedesk-host`：单元 35 + 集成 31，全过（新增：备份移动、已有 workspaces 不动、移动/备份失败不删、五个方法、占用中被拒、删除移到 trash 并删内存钥匙串里的条目、事件按工作区过滤、WebSocket 上的事件、worker 启动失败带最后几行）。
+- `cargo test -p onedesk-host`：单元 31 + 集成 34，全过（含多窗口：绑定/解绑、最后一个窗口关闭停工作进程、占用中不能删、窗口位置保存、浏览器标签 `workspace` 参数；`onedesk.db` 不被碰）。
+- `cargo clippy -p onedesk-host -p onedesk --all-targets -D warnings`（含 `src-tauri`）通过。
+- 假数据模式 `e2e/workbench.spec.ts`：23 过、1 跳过（原本就跳过的 review shots），截图基准没改。
 - 对着真内核走了一遍（临时目录、内存密钥库，`/private/tmp/claude-501/smoke.mjs`，不在仓库里）：devhost → `app.workspaces` → 新建 → 切换（`workspace.info` 变成新工作区）→ 删除当前的被拒 → 改名 → 切回 → 删除，文件夹进了 `trash/workspaces/second-…`，事件 3 次。**当时内核还没有 `workspace.settingsSnapshot`，所以新建时没有 `init-settings.json`；内核合并后要再走一遍。**
 - `pnpm typecheck`、`pnpm lint` 通过。`pnpm test`：574 过、4 失败，**4 个都是 `plugins/_testing/lang-check.test.ts`（中日各两条：键必须等于 en-US、不得为空）**——因为我只加了英语文字（按任务书），中日由测试会话补。其余全过（含新增的 `workspace-dialogs.test.tsx`）。
-- 假数据模式 `e2e/workbench.spec.ts`、clippy：见本文件末尾“收尾结果”。
+
 
 ## 新增文字键（只加了 en-US）
 
-`topbar.manageWorkspaces`、`workspace.name`、`workspace.nameEmpty`、`workspace.nameTooLong`、`workspace.folder`、`workspace.current`、`workspace.newTitle`、`workspace.create`、`workspace.renameTitle`、`workspace.rename`、`workspace.renameAction`、`workspace.deleteAction`、`workspace.deleteTitle`、`workspace.deleteBody`、`workspace.delete`、`workspace.manageTitle`、`workspace.manageBody`、`kernel.error.conflict.inUse`、`tree.unknownKind`、`startup.legacyMoveFailed`、`startup.legacyUpgradeFailed`、`kernel.label.legacyClaimFailed`、`kernel.error.reason.legacyUpgradeFailed`。`kernel-texts.ts` 加了 `conflict.inUse`、`reason.legacyUpgradeFailed`、`legacyClaimFailed` 三个映射。
+`topbar.manageWorkspaces`、`workspace.name`、`workspace.nameEmpty`、`workspace.nameTooLong`、`workspace.folder`、`workspace.current`、`workspace.newTitle`、`workspace.create`、`workspace.renameTitle`、`workspace.rename`、`workspace.renameAction`、`workspace.deleteAction`、`workspace.deleteTitle`、`workspace.deleteBody`、`workspace.delete`、`workspace.manageTitle`、`workspace.manageBody`、`kernel.error.conflict.inUse`、`workspace.openWindowAction`（`topbar.openInNewWindow` 早已存在，现在启用）。`kernel-texts.ts` 加了 `conflict.inUse` 映射。
 
 ## 我做的决定
 
@@ -63,6 +68,6 @@
 - **桌面窗口（Tauri）里没有看到**：没有启动 `pnpm start`；`src-tauri` 只做了编译与 clippy 检查，事件按窗口过滤的改动没有在真窗口里运行过。
 - 切换后的“整页重新载入”靠 `window.location.reload()`，在真窗口里没试；浏览器里的 devhost 方式没有用 Playwright 点过（`e2e/round13.spec.ts` 是测试会话的）。
 - 重复 id 的工作区文件夹（手动拷贝）没有处理（设计 3.1 说后发现的赋新 id）。
-- 第一版旧库升级的内核部分（转换、认领）不在我的范围，用真旧库走通要等内核合并；主进程这一半只测了字节搬运。
-- 窗口位置、多窗口、“新窗口”菜单项：按 D397 留到下一轮。
+- **多窗口在桌面里没有运行过**：`open_window`、窗口事件、位置恢复、按窗口过滤事件只做了编译和 clippy；主进程的绑定/解绑/位置保存和浏览器标签的绑定有测试。浏览器标签的“新窗口”没有用 Playwright 点过。
+- 浏览器标签的 WebSocket 断线重连时，只有带 `workspace` 参数的标签能回到原工作区，切换过的标签会回到默认工作区。
 - 在 `docs/decisions.md` 里补记 host 对 `onedesk-kernel`/`rusqlite` 的依赖，需协调会话做（我无权改该文件）。
