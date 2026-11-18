@@ -29,6 +29,14 @@ describe("kernel texts", () => {
     for (const code of codes) expect(KERNEL_ERRORS["en-US"][code], code).toBeTruthy();
   });
 
+  it("has words for every workspace/environment parameter name the kernel declares (config tree labels)", async () => {
+    const { readFileSync } = await import("node:fs");
+    const names = ["policy.rs", "network.rs", "process.rs"].flatMap((f) => [...readFileSync(`crates/kernel/src/${f}`, "utf8").matchAll(/pub const [A-Z_]+: &str = "([a-z_]+\.[a-z_]+)";/g)].map((m) => m[1]!));
+    expect(names).toEqual(expect.arrayContaining(["network.allow", "protection.readonly", "ui.language"]));
+    // ui.language keeps its own field label (D379).
+    for (const name of [...names.filter((n) => n !== "ui.language"), "ui.theme", "ui.density"]) expect(KERNEL_LABELS["en-US"][name], name).toBeTruthy();
+  });
+
 });
 
 describe("every key the kernel emits has words", () => {

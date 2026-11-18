@@ -14,6 +14,7 @@ export function StatusBarPart({ settings, languages, onSetting, resolvedTheme }:
   const { client, store, actions } = useWorkbench();
   const { t, number, duration, runError } = useI18n();
   const tab = useUi((s) => s.tabs.find((x) => x.id === s.activeTabId) ?? null);
+  const activity = useUi((s) => s.activity);
   const tasksOpen = useUi((s) => s.tasksOpen);
   const noticesOpen = useUi((s) => s.noticesOpen);
   const unread = useUi((s) => unreadCount(s.notices));
@@ -27,6 +28,8 @@ export function StatusBarPart({ settings, languages, onSetting, resolvedTheme }:
 
   const running = (tasks.data ?? []).filter((r) => r.status === "running").length;
   const failed = (tasks.data ?? []).filter((r) => r.status === "error").length;
+  // With a kernel behind it the notice only shows while something demo is in view (a demo tree or a demo page); all mock: always.
+  const showDemo = !client.demo || client.demo.tree(activity) || (tab !== null && client.demo.target(tab.target));
   const env = envs.data?.find((e) => e.id === envId);
   const r = run.data;
 
@@ -69,9 +72,11 @@ export function StatusBarPart({ settings, languages, onSetting, resolvedTheme }:
       }
       end={
         <>
-          <StatusItem icon="flask-conical" tone="warning" title={client.demo ? t("status.partialDemoHint") : t("status.mockHint", { version: client.version })}>
-            {client.demo ? t("status.partialDemo") : t("status.mock")}
-          </StatusItem>
+          {showDemo && (
+            <StatusItem icon="flask-conical" tone="warning" title={client.demo ? t("status.partialDemoHint") : t("status.mockHint", { version: client.version })}>
+              {client.demo ? t("status.partialDemo") : t("status.mock")}
+            </StatusItem>
+          )}
           <StatusItem icon={running > 0 ? "loader" : failed > 0 ? "circle-alert" : "list-checks"} busy={running > 0} tone={running > 0 ? "accent" : "default"} pressed={tasksOpen} title={t("status.tasksHint")} onClick={() => store.set({ tasksOpen: !tasksOpen, noticesOpen: false })}>
             {running > 0 ? t("status.running", { count: running }) : t("status.tasks", { count: tasks.data?.length ?? 0 })}
           </StatusItem>
