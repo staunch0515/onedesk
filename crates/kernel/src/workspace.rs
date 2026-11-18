@@ -66,6 +66,39 @@ pub struct Workspace {
     pub name: String,
 }
 
+/// Largest `workspace.json` the kernel reads (the real one is well under 1 KiB).
+pub const MAX_INFO_BYTES: u64 = 64 * 1024;
+/// Longest workspace name kept, in characters (the main process allows 1 to 100).
+pub const MAX_NAME_CHARS: usize = 100;
+
+/// Reads `workspace.json` safely (round 14 review #3): only a regular file, not through a symbolic link,
+/// never blocking (a FIFO), at most `MAX_INFO_BYTES`; the name is cut to `MAX_NAME_CHARS`. `None` when the
+/// file is missing, not a regular file, too large, unreadable, or its name is empty.
+pub fn read_info(dir: &Path) -> Option<WorkspaceFile> {
+    use std::io::Read;
+    use std::os::unix::fs::OpenOptionsExt;
+    let f = OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .open(dir.join(INFO_FILE))
+        .ok()?;
+    // Checked on the opened file, so it cannot be swapped between the check and the read.
+    let meta = f.metadata().ok()?;
+    if !meta.is_file() || meta.len() > MAX_INFO_BYTES {
+        return None;
+    }
+    let mut bytes = Vec::new();
+    f.take(MAX_INFO_BYTES + 1).read_to_end(&mut bytes).ok()?;
+    if bytes.len() as u64 > MAX_INFO_BYTES {
+        return None;
+    }
+    let mut info: WorkspaceFile = serde_json::from_slice(&bytes).ok()?;
+    if info.name.chars().count() > MAX_NAME_CHARS {
+        info.name = info.name.chars().take(MAX_NAME_CHARS).collect();
+    }
+    Some(info).filter(|i| !i.name.is_empty())
+}
+
 fn configure(conn: &Connection) -> rusqlite::Result<()> {
     conn.busy_timeout(std::time::Duration::from_secs(5))?;
     conn.pragma_update(None, "foreign_keys", true)?;
@@ -115,8 +148,7 @@ impl Workspace {
 
         let db_id: Option<String> =
             conn.query_row("SELECT value FROM meta WHERE key = 'workspace_id'", [], |r| r.get(0)).ok();
-        let file: Option<WorkspaceFile> =
-            std::fs::read(dir.join(INFO_FILE)).ok().and_then(|b| serde_json::from_slice(&b).ok());
+        let file = read_info(dir);
         // The database is the source of truth for the id; the file is a cache for the main process.
         let id = db_id.or_else(|| file.as_ref().map(|f| f.id.clone())).unwrap_or_else(new_id);
         conn.execute(
@@ -127,7 +159,6 @@ impl Workspace {
         let name = file
             .as_ref()
             .map(|f| f.name.clone())
-            .filter(|n| !n.is_empty())
             .or_else(|| dir.file_name().map(|n| n.to_string_lossy().into_owned()))
             .unwrap_or_else(|| "workspace".into());
         let info = WorkspaceFile { id: id.clone(), name: name.clone(), last_opened_at: crate::util::now_ms() };
@@ -141,12 +172,7 @@ impl Workspace {
     /// The current name: `workspace.json` is re-read because the main process renames a workspace by rewriting
     /// that file while its worker runs (round 13 review #10). Falls back to the name read at opening.
     pub fn current_name(&self) -> String {
-        std::fs::read(self.dir.join(INFO_FILE))
-            .ok()
-            .and_then(|b| serde_json::from_slice::<WorkspaceFile>(&b).ok())
-            .map(|f| f.name)
-            .filter(|n| !n.is_empty())
-            .unwrap_or_else(|| self.name.clone())
+        read_info(&self.dir).map(|f| f.name).unwrap_or_else(|| self.name.clone())
     }
 
     pub fn open_reader(&self) -> Result<Connection, String> {
@@ -279,6 +305,48 @@ mod tests {
         std::fs::remove_file(ws_dir.join(INFO_FILE)).unwrap();
         let (third, _c) = Workspace::open(&ws_dir).unwrap();
         assert_eq!(ws.id, third.id);
+    }
+
+    /// Round 14 review #3: `workspace.json` is read only as a small regular file; the name is bounded.
+    #[test]
+    fn workspace_json_is_read_only_as_a_small_regular_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let ws_dir = dir.path().join("ws");
+        let (ws, conn) = Workspace::open(&ws_dir).unwrap();
+        drop(conn);
+        let info = ws_dir.join(INFO_FILE);
+        let write = |name: &str| {
+            let f = WorkspaceFile { id: ws.id.clone(), name: name.into(), last_opened_at: 0 };
+            std::fs::write(&info, serde_json::to_vec(&f).unwrap()).unwrap();
+        };
+        write("Fine");
+        assert_eq!(ws.current_name(), "Fine");
+        // A name longer than 100 characters is cut (characters, not bytes).
+        write(&"名".repeat(150));
+        assert_eq!(read_info(&ws_dir).unwrap().name, "名".repeat(MAX_NAME_CHARS));
+        // Too large: not read, the name read at opening stays.
+        let mut big = serde_json::to_vec(&WorkspaceFile { id: ws.id.clone(), name: "Big".into(), last_opened_at: 0 }).unwrap();
+        big.extend(std::iter::repeat_n(b' ', MAX_INFO_BYTES as usize));
+        std::fs::write(&info, &big).unwrap();
+        assert!(read_info(&ws_dir).is_none());
+        assert_eq!(ws.current_name(), ws.name);
+        // A symbolic link (here to an endless device) is not followed.
+        std::fs::remove_file(&info).unwrap();
+        std::os::unix::fs::symlink("/dev/zero", &info).unwrap();
+        assert!(read_info(&ws_dir).is_none());
+        assert_eq!(ws.current_name(), ws.name);
+        // A FIFO with no writer does not block.
+        std::fs::remove_file(&info).unwrap();
+        let c = std::ffi::CString::new(info.as_os_str().as_encoded_bytes()).unwrap();
+        assert_eq!(unsafe { libc::mkfifo(c.as_ptr(), 0o600) }, 0);
+        assert!(read_info(&ws_dir).is_none());
+        assert_eq!(ws.current_name(), ws.name);
+        // Opening the workspace with such a file neither hangs nor fails; the file is replaced by a real one.
+        std::fs::remove_file(&info).unwrap();
+        std::os::unix::fs::symlink("/dev/zero", &info).unwrap();
+        let (again, _c) = Workspace::open(&ws_dir).unwrap();
+        assert_eq!(again.id, ws.id);
+        assert!(std::fs::symlink_metadata(&info).unwrap().is_file());
     }
 
     #[test]
