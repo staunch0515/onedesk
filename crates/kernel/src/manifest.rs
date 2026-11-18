@@ -142,6 +142,24 @@ pub struct ProgramDecl {
     pub source: String,
     #[serde(default)]
     pub path: Option<String>,
+    /// Round 15 (X1): for a system program, more folders to look in when the fixed ones do not
+    /// have it, in order: absolute, no `..`, at most one component `*` (any one folder; tried in
+    /// descending name order, so `/Library/X/*/bin` finds the highest version first).
+    #[serde(default)]
+    pub search_paths: Option<Vec<String>>,
+}
+
+/// Round 15: at most this many `searchPaths` per program.
+pub const MAX_SEARCH_PATHS: usize = 8;
+
+/// Whether a `searchPaths` entry is acceptable.
+pub fn valid_search_path(p: &str) -> bool {
+    let parts: Vec<&str> = p.split('/').collect();
+    p.starts_with('/')
+        && p.len() <= 512
+        && !parts.iter().any(|c| *c == ".." || *c == ".")
+        && parts.iter().filter(|c| c.contains('*')).count() <= 1
+        && parts.iter().all(|c| !c.contains('*') || *c == "*")
 }
 
 pub const PROGRAM_SYSTEM: &str = "system";
@@ -990,6 +1008,11 @@ pub fn parse_package(dir: &Path, bytes: &[u8], check_folder: bool) -> Result<Plu
         }
         if !names.insert(pr.name.as_str()) {
             return Err(bad("duplicate"));
+        }
+        if let Some(sp) = &pr.search_paths {
+            if pr.source != PROGRAM_SYSTEM || sp.len() > MAX_SEARCH_PATHS || !sp.iter().all(|p| valid_search_path(p)) {
+                return Err(bad("searchPaths"));
+            }
         }
         match (pr.source.as_str(), &pr.path) {
             (PROGRAM_SYSTEM, None) => {}
@@ -1873,6 +1896,8 @@ mod tests {
     fn program_and_event_declarations_and_their_rejections() {
         let progs = |v: Value| with(good(), &["requires", "programs"], v);
         assert_eq!(reason(progs(json!([{ "name": "echo", "source": "system" }]))), "ok");
+        assert_eq!(reason(progs(json!([{ "name": "x", "source": "system", "searchPaths": ["/Library/X/*/bin", "/opt/x/bin"] }]))), "ok");
+        assert_eq!(reason(progs(json!([{ "name": "x", "source": "system", "searchPaths": "/opt/x/bin" }]))), "schema");
         assert_eq!(reason(progs(json!([{ "name": "x", "source": "plugin", "path": "bin/x.sh" }]))), "ok", "a missing file is reported at run time");
         for bad in [
             json!([{ "name": "echo", "source": "system", "path": "bin/echo" }]),
@@ -1886,6 +1911,13 @@ mod tests {
             json!([{ "name": "", "source": "system" }]),
             json!([{ "name": "x".repeat(65), "source": "system" }]),
             json!([{ "name": "echo", "source": "system" }, { "name": "echo", "source": "system" }]),
+            // Round 15: searchPaths only for system programs, absolute, one whole `*` component.
+            json!([{ "name": "x", "source": "plugin", "path": "bin/x.sh", "searchPaths": ["/opt/x/bin"] }]),
+            json!([{ "name": "x", "source": "system", "searchPaths": ["opt/x/bin"] }]),
+            json!([{ "name": "x", "source": "system", "searchPaths": ["/opt/../bin"] }]),
+            json!([{ "name": "x", "source": "system", "searchPaths": ["/opt/*/*/bin"] }]),
+            json!([{ "name": "x", "source": "system", "searchPaths": ["/opt/x*/bin"] }]),
+            json!([{ "name": "x", "source": "system", "searchPaths": vec!["/a"; 9] }]),
         ] {
             assert_eq!(reason(progs(bad.clone())), "badPrograms", "{bad}");
         }
