@@ -64,9 +64,8 @@ describe("prompt plugin: page and actions", () => {
     expect(res.summary.message).toBe("summary.preview");
   });
 
-  it("the manifest: legacyKinds, copy is an event, preview is a run action", () => {
+  it("the manifest: copy is an event, preview is a run action", () => {
     const m = JSON.parse(readFileSync(new URL("./manifest.json", import.meta.url), "utf8"));
-    expect(m.legacyKinds).toEqual(["prompt"]);
     expect(m.contributes.pages[0]).toMatchObject({ recompute: true });
     expect(m.contributes.pages[0].actions.find((a: any) => a.id === "copy").role).toBe("event");
     expect(m.contributes.pages[0].actions.find((a: any) => a.id === "preview")).toMatchObject({ role: "run", action: "preview" });

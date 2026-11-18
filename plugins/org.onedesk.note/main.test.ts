@@ -38,9 +38,8 @@ describe("note plugin: reading view", () => {
   // Review #10: `recompute: true` stays. The shell re-renders a page only through the recompute effect (view-page.tsx: it
   // re-resolves when the draft or a page parameter changes and the page asked for it); a page event's `params`/`changes`
   // only update tab state. Without recompute, toggling `mode` would never redraw the reading view.
-  it("the manifest declares the toggle event, recompute (needed to redraw after the mode changes) and legacyKinds", () => {
+  it("the manifest declares the toggle event, recompute (needed to redraw after the mode changes)", () => {
     const m = JSON.parse(readFileSync(new URL("./manifest.json", import.meta.url), "utf8"));
-    expect(m.legacyKinds).toEqual(["note"]);
     expect(m.contributes.pages[0].recompute).toBe(true);
     expect(m.contributes.pages[0].actions.find((a: any) => a.id === "toggle")).toMatchObject({ role: "event" });
   });

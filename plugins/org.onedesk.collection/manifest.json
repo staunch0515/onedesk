@@ -5,7 +5,6 @@
   "name": "plugin.name",
   "description": "plugin.description",
   "icon": "list-filter",
-  "legacyKinds": ["collection"],
   "main": "main.js",
   "author": "OneDesk",
   "license": "MIT",

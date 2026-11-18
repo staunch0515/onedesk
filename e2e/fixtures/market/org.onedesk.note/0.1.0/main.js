@@ -15,33 +15,8 @@ export function textOf(ctx) {
   return b && typeof b.text === "string" ? b.text : "";
 }
 
-// A first-version body field as text: strings as they are, numbers and booleans as written, anything else empty.
-function legacyText(value) {
-  if (typeof value === "string") return value;
-  if (typeof value === "number" || typeof value === "boolean") return String(value);
-  return "";
-}
-
-function legacyRest(body, used) {
-  const rest = {};
-  for (const k of Object.keys(body)) if (!used.includes(k)) rest[k] = body[k];
-  return rest;
-}
-
-// First-version body { content } becomes { text }. An existing `text` wins; other keys are kept.
-export function upgradeBody(body) {
-  const old = body && typeof body === "object" && !Array.isArray(body) ? body : {};
-  const text = typeof old.text === "string" ? old.text : legacyText(old.content);
-  return { ...legacyRest(old, ["content", "text"]), text };
-}
-
 export default {
   activate(host) {
-    host.kinds.handle("note", {
-      upgrade(ctx, args) {
-        return { body: upgradeBody(args && args.body) };
-      },
-    });
     host.pages.handle("editor", {
       async render(ctx) {
         const reading = modeOf(ctx) === "read";
