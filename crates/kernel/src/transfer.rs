@@ -667,7 +667,7 @@ impl Inner {
         let manifest = ExportManifest {
             format: EXPORT_FORMAT.into(),
             version: EXPORT_VERSION,
-            workspace: ExportWorkspace { id: self.ws.id.clone(), name: self.ws.name.clone() },
+            workspace: ExportWorkspace { id: self.ws.id.clone(), name: self.ws.current_name() },
             exported_at: now_ms(),
             counts: counts.clone(),
             app_version: env!("CARGO_PKG_VERSION").into(),

@@ -133,7 +133,11 @@ pub(crate) fn take_init_settings(dir: &Path, conn: &Connection) -> Option<Worksp
         .optional()
         .ok()
         .flatten();
-    if made != Some(0) {
+    // Round 13 review #9: a workspace whose user only changed settings has no resources of its own but has
+    // an audit history of someone other than the kernel (the startup command's own rows don't count).
+    let history: Option<i64> =
+        conn.query_row("SELECT count(*) FROM audit WHERE actor <> 'core'", [], |r| r.get(0)).optional().ok().flatten();
+    if made != Some(0) || history != Some(0) {
         eprintln!("onedesk: {} ignored: the workspace is not new", file.display());
         return None;
     }

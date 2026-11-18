@@ -553,7 +553,7 @@ impl Inner {
     }
 
     fn info(&self) -> WorkspaceInfo {
-        WorkspaceInfo { id: self.ws.id.clone(), name: self.ws.name.clone(), startup_pages: Some(self.startup_pages()) }
+        WorkspaceInfo { id: self.ws.id.clone(), name: self.ws.current_name(), startup_pages: Some(self.startup_pages()) }
     }
 
     /* ---------------------------------------------------------------- kinds and rows */

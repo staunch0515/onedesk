@@ -48,7 +48,11 @@ pub fn deny_layer(conn: &Connection, name: &str, env: Option<&str>) -> rusqlite:
 /// `denied` with `reason` and the layer that forbids (§6.3).
 pub fn check(conn: &Connection, name: &str, env: Option<&str>) -> KResult<()> {
     match deny_layer(conn, name, env).map_err(crate::util::internal)? {
-        Some(layer) => Err(err_p(onedesk_protocol::ErrorCode::Denied, &[("reason", reason(name)), ("layer", &layer)])),
+        Some(layer) => {
+            // Round 14 (todo, round 8): the layer's name too, so the interface can say which one forbids.
+            let lname = store::get(conn, &layer).ok().flatten().map(|r| r.name).unwrap_or_default();
+            Err(err_p(onedesk_protocol::ErrorCode::Denied, &[("reason", reason(name)), ("layer", &layer), ("layerName", &lname)]))
+        }
         None => Ok(()),
     }
 }

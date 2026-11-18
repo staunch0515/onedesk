@@ -1297,6 +1297,7 @@ impl Tx<'_> {
         let batch = store::delete_batch(self.tx, id).map_err(sql)?;
         let mut doomed = vec![row.clone()];
         let mut queue = vec![row.id.clone()];
+        let mut seen = std::collections::HashSet::from([row.id.clone()]);
         let mut st = self
             .tx
             .prepare_cached(&format!(
@@ -1307,6 +1308,9 @@ impl Tx<'_> {
         while let Some(p) = queue.pop() {
             for r in st.query_map(params![&p, &batch], store::from_sql).map_err(sql)? {
                 let r = r.map_err(sql)?;
+                if !seen.insert(r.id.clone()) {
+                    continue;
+                }
                 queue.push(r.id.clone());
                 doomed.push(r);
             }
