@@ -7,7 +7,8 @@
 //!
 //! Listens on `--socket`, accepts exactly one connection (the main process), and exits with 0 when
 //! it closes, after the running requests finish their transactions. Exit codes: 3 = the workspace
-//! is locked by another worker; 1 = any other start-up failure (reason on stderr).
+//! is locked by another worker; 4 = the first-version database could not be converted (round 13,
+//! `legacyUpgradeFailed` line on stderr); 1 = any other start-up failure (reason on stderr).
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -85,6 +86,14 @@ fn main() -> ExitCode {
         }
         default_hook(info);
     }));
+    // Round 13 (D398): a first-version database is converted before the worker listens, so a
+    // failure reaches the main process as exit code 4 and one stderr line
+    // `onedesk-worker: legacyUpgradeFailed {"table":"…"}` (the database is left as it was).
+    if let Err(e) = onedesk_kernel::legacy::upgrade_folder(&args.workspace, &args.builtin) {
+        eprintln!("onedesk-worker: {}", e.line());
+        eprintln!("onedesk-worker: {e}");
+        return ExitCode::from(onedesk_kernel::legacy::EXIT_LEGACY_FAILED);
+    }
     let rt = match tokio::runtime::Builder::new_multi_thread().enable_all().build() {
         Ok(rt) => rt,
         Err(e) => return fail(format!("runtime: {e}")),

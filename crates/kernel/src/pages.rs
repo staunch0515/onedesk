@@ -377,7 +377,8 @@ impl Inner {
             return Ok(d);
         }
         // §7.6: bound to a version that is not installed — read-only and empty until it is back.
-        if meta.state == NodeState::MissingPlugin {
+        // Round 13 (D399): an unclaimed first-version kind likewise — no editor.
+        if meta.state == NodeState::MissingPlugin || meta.state == NodeState::UnknownKind {
             d.state_reason = meta.reason.clone();
             d.read_only = true;
             return Ok(d);

@@ -12,6 +12,7 @@ mod host;
 mod i18n;
 pub mod kernel;
 mod kind_children;
+pub mod legacy;
 pub mod manifest;
 mod pages;
 mod reach;

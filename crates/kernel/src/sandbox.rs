@@ -478,8 +478,8 @@ const BOOTSTRAP: &str = r#"
     });
     try {
       // `kinds.migrate` takes (body, fromVersion, ctx), as the manifest documentation writes it;
-      // everything else, `kinds.children` and `kinds.drop` included, takes ctx first.
-      const out = kind === "kinds" && fn !== "children" && fn !== "drop" ? await f.call(h, ...args.slice(1), ctx) : await f.call(h, ctx, ...args.slice(1));
+      // everything else, `kinds.children`, `kinds.drop` and `kinds.upgrade` (round 13) included, takes ctx first.
+      const out = kind === "kinds" && fn !== "children" && fn !== "drop" && fn !== "upgrade" ? await f.call(h, ...args.slice(1), ctx) : await f.call(h, ctx, ...args.slice(1));
       return JSON.stringify({ ok: out === undefined ? null : out });
     } catch (e) {
       // A host error the handler did not catch keeps its code.

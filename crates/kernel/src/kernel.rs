@@ -121,6 +121,8 @@ pub(crate) struct Inner {
     pub(crate) state_queries: AtomicU64,
     /// Round 11: the languages last published (`languages` is sent when they change).
     pub(crate) languages_seen: Mutex<Option<Vec<onedesk_protocol::LanguageInfo>>>,
+    /// Round 13 (D399): one claim of first-version resources at a time.
+    pub(crate) claim_lock: tokio::sync::Mutex<()>,
 }
 
 pub(crate) fn parse<T: DeserializeOwned>(v: Value) -> KResult<T> {
@@ -174,7 +176,7 @@ impl Kernel {
     /// Opens (or creates) the workspace in `workspace_dir` and reads the plugins under `plugins_dir`.
     /// The caller holds the workspace lock.
     pub fn open(workspace_dir: &Path, plugins_dir: &Path, cfg: KernelConfig) -> Result<Kernel, String> {
-        let (ws, conn) = Workspace::open(workspace_dir)?;
+        let (ws, conn) = Workspace::open_with(workspace_dir, &cfg.builtin)?;
         // D340: programs a previous worker left running (it was killed) end now.
         let ended = crate::process::cleanup_recorded(&ws.dir);
         if ended > 0 {
@@ -208,7 +210,15 @@ impl Kernel {
             state_snapshot: Mutex::new(None),
             state_queries: AtomicU64::new(0),
             languages_seen: Mutex::new(None),
+            claim_lock: tokio::sync::Mutex::new(()),
         });
+        // Round 13 (D400): a new workspace copies the settings it was created with, once.
+        let init = inner.read(|c| Ok(crate::legacy::take_init_settings(&inner.ws.dir, c))).ok().flatten();
+        if let Some(s) = init {
+            if let Err(e) = inner.pipeline.execute_blocking(crate::pipeline::Actor::Core, Command::InitSettings(Box::new(s))) {
+                eprintln!("onedesk: init-settings not applied: {e:?}");
+            }
+        }
         // D299 first sight, then each plugin's active version.
         inner.take_state_snapshot();
         inner.first_sight_blocking();
@@ -250,6 +260,8 @@ impl Kernel {
                         eprintln!("onedesk: automatic switch of {id} failed: {e:?}");
                     }
                 }
+                // Round 13 (D399): plugins already enabled take their first-version resources.
+                me.claim_legacy_all().await;
             });
         }
         Ok(Kernel { inner })
@@ -520,6 +532,7 @@ impl Inner {
                 self.pipeline.execute(Actor::User, Command::UiSet { client: c, key: p.key, value: p.value }).await?;
                 Ok(Value::Null)
             }
+            onedesk_protocol::method13::WORKSPACE_SETTINGS_SNAPSHOT => to_value(self.settings_snapshot(client.as_deref())?),
             _ => {
                 if crate::i18n::METHODS.contains(&m) {
                     return self.handle11(m, params);
@@ -648,7 +661,8 @@ impl Inner {
                 accepts: vec![],
                 commands: vec![],
                 drop_any: false,
-                state: NodeState::MissingPlugin,
+                // Round 13 (D399): a first-version short kind no plugin claimed.
+                state: if kind.contains(':') { NodeState::MissingPlugin } else { NodeState::UnknownKind },
                 reason: Some(Label::Text(kind.into())),
                 plugin: None,
             },

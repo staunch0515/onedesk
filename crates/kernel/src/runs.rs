@@ -832,6 +832,7 @@ impl Inner {
                 unmet_exports: Some(vec![]),
                 runtime: Some(PluginRuntime::Idle),
                 legacy_kinds: Some(vec![]),
+                legacy_claim_failure: None,
             }));
         };
         let m = &p.manifest;
@@ -912,6 +913,7 @@ impl Inner {
             unmet_exports: Some(self.unmet_exports(p)),
             runtime: Some(if self.runtime_live(id) { PluginRuntime::Live } else { PluginRuntime::Idle }),
             legacy_kinds: Some(m.legacy_kinds.clone()),
+            legacy_claim_failure: self.legacy_claim_failure(id),
         }))
     }
 

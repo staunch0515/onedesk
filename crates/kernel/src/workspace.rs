@@ -103,7 +103,15 @@ impl Workspace {
     /// Opens the folder, creating `workspace.json` and `workspace.db` when missing.
     /// Returns the workspace and the writable connection (the caller hands it to the writer).
     pub fn open(dir: &Path) -> Result<(Workspace, Connection), String> {
+        Self::open_with(dir, &[])
+    }
+
+    /// `open`; a first-version database is converted first (D398). `builtin`: the built-in
+    /// plugins (`id` or `id@version`) whose first-version "off" switch is carried over.
+    pub fn open_with(dir: &Path, builtin: &[String]) -> Result<(Workspace, Connection), String> {
         std::fs::create_dir_all(dir).map_err(|e| format!("create {}: {e}", dir.display()))?;
+        // Round 13: before anything else touches the file, so a failed conversion leaves it as it was.
+        crate::legacy::upgrade_folder(dir, builtin).map_err(|e| e.to_string())?;
         // D280: before migrations touch it. A failed snapshot must not keep the workspace closed (#9).
         if let Err(e) = snapshot(dir, crate::util::now_ms()) {
             eprintln!("onedesk: startup snapshot of {} failed: {e}", dir.display());
