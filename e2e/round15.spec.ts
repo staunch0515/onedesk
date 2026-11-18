@@ -216,7 +216,7 @@ test("C1/C2/C3/C4/C6: :name parameters get a form by declared type; required, en
   await expect(page.getByText("NULL").first()).toBeVisible(); // :empty had no value
   // D4: the statement as sent, parameters substituted as literals
   await page.getByRole("tab", { name: "Sent SQL" }).click();
-  const sent = page.getByRole("tabpanel").filter({ hasText: "SELECT" }).last();
+  const sent = page.locator("body"); // only the Sent SQL tab holds the substituted text
   await expect(sent).toContainText("'2026-01-02T03:04:00Z'::text AS since");
   await expect(sent).toContainText("'paid' AS kind");
   await expect(sent).toContainText("NULL AS e");
@@ -306,6 +306,32 @@ test("D3: the table sorts by a header (three states) and keeps its columns", asy
   await expect(firstCell()).toContainText("o'neil");
   await page.getByRole("columnheader", { name: /customer/ }).click(); // third click: back to the order it came in
   await expect(firstCell()).toContainText('dee, "d"');
+});
+
+test("D1: nothing outside a plain read-only SELECT gets through: psql commands, E'' tricks, COPY … TO PROGRAM", async ({ page }) => {
+  await openKernel(page, host);
+  const marker = path.join(base, "pwned");
+  await newSql(page, "SELECT 1", "Local shop");
+  const tries: [string, RegExp][] = [
+    [`SELECT 1\n\\! touch ${marker}`, /backslash/],
+    ["SELECT 1\n\\gexec", /backslash/],
+    ["SELECT 'x' \\g", /backslash/],
+    ["SELECT 1; COMMIT; DELETE FROM orders", /Only one statement/],
+    ["SELECT E'\\''; COMMIT; DELETE FROM orders; --'", /Only one statement/],
+    [`COPY (SELECT 1) TO PROGRAM 'touch ${marker}'`, /Only SELECT, WITH/],
+    ["DELETE FROM orders", /Only SELECT, WITH/],
+  ];
+  for (const [sql, why] of tries) {
+    await sqlBox(page).fill(sql);
+    await runBtn(page).click();
+    await expect(page.getByText(why).first(), sql).toBeVisible({ timeout: 30_000 });
+  }
+  expect(existsSync(marker), "no local command ran").toBe(false);
+  const count = execFileSync(path.join(pg.bin, "psql"), ["-X", "-A", "-t", "-h", path.join(pg.dir, "sock"), "-p", String(pg.port), "-U", "postgres", "-d", DB1, "-c", "SELECT count(*) FROM orders"], { encoding: "utf8" });
+  expect(count.trim()).toBe("4");
+  // defence in depth: the session itself is read-only (PGOPTIONS), so a write that got past the plugin would still fail
+  const direct = (sql: string) => execFileSync(path.join(pg.bin, "psql"), ["-X", "-q", "-h", path.join(pg.dir, "sock"), "-p", String(pg.port), "-U", PG_USER, "-d", DB1, "-c", sql], { encoding: "utf8", stdio: "pipe", env: { PGOPTIONS: "-c default_transaction_read_only=on" } });
+  expect(() => direct("DELETE FROM orders")).toThrow(/read-only transaction/);
 });
 
 test("explore sql", async ({ page }) => {

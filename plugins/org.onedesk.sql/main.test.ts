@@ -56,6 +56,13 @@ FROM t /* :no5 */ WHERE a = 'it''s :no6' AND b > :from AND c = :Other_1`;
     expect(() => sqlLiteral("a\0b")).toThrow();
   });
 
+  it("reads PostgreSQL's lexical rules: E'' escapes, a $ inside a name, nested block comments", () => {
+    expect(paramNames("SELECT E'\\' :a', :b")).toEqual(["b"]); // E'\'' keeps the string open
+    expect(paramNames("SELECT 'a\\', :c")).toEqual(["c"]); // a plain string: the backslash is data
+    expect(paramNames("SELECT a$b$ :d $$ :e $$")).toEqual(["d"]);
+    expect(paramNames("SELECT /* x /* :f */ :g */ :h")).toEqual(["h"]);
+  });
+
   it("a value cannot break out of its literal", () => {
     const evil = "x'; DROP TABLE t; --";
     expect(renderSql("SELECT :v", { v: evil })).toBe("SELECT 'x''; DROP TABLE t; --'");
@@ -183,8 +190,11 @@ describe("sql: page", () => {
     const host = fakeHost();
     const none = await pages.editor.renderResultTab(ctxOf(host, { run: { id: "r", resourceId: "r1" } }), "sent");
     expect(none).toEqual([{ type: "text", id: "none", text: "Nothing has been run yet.", tone: "muted" }]);
-    await run(host, { "body.sql": "SELECT :a", "body.source": "s1" }, { params: { a: "x'y" } });
-    const view = await pages.editor.renderResultTab(ctxOf(host, { run: { id: "r", resourceId: "r1" } }), "sent");
+    await run(host, { "body.sql": "SELECT :a", "body.source": "s1" }, { params: { a: "x'y" }, runId: "run-9" });
+    const view = await pages.editor.renderResultTab(ctxOf(host, { run: { id: "run-9", resourceId: "r1" } }), "sent");
+    // another run of the same statement has its own text; so does a run of an unsaved statement
+    const other = await pages.editor.renderResultTab(ctxOf(host, { run: { id: "run-10", resourceId: "r1" } }), "sent");
+    expect(other[0].id).toBe("none");
     expect(checkView(view)).toEqual([]);
     expect(view[0]).toMatchObject({ type: "text", text: "SELECT 'x''y'", mono: true, language: "sql" });
     await expect(pages.editor.renderResultTab(ctxOf(host, {}), "nope")).rejects.toThrow();
@@ -268,7 +278,7 @@ describe("sql: run action", () => {
     const ctx = ctxOf(host, resourceOf({}));
     await registry(plugin).actions.run(ctx, { "body.sql": "SELECT 1", "body.source": "s1" });
     expect(ctx.progress).toHaveBeenCalledWith(undefined, "Running on the data source…");
-    expect(host.storage.set).toHaveBeenCalledWith("lastSent:r1", "SELECT 1");
+    expect(host.storage.set).toHaveBeenCalledWith("lastSent:-", "SELECT 1");
   });
 
   it("newHere creates a statement on the data source and links to it", async () => {

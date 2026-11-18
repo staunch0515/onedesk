@@ -23,8 +23,12 @@ export function tr(ctx, key, vars) {
   return text;
 }
 
-// Splits SQL into pieces: raw text and parameters. Strings, quoted names, dollar-quoted text and comments
-// are raw; so is the `::` of a cast.
+const IDENT_CHAR = /[A-Za-z0-9_$\u0080-\uffff]/;
+const DOLLAR = /^\$([A-Za-z_\u0080-\uffff][A-Za-z0-9_\u0080-\uffff]*)?\$/;
+
+// Splits SQL into pieces: raw text and parameters. Strings (E'…' with backslash escapes), quoted names,
+// dollar-quoted text (a `$` inside a name does not start one), comments (block comments nest, as in
+// PostgreSQL) are raw; so is the `::` of a cast. The data source plugin reads the text the same way.
 export function tokenize(sql) {
   const out = [];
   let raw = "";
@@ -38,8 +42,13 @@ export function tokenize(sql) {
     const c = s[i];
     const next = s[i + 1];
     if (c === "'" || c === '"') {
+      const escapes = c === "'" && i > 0 && /[eE]/.test(s[i - 1]) && !(i > 1 && IDENT_CHAR.test(s[i - 2]));
       let j = i + 1;
       while (j < s.length) {
+        if (escapes && s[j] === "\\") {
+          j += 2;
+          continue;
+        }
         if (s[j] === c) {
           if (s[j + 1] === c) {
             j += 2;
@@ -51,27 +60,27 @@ export function tokenize(sql) {
       }
       raw += s.slice(i, j + 1);
       i = j + 1;
-    } else if (c === "$") {
-      const m = /^\$([A-Za-z_][A-Za-z0-9_]*)?\$/.exec(s.slice(i, i + 80));
-      if (m) {
-        const end = s.indexOf(m[0], i + m[0].length);
-        const stop = end < 0 ? s.length : end + m[0].length;
-        raw += s.slice(i, stop);
-        i = stop;
-      } else {
-        raw += c;
-        i++;
-      }
+    } else if (c === "$" && !(i > 0 && IDENT_CHAR.test(s[i - 1])) && DOLLAR.test(s.slice(i, i + 140))) {
+      const tag = DOLLAR.exec(s.slice(i, i + 140))[0];
+      const end = s.indexOf(tag, i + tag.length);
+      const stop = end < 0 ? s.length : end + tag.length;
+      raw += s.slice(i, stop);
+      i = stop;
     } else if (c === "-" && next === "-") {
       let j = i;
       while (j < s.length && s[j] !== "\n") j++;
       raw += s.slice(i, j);
       i = j;
     } else if (c === "/" && next === "*") {
-      const end = s.indexOf("*/", i + 2);
-      const stop = end < 0 ? s.length : end + 2;
-      raw += s.slice(i, stop);
-      i = stop;
+      let depth = 1;
+      let j = i + 2;
+      while (j < s.length && depth > 0) {
+        if (s[j] === "/" && s[j + 1] === "*") (depth++, (j += 2));
+        else if (s[j] === "*" && s[j + 1] === "/") (depth--, (j += 2));
+        else j++;
+      }
+      raw += s.slice(i, j);
+      i = j;
     } else if (c === ":" && next === ":") {
       raw += "::";
       i += 2;
@@ -299,8 +308,7 @@ export default {
 
       async renderResultTab(ctx, tabId) {
         if (tabId !== "sent") throw new Error(`unknown result tab ${tabId}`);
-        const id = (ctx.run && ctx.run.resourceId) || "-";
-        const raw = await ctx.host.storage.get(`${SENT_KEY}:${id}`);
+        const raw = await ctx.host.storage.get(`${SENT_KEY}:${(ctx.run && ctx.run.id) || "-"}`);
         if (!raw) return [{ type: "text", id: "none", text: tr(ctx, "sent.none"), tone: "muted" }];
         return [{ type: "text", id: "sent", text: raw, mono: true, language: "sql" }];
       },
@@ -332,8 +340,8 @@ export default {
         values[name] = value;
       }
       const rendered = renderSql(sql, values, decls);
-      const id = (ctx.resource && ctx.resource.id) || "-";
-      await ctx.host.storage.set(`${SENT_KEY}:${id}`, rendered);
+      // the statement as sent belongs to this run (not to the resource: a statement not saved yet has none)
+      await ctx.host.storage.set(`${SENT_KEY}:${ctx.runId || "-"}`, rendered);
 
       const sourceId = await pickSource(ctx, String((input && input["body.source"]) || ""));
       ctx.progress(undefined, tr(ctx, "step.running"));

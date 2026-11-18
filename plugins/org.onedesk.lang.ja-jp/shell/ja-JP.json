@@ -197,7 +197,7 @@
   "result.empty": "実行すると、ここに結果が表示されます",
   "result.gone": "この実行の結果はもう保持されていません",
   "kernel.error.reason.callDepth": "プラグイン同士の呼び出しが深すぎるため、操作を停止しました。",
-  "result.elapsed": "経過時間",
+  "result.elapsed": "所要時間",
   "field.timePlaceholder": "HH:MM（UTC）",
   "field.requiredMissing": "入力してください：{fields}",
   "kernel.error.reason.calleeFailed": "別のプラグインが提供する操作が失敗しました。",
@@ -837,6 +837,6 @@
   "kernel.label.protection.no_export": "エクスポート禁止保護",
   "kernel.error.reason.readonly|layerName": "読み取り専用保護（protection.readonly、設定元：「{layerName}」）がオンのため、何も変更できません。「{layerName}」でオフにしてください。",
   "kernel.error.reason.noExport|layerName": "エクスポート禁止保護（protection.no_export、設定元：「{layerName}」）がオンのため、エクスポートできません。「{layerName}」でオフにしてください。",
-  "field.timePlaceholder": "HH:MM（UTC）",
-  "result.elapsed": "所要時間"
+  "kernel.error.reason.ownPrograms": "プラグインは自分の bin/ フォルダーをこの方法では読み書きできません。そこにはプログラムが入っています。",
+  "kernel.error.reason.wrongKind": "この操作は、指定されたリソースとは別の種類のリソースを対象にしています。"
 }

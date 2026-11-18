@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 // @ts-ignore plain JS module, no types
-import plugin, { captureReadonly, checkConnection, connectionOf, errorText, hasSeveralStatements, parseConnectionUrl, parseCsv, processSpec, readonlyScript, runReadonly, safePart } from "./main.js";
+import plugin, { captureReadonly, checkConnection, connectionOf, errorText, parseConnectionUrl, parseCsv, positiveInt, processSpec, readonlyScript, refuse, scanSql, runReadonly, safePart } from "./main.js";
 import { RENDER_KEYS, checkActionResult, checkView, hostError, onlyKeys, registry } from "../_testing/view-check";
 
 const load = (f: string) => JSON.parse(readFileSync(new URL(`./locales/${f}.json`, import.meta.url), "utf8")) as Record<string, string>;
@@ -47,18 +47,53 @@ describe("datasource: helpers", () => {
   });
 
   it("wraps a statement in a read-only transaction that is rolled back; a trailing comment cannot swallow the end", () => {
-    expect(readonlyScript("SELECT 1;", 5000)).toBe("BEGIN READ ONLY;\nSET LOCAL statement_timeout = 5000;\nSELECT 1\n;\nROLLBACK;\n");
+    expect(readonlyScript("SELECT 1;", 5000)).toBe("BEGIN READ ONLY;\nSET LOCAL statement_timeout = 5000;\nSET LOCAL standard_conforming_strings = on;\nSELECT 1\n;\nROLLBACK;\n");
     expect(readonlyScript("SELECT 1 -- note", 1000)).toContain("SELECT 1 -- note\n;\nROLLBACK;");
   });
 
-  it("tells one statement from several, ignoring strings, comments and quoted names", () => {
-    expect(hasSeveralStatements("SELECT 1")).toBe(false);
-    expect(hasSeveralStatements("SELECT 1;")).toBe(false);
-    expect(hasSeveralStatements("SELECT 1; -- done\n")).toBe(false);
-    expect(hasSeveralStatements("SELECT ';' , \"a;b\", $$x;y$$ /* ; */")).toBe(false);
-    expect(hasSeveralStatements("SELECT 1; SELECT 2")).toBe(true);
-    expect(hasSeveralStatements("SELECT 1; COMMIT")).toBe(true);
-    expect(hasSeveralStatements("SELECT 1;\n'x'")).toBe(true);
+  it("reads the text the way PostgreSQL does: one statement, strings, E'' escapes, nested comments, dollar quotes only where they can start", () => {
+    const n = (sql: string) => scanSql(sql).statements;
+    expect(n("SELECT 1")).toBe(1);
+    expect(n("SELECT 1;")).toBe(1);
+    expect(n("SELECT 1; -- done\n")).toBe(1);
+    expect(n("")).toBe(0);
+    expect(n("SELECT ';' , \"a;b\", $$x;y$$ /* ; */")).toBe(1);
+    expect(n("SELECT 1; SELECT 2")).toBe(2);
+    expect(n("SELECT 1; COMMIT")).toBe(2);
+    expect(n("SELECT 1;\n'x'")).toBe(2);
+    // E'' : the backslash escapes the quote, so the string goes on and the ; is inside it
+    expect(n("SELECT E'a\\'b; COMMIT; DELETE FROM t; --'")).toBe(1);
+    // the same text with a plain string: the quote closes, the rest is real statements
+    expect(n("SELECT 'a\\'b; COMMIT; DELETE FROM t; --'")).toBeGreaterThan(1);
+    // a `$` inside a name is not a dollar quote: here `a$b$` is one name and `; COMMIT` is a second statement
+    expect(n("SELECT a$b$ FROM t; COMMIT; $$ x")).toBe(3);
+    expect(n("SELECT $a$ ; $a$, $$ ; $$")).toBe(1);
+    // block comments nest in PostgreSQL
+    expect(n("SELECT 1 /* a /* b */ ; COMMIT */")).toBe(1);
+    expect(n("SELECT 1 /* a */ ; COMMIT")).toBe(2);
+    expect(scanSql("  (SELECT 1) UNION (SELECT 2)").first).toBe("SELECT");
+    expect(scanSql("-- c\n/* c */ with x as (select 1) select * from x").first).toBe("WITH");
+  });
+
+  it("a backslash outside strings, quoted names and comments is a psql command and is refused; inside them it is data", () => {
+    for (const bad of ["SELECT 1\n\\gexec", "SELECT 1 \\g", "SELECT 1\n\\! id", "SELECT 1\n\\o /tmp/x", "\\c other", "SELECT 1\\;", "SELECT 'x'\\gexec"]) {
+      expect(refuse(bad), bad).toBe("backslash");
+    }
+    for (const ok of ["SELECT 'a\\b'", "SELECT E'a\\nb'", 'SELECT "a\\b"', "SELECT 1 -- \\! id", "SELECT 1 /* \\gexec */", "SELECT $$\\gexec$$"]) {
+      expect(refuse(ok), ok).toBeNull();
+    }
+  });
+
+  it("only reading statements run: SELECT, WITH, VALUES, TABLE, EXPLAIN, SHOW; several statements, COPY, CALL, DO, writes are refused", () => {
+    for (const ok of ["SELECT 1", "with x as (select 1) select * from x", "VALUES (1)", "TABLE orders", "EXPLAIN SELECT 1", "SHOW server_version", "(SELECT 1) UNION (SELECT 2)", "-- c\nSELECT 1;"]) expect(refuse(ok), ok).toBeNull();
+    for (const bad of ["COPY (SELECT 1) TO PROGRAM 'id'", "DO $$ BEGIN END $$", "CALL p()", "UPDATE t SET a = 1", "DELETE FROM t", "COMMIT", "SELECT 1; SELECT 2", "SELECT E'\\''; COMMIT; DELETE FROM t"]) expect(refuse(bad), bad).not.toBeNull();
+    expect(refuse("COPY (SELECT 1) TO PROGRAM 'id'")).toBe("notRead");
+    expect(refuse("SELECT 1; SELECT 2")).toBe("severalStatements");
+  });
+
+  it("positive whole numbers only for the timeout and the row limit", () => {
+    expect(positiveInt(5000, 10000)).toBe(5000);
+    for (const bad of [0, -1, 1.5, NaN, Infinity, "5", "5; DROP", null, undefined, 20000]) expect(positiveInt(bad, 10000), String(bad)).toBeNull();
   });
 
   it("parses CSV as psql writes it: unquoted empty = NULL, \"\" = empty string, quotes, commas and line breaks inside", () => {
@@ -82,7 +117,7 @@ describe("datasource: helpers", () => {
       connection: { mode: "ssh", sshHost: "quizbuks-staging", container: "postgres", user: "app", database: "shop", host: "", port: "5432" },
       hadPassword: false,
     });
-    expect(parseConnectionUrl("ssh://h/c?db=d").connection.user).toBe("postgres");
+    expect(parseConnectionUrl("ssh://h/c?db=d")).toEqual({ error: "badUrl" }); // the user is required, there is no default
     for (const bad of ["", "mysql://u@h/d", "postgres://h/d", "postgres://u:p@h/", "ssh://h/c", "ssh://h/c?db=d&x=1", "ssh://-oProxyCommand=x/c?db=d", "ssh://h/c?db=d; rm"]) {
       expect(parseConnectionUrl(bad), bad).toEqual({ error: "badUrl" });
     }
@@ -93,16 +128,16 @@ describe("datasource: helpers", () => {
     expect(direct).toEqual({
       program: "psql",
       args: ["-X", "-q", "--csv", "-w", "-v", "ON_ERROR_STOP=1", "-h", "localhost", "-p", "5433", "-U", "app", "-d", "shop", "-f", "-"],
-      env: { PGCONNECT_TIMEOUT: "10", PGPASSWORD: "{{secret:pw-s1}}" },
+      env: { PGCONNECT_TIMEOUT: "10", PGOPTIONS: "-c default_transaction_read_only=on -c statement_timeout=30000", PGPASSWORD: "{{secret:pw-s1}}" },
       stdin: "SCRIPT",
       timeoutMs: 45000,
     });
     expect(JSON.stringify(direct.args)).not.toContain("pw-s1");
     const noPw = processSpec(connectionOf({ ...SOURCE.body, password: undefined }), "S", 1000);
-    expect(noPw.env).toEqual({ PGCONNECT_TIMEOUT: "10" });
+    expect(noPw.env).toEqual({ PGCONNECT_TIMEOUT: "10", PGOPTIONS: "-c default_transaction_read_only=on -c statement_timeout=1000" });
     expect(processSpec(connectionOf(SSH.body), "S", 1000)).toEqual({
       program: "ssh",
-      args: ["-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "staging", "docker exec -i postgres psql -X -q --csv -v ON_ERROR_STOP=1 -U postgres -d shop -f -"],
+      args: ["-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "staging", "docker exec -i -e 'PGOPTIONS=-c default_transaction_read_only=on -c statement_timeout=1000' postgres psql -X -q --csv -v ON_ERROR_STOP=1 -U postgres -d shop -f -"],
       stdin: "S",
       timeoutMs: 16000,
     });
@@ -124,7 +159,7 @@ describe("datasource: running", () => {
     const r = await runReadonly(ctxOf(host), conn, "SELECT a, b FROM t");
     expect(r).toMatchObject({ columns: ["a", "b"], rows: [["1", "x"], ["2", null]], total: 2, truncated: false });
     const call = host.process.run.mock.calls[0]![0];
-    expect(call.stdin).toContain("BEGIN READ ONLY;\nSET LOCAL statement_timeout = 30000;\nSELECT a, b FROM t\n;\nROLLBACK;");
+    expect(call.stdin).toContain("BEGIN READ ONLY;\nSET LOCAL statement_timeout = 30000;\nSET LOCAL standard_conforming_strings = on;\nSELECT a, b FROM t\n;\nROLLBACK;");
   });
 
   it("cuts at the row limit (the call's own; the in-memory path is only for the connection test) and says it was truncated", async () => {
@@ -151,6 +186,10 @@ describe("datasource: running", () => {
     const host = fakeHost();
     await expect(runReadonly(ctxOf(host), conn, "  ")).rejects.toThrow("nothing to run");
     await expect(runReadonly(ctxOf(host), conn, "SELECT 1; DROP TABLE x")).rejects.toThrow("one statement");
+    await expect(runReadonly(ctxOf(host), conn, "SELECT 1\n\\gexec")).rejects.toThrow("backslash");
+    await expect(runReadonly(ctxOf(host), conn, "COPY (SELECT 1) TO PROGRAM 'id'")).rejects.toThrow("Only SELECT");
+    await expect(runReadonly(ctxOf(host), conn, "SELECT 1", { timeoutMs: "1; DROP" as any })).rejects.toThrow("positive whole number");
+    await expect(captureReadonly(ctxOf(host), conn, "SELECT 1", { timeoutMs: -5 })).rejects.toThrow("positive whole number");
     await expect(runReadonly(ctxOf(host), { ...conn, host: "-bad" }, "SELECT 1")).rejects.toThrow("“host”");
     expect(host.process.run).not.toHaveBeenCalled();
   });
@@ -171,7 +210,7 @@ describe("datasource: capturing to a file", () => {
     expect(file).toMatch(/^tmp\/q-\d+-\d+\.csv$/);
     const call = host.transfer.capture.mock.calls[0]![0];
     expect(call).toMatchObject({ program: "psql", to: file, overwrite: true });
-    expect(call.stdin).toContain("BEGIN READ ONLY;\nSET LOCAL statement_timeout = 30000;\nSELECT n FROM t\n;\nROLLBACK;");
+    expect(call.stdin).toContain("BEGIN READ ONLY;\nSET LOCAL statement_timeout = 30000;\nSET LOCAL standard_conforming_strings = on;\nSELECT n FROM t\n;\nROLLBACK;");
     expect(host.process.run).not.toHaveBeenCalled();
   });
   it("refuses the same things before any program starts, and turns a failing psql into the error", async () => {
@@ -198,7 +237,7 @@ describe("datasource: page and actions", () => {
     const direct = await pages.editor.render(ctxOf(fakeHost(), { resource: SOURCE }));
     expect(checkView(direct.view)).toEqual([]);
     expect(onlyKeys(direct, RENDER_KEYS)).toEqual([]);
-    expect(direct.view.map((n: any) => n.id)).toEqual(["mode", "server", "database", "auth", "import"]);
+    expect(direct.view.map((n: any) => n.id)).toEqual(["mode", "server", "database", "auth", "readonly", "import"]);
     expect(direct.view[3].fields[0]).toMatchObject({ kind: "secret", bind: "body.password" });
     expect(direct.view[1].fields.map((f: any) => f.name)).toEqual(["host", "port"]);
     expect(direct.view[1].fields.every((f: any) => f.required === true)).toBe(true);
@@ -206,7 +245,7 @@ describe("datasource: page and actions", () => {
 
     const ssh = await pages.editor.render(ctxOf(fakeHost(), { resource: SSH }));
     expect(checkView(ssh.view)).toEqual([]);
-    expect(ssh.view.map((n: any) => n.id)).toEqual(["mode", "server", "database", "sshNote", "import"]);
+    expect(ssh.view.map((n: any) => n.id)).toEqual(["mode", "server", "database", "sshNote", "readonly", "import"]);
     expect(ssh.view[1].fields.map((f: any) => f.name)).toEqual(["sshHost", "container"]);
     expect(JSON.stringify(ssh.view)).not.toContain('"secret"');
 

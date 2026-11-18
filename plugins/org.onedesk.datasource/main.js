@@ -9,6 +9,7 @@
 export const KIND = "source";
 export const DEFAULT_TIMEOUT_MS = 30000;
 export const DEFAULT_MAX_ROWS = 1000;
+export const MAX_TIMEOUT_MS = 3600000;
 const CONNECT_TIMEOUT_S = 10;
 
 /* ---------------------------------------------------------------- helpers */
@@ -67,54 +68,109 @@ export function checkConnection(c) {
 }
 
 // The script that runs a statement read-only: one transaction, always rolled back. The newline before the
-// statement and after it protects against a `--` comment on either end.
+// statement and after it protects against a `--` comment on either end; `standard_conforming_strings` is forced
+// on because the SQL plugin writes values as '…' literals with only the quote doubled (D416).
 export function readonlyScript(sql, timeoutMs) {
   const body = String(sql).trim().replace(/;+\s*$/, "");
-  return `BEGIN READ ONLY;\nSET LOCAL statement_timeout = ${timeoutMs};\n${body}\n;\nROLLBACK;\n`;
+  return `BEGIN READ ONLY;\nSET LOCAL statement_timeout = ${timeoutMs};\nSET LOCAL standard_conforming_strings = on;\n${body}\n;\nROLLBACK;\n`;
 }
 
-// True when, outside strings, comments and quoted names, more than one statement is written.
-// ("a;" is one statement; "a; b" and "a; -- x\n b" are two.)
-export function hasSeveralStatements(sql) {
-  let i = 0;
-  let sawSemicolon = false;
+const IDENT_CHAR = /[A-Za-z0-9_$\u0080-\uffff]/;
+
+// Reads the text the way PostgreSQL (and psql) do: '…' (and E'…' where a backslash escapes), "…", $tag$…$tag$
+// (only where a `$` cannot be part of a name), -- and nested /* */ comments. Returns what the read-only check needs:
+//   statements  how many statements are written (a final `;` does not make another),
+//   backslash   a backslash outside strings, quoted names and comments — a psql meta-command (D416),
+//   first       the first word of the first statement (leading parentheses skipped), upper-case.
+export function scanSql(sql) {
   const s = String(sql);
+  let i = 0;
+  let statements = 0;
+  let open = false; // a statement has started and not ended with `;`
+  let backslash = false;
+  let first = "";
+  const begin = () => {
+    if (!open) {
+      open = true;
+      statements++;
+    }
+  };
   while (i < s.length) {
     const c = s[i];
-    const next = s[i + 1];
-    if (c === "'" || c === '"') {
-      if (sawSemicolon) return true;
+    const n = s[i + 1];
+    if (c === "-" && n === "-") {
+      while (i < s.length && s[i] !== "\n") i++;
+    } else if (c === "/" && n === "*") {
+      let depth = 1;
+      i += 2;
+      while (i < s.length && depth > 0) {
+        if (s[i] === "/" && s[i + 1] === "*") (depth++, (i += 2));
+        else if (s[i] === "*" && s[i + 1] === "/") (depth--, (i += 2));
+        else i++;
+      }
+    } else if (c === "'") {
+      begin();
+      const escapes = i > 0 && /[eE]/.test(s[i - 1]) && !(i > 1 && IDENT_CHAR.test(s[i - 2]));
       i++;
       while (i < s.length) {
-        if (s[i] === c) {
-          if (s[i + 1] === c) {
-            i += 2;
-            continue;
-          }
-          break;
-        }
-        i++;
+        if (escapes && s[i] === "\\") i += 2;
+        else if (s[i] === "'") {
+          if (s[i + 1] === "'") i += 2;
+          else break;
+        } else i++;
       }
       i++;
-    } else if (c === "$" && /^\$([A-Za-z_][A-Za-z0-9_]*)?\$/.test(s.slice(i))) {
-      if (sawSemicolon) return true;
-      const tag = /^\$([A-Za-z_][A-Za-z0-9_]*)?\$/.exec(s.slice(i))[0];
+    } else if (c === '"') {
+      begin();
+      i++;
+      while (i < s.length) {
+        if (s[i] === '"') {
+          if (s[i + 1] === '"') i += 2;
+          else break;
+        } else i++;
+      }
+      i++;
+    } else if (c === "$" && !(i > 0 && IDENT_CHAR.test(s[i - 1])) && /^\$([A-Za-z_\u0080-\uffff][A-Za-z0-9_\u0080-\uffff]*)?\$/.test(s.slice(i, i + 140))) {
+      begin();
+      const tag = /^\$([A-Za-z_\u0080-\uffff][A-Za-z0-9_\u0080-\uffff]*)?\$/.exec(s.slice(i, i + 140))[0];
       const end = s.indexOf(tag, i + tag.length);
       i = end < 0 ? s.length : end + tag.length;
-    } else if (c === "-" && next === "-") {
-      while (i < s.length && s[i] !== "\n") i++;
-    } else if (c === "/" && next === "*") {
-      const end = s.indexOf("*/", i + 2);
-      i = end < 0 ? s.length : end + 2;
     } else if (c === ";") {
-      sawSemicolon = true;
+      open = false;
+      i++;
+    } else if (c === "\\") {
+      backslash = true;
+      i++;
+    } else if (/\s/.test(c)) {
       i++;
     } else {
-      if (sawSemicolon && !/\s/.test(c)) return true;
+      begin();
+      if (statements === 1 && first === "" && c !== "(") {
+        const m = /^[A-Za-z]+/.exec(s.slice(i, i + 32));
+        first = m ? m[0].toUpperCase() : "?";
+      }
       i++;
     }
   }
-  return false;
+  return { statements, backslash, first };
+}
+
+// Words a statement may start with. A read-only transaction stops writes; this stops what it cannot
+// (COPY … TO PROGRAM, CALL, DO …), and is part of the same check.
+export const READ_WORDS = ["SELECT", "WITH", "VALUES", "TABLE", "EXPLAIN", "SHOW"];
+
+// null when `sql` may run, else the reason key.
+export function refuse(sql) {
+  const r = scanSql(sql);
+  if (r.backslash) return "backslash";
+  if (r.statements > 1) return "severalStatements";
+  if (r.statements === 1 && !READ_WORDS.includes(r.first)) return "notRead";
+  return null;
+}
+
+// A positive whole number of at most `max`, else null.
+export function positiveInt(v, max) {
+  return typeof v === "number" && Number.isInteger(v) && v > 0 && v <= max ? v : null;
 }
 
 // CSV as psql writes it: an unquoted empty field is NULL, "" is an empty string.
@@ -176,7 +232,7 @@ export function parseConnectionUrl(text) {
   const url = String(text || "").trim();
   const ssh = /^ssh:\/\/([^/?]*)\/([^?]*)(?:\?(.*))?$/.exec(url);
   if (ssh) {
-    let user = "postgres";
+    let user = "";
     let database = "";
     for (const pair of (ssh[3] || "").split("&").filter(Boolean)) {
       const i = pair.indexOf("=");
@@ -209,14 +265,16 @@ export function parseConnectionUrl(text) {
   return { connection: c, hadPassword };
 }
 
-// What `ctx.host.process.run` gets for one script on one data source.
+// What `ctx.host.process.run` gets for one script on one data source. Besides the script's own read-only
+// transaction the session is read-only and times out by itself (PGOPTIONS), and psql reads no psqlrc (-X).
 export function processSpec(c, script, timeoutMs) {
   const procTimeout = timeoutMs + (CONNECT_TIMEOUT_S + 5) * 1000;
+  const options = `-c default_transaction_read_only=on -c statement_timeout=${timeoutMs}`;
   if (c.mode === "ssh") {
-    const remote = `docker exec -i ${c.container} psql -X -q --csv -v ON_ERROR_STOP=1 -U ${c.user} -d ${c.database} -f -`;
+    const remote = `docker exec -i -e 'PGOPTIONS=${options}' ${c.container} psql -X -q --csv -v ON_ERROR_STOP=1 -U ${c.user} -d ${c.database} -f -`;
     return { program: "ssh", args: ["-o", "BatchMode=yes", "-o", `ConnectTimeout=${CONNECT_TIMEOUT_S}`, c.sshHost, remote], stdin: script, timeoutMs: procTimeout };
   }
-  const env = { PGCONNECT_TIMEOUT: String(CONNECT_TIMEOUT_S) };
+  const env = { PGCONNECT_TIMEOUT: String(CONNECT_TIMEOUT_S), PGOPTIONS: options };
   if (c.secret) env.PGPASSWORD = `{{secret:${c.secret}}}`;
   return {
     program: "psql",
@@ -244,10 +302,19 @@ function runError(ctx, err) {
   return Object.assign(new Error(`${tr(ctx, "error.cannotRun")}${program} (${(err && err.code) || "error"}${reason})`), { code: err && err.code, params: err && err.params });
 }
 
+// The caller's own timeout must be a positive whole number of milliseconds (it is written into the script);
+// without one, the setting.
+async function timeoutOf(ctx, given) {
+  if (given === undefined || given === null) return numSetting(ctx, "statementTimeoutMs", DEFAULT_TIMEOUT_MS);
+  const n = positiveInt(given, MAX_TIMEOUT_MS);
+  if (n === null) throw fail(ctx, "error.badTimeout", {}, "invalid");
+  return n;
+}
+
 async function numSetting(ctx, name, fallback) {
   const raw = await ctx.host.settings.get(name);
   const n = Number(raw);
-  return raw !== null && raw !== undefined && raw !== "" && Number.isFinite(n) && n > 0 ? Math.floor(n) : fallback;
+  return raw !== null && raw !== undefined && raw !== "" && Number.isInteger(n) && n > 0 && n <= MAX_TIMEOUT_MS ? n : fallback;
 }
 
 /* ---------------------------------------------------------------- running */
@@ -258,9 +325,11 @@ export async function runReadonly(ctx, c, sql, opts) {
   const bad = checkConnection(c);
   if (bad) throw fail(ctx, "error.badField", { field: bad }, "invalid");
   if (!String(sql || "").trim()) throw fail(ctx, "error.emptySql", {}, "invalid");
-  if (hasSeveralStatements(sql)) throw fail(ctx, "error.severalStatements", {}, "invalid");
-  const timeoutMs = o.timeoutMs || (await numSetting(ctx, "statementTimeoutMs", DEFAULT_TIMEOUT_MS));
-  const maxRows = o.maxRows || DEFAULT_MAX_ROWS;
+  const why = refuse(sql);
+  if (why) throw fail(ctx, `error.${why}`, {}, "invalid");
+  const timeoutMs = await timeoutOf(ctx, o.timeoutMs);
+  const maxRows = o.maxRows === undefined ? DEFAULT_MAX_ROWS : positiveInt(o.maxRows, 100000);
+  if (maxRows === null) throw fail(ctx, "error.badTimeout", {}, "invalid");
   const started = Date.now();
   let res;
   try {
@@ -292,8 +361,9 @@ export async function captureReadonly(ctx, c, sql, opts) {
   const bad = checkConnection(c);
   if (bad) throw fail(ctx, "error.badField", { field: bad }, "invalid");
   if (!String(sql || "").trim()) throw fail(ctx, "error.emptySql", {}, "invalid");
-  if (hasSeveralStatements(sql)) throw fail(ctx, "error.severalStatements", {}, "invalid");
-  const timeoutMs = o.timeoutMs || (await numSetting(ctx, "statementTimeoutMs", DEFAULT_TIMEOUT_MS));
+  const why = refuse(sql);
+  if (why) throw fail(ctx, `error.${why}`, {}, "invalid");
+  const timeoutMs = await timeoutOf(ctx, o.timeoutMs);
   const file = `tmp/q-${Date.now()}-${++captureSeq}.csv`;
   let res;
   try {
@@ -340,6 +410,7 @@ export default {
         } else {
           view.push({ type: "text", id: "sshNote", text: tr(ctx, "note.ssh"), tone: "muted" });
         }
+        view.push({ type: "text", id: "readonly", text: tr(ctx, "note.readonly"), tone: "muted" });
         if (!ctx.run) {
           view.push({
             type: "form",

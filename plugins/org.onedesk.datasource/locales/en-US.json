@@ -25,7 +25,7 @@
   "field.container": "Container",
   "field.container.placeholder": "Docker container running PostgreSQL",
   "field.importUrl": "Connection string",
-  "field.importUrl.placeholder": "postgres://user@host:5432/database or ssh://host/container?user=u&db=d",
+  "field.importUrl.placeholder": "postgres://user@host:5432/database or ssh://host/container?user=u&db=d — without the password",
   "note.ssh": "ssh uses ~/.ssh/config and never asks for a password; the server needs docker and the container needs psql.",
   "message.imported": "Connection string imported. Save to keep it.",
   "message.importedPassword": "Imported, without the password. Type it in the password field.",
@@ -41,5 +41,9 @@
   "error.noSource": "No data source: pick one on the statement, in the environment, or set the default.",
   "error.sourceMissing": "Data source “{source}” was not found.",
   "summary.ran": "Ran in {ms} ms",
-  "action.saveTest": "Save & test"
+  "action.saveTest": "Save & test",
+  "error.backslash": "A backslash outside a string, a quoted name or a comment is not allowed (it would be a psql command).",
+  "error.notRead": "Only SELECT, WITH, VALUES, TABLE, EXPLAIN and SHOW statements can run here.",
+  "error.badTimeout": "The timeout or row limit must be a positive whole number.",
+  "note.readonly": "Statements run in a read-only transaction that is rolled back, one statement at a time. This does not stop what a database superuser can do on the server (COPY … TO PROGRAM, dblink): connect with a read-only account."
 }

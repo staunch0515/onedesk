@@ -25,7 +25,7 @@
   "field.container": "容器",
   "field.container.placeholder": "运行 PostgreSQL 的 Docker 容器",
   "field.importUrl": "连接串",
-  "field.importUrl.placeholder": "postgres://用户@主机:5432/库 或 ssh://主机/容器?user=u&db=d",
+  "field.importUrl.placeholder": "postgres://用户@主机:5432/库 或 ssh://主机/容器?user=u&db=d —— 不要带密码",
   "note.ssh": "ssh 使用 ~/.ssh/config，从不询问密码；服务器上要有 docker，容器里要有 psql。",
   "message.imported": "已导入连接串，保存后生效。",
   "message.importedPassword": "已导入，但不含密码，请在密码栏里填写。",
@@ -41,5 +41,9 @@
   "error.noSource": "没有数据源：请在语句上选一个、在环境里指定，或设置默认数据源。",
   "error.sourceMissing": "找不到数据源“{source}”。",
   "summary.ran": "耗时 {ms} 毫秒",
-  "action.saveTest": "保存并测试"
+  "action.saveTest": "保存并测试",
+  "error.backslash": "字符串、带引号的名字和注释之外不允许出现反斜杠（那会是 psql 命令）。",
+  "error.notRead": "这里只能运行以 SELECT、WITH、VALUES、TABLE、EXPLAIN、SHOW 开头的语句。",
+  "error.badTimeout": "超时或行数上限必须是正整数。",
+  "note.readonly": "语句在只读事务里运行并回滚，一次一条。这防不住数据库超级用户能在服务器上做的事（COPY … TO PROGRAM、dblink）：请用只读账号连接。"
 }

@@ -44,7 +44,7 @@ if (existsSync(pluginsDir)) {
 }
 
 // ---- 1: kernel-side sources know no concrete plugin
-const BANNED_WORDS = ["note", "sql", "postgres", "ssh", "docker", "psql", "video", "ffmpeg"];
+const BANNED_WORDS = ["note", "sql", "postgres", "postgresql", "ssh", "docker", "psql", "video", "ffmpeg"];
 const wordRe = new RegExp(`(?<![A-Za-z0-9_])(${BANNED_WORDS.join("|")})(?![A-Za-z0-9_])`, "i");
 const wordReNoSql = new RegExp(`(?<![A-Za-z0-9_])(${BANNED_WORDS.filter((w) => w !== "sql").join("|")})(?![A-Za-z0-9_])`, "i");
 // Round 15 (D412): the kernel's own SQLite layer makes the word `sql` unusable as a ban there, so what is

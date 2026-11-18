@@ -197,7 +197,7 @@
   "result.empty": "执行后结果显示在这里",
   "result.gone": "这次运行的结果已不再保留",
   "kernel.error.reason.callDepth": "插件之间的调用层数太深，操作已停止。",
-  "result.elapsed": "已用时间",
+  "result.elapsed": "耗时",
   "field.timePlaceholder": "HH:MM（UTC）",
   "field.requiredMissing": "请填写：{fields}",
   "kernel.error.reason.calleeFailed": "另一个插件提供的动作执行失败。",
@@ -837,6 +837,6 @@
   "kernel.label.protection.no_export": "禁止导出保护",
   "kernel.error.reason.readonly|layerName": "已开启只读保护（protection.readonly，由“{layerName}”设置），不能做任何修改。请到“{layerName}”里关闭。",
   "kernel.error.reason.noExport|layerName": "已开启禁止导出（protection.no_export，由“{layerName}”设置），不能导出。请到“{layerName}”里关闭。",
-  "field.timePlaceholder": "HH:MM（UTC）",
-  "result.elapsed": "耗时"
+  "kernel.error.reason.ownPrograms": "插件不能这样读写自己的 bin/ 文件夹，那里放的是它的程序。",
+  "kernel.error.reason.wrongKind": "这个动作处理的资源类型与给出的资源不一致。"
 }

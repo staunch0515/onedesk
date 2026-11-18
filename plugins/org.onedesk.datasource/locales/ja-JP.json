@@ -25,7 +25,7 @@
   "field.container": "コンテナ",
   "field.container.placeholder": "PostgreSQL が動く Docker コンテナ",
   "field.importUrl": "接続文字列",
-  "field.importUrl.placeholder": "postgres://ユーザー@ホスト:5432/DB または ssh://ホスト/コンテナ?user=u&db=d",
+  "field.importUrl.placeholder": "postgres://ユーザー@ホスト:5432/DB または ssh://ホスト/コンテナ?user=u&db=d —— パスワードは含めない",
   "note.ssh": "ssh は ~/.ssh/config を使い、パスワードは尋ねません。サーバーに docker、コンテナに psql が必要です。",
   "message.imported": "接続文字列をインポートしました。保存すると反映されます。",
   "message.importedPassword": "インポートしました（パスワードは含まれません）。パスワード欄に入力してください。",
@@ -41,5 +41,9 @@
   "error.noSource": "データソースがありません。文で選ぶか、環境で指定するか、既定のデータソースを設定してください。",
   "error.sourceMissing": "データソース「{source}」が見つかりません。",
   "summary.ran": "{ms} ms で実行",
-  "action.saveTest": "保存してテスト"
+  "action.saveTest": "保存してテスト",
+  "error.backslash": "文字列・引用符付きの名前・コメントの外にバックスラッシュは使えません（psql のコマンドになってしまいます）。",
+  "error.notRead": "ここで実行できるのは SELECT、WITH、VALUES、TABLE、EXPLAIN、SHOW で始まる文だけです。",
+  "error.badTimeout": "タイムアウトと行数の上限は正の整数にしてください。",
+  "note.readonly": "文は読み取り専用トランザクションで 1 つずつ実行され、ロールバックされます。データベースのスーパーユーザーがサーバー上でできること（COPY … TO PROGRAM、dblink）は防げません。読み取り専用のアカウントで接続してください。"
 }
