@@ -67,7 +67,7 @@ describe("http: page", () => {
     expect(out.view[2].fields[0]).toMatchObject({ kind: "secret", bind: "body.token" });
     const [method, url] = out.view[0].fields;
     expect(method).toMatchObject({ kind: "enum", bind: "body.method" });
-    expect(method.options.map((o: any) => o.value)).toEqual(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"]);
+    expect(method.options.map((o: any) => o.value)).toEqual(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]);
     expect(url).toMatchObject({ kind: "text", bind: "body.url" });
     expect(out.view[3].fields[0]).toMatchObject({ kind: "longtext", bind: "body.headers" });
     expect(out.view[4].fields[0]).toMatchObject({ kind: "longtext", bind: "body.body", fill: true });
@@ -225,14 +225,14 @@ describe("http: round 12 additions", () => {
     expect(JSON.parse(host.storage.set.mock.calls[0]![1])).toEqual({ etag: "x" });
   });
 
-  it("PUT, PATCH and DELETE are sent with their body; an unknown method fails before any request", async () => {
-    for (const m of ["PUT", "PATCH", "DELETE"]) {
+  it("PUT, PATCH, DELETE and OPTIONS are sent with their body; an unknown method fails before any request", async () => {
+    for (const m of ["PUT", "PATCH", "DELETE", "OPTIONS"]) {
       const host = fakeHost();
       await send(host, { ...base, "body.method": m, "body.body": "x" });
       expect(host.network.request.mock.calls[0]![0]).toMatchObject({ method: m, body: "x" });
     }
     const host = fakeHost();
-    await expect(send(host, { ...base, "body.method": "OPTIONS" })).rejects.toThrow("This method is not supported.");
+    await expect(send(host, { ...base, "body.method": "TRACE" })).rejects.toThrow("This method is not supported.");
     expect(host.network.request).not.toHaveBeenCalled();
   });
 
@@ -255,7 +255,7 @@ describe("http: round 12 additions", () => {
     expect(none[0]).toMatchObject({ type: "text", tone: "muted" });
   });
 
-  it("the manifest declares the query field and the six methods' default; keys exist in en, zh and ja", () => {
+  it("the manifest declares the query field and the default method; keys exist in en, zh and ja", () => {
     const m = JSON.parse(readFileSync(new URL("./manifest.json", import.meta.url), "utf8"));
     const kind = m.contributes.kinds[0];
     expect(kind.defaults).toMatchObject({ method: "GET", url: "", query: "", headers: "", body: "" });

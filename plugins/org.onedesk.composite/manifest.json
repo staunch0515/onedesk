@@ -37,25 +37,6 @@
         "id": "editor",
         "actions": [
           {
-            "id": "up",
-            "role": "event",
-            "label": "action.up",
-            "icon": "arrow-up"
-          },
-          {
-            "id": "down",
-            "role": "event",
-            "label": "action.down",
-            "icon": "arrow-down"
-          },
-          {
-            "id": "remove",
-            "role": "event",
-            "label": "action.remove",
-            "icon": "trash-2",
-            "danger": true
-          },
-          {
             "id": "save",
             "role": "save",
             "label": "action.save",

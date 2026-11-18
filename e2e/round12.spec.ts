@@ -206,7 +206,7 @@ test("composite page: the buttons move and remove the chosen item; removing neve
   const third = await create(page, NOTE, { name: "Third", "body.text": "c" });
   await dropOn(page, third, compId);
   expect(await items(page, compId)).toEqual([noteId, linkId, third]);
-  const ev = (event: string, item: string) => call<{ message?: unknown }>(page, "page.event", { target: `resource:${compId}`, event, context: { params: { item }, locale: "en-US" } });
+  const ev = (event: string, row: string) => call<{ message?: unknown }>(page, "page.event", { target: `resource:${compId}`, event, context: { row, locale: "en-US" } });
   await ev("up", third);
   expect(await items(page, compId)).toEqual([noteId, third, linkId]);
   await ev("down", noteId);
@@ -255,7 +255,7 @@ test("interface: dropping a note on the composite shows the message; expanding l
   await shot(page, "composite-expanded");
 });
 
-test("interface: the composite page lists the items; the page buttons reorder and remove them", async ({ page }) => {
+test("interface: the composite page lists the items with row keys, targets and row actions", async ({ page }) => {
   await bare(page);
   const id = await create(page, COMPOSITE, { name: "Board" });
   const one = await create(page, NOTE, { name: "One", "body.text": "1" });
@@ -268,17 +268,39 @@ test("interface: the composite page lists the items; the page buttons reorder an
   await expect(page.getByRole("tab", { name: /^Board/, selected: true })).toBeVisible({ timeout: 15_000 });
   const rows = page.getByRole("row");
   await expect(rows.filter({ hasText: "One" })).toBeVisible({ timeout: 15_000 });
+  // the table page: row keys and row buttons are accepted by the kernel
+  const view = await call<{ view: { type: string; rowKeys?: string[]; rowTargets?: (string | null)[]; rowActions?: { id: string }[] }[] }>(page, "page.resolve", { target: `resource:${id}`, context: { locale: "en-US" } });
+  expect(view.view[0]).toMatchObject({ type: "table", rowKeys: [one, two], rowTargets: [`resource:${one}`, `resource:${two}`] });
+  expect(view.view[0]!.rowActions!.map((a) => a.id)).toEqual(["up", "down", "remove"]);
   await expect(rows.filter({ hasText: "Two" })).toBeVisible();
   await shot(page, "composite-page");
-  // pick "Two" (the second item) and move it up
-  await page.getByRole("combobox", { name: "Item" }).click();
-  await page.getByRole("option", { name: "2. Two" }).click();
-  await page.getByRole("button", { name: "Move up", exact: true }).click();
+});
+
+// fixme until the shell sends `context.row` = the row's rowKeys value (D393): with the pre-D393 shell the click does nothing.
+test.fixme("interface: the row buttons move a row up and down and remove it, and removing never deletes the resource", async ({ page }) => {
+  await bare(page);
+  const id = await create(page, COMPOSITE, { name: "Rows" });
+  const one = await create(page, NOTE, { name: "One", "body.text": "1" });
+  const two = await create(page, NOTE, { name: "Two", "body.text": "2" });
+  await dropOn(page, one, id);
+  await dropOn(page, two, id);
+  await openKernel(page, host);
+  await showTree(page, "Resources");
+  await treeItem(page, /^Rows/).first().click();
+  const rows = page.getByRole("row");
+  await expect(rows.filter({ hasText: "One" })).toBeVisible({ timeout: 15_000 });
+  const rowOf = (name: string) => rows.filter({ hasText: name });
+  // row buttons: "Two" up, then "Two" down, then "Two" up again, then remove "Two"
+  await rowOf("Two").getByRole("button", { name: "Move up", exact: true }).click();
   await expect.poll(() => items(page, id), { timeout: 15_000 }).toEqual([two, one]);
-  await expect(rows.nth(1)).toContainText("Two");
-  await page.getByRole("button", { name: "Remove", exact: true }).click();
+  await rowOf("One").getByRole("button", { name: "Move up", exact: true }).click();
+  await expect.poll(() => items(page, id), { timeout: 15_000 }).toEqual([one, two]);
+  await rowOf("One").getByRole("button", { name: "Move down", exact: true }).click();
+  await expect.poll(() => items(page, id), { timeout: 15_000 }).toEqual([two, one]);
+  await rowOf("Two").getByRole("button", { name: "Remove", exact: true }).click();
   await expect.poll(() => items(page, id), { timeout: 15_000 }).toEqual([one]);
   expect((await getRes(page, two)).deleted).toBe(false);
+  await expect(rowOf("Two")).toHaveCount(0);
   await shot(page, "composite-page-removed");
 });
 
@@ -434,7 +456,7 @@ const tabView = (page: Page, run: string, tabId: string) => call<{ type: string;
 
 test("http: every method reaches the server with its body; the summary has status text, time and size", async ({ page }) => {
   await bare(page);
-  for (const method of ["GET", "POST", "PUT", "PATCH", "DELETE"]) {
+  for (const method of ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]) {
     const { run } = await sendRequest(page, { method, body: method === "GET" ? "" : `{"m":"${method}"}`, headers: "Content-Type: application/json" });
     expect(run.status, JSON.stringify(run.error)).toBe("success");
     const echo = echoOf(run);

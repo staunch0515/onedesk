@@ -66,3 +66,13 @@
 3. `run.get` 的状态是 `success`/`error`（不是 `done`/`failed`）。
 4. 审计里 `tree.drop` 的 `target` 是资源名称，不是 id。
 5. 第一阶段假设 3（`items` 数组可写、可存、可默认）在真内核里成立；假设 5（`message` 为纯字符串）成立（返回 `Added N item(s)`，内核按 Label 原样给出）。
+
+
+# 审查修改（`round12-review.md`，D393–D395）
+
+- **#1 行内动作**：综合页表格输出 `rowActions`（up / down / remove，带 Label 与图标）、`rowKeys`（资源 id）、`rowTargets`（失效的 `null`）；`onEvent` 按事件名 `remove`/`up`/`down` 用 `ctx.row` 找那一行，经 `ctx.host.resources.update` 写 `body.items`；去掉了 `remove:<id>` 事件名、Item 下拉和页面级事件按钮。假 host 测试：表格形状与等长、三个事件、没有 `ctx.row`/未知行只提示、旧事件名被拒。真内核 e2e：`page.resolve` 返回 `rowKeys/rowTargets/rowActions` 被内核接受；`page.event`（`context.row`）移除/上移/下移全过（含移除不删资源）。
+- **界面上点行按钮**：`test.fixme`——外壳还没对齐 D393（`src/workbench/parts/view-nodes.tsx` 用的是旧的 `TableRowAction.event`，`pnpm typecheck` 现在因此报错，不是我这边的文件），点按钮没有效果。外壳对齐后去掉 `fixme` 重跑。
+- **#4**：HTTP 方法保留 `OPTIONS`（七种）；测试与 e2e 的方法循环含 OPTIONS，未知方法（TRACE）仍报错。
+- **#8**：集合页的总数去掉它自己（再按它自己的 id 搜一次，匹配才减一；超出前 200 条也对）；假 host 测试三种情况。
+- **语言插件 JSON**：合并协调分支后 `lang-check` 已通过（8 条），本批无需补；外壳新增的 `badDropAnswer`/`inDrop` 等文字等通知后再补。
+- 结果：`vitest run plugins` 297 通过；`E2E_PORT=1437 playwright test e2e/round12.spec.ts`：26 通过、1 失败（改成 fixme 之前的界面按钮用例）→ 现为 26 通过 + 1 fixme（改动后整套未再完整重跑，只改了该用例的拆分）；`pnpm lint` 通过；`pnpm typecheck` 失败，原因同上（外壳文件）。

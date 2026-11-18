@@ -92,6 +92,17 @@ describe("collection: page", () => {
     const none = await pages.editor.render(ctxOf(hostOf(() => ({ items: [], total: 0 })), { text: "x" }));
     expect(none.view.map((n: any) => n.id)).toEqual(["conditions", "total"]);
   });
+  it("the collection itself is not a result and not in the total, even when it is past the shown batch", async () => {
+    const host = hostOf((q) => (q.ids ? { items: [info("col1")], total: 1 } : { items: [info("a"), info("col1")], total: 2 }));
+    const out = await pages.editor.render(ctxOf(host, { text: "x" }));
+    expect(out.view[1].text).toBe("1 result(s)");
+    expect(out.view[2].rows).toHaveLength(1);
+    expect(host.resources.search).toHaveBeenCalledWith({ text: "x", ids: ["col1"], limit: 1, offset: 0 });
+    const far = hostOf((q) => (q.ids ? { items: [info("col1")], total: 1 } : { items: Array.from({ length: 200 }, (_, i) => info(`i${i}`)), total: 501, next: 200 }));
+    expect((await pages.editor.render(ctxOf(far, { text: "x" }))).view[1].text).toBe("500 result(s), showing the first 200");
+    const notMatching = hostOf((q) => (q.ids ? { items: [], total: 0 } : { items: [info("a")], total: 1 }));
+    expect((await pages.editor.render(ctxOf(notMatching, { text: "x" }))).view[1].text).toBe("1 result(s)");
+  });
   it("searches with the unsaved draft, and a run page is read only", async () => {
     const host = hostOf(() => ({ items: [], total: 0 }));
     await pages.editor.render(ctxOf(host, { text: "old" }, { draft: { "body.text": "new" } }));
