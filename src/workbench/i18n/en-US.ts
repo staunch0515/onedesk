@@ -231,6 +231,7 @@ export const enUS = {
   "result.history": "History",
   "result.empty": "Run to see the result here",
   "result.gone": "The result of this run is no longer kept",
+  "field.requiredMissing": "Fill in: {fields}",
   "field.timePlaceholder": "HH:MM (UTC)",
   "result.running": "Running…",
   "result.elapsed": "Elapsed time",

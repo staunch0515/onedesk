@@ -24,9 +24,9 @@ const PAGE_ROWS = 1000;
 export function usePagedRows(run: Run): OutputCell[][] | null {
   const { client, actions } = useWorkbench();
   const out = run.output;
-  const paged = out?.type === "table" && (out as { paged?: boolean }).paged === true;
+  const paged = out?.type === "table" && out.paged === true;
   const first = out?.type === "table" ? (out.rows as OutputCell[][]) : [];
-  const total = out?.type === "table" ? (out as { total?: number }).total ?? first.length : 0;
+  const total = out?.type === "table" ? out.total : 0;
   const [rows, setRows] = useState<OutputCell[][]>(first);
   useEffect(() => {
     setRows(first);
@@ -299,11 +299,11 @@ export function ResultArea({ tab, descriptor }: { tab: TabState; descriptor: Pag
             if (!r) return;
             // A paged table holds only its first rows here: the whole result is read page by page for the clipboard.
             const out = r.output;
-            const paged = out?.type === "table" && (out as { paged?: boolean }).paged === true;
+            const paged = out?.type === "table" && out.paged === true;
             const gather = async (): Promise<OutputCell[][] | undefined> => {
               if (!paged || out?.type !== "table" || !client.run.rows) return undefined;
               let all = out.rows as OutputCell[][];
-              const total = (out as { total?: number }).total ?? all.length;
+              const total = out.total;
               while (all.length < total) {
                 const page = await client.run.rows!(r.id, all.length, PAGE_ROWS);
                 if (page.rows.length === 0) break;
