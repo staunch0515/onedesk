@@ -197,10 +197,8 @@ test("shell: a start that has tabs does not open the welcome page again", async 
   await welcome.hover();
   await welcome.getByRole("button", { name: "Close" }).click();
   await expect(welcome).toHaveCount(0);
-  // the layout is saved a moment after the change: reload only once the kernel has the tab list without the welcome page
-  await expect
-    .poll(async () => JSON.stringify(await call(page, "ui.get", { key: "layout" })), { timeout: 15_000 })
-    .not.toContain("org.onedesk.welcome");
+  // reload straight away: the shell flushes its debounced layout save on pagehide (a `ui.get` from the test's own rpc
+  // client cannot see the page's layout, which is stored per client)
   await page.reload();
   await expect(page.getByRole("textbox", { name: "Content", exact: true })).toBeVisible({ timeout: 20_000 });
   await expect(page.getByRole("heading", { name: "Welcome to OneDesk" })).toHaveCount(0);
