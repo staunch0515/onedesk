@@ -89,3 +89,4 @@
 - 定新依赖时连子依赖的许可证一起查（第十一轮 `markdown-it` 的子依赖是 Python-2.0，审查才发现，换成了 `marked`）。
 - 整套单元测试并行跑时 `src/workbench/parts/tree-batches.test.tsx` 偶尔失败，单独跑通过；完整 `pnpm check` 里假数据模式的拖动用例也偶发失败——先单独重跑确认再判断。
 - 内置浏览器面板的视口有时被放得很大，截图变得极小：先 `resize_window` 到 1280×800，用完再还原。
+- 第十三轮协调：r13-tests 的 5a21f74（HTTP legacyKinds 对象写法）要等内核实现 D402 后再合并，否则现有内核会把 HTTP 清单判为无效。
