@@ -61,3 +61,8 @@
 - 原因：`real-client.ts` 的 `pageContext()` 只挑 `envId/draft/params/locale`，把 `row` 丢了（`view-page` 本来就传了）。已修；测试：`real-client.test.ts`「sends the row of a row action with page.event」（抓得到这个问题：丢掉 `row` 就失败），以及 `view-page-language.test.tsx` 里从行按钮到 `client.page.event` 的一条。
 - 顺带加固：行键随行数据走（`view-nodes.tsx` 的 `Indexed.key`），按钮不再在点击时回头查 `node.rowKeys`，避免表格刷新时按钮拿到旧行键。
 - 真内核：把 `e2e/round12.spec.ts` 的行按钮用例临时改成 `test` 跑（不入库）。上移/下移/移除**能工作**（加等待后稳定通过）；但该用例原样跑会不稳定——它在 `items()` 轮询看到已保存后**立刻**点下一行按钮，此时页面还没按新顺序重新取（保存与页面刷新之间有几十到几百毫秒），点到的仍是旧顺序的行。**用例需要在每次点击之间等表格行顺序变成新的**（例如 `expect(rows.nth(1)).toContainText("One")`）再点下一个；这是用例的竞态，不是协议或外壳丢参数。
+
+### round11.spec.ts:187（关掉欢迎页后重载又出现欢迎页）的确切原因
+- **外壳的真问题**：布局保存有 200 ms 的安静期（`createStore` 的 `scheduleSave`）。用户关了标签、页面在这 200 ms 内重载，这次保存就丢了，重载读到的是旧布局（还有欢迎页）。修：`Store.flush()`（立即写出还在等的改动），`main.tsx` 在 `pagehide` 和 `visibilitychange→hidden` 时调用。测试：`state/store-flush.test.ts`（关标签后 flush 写出且不重复写）。
+- **测试自身的问题（请测试会话改）**：用例里“等布局已不含 welcome”的轮询是空的——`rpc()` 用的是另一个客户端（`client=e2e-rpc`），而布局是按客户端存的，所以 `ui.get layout` 一直返回 `null`，`not.toContain("org.onedesk.welcome")` 立刻成立，等于没等。应改成等页面自己的布局：例如先 `await page.waitForTimeout(400)`，或在页面里调用 `page.evaluate` 读 `localStorage`/等待保存，或让 `rpc` 带上页面的客户端名。外壳现在即使不等也不会丢，但这条等待仍应修正。
+- 验证：该用例 `--repeat-each=10`：修前 10/10 失败，修后 10/10 通过（真内核）。

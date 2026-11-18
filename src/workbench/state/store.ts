@@ -125,6 +125,8 @@ export interface Store {
   get: () => UiState;
   set: (update: Partial<UiState> | ((state: UiState) => Partial<UiState>)) => void;
   subscribe: (listener: () => void) => () => void;
+  /** Writes a layout change that is still waiting for its quiet moment now (the page is going away). */
+  flush: () => void;
 }
 
 export function createStore(saved: Partial<LayoutState> | null, save: (layout: LayoutState) => void): Store {
@@ -157,14 +159,18 @@ export function createStore(saved: Partial<LayoutState> | null, save: (layout: L
   const listeners = new Set<() => void>();
   let timer: ReturnType<typeof setTimeout> | undefined;
   let lastSaved = "";
+  const saveNow = () => {
+    const layout = Object.fromEntries(LAYOUT_KEYS.map((k) => [k, state[k]])) as unknown as LayoutState;
+    const json = JSON.stringify(layout);
+    if (json === lastSaved) return;
+    lastSaved = json;
+    save(layout);
+  };
   const scheduleSave = () => {
     clearTimeout(timer);
     timer = setTimeout(() => {
-      const layout = Object.fromEntries(LAYOUT_KEYS.map((k) => [k, state[k]])) as unknown as LayoutState;
-      const json = JSON.stringify(layout);
-      if (json === lastSaved) return;
-      lastSaved = json;
-      save(layout);
+      timer = undefined;
+      saveNow();
     }, 200);
   };
   return {
@@ -174,6 +180,12 @@ export function createStore(saved: Partial<LayoutState> | null, save: (layout: L
       state = { ...state, ...patch };
       for (const l of [...listeners]) l();
       scheduleSave();
+    },
+    flush: () => {
+      if (timer === undefined) return;
+      clearTimeout(timer);
+      timer = undefined;
+      saveNow();
     },
     subscribe: (listener) => {
       listeners.add(listener);
