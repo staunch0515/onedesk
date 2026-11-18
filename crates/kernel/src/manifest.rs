@@ -57,12 +57,6 @@ pub struct Manifest {
     /// Round 8 (D357): the validated `exports.pages` — short names of its own pages.
     #[serde(skip)]
     pub exported_pages: Vec<String>,
-    /// Round 11 (D383): first-version short kind names this plugin will take over (`badLegacyKinds`);
-    /// see `legacy_kinds`. Only checked, kept and shown this round.
-    #[serde(default, rename = "legacyKinds")]
-    pub legacy_kinds_raw: Option<serde_json::Value>,
-    #[serde(skip)]
-    pub legacy_kinds: Vec<String>,
     /// Round 11 (D379): the validated `contributes.languages`.
     #[serde(skip)]
     pub languages: Vec<LanguageDecl>,
@@ -78,12 +72,11 @@ pub struct LanguageDecl {
     pub shell: String,
 }
 
-/// Round 11: limits of `contributes.languages` and `legacyKinds`.
+/// Round 11: limits of `contributes.languages`.
 pub const MAX_LOCALE_LEN: usize = 35;
 pub const MAX_LANGUAGE_NAME: usize = 100;
 pub const MAX_LANGUAGES: usize = 64;
 pub const MAX_LANGUAGE_FILE: u64 = 1024 * 1024;
-pub const MAX_LEGACY_KINDS: usize = 64;
 
 /// One dependency (round 7): another plugin's id and a semver range of its active version.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1026,7 +1019,6 @@ pub fn parse_package(dir: &Path, bytes: &[u8], check_folder: bool) -> Result<Plu
     }
 
     let languages = parse_languages(dir, &m)?;
-    let legacy_kinds = parse_legacy_kinds(dir, &m)?;
     let mut startups = c.pages.iter().filter(|p| p.startup);
     if let Some(pg) = startups.next() {
         if startups.next().is_some() {
@@ -1041,7 +1033,6 @@ pub fn parse_package(dir: &Path, bytes: &[u8], check_folder: bool) -> Result<Plu
 
     let mut m = m;
     m.languages = languages;
-    m.legacy_kinds = legacy_kinds;
     m.deps = deps;
     m.exported = exported;
     m.exported_trees = exported_trees;
@@ -1091,29 +1082,6 @@ fn parse_languages(dir: &Path, m: &Manifest) -> Result<Vec<LanguageDecl>, Reject
             return Err(bad(format!("{locale}: duplicate")));
         }
         out.push(LanguageDecl { locale, name, shell });
-    }
-    Ok(out)
-}
-
-/// Round 11 (D383): `legacyKinds` — a list of distinct first-version short kind names
-/// (`[A-Za-z0-9._-]{1,64}`, no `:`).
-fn parse_legacy_kinds(dir: &Path, m: &Manifest) -> Result<Vec<String>, Rejection> {
-    let bad = |why: String| reject(dir, "badLegacyKinds", why);
-    let Some(raw) = &m.legacy_kinds_raw else { return Ok(vec![]) };
-    let list = raw.as_array().ok_or_else(|| bad("not a list".into()))?;
-    if list.len() > MAX_LEGACY_KINDS {
-        return Err(bad("too many".into()));
-    }
-    let mut out: Vec<String> = Vec::new();
-    for item in list {
-        let k = item.as_str().ok_or_else(|| bad(format!("not a string: {item}")))?;
-        if !valid_short(k) {
-            return Err(bad(k.to_string()));
-        }
-        if out.iter().any(|x| x == k) {
-            return Err(bad(format!("{k}: duplicate")));
-        }
-        out.push(k.to_string());
     }
     Ok(out)
 }
@@ -1858,7 +1826,7 @@ mod tests {
     }
 
     #[test]
-    fn round11_startup_pages_and_legacy_kinds() {
+    fn round11_startup_pages() {
         let pages = |v: Value| with(good(), &["contributes", "pages"], v);
         let solo = json!({ "id": "home", "startup": true });
         assert_eq!(reason(pages(json!([{ "id": "editor" }, solo.clone()]))), "ok");
@@ -1874,26 +1842,8 @@ mod tests {
         };
         assert!(p.page("home").unwrap().startup && !p.page("editor").unwrap().startup);
 
-        let legacy = |v: Value| with(good(), &["legacyKinds"], v);
-        assert_eq!(reason(legacy(json!(["note", "http-request", "a.b_c"]))), "ok");
-        assert_eq!(reason(legacy(json!([]))), "ok");
-        let many: Vec<String> = (0..65).map(|i| format!("k{i}")).collect();
-        for bad in [
-            json!("note"),
-            json!({ "note": 1 }),
-            json!([1]),
-            json!([""]),
-            json!(["a:b"]),
-            json!(["a b"]),
-            json!(["x".repeat(65)]),
-            json!(["note", "note"]),
-            json!(many),
-        ] {
-            assert_eq!(reason(legacy(bad.clone())), "badLegacyKinds", "{bad}");
-        }
-        let tmp = tempfile::tempdir().unwrap();
-        let dir = write(tmp.path(), "test.alpha", "0.1.0", &legacy(json!(["note", "prompt"])));
-        assert_eq!(load_package(&dir).unwrap().manifest.legacy_kinds, vec!["note".to_string(), "prompt".to_string()]);
+        // Round 13 (D403): `legacyKinds` is no longer a manifest field.
+        assert_eq!(reason(with(good(), &["legacyKinds"], json!(["note"]))), "schema");
     }
 
     #[test]

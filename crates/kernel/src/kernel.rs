@@ -209,6 +209,13 @@ impl Kernel {
             state_queries: AtomicU64::new(0),
             languages_seen: Mutex::new(None),
         });
+        // Round 13 (D400): a new workspace copies the settings it was created with, once.
+        let init = inner.read(|c| Ok(crate::workspace_settings::take_init_settings(&inner.ws.dir, c))).ok().flatten();
+        if let Some(s) = init {
+            if let Err(e) = inner.pipeline.execute_blocking(crate::pipeline::Actor::Core, Command::InitSettings(Box::new(s))) {
+                eprintln!("onedesk: init-settings not applied: {e:?}");
+            }
+        }
         // D299 first sight, then each plugin's active version.
         inner.take_state_snapshot();
         inner.first_sight_blocking();
@@ -520,6 +527,7 @@ impl Inner {
                 self.pipeline.execute(Actor::User, Command::UiSet { client: c, key: p.key, value: p.value }).await?;
                 Ok(Value::Null)
             }
+            onedesk_protocol::method13::WORKSPACE_SETTINGS_SNAPSHOT => to_value(self.settings_snapshot(client.as_deref())?),
             _ => {
                 if crate::i18n::METHODS.contains(&m) {
                     return self.handle11(m, params);

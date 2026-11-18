@@ -135,3 +135,6 @@
 - 第十一轮（测试会话）：网址插件的运行输出 `label` 在协议里是字符串，切换语言后已有的输出文字不会变（新运行的会跟着语言）；要变需把输出的 `label` 改成 `Label`（协议变更，待定）。日语译文为自译，未经母语者审阅。
 - 第十二轮验收：表格单元格不支持图标，也不按语言显示 `Label` 对象（D396 先由插件取成文字、去掉图标列）；需要时给 `OutputColumn` 只增一个列类型。
 - 第十二轮验收：切换界面语言后，没激活的标签页标题仍是旧语言，激活后才更新（外壳）。
+
+- 第十三轮（内核会话）：协议新增 `NodeState` 值 `"unknownKind"` 后，`src/workbench/parts/frame.tsx` 的三张 `Record<NodeState, …>` 表和 `side-panel.tsx` 的 `TreeNodeState` 需加上它，否则 `pnpm typecheck` 不过（外壳会话处理）。
+- 第十三轮（内核会话）：上一条作废——D403 后 `unknownKind` 已从协议删除，外壳无需改。另：清单字段 `legacyKinds` 已从内核删除，带它的清单无效（schema），`plugins/*/manifest.json` 与 `e2e/fixtures/market` 里的要由测试会话删掉。

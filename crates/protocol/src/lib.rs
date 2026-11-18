@@ -1575,11 +1575,6 @@ pub struct PluginDetail {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub runtime: Option<PluginRuntime>,
-    /// Round 11 (D383): the active version's manifest `legacyKinds` (first-version short kind
-    /// names; not taken over yet). Always present from the kernel.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub legacy_kinds: Option<Vec<String>>,
 }
 
 /// Round 9 (D365): `PluginDetail.runtime`.
@@ -2135,6 +2130,134 @@ pub struct I18nShellResult {
     pub texts: BTreeMap<String, String>,
 }
 
+/* ================================================================== round 13 (D397–D401)
+   Several workspaces (D400, D401). The first-version database upgrade was dropped (D403). */
+
+/// Methods of round 13. `app.*` are the main process's own (never forwarded to a worker);
+/// `workspace.settingsSnapshot` is the kernel's and answers only the main process (a request
+/// without `client`).
+pub mod method13 {
+    /// No params → `WorkspacesResult`.
+    pub const APP_WORKSPACES: &str = "app.workspaces";
+    /// `CreateWorkspaceParams` → `WorkspaceEntry`.
+    pub const APP_CREATE_WORKSPACE: &str = "app.createWorkspace";
+    /// `WorkspaceIdParams` → `WorkspaceEntry`.
+    pub const APP_SWITCH_WORKSPACE: &str = "app.switchWorkspace";
+    /// `RenameWorkspaceParams` → `null`.
+    pub const APP_RENAME_WORKSPACE: &str = "app.renameWorkspace";
+    /// `WorkspaceIdParams` → `null`.
+    pub const APP_DELETE_WORKSPACE: &str = "app.deleteWorkspace";
+    /// No params → `WorkspaceSettingsSnapshot`. Refused (`denied`, reason `mainProcessOnly`)
+    /// when the request carries a `client`.
+    pub const WORKSPACE_SETTINGS_SNAPSHOT: &str = "workspace.settingsSnapshot";
+}
+
+/// Topics of round 13.
+pub mod topic13 {
+    /// Payload-less: a workspace was created, renamed or deleted.
+    pub const APP_WORKSPACES_CHANGED: &str = "app.workspacesChanged";
+}
+
+/// Round 13 (D400): the file in a new workspace folder holding a `WorkspaceSettingsSnapshot`
+/// (as JSON). The kernel applies it when it opens a new, empty database there, then deletes it.
+pub const INIT_SETTINGS_FILE: &str = "init-settings.json";
+
+/// One workspace of the data folder (`app.workspaces`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct WorkspaceEntry {
+    pub id: String,
+    pub name: String,
+    /// The folder's name under `workspaces/`.
+    pub folder: String,
+    /// Milliseconds since the epoch.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub last_opened: Option<i64>,
+    /// The workspace this connection uses.
+    pub current: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct WorkspacesResult {
+    /// Most recently opened first.
+    pub items: Vec<WorkspaceEntry>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct CreateWorkspaceParams {
+    /// 1–100 characters.
+    pub name: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct WorkspaceIdParams {
+    pub id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct RenameWorkspaceParams {
+    pub id: String,
+    /// 1–100 characters.
+    pub name: String,
+}
+
+/// `workspace.settingsSnapshot`: what a new workspace copies from this one (D400) — the
+/// configuration tree's nodes and values, and which plugins are switched off. No data.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct WorkspaceSettingsSnapshot {
+    /// Root configuration nodes, in tree order.
+    #[serde(default)]
+    pub config: Vec<SettingsSnapshotNode>,
+    /// Every plugin with a recorded switch.
+    #[serde(default)]
+    pub plugins: Vec<PluginEnabledState>,
+}
+
+/// One configuration node of a `WorkspaceSettingsSnapshot`.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct SettingsSnapshotNode {
+    pub name: String,
+    #[serde(default)]
+    pub description: String,
+    /// The node's own parameters (not inherited ones).
+    #[serde(default)]
+    pub params: Vec<SnapshotParam>,
+    #[serde(default)]
+    pub children: Vec<SettingsSnapshotNode>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct SnapshotParam {
+    pub name: String,
+    #[serde(rename = "type")]
+    pub param_type: ParamType,
+    pub value: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct PluginEnabledState {
+    pub plugin: String,
+    pub enabled: bool,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2189,6 +2312,16 @@ mod tests {
         assert_eq!(serde_json::to_value(l).unwrap(), json!({ "locale": "en-US", "name": "English" }));
         let w: WorkspaceInfo = serde_json::from_value(json!({ "id": "w", "name": "n" })).unwrap();
         assert!(w.startup_pages.is_none());
+    }
+
+    #[test]
+    fn round13_wire_shapes() {
+        let e = WorkspaceEntry { id: "w".into(), name: "n".into(), folder: "f".into(), last_opened: None, current: true };
+        assert_eq!(serde_json::to_value(e).unwrap(), json!({ "id": "w", "name": "n", "folder": "f", "current": true }));
+        let s: WorkspaceSettingsSnapshot = serde_json::from_value(json!({})).unwrap();
+        assert_eq!(s, WorkspaceSettingsSnapshot::default());
+        let p = SnapshotParam { name: "ui.theme".into(), param_type: ParamType::Text, value: "dark".into() };
+        assert_eq!(serde_json::to_value(p).unwrap(), json!({ "name": "ui.theme", "type": "text", "value": "dark" }));
     }
 
     #[test]
