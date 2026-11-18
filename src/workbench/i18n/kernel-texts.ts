@@ -205,6 +205,7 @@ export const KERNEL_ERRORS: Table = {
   "reason.dependents": "kernel.error.reason.dependents",
   "conflict.dependents": "kernel.error.conflict.dependents",
   "conflict.inUse": "kernel.error.conflict.inUse",
+  "conflict.idPending": "kernel.error.conflict.idPending",
   "reason.dependsUnmet": "kernel.error.reason.dependsUnmet",
   "reason.pendingRequest": "kernel.error.reason.pendingRequest",
   "reason.notInteractive": "kernel.error.reason.notInteractive",

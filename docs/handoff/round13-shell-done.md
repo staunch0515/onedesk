@@ -13,7 +13,7 @@
 - 事件：内部事件带工作区（`HostEvent { workspace, event }`，`Deref` 到 `EventMessage`）。`Host::visible_to(&ev, client)`：事件只发给绑定在该工作区的连接，`workspace: None` 的（`app.workspacesChanged`）发给所有人。`ws.rs`（devhost）与 `src-tauri/src/lib.rs` 都用它。`Host::events()` 的返回类型因此变成 `Receiver<HostEvent>`。
 - 工作进程启动失败时，把它 stderr 的最后约 2000 字节拼进错误（例如打不开数据库的原因）。
 - 新增 `workspaces.rs`：扫描、`workspace.json` 读写、建、移到 trash、读密钥名字。
-- 新依赖：`crates/host` 依赖 `onedesk-kernel`（只用 `secrets::SecretStoreHandle` 与 `workspace::stamp`）和 `rusqlite`（只读打开待删工作区的库读 `meta.workspace_id` 与 `secret_names`）。两者都已是工作区内依赖/已在 decisions 的白名单里，没有新的第三方包；**请协调会话在 decisions.md 补一行**（规则 9）。
+- 新依赖：`crates/host` 依赖 `onedesk-kernel`（只用 `secrets::SecretStoreHandle` 与 `workspace::stamp`）。**D404：主进程不打开任何数据库，已去掉 `rusqlite`。** 工作区没有可读的 `workspace.json` 时列出为：名称=文件夹名、id=`pending:<文件夹>`、`idPending:true`，可切换，改名/删除返回 `conflict/idPending`；内核打开它时写出 `workspace.json` 后 id 就确定。删除时按前缀 `<工作区id>/` 删钥匙串：给内核 `SecretStore` 加了 `delete_prefix`（内存库有测试；钥匙串实现用 `security-framework` 列出本服务的账户再逐个删，**没有测试——不能碰真钥匙串，未运行过**）；`crates/kernel/Cargo.toml` 因此新增 `security-framework = "3"`（keyring 已带的同一个包，MIT/Apache-2.0），请在 decisions.md 补记。
 - `HostConfig` 增加 `secrets: Option<SecretStoreHandle>`（`None` = 按环境：钥匙串或 `ONEDESK_SECRET_STORE=memory`）。测试一律传内存库。
 
 **外壳**
@@ -70,4 +70,5 @@
 - 重复 id 的工作区文件夹（手动拷贝）没有处理（设计 3.1 说后发现的赋新 id）。
 - **多窗口在桌面里没有运行过**：`open_window`、窗口事件、位置恢复、按窗口过滤事件只做了编译和 clippy；主进程的绑定/解绑/位置保存和浏览器标签的绑定有测试。浏览器标签的“新窗口”没有用 Playwright 点过。
 - 浏览器标签的 WebSocket 断线重连时，只有带 `workspace` 参数的标签能回到原工作区，切换过的标签会回到默认工作区。
-- 在 `docs/decisions.md` 里补记 host 对 `onedesk-kernel`/`rusqlite` 的依赖，需协调会话做（我无权改该文件）。
+- 在 `docs/decisions.md` 里补记 host 对 `onedesk-kernel` 的依赖和内核新增的 `security-framework`，需协调会话做（我无权改该文件）。
+- 钥匙串的 `delete_prefix` 真实现没运行过（只编译、clippy）。

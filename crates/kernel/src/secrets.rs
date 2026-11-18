@@ -20,6 +20,9 @@ pub trait SecretStore: Send + Sync {
     fn get(&self, account: &str) -> Result<Option<String>, String>;
     fn set(&self, account: &str, value: &str) -> Result<(), String>;
     fn delete(&self, account: &str) -> Result<(), String>;
+    /// Deletes every entry whose account starts with `prefix` (the main process removes `<workspace id>/` when it
+    /// deletes a workspace, without opening its database, D404). Returns how many went.
+    fn delete_prefix(&self, prefix: &str) -> Result<usize, String>;
 }
 
 /// The macOS keychain (generic passwords of one service).
@@ -46,6 +49,29 @@ impl SecretStore for KeychainStore {
             Err(e) => Err(e.to_string()),
         }
     }
+    fn delete_prefix(&self, prefix: &str) -> Result<usize, String> {
+        let accounts = self.accounts_with_prefix(prefix)?;
+        for a in &accounts {
+            self.delete(a)?;
+        }
+        Ok(accounts.len())
+    }
+}
+
+impl KeychainStore {
+    /// The accounts of this service that start with `prefix` (attributes only: no secret value is read, so no prompt).
+    fn accounts_with_prefix(&self, prefix: &str) -> Result<Vec<String>, String> {
+        use security_framework::item::{ItemClass, ItemSearchOptions, Limit};
+        /// errSecItemNotFound: nothing stored under this service.
+        const NOT_FOUND: i32 = -25300;
+        let found = ItemSearchOptions::new().class(ItemClass::generic_password()).service(&self.service).load_attributes(true).limit(Limit::All).search();
+        let results = match found {
+            Ok(r) => r,
+            Err(e) if e.code() == NOT_FOUND => return Ok(Vec::new()),
+            Err(e) => return Err(e.to_string()),
+        };
+        Ok(results.iter().filter_map(|r| r.simplify_dict()).filter_map(|d| d.get("acct").cloned()).filter(|a| a.starts_with(prefix)).collect())
+    }
 }
 
 /// In memory (tests, and `ONEDESK_SECRET_STORE=memory`). Never touches the keychain.
@@ -71,6 +97,12 @@ impl SecretStore for MemoryStore {
     fn delete(&self, account: &str) -> Result<(), String> {
         self.0.lock().unwrap().remove(account);
         Ok(())
+    }
+    fn delete_prefix(&self, prefix: &str) -> Result<usize, String> {
+        let mut map = self.0.lock().unwrap();
+        let before = map.len();
+        map.retain(|k, _| !k.starts_with(prefix));
+        Ok(before - map.len())
     }
 }
 
@@ -341,4 +373,20 @@ pub fn resource_secret_names(k: &crate::manifest::KindDecl, body: &JsonMap) -> B
         }
     }
     out
+}
+
+#[cfg(test)]
+mod prefix_tests {
+    use super::*;
+
+    #[test]
+    fn the_memory_store_deletes_by_prefix_and_leaves_other_workspaces_alone() {
+        let (handle, memory) = SecretStoreHandle::memory();
+        for a in ["ws1/token", "ws1/key", "ws10/token", "ws2/token"] {
+            handle.0.set(a, "v").unwrap();
+        }
+        assert_eq!(handle.0.delete_prefix("ws1/").unwrap(), 2);
+        assert_eq!(memory.accounts(), ["ws10/token", "ws2/token"]);
+        assert_eq!(handle.0.delete_prefix("ws1/").unwrap(), 0);
+    }
 }

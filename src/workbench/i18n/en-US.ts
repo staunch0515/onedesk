@@ -130,6 +130,7 @@ export const enUS = {
   "workspace.delete": "Delete",
   "workspace.manageTitle": "Workspaces",
   "workspace.manageBody": "A new workspace starts empty with this workspace's settings. Switching reloads the window. A workspace open in any window cannot be deleted.",
+  "kernel.error.conflict.idPending": "Open this workspace once first; then it can be renamed or deleted.",
   "kernel.error.conflict.inUse": "That workspace is in use and cannot be deleted. Switch to another one first.",
   "topbar.openInNewWindow": "Open a workspace in a new window…",
   "topbar.search": "Search this workspace",

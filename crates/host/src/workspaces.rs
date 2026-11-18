@@ -21,6 +21,9 @@ pub struct WorkspaceEntry {
     pub id: String,
     pub name: String,
     pub folder: String,
+    /// True while `id` is `pending:<folder>`: no `workspace.json` yet. Such a workspace can be switched to, not deleted or renamed.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub id_pending: bool,
     /// Milliseconds since the epoch; absent for a workspace that was never opened.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_opened: Option<i64>,
@@ -114,14 +117,9 @@ pub fn write_info(dir: &Path, info: &InfoFile) -> std::io::Result<()> {
     std::fs::rename(&tmp, dir.join(INFO_FILE))
 }
 
-/// The id the database holds (`meta.workspace_id`), read without writing.
-fn db_id(dir: &Path) -> Option<String> {
-    let conn = rusqlite::Connection::open_with_flags(dir.join(DB_FILE), rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).ok()?;
-    conn.query_row("SELECT value FROM meta WHERE key = 'workspace_id'", [], |r| r.get(0)).ok()
-}
-
-/// Folders that are workspaces (have a `workspace.json` or a `workspace.db`). One without a readable `workspace.json`
-/// gets one: the id from the database, else a new one; the name is the folder's.
+/// Folders that are workspaces (have a `workspace.json` or a `workspace.db`). The main process never opens a database
+/// (D404): one without a readable `workspace.json` is listed with the folder's name and a pending id (`""`); the kernel
+/// writes `workspace.json` with the real id when its worker opens the workspace.
 pub fn scan(data_dir: &Path) -> Vec<(String, InfoFile)> {
     let Ok(rd) = std::fs::read_dir(data_dir.join("workspaces")) else { return Vec::new() };
     let mut out = Vec::new();
@@ -133,11 +131,7 @@ pub fn scan(data_dir: &Path) -> Vec<(String, InfoFile)> {
         }
         let info = match read_info(&dir) {
             Some(i) if !i.id.is_empty() => i,
-            _ => {
-                let i = InfoFile { id: db_id(&dir).unwrap_or_else(new_id), name: folder.clone(), last_opened_at: 0, window: None };
-                let _ = write_info(&dir, &i);
-                i
-            }
+            _ => InfoFile { id: String::new(), name: folder.clone(), last_opened_at: 0, window: None },
         };
         out.push((folder, info));
     }
@@ -150,9 +144,15 @@ pub fn sorted(mut v: Vec<(String, InfoFile)>) -> Vec<(String, InfoFile)> {
     v
 }
 
+/// The id a workspace without `workspace.json` is listed under.
+pub fn pending_id(folder: &str) -> String {
+    format!("pending:{folder}")
+}
+
 pub fn entry(folder: &str, info: &InfoFile, current: bool) -> WorkspaceEntry {
     WorkspaceEntry {
-        id: info.id.clone(),
+        id: if info.id.is_empty() { pending_id(folder) } else { info.id.clone() },
+        id_pending: info.id.is_empty(),
         name: info.name.clone(),
         folder: folder.to_string(),
         last_opened: (info.last_opened_at > 0).then_some(info.last_opened_at),
@@ -193,17 +193,6 @@ pub fn move_to_trash(data_dir: &Path, folder: &str) -> Result<PathBuf, String> {
     Ok(to)
 }
 
-/// The keychain accounts of a workspace: `<workspace id>/<secret name>` for every name in its `secret_names` table.
-pub fn secret_accounts(dir: &Path, fallback_id: &str) -> Vec<String> {
-    let Ok(conn) = rusqlite::Connection::open_with_flags(dir.join(DB_FILE), rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY) else {
-        return Vec::new();
-    };
-    let id = db_id(dir).unwrap_or_else(|| fallback_id.to_string());
-    let Ok(mut stmt) = conn.prepare("SELECT name FROM secret_names") else { return Vec::new() };
-    let names: Vec<String> = stmt.query_map([], |r| r.get(0)).map(|rows| rows.filter_map(|r| r.ok()).collect()).unwrap_or_default();
-    names.into_iter().map(|n| format!("{id}/{n}")).collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -217,6 +206,22 @@ mod tests {
         let (a, _) = create(tmp.path(), "Team", None).unwrap();
         let (b, _) = create(tmp.path(), "team", None).unwrap();
         assert_eq!((a.as_str(), b.as_str()), ("team", "team-2"));
+    }
+
+    #[test]
+    fn a_folder_without_workspace_json_is_listed_with_a_pending_id_and_nothing_is_written() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = workspace_path(tmp.path(), "old-one");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join(DB_FILE), b"not opened by the main process").unwrap();
+        let found = scan(tmp.path());
+        assert_eq!(found.len(), 1);
+        let e = entry(&found[0].0, &found[0].1, false);
+        assert_eq!((e.name.as_str(), e.id.as_str(), e.id_pending), ("old-one", "pending:old-one", true));
+        assert!(!dir.join(INFO_FILE).exists());
+        // A corrupt file counts the same.
+        std::fs::write(dir.join(INFO_FILE), b"{ nope").unwrap();
+        assert!(scan(tmp.path())[0].1.id.is_empty());
     }
 
     #[test]

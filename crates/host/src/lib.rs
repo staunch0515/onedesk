@@ -704,7 +704,17 @@ impl Host {
     }
 
     fn find(&self, id: &str) -> Result<(String, workspaces::InfoFile), ProtocolError> {
-        self.scanned().into_iter().find(|(_, i)| i.id == id).ok_or_else(|| not_found("workspace"))
+        self.scanned().into_iter().find(|(f, i)| workspaces::entry(f, i, false).id == id).ok_or_else(|| not_found("workspace"))
+    }
+
+    /// Like `find`, but refuses a workspace whose id is still pending (no `workspace.json` yet): renaming or deleting it
+    /// would need the id (D404). Opening it once lets the kernel write the file.
+    fn find_with_id(&self, id: &str) -> Result<(String, workspaces::InfoFile), ProtocolError> {
+        let found = self.find(id)?;
+        if found.1.id.is_empty() {
+            return Err(ProtocolError { code: ErrorCode::Conflict, params: [("reason".to_string(), "idPending".to_string())].into(), detail: None });
+        }
+        Ok(found)
     }
 
     fn changed(&self) {
@@ -817,7 +827,7 @@ impl Host {
     fn rename_workspace(&self, params: Value) -> Result<Value, ProtocolError> {
         let p = parse::<RenameParams>(params)?;
         let name = workspaces::valid_name(&p.name).ok_or_else(|| err(ErrorCode::InvalidParams, "name must be 1 to 100 characters"))?;
-        let (folder, mut info) = self.find(&p.id)?;
+        let (folder, mut info) = self.find_with_id(&p.id)?;
         info.name = name;
         workspaces::write_info(&workspace_path(&self.data_dir, &folder), &info).map_err(|e| err(ErrorCode::Internal, format!("workspace.json: {e}")))?;
         self.changed();
@@ -827,7 +837,7 @@ impl Host {
     /// `app.deleteWorkspace { id }`: not the one in use; the folder moves to `trash/workspaces/` and its keychain
     /// entries are deleted.
     fn delete_workspace(&self, client: Option<&str>, params: Value) -> Result<Value, ProtocolError> {
-        let (folder, info) = self.find(&parse::<IdParams>(params)?.id)?;
+        let (folder, info) = self.find_with_id(&parse::<IdParams>(params)?.id)?;
         let used = self.bound(client) == folder
             || *self.active.lock().unwrap() == folder
             || self.bindings.lock().unwrap().values().any(|f| *f == folder)
@@ -835,14 +845,10 @@ impl Host {
         if used {
             return Err(in_use());
         }
-        // The names are read first (they live in the database); nothing is lost if the move fails.
-        let dir = workspace_path(&self.data_dir, &folder);
-        let accounts = workspaces::secret_accounts(&dir, &info.id);
         let trashed = workspaces::move_to_trash(&self.data_dir, &folder).map_err(|e| err(ErrorCode::Internal, e))?;
-        for account in accounts {
-            if let Err(e) = self.secrets.0.delete(&account) {
-                eprintln!("onedesk-host: could not delete keychain entry {account}: {e}");
-            }
+        // The keychain accounts are `<workspace id>/<name>`: all of them go, without opening the database (D404).
+        if let Err(e) = self.secrets.0.delete_prefix(&format!("{}/", info.id)) {
+            eprintln!("onedesk-host: could not delete the keychain entries of workspace {}: {e}", info.id);
         }
         let _ = trashed;
         self.changed();

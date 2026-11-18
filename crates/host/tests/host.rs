@@ -549,19 +549,15 @@ async fn delete_refuses_the_workspace_in_use_and_moves_the_rest_to_trash_with_it
     let host = start_with(tmp.path(), store.clone()).await;
     let mut events = host.events();
     let made = host.request(Some("a"), "app.createWorkspace", json!({ "name": "scratch" })).await.unwrap();
-    // A database with a workspace id and two secret names, as the kernel would leave it.
-    let dir = tmp.path().join("data/workspaces/scratch");
-    {
-        let db = rusqlite::Connection::open(dir.join("workspace.db")).unwrap();
-        db.execute_batch("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT); CREATE TABLE secret_names (name TEXT PRIMARY KEY, updated_at INTEGER NOT NULL);").unwrap();
-        db.execute("INSERT INTO meta VALUES ('workspace_id', ?1)", [made["id"].as_str().unwrap()]).unwrap();
-        db.execute_batch("INSERT INTO secret_names VALUES ('token', 1), ('key', 1);").unwrap();
-    }
     let id = made["id"].as_str().unwrap().to_string();
     for name in ["token", "key"] {
         store.0.set(&format!("{id}/{name}"), "value").unwrap();
     }
+    // Another workspace's entries, one whose id merely starts the same way, and a database file that is not even SQLite.
     store.0.set("other-workspace/token", "value").unwrap();
+    store.0.set(&format!("{id}0/token"), "value").unwrap();
+    let dir = tmp.path().join("data/workspaces/scratch");
+    std::fs::write(dir.join("workspace.db"), b"the main process never opens this").unwrap();
     // In use: the current one, and one another connection is on.
     let current = list(&host, "a").await[0]["id"].clone();
     let e = host.request(Some("a"), "app.deleteWorkspace", json!({ "id": current })).await.unwrap_err();
@@ -580,7 +576,7 @@ async fn delete_refuses_the_workspace_in_use_and_moves_the_rest_to_trash_with_it
     assert_eq!(trash.len(), 1);
     assert!(trash[0].starts_with("scratch-20"), "{trash:?}");
     assert!(tmp.path().join("data/trash/workspaces").join(&trash[0]).join("workspace.db").is_file(), "moved, not deleted");
-    assert_eq!(memory.accounts(), ["other-workspace/token"], "only this workspace's keychain entries went");
+    assert_eq!(memory.accounts(), [format!("{id}0/token"), "other-workspace/token".to_string()], "only this workspace's keychain entries went");
     assert_eq!(list(&host, "a").await.len(), 1);
     let gone = host.request(Some("a"), "app.deleteWorkspace", json!({ "id": id })).await.unwrap_err();
     assert_eq!(gone.code, ErrorCode::NotFound);
@@ -712,5 +708,27 @@ async fn a_browser_tab_opened_with_a_workspace_parameter_is_bound_and_released_o
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
     assert_eq!(host.running_workspaces(), ["default"]);
+    host.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_folder_without_workspace_json_is_listed_switchable_and_not_deletable_until_its_worker_has_run() {
+    let tmp = tempfile::tempdir().unwrap();
+    let host = start(tmp.path()).await;
+    let dir = tmp.path().join("data/workspaces/copied-in");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("workspace.db"), b"x").unwrap();
+    let items = list(&host, "w").await;
+    let pending = items.iter().find(|i| i["folder"] == "copied-in").expect("listed");
+    assert_eq!((pending["name"].clone(), pending["id"].clone(), pending["idPending"].clone()), (json!("copied-in"), json!("pending:copied-in"), json!(true)));
+    assert!(!dir.join("workspace.json").exists(), "the main process writes nothing for it");
+    for method in ["app.deleteWorkspace", "app.renameWorkspace"] {
+        let e = host.request(Some("w"), method, json!({ "id": "pending:copied-in", "name": "x" })).await.unwrap_err();
+        assert_eq!((e.code, e.params.get("reason").map(String::as_str)), (ErrorCode::Conflict, Some("idPending")));
+    }
+    // It can be switched to; the (real) kernel then writes workspace.json with the id. The fake worker does not, so
+    // the entry stays pending here; what matters is that the switch works.
+    let switched = host.request(Some("w"), "app.switchWorkspace", json!({ "id": "pending:copied-in" })).await.unwrap();
+    assert_eq!(switched["folder"], "copied-in");
     host.shutdown().await;
 }

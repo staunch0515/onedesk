@@ -117,6 +117,8 @@ export type PageSaveResult = { page: PageDescriptor };
 export interface WorkspaceEntry {
   id: string;
   name: string;
+  /** True while the workspace has no `workspace.json` yet (id `pending:<folder>`): it can be opened, not renamed or deleted (D404). */
+  idPending?: boolean;
   /** The folder under `workspaces/`; the demo has none. */
   folder?: string;
   /** Milliseconds since the epoch; absent when never opened. */
