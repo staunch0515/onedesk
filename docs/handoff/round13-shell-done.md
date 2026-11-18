@@ -78,3 +78,21 @@
 - 主进程与外壳改用 `crates/protocol` 的 `WorkspaceEntry`、`WorkspacesResult`、`CreateWorkspaceParams`、`WorkspaceIdParams`、`RenameWorkspaceParams`、`method13::APP_*`、`topic13::APP_WORKSPACES_CHANGED`、`INIT_SETTINGS_FILE`、`WORKSPACE_SETTINGS_SNAPSHOT`；删掉自己的重复定义。**`idPending` 没进协议**：主进程内部用 id 形如 `pending:<文件夹>` 表示（外壳 `isPendingWorkspace(w)` 判断 `id.startsWith("pending:")`）；是否把它做成协议字段由协调会话定。
 - 对真工作进程走出的一个问题：内核只接受不带 `client` 的 `workspace.settingsSnapshot`（`denied/mainProcessOnly`），主进程原先转发时带了 client，新建会失败——已改为不带 client 发给该连接所绑定工作区的工作进程，并加了断言。
 - 真工作进程脚本（`/private/tmp/claude-501/smoke2.mjs`，临时目录+内存密钥库，不在仓库里）全过：A 改 `ui.density` 并停用 `org.onedesk.link`、建一个分组后新建工作区 → `init-settings.json` 写出；标签 B 以 `?workspace=<id>` 连上后：两个标签属于两个工作区；`init-settings.json` 首次打开后被删；B 里配置跟过去、插件仍停用、数据（分组）没过去；改 B 的配置不影响 A；列表里 `current` 按连接；关掉 B 后 Second 的工作进程在 2.5 秒内退出，A 不受影响。
+
+## 审查后的修改（round13-review.md）
+
+| # | 做了什么 | 测试 |
+|---|---|---|
+| 1 | 新建时以主进程身份（不带 `client`）向工作进程要 `workspace.settingsSnapshot`。**假工作进程现在像内核一样拒绝带 `client` 的请求**（`denied/mainProcessOnly`）；另在真内核上走通（`/private/tmp/claude-501/smoke2.mjs`） | `a_worker_that_refuses_a_snapshot_with_a_client_still_lets_create_succeed`、`create_makes_a_folder_…`（断言快照请求无 client） |
+| 2 | D406：连接第一次出现就绑定到当时的默认；`active` 只是新连接的默认，不路由、不算在用；删除一个 `active` 指向的工作区时 `active` 改到发起者的工作区 | `a_connection_is_bound_when_it_first_appears_and_is_not_carried_off_by_others`、`the_default_for_new_connections_is_neither_kept_running_nor_protected_from_delete` |
+| 3 | 新建/切换/绑定/解绑/改名/删除共用一把锁（`ops`）；切换与新窗口绑定**先登记绑定再启动工作进程**，启动失败则还原旧绑定 | `a_delete_racing_a_switch_never_leaves_a_connection_on_a_deleted_workspace`（6 轮并发，只允许“切换成功+删除被拒”或“删除成功+切换找不到”） |
+| 4 | 新建用 `create_dir`，`AlreadyExists` 换后缀重试 | 单元 `creating_the_same_name_at_once_…`（12 线程）、主进程 `creating_the_same_name_at_the_same_time_gives_different_folders` |
+| 5 | 扫描时按文件夹名排序，后发现的重复 id 标为待定（`pending:<文件夹>`），不能改名删除，钥匙串不会被误删。列表里的“提示”就是它的 `pending:` id（外壳已禁用其改名/删除按钮）；按 §3.1 分配新 id 属内核，**记 todo** | 单元 `a_copied_folder_with_the_same_id_…`、主进程 `a_folder_copied_by_hand_with_the_same_id_…` |
+| 6 | `plugin.rescan` 现在让所有运行中的工作进程重扫（别的工作区的失败只记日志）；移除插件前先问所有运行中的工作进程（`plugin.checkRemove`），任一拒绝则不动文件。装插件的“确认权限”仍只记在发起的工作区（权限确认按工作区） | `installing_and_removing_a_plugin_involves_every_running_workspace`、`another_workspace_that_still_needs_the_plugin_stops_its_removal` |
+| 7 | `ws-transport` 实现 `openWindow`：开 `?workspace=<id>` 的新标签页（`noopener`） | `ws-transport.test.ts`（两条） |
+| 10 | `window` 字段在 `spawn_worker` 里保存/写回，首次启动和崩溃重启都覆盖；假工作进程在 `hello` 时像内核一样重写 `workspace.json` 丢掉 `window` | `the_window_position_survives_a_worker_crash_and_restart` |
+| 12 | `top-bar.tsx` 缩进；主进程不再有自己的 `WorkspaceEntry`（用协议的）；删除确认按钮在进行中禁用并显示 loading | 现有 `workspace-dialogs.test.tsx` 仍过 |
+
+结果：`cargo test -p onedesk-host` 34 单元 + 44 集成全过；clippy（host、src-tauri）过；typecheck、lint 过；`src/workbench` 的 vitest 179 全过；真工作进程脚本全过。**没重跑**全量 `pnpm test`、Playwright；桌面窗口仍没运行过。
+
+仍属他人/记录：#8、#9、内核 `workspace.info` 改名后的旧名与重复 id 的新 id 分配（内核）；#11、#13 的 e2e（测试会话）。

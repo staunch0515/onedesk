@@ -45,7 +45,7 @@ export function TopBarPart({ onSettings }: { onSettings: () => void }) {
   }, [query, client, actions]);
 
   const current = workspaces.data?.find((w) => w.current);
-    const workspaceMenu: MenuEntry[] = [
+  const workspaceMenu: MenuEntry[] = [
     { type: "label", key: "label", label: t("topbar.workspaces") },
     ...(workspaces.data ?? []).map((w): MenuEntry => ({ key: w.id, label: w.name, icon: w.current ? "check" : undefined, onSelect: () => (w.current ? undefined : void switchWorkspace(client, w.id).catch(actions.fail)) })),
     { type: "separator", key: "sep-workspaces" },
@@ -73,58 +73,58 @@ export function TopBarPart({ onSettings }: { onSettings: () => void }) {
 
   return (
     <>
-    <WorkspaceDialogs dialog={workspaceDialog} setDialog={setWorkspaceDialog} />
-    <TopBar
-      start={
-        <DropdownMenu
-          items={workspaceMenu}
-          trigger={
-            <Button variant="ghost" icon="box" trailingIcon="chevrons-up-down">
-              {current?.name ?? "…"}
-            </Button>
-          }
-        />
-      }
-      center={
-        <SearchBox
-          ref={inputRef}
-          value={query}
-          onValueChange={setQuery}
-          placeholder={t("topbar.searchPlaceholder")}
-          label={t("topbar.search")}
-          shortcut={["⌘", "K"]}
-          results={results}
-          resultsLabel={t("topbar.searchResults")}
-          emptyText={t("topbar.searchEmpty", { query: query.trim() })}
-        />
-      }
-      end={
-        <>
+      <WorkspaceDialogs dialog={workspaceDialog} setDialog={setWorkspaceDialog} />
+      <TopBar
+        start={
           <DropdownMenu
-            align="end"
-            items={newMenu}
+            items={workspaceMenu}
             trigger={
-              <Button variant="primary" icon="plus" trailingIcon="chevron-down">
-                {t("topbar.new")}
+              <Button variant="ghost" icon="box" trailingIcon="chevrons-up-down">
+                {current?.name ?? "…"}
               </Button>
             }
           />
-          <IconButton icon="square-terminal" label={t("topbar.commandPalette")} shortcut={["⌘", "⇧", "P"]} tooltipSide="bottom" onClick={() => store.set({ paletteOpen: true })} />
-          <DropdownMenu
-            align="end"
-            items={[
-              { key: "settings", label: t("topbar.settings"), icon: "settings", shortcut: ["⌘", ","], onSelect: onSettings },
-              // Connected to a kernel: settings has more than one page (D298 §6: the secrets page lives under settings).
-              ...(client.secrets ? [{ key: "secrets", label: t("secrets.title"), icon: "key-round", onSelect: () => actions.open(SECRETS_TARGET) }] : []),
-              { type: "separator", key: "sep-transfer" } as MenuEntry,
-              { key: "export", label: t("transfer.export"), icon: "folder-output", onSelect: () => void startExport(client, store, actions, (resources, folder) => toast({ tone: "success", title: t("transfer.exportDone", { resources, folder }) })) },
-              { key: "import", label: t("transfer.import"), icon: "folder-input", onSelect: () => void startImport(client, store, actions) },
-            ]}
-            trigger={<IconButton icon="settings" label={t("topbar.settings")} tooltipSide="bottom" />}
+        }
+        center={
+          <SearchBox
+            ref={inputRef}
+            value={query}
+            onValueChange={setQuery}
+            placeholder={t("topbar.searchPlaceholder")}
+            label={t("topbar.search")}
+            shortcut={["⌘", "K"]}
+            results={results}
+            resultsLabel={t("topbar.searchResults")}
+            emptyText={t("topbar.searchEmpty", { query: query.trim() })}
           />
-        </>
-      }
-    />
+        }
+        end={
+          <>
+            <DropdownMenu
+              align="end"
+              items={newMenu}
+              trigger={
+                <Button variant="primary" icon="plus" trailingIcon="chevron-down">
+                  {t("topbar.new")}
+                </Button>
+              }
+            />
+            <IconButton icon="square-terminal" label={t("topbar.commandPalette")} shortcut={["⌘", "⇧", "P"]} tooltipSide="bottom" onClick={() => store.set({ paletteOpen: true })} />
+            <DropdownMenu
+              align="end"
+              items={[
+                { key: "settings", label: t("topbar.settings"), icon: "settings", shortcut: ["⌘", ","], onSelect: onSettings },
+                // Connected to a kernel: settings has more than one page (D298 §6: the secrets page lives under settings).
+                ...(client.secrets ? [{ key: "secrets", label: t("secrets.title"), icon: "key-round", onSelect: () => actions.open(SECRETS_TARGET) }] : []),
+                { type: "separator", key: "sep-transfer" } as MenuEntry,
+                { key: "export", label: t("transfer.export"), icon: "folder-output", onSelect: () => void startExport(client, store, actions, (resources, folder) => toast({ tone: "success", title: t("transfer.exportDone", { resources, folder }) })) },
+                { key: "import", label: t("transfer.import"), icon: "folder-input", onSelect: () => void startImport(client, store, actions) },
+              ]}
+              trigger={<IconButton icon="settings" label={t("topbar.settings")} tooltipSide="bottom" />}
+            />
+          </>
+        }
+      />
     </>
   );
 }

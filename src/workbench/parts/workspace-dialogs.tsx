@@ -63,6 +63,39 @@ function NameDialog({ title, ok, initial, onSubmit, onClose }: { title: string; 
   );
 }
 
+/** Asks before a workspace goes to the trash folder; the button is busy while the main process works. */
+function DeleteDialog({ entry, setDialog }: { entry: WorkspaceEntry; setDialog: (d: WorkspaceDialog) => void }) {
+  const { client, actions } = useWorkbench();
+  const { t } = useI18n();
+  const [busy, setBusy] = useState(false);
+  const back = () => setDialog({ kind: "manage" });
+  return (
+    <Dialog
+      open
+      onOpenChange={(open) => !open && !busy && back()}
+      size="sm"
+      title={t("workspace.deleteTitle", { name: entry.name })}
+      description={t("workspace.deleteBody")}
+      footer={
+        <>
+          <Button disabled={busy} onClick={back}>{t("common.cancel")}</Button>
+          <Button
+            variant="danger"
+            disabled={busy}
+            loading={busy}
+            onClick={() => {
+              setBusy(true);
+              client.workspace.remove(entry.id).catch(actions.fail).finally(back);
+            }}
+          >
+            {t("workspace.delete")}
+          </Button>
+        </>
+      }
+    />
+  );
+}
+
 /** The dialogs behind the title bar's workspace menu: new, rename, delete and the list to manage them. */
 export function WorkspaceDialogs({ dialog, setDialog }: { dialog: WorkspaceDialog; setDialog: (d: WorkspaceDialog) => void }) {
   const { client, actions } = useWorkbench();
@@ -87,31 +120,7 @@ export function WorkspaceDialogs({ dialog, setDialog }: { dialog: WorkspaceDialo
   if (dialog.kind === "rename") {
     return <NameDialog title={t("workspace.renameTitle")} ok={t("workspace.rename")} initial={dialog.entry.name} onClose={() => setDialog({ kind: "manage" })} onSubmit={(name) => client.workspace.rename(dialog.entry.id, name)} />;
   }
-  if (dialog.kind === "delete") {
-    const entry = dialog.entry;
-    return (
-      <Dialog
-        open
-        onOpenChange={(open) => !open && setDialog({ kind: "manage" })}
-        size="sm"
-        title={t("workspace.deleteTitle", { name: entry.name })}
-        description={t("workspace.deleteBody")}
-        footer={
-          <>
-            <Button onClick={() => setDialog({ kind: "manage" })}>{t("common.cancel")}</Button>
-            <Button
-              variant="danger"
-              onClick={() => {
-                client.workspace.remove(entry.id).then(() => setDialog({ kind: "manage" }), (e) => { actions.fail(e); setDialog({ kind: "manage" }); });
-              }}
-            >
-              {t("workspace.delete")}
-            </Button>
-          </>
-        }
-      />
-    );
-  }
+  if (dialog.kind === "delete") return <DeleteDialog entry={dialog.entry} setDialog={setDialog} />;
 
   const columns: Array<TableColumn<WorkspaceEntry>> = [
     { key: "name", header: t("workspace.name"), render: (w) => (w.current ? <>{w.name} <Badge tone="accent">{t("workspace.current")}</Badge></> : w.name) },

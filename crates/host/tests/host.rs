@@ -732,3 +732,163 @@ async fn a_folder_without_workspace_json_is_listed_switchable_and_not_deletable_
     assert_eq!(switched["folder"], "copied-in");
     host.shutdown().await;
 }
+
+/* ---------------------------------------------------------------- after the review (round 13) */
+
+fn calls_of(tmp: &Path, folder: &str) -> Vec<String> {
+    std::fs::read_to_string(tmp.join("data/workspaces").join(folder).join("calls.log")).map(|t| t.lines().map(str::to_string).collect()).unwrap_or_default()
+}
+
+#[tokio::test]
+async fn a_worker_that_refuses_a_snapshot_with_a_client_still_lets_create_succeed() {
+    // The fake refuses like the kernel does; creating works only because the main process asks as itself (#1).
+    let tmp = tempfile::tempdir().unwrap();
+    let host = start(tmp.path()).await;
+    let refused = host.request(Some("w"), "workspace.settingsSnapshot", Value::Null).await.unwrap_err();
+    assert_eq!((refused.code, refused.params.get("reason").map(String::as_str)), (ErrorCode::Denied, Some("mainProcessOnly")));
+    let made = host.request(Some("w"), "app.createWorkspace", json!({ "name": "ok" })).await.unwrap();
+    assert!(std::fs::read(tmp.path().join("data/workspaces").join(made["folder"].as_str().unwrap()).join("init-settings.json")).is_ok());
+    host.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_connection_is_bound_when_it_first_appears_and_is_not_carried_off_by_others() {
+    let tmp = tempfile::tempdir().unwrap();
+    let host = start(tmp.path()).await;
+    let team = host.request(Some("main"), "app.createWorkspace", json!({ "name": "team" })).await.unwrap();
+    // main appears (bound to default), then another tab switches: main stays where it is (#2, D406).
+    assert!(host.request(Some("main"), "args", Value::Null).await.unwrap()["workspace"].as_str().unwrap().ends_with("workspaces/default"));
+    host.request(Some("other"), "app.switchWorkspace", json!({ "id": team["id"] })).await.unwrap();
+    assert!(host.request(Some("main"), "args", Value::Null).await.unwrap()["workspace"].as_str().unwrap().ends_with("workspaces/default"));
+    // A connection that appears now starts in the default of this moment (the last switch).
+    assert!(host.request(Some("newcomer"), "args", Value::Null).await.unwrap()["workspace"].as_str().unwrap().ends_with("workspaces/team"));
+    assert_eq!(host.running_workspaces(), ["default", "team"]);
+    host.shutdown().await;
+}
+
+#[tokio::test]
+async fn the_default_for_new_connections_is_neither_kept_running_nor_protected_from_delete() {
+    let tmp = tempfile::tempdir().unwrap();
+    let host = start(tmp.path()).await;
+    let team = host.request(Some("a"), "app.createWorkspace", json!({ "name": "team" })).await.unwrap();
+    let default_id = list(&host, "a").await[0]["id"].clone();
+    host.request(Some("a"), "app.switchWorkspace", json!({ "id": team["id"] })).await.unwrap();
+    // `a` left default; nobody is on it any more, whatever new connections would get.
+    assert_eq!(host.running_workspaces(), ["team"]);
+    host.request(Some("a"), "app.switchWorkspace", json!({ "id": default_id })).await.unwrap();
+    // Now the default for newcomers is `default`, yet `team` (no connection) can be deleted, and the other way round.
+    host.request(Some("a"), "app.deleteWorkspace", json!({ "id": team["id"] })).await.unwrap();
+    // Deleting the workspace the default pointed at moves the default to the asker's: a newcomer lands on a real one.
+    let made = host.request(Some("a"), "app.createWorkspace", json!({ "name": "again" })).await.unwrap();
+    host.request(Some("b"), "app.switchWorkspace", json!({ "id": made["id"] })).await.unwrap();
+    host.request(Some("c"), "app.switchWorkspace", json!({ "id": default_id })).await.unwrap();
+    host.request(Some("c"), "app.deleteWorkspace", json!({ "id": made["id"] })).await.unwrap_err(); // b is on it
+    host.request(Some("b"), "app.switchWorkspace", json!({ "id": default_id })).await.unwrap();
+    host.request(Some("c"), "app.deleteWorkspace", json!({ "id": made["id"] })).await.unwrap();
+    assert!(host.request(Some("newcomer"), "args", Value::Null).await.unwrap()["workspace"].as_str().unwrap().ends_with("workspaces/default"));
+    host.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_delete_racing_a_switch_never_leaves_a_connection_on_a_deleted_workspace() {
+    let tmp = tempfile::tempdir().unwrap();
+    let host = start(tmp.path()).await;
+    for round in 0..6 {
+        let made = host.request(Some("owner"), "app.createWorkspace", json!({ "name": format!("race {round}") })).await.unwrap();
+        let (switch, delete) = tokio::join!(
+            host.request(Some("tab"), "app.switchWorkspace", json!({ "id": made["id"] })),
+            host.request(Some("owner"), "app.deleteWorkspace", json!({ "id": made["id"] })),
+        );
+        match (switch, delete) {
+            (Ok(_), Err(e)) => assert_eq!(e.code, ErrorCode::Conflict, "switched first, so the delete is refused"),
+            (Err(e), Ok(_)) => assert_eq!(e.code, ErrorCode::NotFound, "deleted first, so the switch finds nothing"),
+            (s, d) => panic!("round {round}: switch {s:?} / delete {d:?}"),
+        }
+        // Whatever won, `tab` is on an existing workspace.
+        let folder = host.request(Some("tab"), "args", Value::Null).await.unwrap()["workspace"].as_str().unwrap().to_string();
+        assert!(Path::new(&folder).exists(), "{folder}");
+    }
+    host.shutdown().await;
+}
+
+#[tokio::test]
+async fn creating_the_same_name_at_the_same_time_gives_different_folders() {
+    let tmp = tempfile::tempdir().unwrap();
+    let host = start(tmp.path()).await;
+    let results = futures_util::future::join_all((0..6).map(|i| {
+        let host = host.clone();
+        async move { host.request(Some(&format!("c{i}")), "app.createWorkspace", json!({ "name": "Same" })).await.unwrap() }
+    }))
+    .await;
+    let mut folders: Vec<String> = results.iter().map(|r| r["folder"].as_str().unwrap().to_string()).collect();
+    folders.sort();
+    folders.dedup();
+    assert_eq!(folders.len(), 6);
+    host.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_folder_copied_by_hand_with_the_same_id_is_pending_and_cannot_touch_its_twins_secrets() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (store, memory) = memory_store();
+    let host = start_with(tmp.path(), store.clone()).await;
+    let made = host.request(Some("a"), "app.createWorkspace", json!({ "name": "Work" })).await.unwrap();
+    let id = made["id"].as_str().unwrap();
+    store.0.set(&format!("{id}/token"), "v").unwrap();
+    let from = tmp.path().join("data/workspaces/work");
+    let copy = tmp.path().join("data/workspaces/work-copy");
+    std::fs::create_dir_all(&copy).unwrap();
+    std::fs::copy(from.join("workspace.json"), copy.join("workspace.json")).unwrap();
+    let items = list(&host, "a").await;
+    let twin = items.iter().find(|i| i["folder"] == "work-copy").unwrap();
+    assert_eq!(twin["id"], "pending:work-copy");
+    assert_eq!(items.iter().find(|i| i["folder"] == "work").unwrap()["id"], id);
+    let e = host.request(Some("a"), "app.deleteWorkspace", json!({ "id": "pending:work-copy" })).await.unwrap_err();
+    assert_eq!(e.params.get("reason").map(String::as_str), Some("idPending"));
+    assert_eq!(memory.accounts(), [format!("{id}/token")]);
+    host.shutdown().await;
+}
+
+#[tokio::test]
+async fn installing_and_removing_a_plugin_involves_every_running_workspace() {
+    let tmp = tempfile::tempdir().unwrap();
+    let host = start(tmp.path()).await;
+    let team = host.request(Some("a"), "app.createWorkspace", json!({ "name": "team" })).await.unwrap();
+    host.bind_client("b", team["id"].as_str().unwrap()).await.unwrap();
+    // `a` is on default, `b` on team. A rescan asked by a reaches both (#6).
+    host.request(Some("a"), "app.removePlugin", json!({ "plugin": "org.test.alpha", "version": "0.1.0" })).await.unwrap();
+    for folder in ["default", "team"] {
+        let log = calls_of(tmp.path(), folder);
+        assert!(log.iter().any(|l| l.starts_with("plugin.checkRemove")), "{folder}: {log:?}");
+        assert!(log.iter().any(|l| l.starts_with("plugin.rescan")), "{folder}: {log:?}");
+    }
+    host.shutdown().await;
+}
+
+#[tokio::test]
+async fn another_workspace_that_still_needs_the_plugin_stops_its_removal() {
+    let tmp = tempfile::tempdir().unwrap();
+    let host = start(tmp.path()).await;
+    let team = host.request(Some("a"), "app.createWorkspace", json!({ "name": "team" })).await.unwrap();
+    host.bind_client("b", team["id"].as_str().unwrap()).await.unwrap();
+    std::fs::write(tmp.path().join("data/workspaces/team/remove-refused"), "").unwrap();
+    let e = host.request(Some("a"), "app.removePlugin", json!({ "plugin": "org.test.alpha", "version": "0.1.0" })).await.unwrap_err();
+    assert_eq!(e.code, ErrorCode::Conflict);
+    assert!(tmp.path().join("data/plugins/org.test.alpha/0.1.0/main.js").exists(), "nothing moved");
+    host.shutdown().await;
+}
+
+#[tokio::test]
+async fn the_window_position_survives_a_worker_crash_and_restart() {
+    let tmp = tempfile::tempdir().unwrap();
+    let host = start(tmp.path()).await;
+    let b = onedesk_host::workspaces::WindowBounds { x: 1.0, y: 2.0, width: 1300.0, height: 700.0 };
+    host.set_window_bounds("default", Some(b));
+    let mut events = host.events();
+    let _ = host.request(None, "crash", Value::Null).await;
+    assert_eq!(next_connection(&mut events).await, ConnectionState::Lost);
+    assert_eq!(next_connection(&mut events).await, ConnectionState::Restored);
+    // The restarted fake worker rewrote workspace.json without the field; the main process put it back.
+    assert_eq!(host.window_bounds("default"), Some(b));
+    host.shutdown().await;
+}

@@ -184,6 +184,9 @@ struct Started {
 
 async fn spawn_worker(cfg: &HostConfig, shared: &Shared) -> Result<Started, HostError> {
     let workspace = workspace_path(&cfg.data_dir, &shared.folder);
+    // The kernel rewrites `workspace.json` when it opens the workspace; the window position is ours to keep, on a
+    // restart after a crash as much as at the first start.
+    let window = workspaces::read_info(&workspace).and_then(|i| i.window);
     let plugins = cfg.data_dir.join("plugins");
     let socket = socket_path();
     let mut command = tokio::process::Command::new(&cfg.worker_bin);
@@ -266,6 +269,7 @@ async fn spawn_worker(cfg: &HostConfig, shared: &Shared) -> Result<Started, Host
         Ok(h) if h.protocol == PROTOCOL_VERSION => {}
         _ => return Err(HostError("worker speaks another protocol version".into())),
     }
+    workspaces::keep_window(&workspace, window);
     Ok(Started { child, conn, hello, socket })
 }
 
@@ -363,8 +367,12 @@ pub struct Host {
     start_lock: tokio::sync::Mutex<()>,
     /// `client` -> folder, set by `app.switchWorkspace`.
     bindings: Mutex<HashMap<String, String>>,
-    /// The folder a connection without a binding uses: the one opened at start, then the last one switched to.
+    /// The workspace a connection that appears now starts in: the one opened at start, then the last one switched to.
+    /// It routes nothing and does not count as "in use" (D406).
     active: Mutex<String>,
+    /// Workspace operations (create, switch, bind, rename, delete) one at a time, so a delete cannot slip between
+    /// a switch's worker start and its binding.
+    ops: tokio::sync::Mutex<()>,
     secrets: SecretStoreHandle,
 }
 
@@ -402,6 +410,7 @@ impl Host {
             start_lock: tokio::sync::Mutex::new(()),
             bindings: Mutex::new(HashMap::new()),
             active: Mutex::new(first.clone()),
+            ops: tokio::sync::Mutex::new(()),
             secrets,
         });
         host.slot_for(&first).await.map_err(|e| HostError(e.detail.unwrap_or_else(|| format!("{:?}", e.code))))?;
@@ -434,11 +443,17 @@ impl Host {
         self.slots.lock().unwrap().values().map(|s| s.restarts.load(Ordering::SeqCst)).sum()
     }
 
-    /// The folder `client` uses.
+    /// The folder `client` uses. A connection is bound the first time it appears, to the default of that moment (D406);
+    /// after that only its own `app.switchWorkspace` (or a new window's binding) changes it.
     fn bound(&self, client: Option<&str>) -> String {
-        client
-            .and_then(|c| self.bindings.lock().unwrap().get(c).cloned())
-            .unwrap_or_else(|| self.active.lock().unwrap().clone())
+        let key = client.unwrap_or_default();
+        let mut bindings = self.bindings.lock().unwrap();
+        if let Some(f) = bindings.get(key) {
+            return f.clone();
+        }
+        let folder = self.active.lock().unwrap().clone();
+        bindings.insert(key.to_string(), folder.clone());
+        folder
     }
 
     /// The running worker of a folder, starting it if needed.
@@ -459,10 +474,7 @@ impl Host {
             current: watch::channel(None).0,
             shutdown: watch::channel(false).0,
         });
-        // The kernel rewrites `workspace.json` when it opens the workspace; the window position is ours to keep.
-        let window = workspaces::read_info(&workspace_path(&self.data_dir, folder)).and_then(|i| i.window);
         let first = spawn_worker(&self.cfg, &shared).await.map_err(|e| err(ErrorCode::WorkerGone, e.0))?;
-        self.set_window_bounds(folder, window);
         *shared.hello.lock().unwrap() = first.hello.clone();
         shared.current.send_replace(Some(first.conn.clone()));
         let restarts = Arc::new(std::sync::atomic::AtomicU32::new(0));
@@ -494,8 +506,8 @@ impl Host {
             APP_WORKSPACES => return self.list_workspaces(client),
             APP_CREATE_WORKSPACE => return self.create_workspace(client, params).await,
             APP_SWITCH_WORKSPACE => return self.switch_workspace(client, params).await,
-            APP_RENAME_WORKSPACE => return self.rename_workspace(params),
-            APP_DELETE_WORKSPACE => return self.delete_workspace(client, params),
+            APP_RENAME_WORKSPACE => return self.rename_workspace(params).await,
+            APP_DELETE_WORKSPACE => return self.delete_workspace(client, params).await,
             // A client's rescan (a package copied in by hand) takes the same road as ours: refresh the index, add the
             // built-in list. Its own parameters are ignored; only the main process knows what is built in.
             "plugin.rescan" => return self.rescan(client).await,
@@ -514,7 +526,22 @@ impl Host {
     async fn rescan(&self, client: Option<&str>) -> Result<Value, ProtocolError> {
         let builtin = self.builtin.lock().unwrap().clone();
         refresh_index(&self.data_dir.join("plugins"), &builtin);
+        // The plugin folder is shared by every workspace: each running worker looks again, not only the asking one.
+        // The asking worker's answer is the answer; a failure in another workspace is theirs to show, not this request's.
+        let own = self.bound(client);
+        for (folder, slot) in self.running_slots() {
+            if folder != own {
+                if let Err(e) = slot.forward(None, "plugin.rescan", json!({ "builtin": builtin })).await {
+                    eprintln!("onedesk-host: workspace {folder} could not rescan plugins: {}", e.detail.unwrap_or_default());
+                }
+            }
+        }
         self.forward(client, "plugin.rescan", json!({ "builtin": builtin })).await
+    }
+
+    /// The running workers with their folders.
+    fn running_slots(&self) -> Vec<(String, Arc<Slot>)> {
+        self.slots.lock().unwrap().iter().map(|(f, s)| (f.clone(), s.clone())).collect()
     }
 
     /// `app.installPlugin` (D312): the interface brings back the `id`, `version` and `fingerprint` the
@@ -590,6 +617,13 @@ impl Host {
         }
         let _one_at_a_time = self.install_lock.lock().await;
         // The kernel refuses (`conflict/dependents`) while an enabled plugin needs this version; files move only after it agrees.
+        // Every running workspace is asked: one whose enabled plugins still need this version stops the removal.
+        let own = self.bound(client);
+        for (folder, slot) in self.running_slots() {
+            if folder != own {
+                slot.forward(None, "plugin.checkRemove", json!({ "plugin": p.plugin, "version": p.version })).await?;
+            }
+        }
         self.forward(client, "plugin.checkRemove", json!({ "plugin": p.plugin, "version": p.version })).await?;
         match install::remove_version(&self.data_dir.join("plugins"), &p.plugin, &p.version) {
             Ok(_) => {}
@@ -730,20 +764,32 @@ impl Host {
     /// Binds a new window or tab to a workspace without changing the default for others (D403). Starts the
     /// workspace's worker if needed.
     pub async fn bind_client(&self, client: &str, workspace_id: &str) -> Result<WorkspaceEntry, ProtocolError> {
+        let _one_at_a_time = self.ops.lock().await;
         let (folder, info) = self.find(workspace_id)?;
-        self.slot_for(&folder).await?;
-        self.touch_last_opened(&folder);
-        let old = self.bound(Some(client));
-        self.bindings.lock().unwrap().insert(client.to_string(), folder.clone());
-        if old != folder {
-            self.release(&old).await;
-        }
+        self.attach(client, &folder).await?;
         let info = workspaces::read_info(&workspace_path(&self.data_dir, &folder)).unwrap_or(info);
         Ok(workspaces::entry(&folder, &info, true))
     }
 
-    /// A window or tab went away: its worker stops when nobody else uses it (and it is not the default).
+    /// Binds `client` to `folder` before the worker starts (so a delete cannot get in between) and starts it; on a
+    /// failure the old binding stays. Called with the operations lock held.
+    async fn attach(&self, client: &str, folder: &str) -> Result<(), ProtocolError> {
+        let old = self.bound(Some(client));
+        self.bindings.lock().unwrap().insert(client.to_string(), folder.to_string());
+        if let Err(e) = self.slot_for(folder).await {
+            self.bindings.lock().unwrap().insert(client.to_string(), old);
+            return Err(e);
+        }
+        self.touch_last_opened(folder);
+        if old != folder {
+            self.release(&old).await;
+        }
+        Ok(())
+    }
+
+    /// A window or tab went away: its worker stops when nobody else uses it.
     pub async fn unbind_client(&self, client: &str) {
+        let _one_at_a_time = self.ops.lock().await;
         let old = self.bindings.lock().unwrap().remove(client);
         if let Some(folder) = old {
             self.release(&folder).await;
@@ -768,10 +814,10 @@ impl Host {
     /// `app.createWorkspace { name }`: a new folder with the current workspace's settings to apply at its first open.
     /// Nothing is switched.
     async fn create_workspace(&self, client: Option<&str>, params: Value) -> Result<Value, ProtocolError> {
+        let _one_at_a_time = self.ops.lock().await;
         let name = workspaces::valid_name(&parse::<CreateWorkspaceParams>(params)?.name).ok_or_else(|| err(ErrorCode::InvalidParams, "name must be 1 to 100 characters"))?;
         // The kernel gives the configuration tree values and plugin enablement (no data). A kernel without the method
-        // yields an empty workspace.
-        // The kernel answers only the main process itself: the request carries no `client`.
+        // yields an empty workspace. It answers only the main process itself, so the request carries no `client`.
         let slot = self.slot_for(&self.bound(client)).await?;
         let snapshot = match slot.forward(None, WORKSPACE_SETTINGS_SNAPSHOT, Value::Null).await {
             Ok(v) => Some(v),
@@ -786,22 +832,17 @@ impl Host {
     /// `app.switchWorkspace { id }`: binds this connection to the workspace (starting its worker if needed). The
     /// worker left behind stops when no connection uses it any more.
     async fn switch_workspace(&self, client: Option<&str>, params: Value) -> Result<Value, ProtocolError> {
+        let _one_at_a_time = self.ops.lock().await;
         let (folder, info) = self.find(&parse::<WorkspaceIdParams>(params)?.id)?;
-        self.slot_for(&folder).await?;
-        self.touch_last_opened(&folder);
-        let old = self.bound(client);
-        self.bindings.lock().unwrap().insert(client.unwrap_or_default().to_string(), folder.clone());
+        self.attach(client.unwrap_or_default(), &folder).await?;
         *self.active.lock().unwrap() = folder.clone();
-        if old != folder {
-            self.release(&old).await;
-        }
         let info = workspaces::read_info(&workspace_path(&self.data_dir, &folder)).unwrap_or(info);
         Ok(serde_json::to_value(workspaces::entry(&folder, &info, true)).expect("entry serializes"))
     }
 
-    /// Stops the worker of `folder` unless a connection (or the default for new ones) still uses it.
+    /// Stops the worker of `folder` unless a connection still uses it.
     async fn release(&self, folder: &str) {
-        let used = *self.active.lock().unwrap() == folder || self.bindings.lock().unwrap().values().any(|f| f == folder);
+        let used = self.bindings.lock().unwrap().values().any(|f| f == folder);
         if used {
             return;
         }
@@ -812,7 +853,8 @@ impl Host {
     }
 
     /// `app.renameWorkspace { id, name }`: changes the name in `workspace.json`.
-    fn rename_workspace(&self, params: Value) -> Result<Value, ProtocolError> {
+    async fn rename_workspace(&self, params: Value) -> Result<Value, ProtocolError> {
+        let _one_at_a_time = self.ops.lock().await;
         let p = parse::<RenameWorkspaceParams>(params)?;
         let name = workspaces::valid_name(&p.name).ok_or_else(|| err(ErrorCode::InvalidParams, "name must be 1 to 100 characters"))?;
         let (folder, mut info) = self.find_with_id(&p.id)?;
@@ -824,15 +866,20 @@ impl Host {
 
     /// `app.deleteWorkspace { id }`: not the one in use; the folder moves to `trash/workspaces/` and its keychain
     /// entries are deleted.
-    fn delete_workspace(&self, client: Option<&str>, params: Value) -> Result<Value, ProtocolError> {
+    async fn delete_workspace(&self, client: Option<&str>, params: Value) -> Result<Value, ProtocolError> {
+        let _one_at_a_time = self.ops.lock().await;
         let (folder, info) = self.find_with_id(&parse::<WorkspaceIdParams>(params)?.id)?;
-        let used = self.bound(client) == folder
-            || *self.active.lock().unwrap() == folder
-            || self.bindings.lock().unwrap().values().any(|f| *f == folder)
-            || self.slots.lock().unwrap().contains_key(&folder);
+        let mine = self.bound(client);
+        let used = mine == folder || self.bindings.lock().unwrap().values().any(|f| *f == folder) || self.slots.lock().unwrap().contains_key(&folder);
         if used {
             return Err(in_use());
         }
+        // New connections must not start in a workspace that is going away.
+        let mut active = self.active.lock().unwrap();
+        if *active == folder {
+            *active = mine;
+        }
+        drop(active);
         let trashed = workspaces::move_to_trash(&self.data_dir, &folder).map_err(|e| err(ErrorCode::Internal, e))?;
         // The keychain accounts are `<workspace id>/<name>`: all of them go, without opening the database (D404).
         if let Err(e) = self.secrets.0.delete_prefix(&format!("{}/", info.id)) {
