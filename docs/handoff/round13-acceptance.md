@@ -16,3 +16,7 @@
 | 浏览器“新窗口” | 我没亲手点 | 界面检查覆盖（`openWindow` 开带 `?workspace=` 的标签页） |
 
 小问题：工作区菜单里打勾的一项与没打勾的一项文字不对齐（“Default”没有为勾留位置），记 `todo.md`。管理表里被别的连接占用的工作区，删除按钮仍可点（点了会得到 `inUse` 提示）。
+
+## 检查结果
+
+第一遍 `E2E_PORT=1434 pnpm check`（6ae7f40 合并后）：单元测试、Rust、clippy 通过；界面检查 171 通过、13 失败、45 没跑。单独跑 `round12.spec.ts` 也复现（9 失败）：运行被 `interrupted`、`workerGone: workspace is locked by another worker`——本轮主进程的回归（多工作区的连接绑定/工作进程启停），已派外壳会话修。不合并。
