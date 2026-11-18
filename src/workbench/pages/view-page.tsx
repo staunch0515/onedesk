@@ -305,7 +305,7 @@ export function ViewPage({ tab, descriptor: initial }: { tab: TabState; descript
     const onKey = (e: KeyboardEvent) => {
       if (!(e.metaKey || e.ctrlKey) || e.altKey) return;
       const list = latest.current.descriptor.actions;
-      const action = e.key === "s" && !e.shiftKey ? list.find((a) => a.role === "save") : e.key === "Enter" ? list.find((a) => a.role === "run") : undefined;
+      const action = e.key === "s" && !e.shiftKey ? list.find((a) => a.role === "save") : e.key === "Enter" ? (list.find((a) => a.role === "run") ?? list.find((a) => a.role === "save-run")) : undefined;
       if (!action) return;
       e.preventDefault();
       if (!action.disabled && !blockedByProtection(latest.current.descriptor, action)) void invokeRef.current(action);

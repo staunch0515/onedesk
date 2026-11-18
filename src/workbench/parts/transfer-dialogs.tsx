@@ -40,16 +40,37 @@ export async function previewFolder(client: ProtocolClient, store: Store, folder
 /** Exporting a run's table: the system "save as" dialog on the desktop, a path box in the browser. */
 export async function startRunExport(client: ProtocolClient, store: Store, actions: Fail, run: string, suggested: string, done: (rows: number, path: string) => void): Promise<void> {
   try {
-    const pick = client.platform?.pickSaveFile;
-    if (!pick) return void store.set({ exportCsv: { run } });
-    const path = await pick(suggested);
+    // The first export asks where; the folder is remembered (per client) and later exports go straight there under a fresh name.
+    const remembered = await client.ui.get<string>(EXPORT_DIR_KEY).catch(() => null);
+    let path: string | null = null;
+    if (remembered) {
+      path = `${remembered.replace(/\/+$/, "")}/${uniqueName(suggested)}`;
+    } else if (client.platform?.pickFolder) {
+      const folder = await client.platform.pickFolder();
+      if (folder) path = `${folder.replace(/\/+$/, "")}/${uniqueName(suggested)}`;
+    } else if (client.platform?.pickSaveFile) {
+      path = await client.platform.pickSaveFile(suggested);
+    } else {
+      return void store.set({ exportCsv: { run } });
+    }
     if (path) {
       const result = await client.run.export(run, path);
+      await client.ui.set(EXPORT_DIR_KEY, path.slice(0, path.lastIndexOf("/")) || "/").catch(() => undefined);
       done(result.rows, result.path);
     }
   } catch (error) {
     actions.fail(error);
   }
+}
+
+/** Where CSV exports go (`ui` key of the client). */
+export const EXPORT_DIR_KEY = "export.dir";
+
+/** `result-3.csv` → `result-3-153045.csv`: the kernel refuses an existing file, so every export gets its own name. */
+function uniqueName(name: string): string {
+  const stamp = new Date().toTimeString().slice(0, 8).replace(/:/g, "");
+  const dot = name.lastIndexOf(".");
+  return dot > 0 ? `${name.slice(0, dot)}-${stamp}${name.slice(dot)}` : `${name}-${stamp}`;
 }
 
 /** The dialogs of the export, import and CSV export flows (browser mode asks for paths; the preview is always shown). */
@@ -96,6 +117,7 @@ export function TransferDialogs() {
     else if (exportCsv)
       void run(async () => {
         const result = await client.run.export(exportCsv.run, folder);
+        await client.ui.set(EXPORT_DIR_KEY, folder.slice(0, folder.lastIndexOf("/")) || "/").catch(() => undefined);
         toast({ tone: "success", title: t("result.exported", { rows: result.rows, path: result.path }) });
         close();
       });
