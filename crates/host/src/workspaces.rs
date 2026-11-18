@@ -79,20 +79,18 @@ fn slug(name: &str) -> String {
     }
 }
 
-/// A folder name that does not exist yet under `workspaces/`.
-pub fn free_folder(data_dir: &Path, name: &str) -> String {
-    let base = slug(name);
-    let mut candidate = base.clone();
-    let mut n = 2;
-    while workspace_path(data_dir, &candidate).exists() {
-        candidate = format!("{base}-{n}");
-        n += 1;
-    }
-    candidate
-}
-
 pub fn read_info(dir: &Path) -> Option<InfoFile> {
     std::fs::read(dir.join(INFO_FILE)).ok().and_then(|b| serde_json::from_slice(&b).ok())
+}
+
+/// Puts a remembered window position back into `workspace.json` after the kernel rewrote the file.
+pub fn keep_window(dir: &Path, window: Option<WindowBounds>) {
+    if let (Some(w), Some(mut info)) = (window, read_info(dir)) {
+        if info.window != Some(w) {
+            info.window = Some(w);
+            let _ = write_info(dir, &info);
+        }
+    }
 }
 
 pub fn write_info(dir: &Path, info: &InfoFile) -> std::io::Result<()> {
@@ -107,7 +105,11 @@ pub fn write_info(dir: &Path, info: &InfoFile) -> std::io::Result<()> {
 pub fn scan(data_dir: &Path) -> Vec<(String, InfoFile)> {
     let Ok(rd) = std::fs::read_dir(data_dir.join("workspaces")) else { return Vec::new() };
     let mut out = Vec::new();
-    for e in rd.filter_map(|e| e.ok()) {
+    // In folder order, so which of two folders with one id is "first" does not change between runs.
+    let mut entries: Vec<_> = rd.filter_map(|e| e.ok()).collect();
+    entries.sort_by_key(|e| e.file_name());
+    let mut seen = std::collections::HashSet::new();
+    for e in entries {
         let dir = e.path();
         let folder = e.file_name().to_string_lossy().into_owned();
         if folder.starts_with('.') || !dir.is_dir() || !(dir.join(INFO_FILE).is_file() || dir.join(DB_FILE).is_file()) {
@@ -117,6 +119,9 @@ pub fn scan(data_dir: &Path) -> Vec<(String, InfoFile)> {
             Some(i) if !i.id.is_empty() => i,
             _ => InfoFile { id: String::new(), name: folder.clone(), last_opened_at: 0, window: None },
         };
+        // A folder copied by hand has its twin's id (§3.1): the one found later is pending, like one without a file —
+        // it cannot be renamed or deleted, so the twin's keychain entries are safe.
+        let info = if !info.id.is_empty() && !seen.insert(info.id.clone()) { InfoFile { id: String::new(), ..info } } else { info };
         out.push((folder, info));
     }
     out
@@ -145,9 +150,24 @@ pub fn entry(folder: &str, info: &InfoFile, current: bool) -> WorkspaceEntry {
 
 /// Creates the folder with its `workspace.json` (and the settings to apply at the first open, if any).
 pub fn create(data_dir: &Path, name: &str, init_settings: Option<&serde_json::Value>) -> Result<(String, InfoFile), String> {
-    let folder = free_folder(data_dir, name);
-    let dir = workspace_path(data_dir, &folder);
-    std::fs::create_dir_all(&dir).map_err(|e| format!("create {}: {e}", dir.display()))?;
+    let root = data_dir.join("workspaces");
+    std::fs::create_dir_all(&root).map_err(|e| format!("create {}: {e}", root.display()))?;
+    // `create_dir` fails when the folder exists, so two creations of one name at once cannot share a folder: the loser
+    // takes the next suffix.
+    let base = slug(name);
+    let mut folder = base.clone();
+    let mut n = 2;
+    let dir = loop {
+        let dir = root.join(&folder);
+        match std::fs::create_dir(&dir) {
+            Ok(()) => break dir,
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                folder = format!("{base}-{n}");
+                n += 1;
+            }
+            Err(e) => return Err(format!("create {}: {e}", dir.display())),
+        }
+    };
     let info = InfoFile { id: new_id(), name: name.to_string(), last_opened_at: 0, window: None };
     let done = write_info(&dir, &info).and_then(|_| match init_settings {
         Some(v) => std::fs::write(dir.join(INIT_SETTINGS_FILE), serde_json::to_vec_pretty(v).expect("serializes")),
@@ -205,6 +225,38 @@ mod tests {
         // A corrupt file counts the same.
         std::fs::write(dir.join(INFO_FILE), b"{ nope").unwrap();
         assert!(scan(tmp.path())[0].1.id.is_empty());
+    }
+
+    #[test]
+    fn creating_the_same_name_at_once_gives_every_creator_its_own_folder() {
+        let tmp = tempfile::tempdir().unwrap();
+        let data = tmp.path().to_path_buf();
+        let threads: Vec<_> = (0..12)
+            .map(|_| {
+                let data = data.clone();
+                std::thread::spawn(move || create(&data, "Team", None).unwrap().0)
+            })
+            .collect();
+        let mut folders: Vec<String> = threads.into_iter().map(|t| t.join().unwrap()).collect();
+        folders.sort();
+        folders.dedup();
+        assert_eq!(folders.len(), 12);
+        assert_eq!(scan(&data).len(), 12);
+    }
+
+    #[test]
+    fn a_copied_folder_with_the_same_id_is_pending_and_the_first_keeps_its_id() {
+        let tmp = tempfile::tempdir().unwrap();
+        let info = InfoFile { id: "same".into(), name: "Work".into(), last_opened_at: 5, window: None };
+        for folder in ["a-work", "b-work-copy"] {
+            let dir = workspace_path(tmp.path(), folder);
+            std::fs::create_dir_all(&dir).unwrap();
+            write_info(&dir, &info).unwrap();
+        }
+        let found = sorted(scan(tmp.path()));
+        let ids: Vec<(String, String)> = found.iter().map(|(f, i)| (f.clone(), entry(f, i, false).id)).collect();
+        assert!(ids.contains(&("a-work".into(), "same".into())));
+        assert!(ids.contains(&("b-work-copy".into(), "pending:b-work-copy".into())));
     }
 
     #[test]

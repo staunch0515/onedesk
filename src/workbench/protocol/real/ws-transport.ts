@@ -65,6 +65,12 @@ export function createWsTransport(base: string, token: string, client: string, w
       handlers.add(handler);
       return () => handlers.delete(handler);
     },
+    async openWindow(workspaceId) {
+      // "New window" in a browser is a new tab for that workspace; `noopener` gives it its own client id (D403).
+      const url = new URL(window.location.href);
+      url.searchParams.set("workspace", workspaceId);
+      window.open(url.toString(), "_blank", "noopener");
+    },
     close() {
       closed = true;
       socket.close();
