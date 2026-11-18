@@ -42,7 +42,7 @@ export function compact<T extends Record<string, unknown>>(value: T): Record<str
 }
 
 function pageContext(context?: PageContext, locale?: string): Record<string, unknown> | undefined {
-  const out = compact({ envId: context?.envId, draft: context?.draft, params: context?.params, locale });
+  const out = compact({ envId: context?.envId, draft: context?.draft, params: context?.params, row: context?.row, locale });
   return Object.keys(out).length > 0 ? out : undefined;
 }
 
