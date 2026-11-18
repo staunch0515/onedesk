@@ -165,3 +165,11 @@
 ## e2e
 
 全部 `pnpm exec playwright test`（先 `cargo build -p onedesk-worker -p onedesk-host`，`ONEDESK_SECRET_STORE=memory`）：229 过、1 跳过（原本就跳过的 review shots），用时 34 分钟；之后已 `git checkout -- docs/screenshots` 还原基准截图。
+
+## 追加（协调会话第二批要求）
+
+- 合并了协调分支（含 D410）。`ui-spec.md` 的“默认/待确认”标记已全部换成“已定（D410…）”或“以后（todo）”，写法按上面的结论表。
+- 状态栏“部分为演示数据”：连真内核（混合客户端）时只在当前树或当前标签是演示内容时才显示；纯假数据模式仍一直显示。测试 `parts/round14-shell.test.tsx`（3 条）。
+- `kernel-texts.ts`/`en-US.ts`：补了 `ui.theme`、`ui.density`、`network.allow`、`process.allow`、`protection.readonly`、`protection.no_export` 的文字（只加英语）；`ui.language` 故意不加（配置页用自己的字段标签，D379 的测试依赖）。测试：内核声明的参数名都有文字（`kernel-texts.test.ts`）。**新增 6 个键，`plugins/_testing/lang-check.test.ts` 的中日各两条会因此失败，需测试会话补译文。**
+- 语言切换后后台标签改名：补了单元测试（同文件；去掉修复后该条失败，已验证）。
+- 这一批没有重跑全部 e2e（只改了状态栏的显示条件与文字，没有 e2e 引用它）；单元测试 workbench 全过。
