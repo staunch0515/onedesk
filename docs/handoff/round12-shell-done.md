@@ -25,3 +25,26 @@
 - 没连真内核走过拖放、行按钮（内核还没合并）；假数据（mock）里没有 `dropAny` 节点和 `rowActions` 表，所以截图基准里看不到这些。
 - 行按钮点击后表格是否刷新取决于内核对 `page.event` 后资源变更的推送，未验证。
 - 日语/中文文字未加（不归外壳）。
+
+## 合并后对齐（对着真内核走过，合并了 `claude/onedesk-coord-3-f0c048` 之后）
+做法：`cargo build -p onedesk-worker -p onedesk-host`；devhost（`ONEDESK_SECRET_STORE=memory`、临时数据目录、随机端口）+ vite 1434；一份临时 Playwright 脚本（没提交，不属于 `e2e/` 的交付）用真鼠标拖放、协议调用核对。截图在合并前删除，没入库。
+
+**对齐改动**
+- `TreeNode.dropAny`、`TreeMoveResult` 改用生成类型，去掉本地假类型（`DropAwareNode`）。
+- `tree.move` 多带一个 `locale`（内核交给插件 `drop` 的 `ctx.locale`；否则“已加入 N 项”会按默认语言）。`mixed-client` 里原来丢掉了这个参数，已补。
+- 文字：`kernel-texts.ts` 加映射 `reason.badDropAnswer`、`dropWithoutTree`、审计 `tree.drop`、`resources.search`、权限 `resourcesAll`；`en-US.ts` 加对应 `kernel.*` 键（`kernel.permission.resourcesAll` 取代我早先的 `permission.resourcesAll`）。`kernel-texts.test.ts` 全过。`permission()` 恢复成只查内核映射（回落键已不需要）。**两个语言插件要补这 6 个 `kernel.*` 键**：`kernel.error.reason.badDropAnswer`、`kernel.label.dropWithoutTree`、`kernel.audit.tree.drop`、`kernel.audit.resources.search`、`kernel.permission.resourcesAll`（5 个；全量 `lang-check` 以 en-US.ts 为准）。
+- 页面布局（真内核才暴露）：HTTP 请求页有多个表单段，其中一段 `fill`，原来“查询参数”文本框被压扁、与“令牌”重叠。改 `view-page.tsx`：多段且有 fill 时，非 fill 段 `fixed`（不收缩）、外层可滚动；fill 段 `fillMin`（最小高度）。`src/design` 新增 `Pane` 的 `fixed`、`fillMin` 与 token `--stacked-fill-min-height`。单段页面不变（`workbench.spec.ts` 23 通过、截图未变）。
+
+**实际走通的（真内核）**
+- 综合：拖笔记、网址、提示词到“综合”上 → `items` 三项、三个资源仍在顶层、出现“Added 1 item”提示；展开后三个引用（`@<综合>/ref-<id>`），名称取自基本信息；删掉其中的笔记后重新读：那一条显示“(no longer exists)”和断链图标；把另一个综合拖进去 → 真移动（成为子节点，`items` 不变）。`dropAny` 只出现在综合节点上。
+- 集合：只填类型 → 空库时无子节点，新建一条笔记后重新读出现；三项都空 → 0 个子节点（页面上的“至少填一项条件”提示没单独核对）；结果表有“1 result(s)”。
+- HTTP：方法下拉（POST）、地址、发出后 `200 OK · 耗时 · 29 bytes`（状态栏）、JSON 自动排版、响应头表。查询参数/请求头/正文/令牌分区都显示。
+- `resourcesAll`：`app.inspectPlugin` 对内置综合插件给出 `{id:"resourcesAll", detail:"", required:true}`。
+
+**发现的缺陷（不是我的文件，没改）**
+1. **表格行内按钮没有协议**：生成的 `ViewNode::Table` 只有 `rowTargets`，没有 `rowActions`，综合插件页上看不到“移除/上移/下移”（我数过，0 个按钮），且插件的 `onEvent` 约定的事件名 `remove:<id>`、`up:<id>`、`down:<id>` 没有任何入口能触发。需要主会话决定：给 `Table` 加 `rowActions`（外壳已按 `{event,label,icon?}` + `context.row` 写好，名字可改），或改插件用页面动作。**这一块在真内核上没走通。**
+2. **综合页和集合页“类型”列显示 `[object Object]`**：插件把 `ResourceInfo.kindLabel`（`Label`，可能是对象）直接放进表格单元格（`plugins/org.onedesk.composite/main.js` 的 `info.kindLabel || info.kind`，集合插件同理）。需要在插件里按 `ctx.locale` 取字符串。
+3. 失效的引用节点：节点 `state` 仍是 `ok`（只是名称“(no longer exists)”和 unlink 图标）；计划说“用节点已有的状态字段”（应为 `state: "broken"`）。外壳对 `broken` 已有显示，插件的 `children` 没设。
+4. 综合页打开着时删除被引用的资源，页面表格没有刷新（仍显示已删的行），重新打开才对；没查是外壳缓存还是内核没推事件——未定位。
+
+**没做/没验证**：拖到综合节点的**前/后**（普通规则）没在真内核上走；集合页的“至少填一项条件”文字；`resourcesAll` 在安装确认对话框里的实际画面（只核对了协议返回，对话框文字由单元测试覆盖）；中文、日文界面。

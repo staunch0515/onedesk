@@ -322,9 +322,12 @@ export function ViewPage({ tab, descriptor: initial }: { tab: TabState; descript
   }));
   if (isConfig) items.push({ key: "params.add", label: t("params.add"), icon: "plus", onSelect: () => setAddingParam(true) });
 
+  const hasFill = descriptor.view.some((n) => (n.type === "form" && n.fields.some((f) => f.fill)) || (n.type === "text" && n.mono) || n.type === "table");
   const renderForm = (node: Extract<ViewNode, { type: "form" }>) => {
+    // Several forms on one page, one of them filling the rest: the others keep their own height instead of being squeezed into each other.
+    const stacked = descriptor.view.length > 1 && hasFill;
     if (node.layout === "strip") {
-      return (
+      const strip = (
         <FieldStrip key={node.id} label={tx(node.label)}>
           {node.fields.map((f) => {
             const id = `${tab.id}-${node.id}-${f.name}`;
@@ -352,13 +355,20 @@ export function ViewPage({ tab, descriptor: initial }: { tab: TabState; descript
           })}
         </FieldStrip>
       );
+      return stacked ? (
+        <Pane key={node.id} fixed>
+          {strip}
+        </Pane>
+      ) : (
+        strip
+      );
     }
     const fill = node.fields.find((f) => f.fill);
     const rest = node.fields.filter((f) => !f.fill);
     return (
-      <Pane key={node.id} grow={Boolean(fill)}>
+      <Pane key={node.id} grow={Boolean(fill)} fixed={stacked && !fill} fillMin={stacked && Boolean(fill)}>
         {rest.length > 0 && (
-          <Pane grow={!fill} scroll pad="lg" gap="md" width="form">
+          <Pane grow={!fill && !stacked} scroll={!stacked} pad="lg" gap="md" width="form">
             {rest.map((f) => (
               <FormField key={f.name} label={tx(f.label)} description={f.hint ? tx(f.hint) : undefined}>
                 <FieldControl field={f} size="md" readOnly={readOnly} value={fieldValue(f)} secret={secretOf(f)} onChange={(v) => setBound(f.bind ?? f.name, v)} />
@@ -402,13 +412,12 @@ export function ViewPage({ tab, descriptor: initial }: { tab: TabState; descript
       {t("merge.body", { fields: pending.conflicts.map(labelOf).join(", ") })}
     </Banner>
   );
-  const hasFill = descriptor.view.some((n) => (n.type === "form" && n.fields.some((f) => f.fill)) || (n.type === "text" && n.mono) || n.type === "table");
   return (
     <>
     <Frame tab={tab} descriptor={descriptor} actions={items} panel={descriptor.resultTabs.length > 0 || tab.runId ? <ResultArea tab={tab} descriptor={descriptor} /> : undefined}>
       {conflictBar}
       {descriptor.runId && <RunHeader runId={descriptor.runId} />}
-      <Pane grow scroll={!hasFill}>
+      <Pane grow scroll={!hasFill || descriptor.view.length > 1}>
         {descriptor.view.map((node) => (node.type === "form" ? renderForm(node) : <ViewNodes key={node.id} nodes={[node]} onRowAction={(event, row) => void rowEvent(event, row)} />))}
       </Pane>
     </Frame>

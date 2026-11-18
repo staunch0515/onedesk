@@ -75,7 +75,7 @@ describe("a node that accepts any resource (dropAny, D390)", () => {
     const move = vi.fn<ProtocolClient["tree"]["move"]>(async () => ({ message: "Added 1 item" }));
     setup(move);
     await dragOnto("note", "bag");
-    await waitFor(() => expect(move).toHaveBeenCalledWith("t12", "note", "bag", "inside"));
+    await waitFor(() => expect(move).toHaveBeenCalledWith("t12", "note", "bag", "inside", expect.any(String)));
     expect(await screen.findByText("Added 1 item")).toBeTruthy();
   });
 

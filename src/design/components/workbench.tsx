@@ -180,6 +180,10 @@ export interface PaneProps {
   /** Take the remaining space of the parent and allow shrinking. */
   grow?: boolean;
   scroll?: boolean;
+  /** Keep its own height when the parent is shorter than its children (no squeezing). */
+  fixed?: boolean;
+  /** A filling pane never gets shorter than a usable editor, even among stacked sections. */
+  fillMin?: boolean;
   pad?: "none" | "sm" | "md" | "lg";
   gap?: "none" | "xs" | "sm" | "md" | "lg";
   surface?: "none" | "surface" | "app" | "subtle";
@@ -199,6 +203,8 @@ export function Pane({
   direction = "column",
   grow,
   scroll,
+  fixed,
+  fillMin,
   pad = "none",
   gap = "none",
   surface = "none",
@@ -217,6 +223,8 @@ export function Pane({
         `od-pane--${direction}`,
         grow && "od-pane--grow",
         scroll && "od-pane--scroll",
+        fixed && "od-pane--fixed",
+        fillMin && "od-pane--fill-min",
         pad !== "none" && `od-pane--pad-${pad}`,
         gap !== "none" && `od-pane--gap-${gap}`,
         surface !== "none" && `od-pane--${surface}`,

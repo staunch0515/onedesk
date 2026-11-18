@@ -296,6 +296,14 @@
   overflow: auto;
 }
 
+.od-pane--fixed {
+  flex-shrink: 0;
+}
+
+.od-pane--fill-min {
+  min-height: var(--stacked-fill-min-height);
+}
+
 .od-pane--wrap {
   flex-wrap: wrap;
 }
