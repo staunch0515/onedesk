@@ -160,3 +160,4 @@
 - `host.actions.call` 的被调方看不到调用方的页面参数。
 - 安装确认里系统程序的 `searchPaths` 没有列给用户看（只列程序名）。
 - `scripts/check-arch.mjs` 的内核禁用词须排除迁移文件名（`include_str!` 行）与 `rusqlite`/`SQLITE_*`。
+- 第十五轮审查 #15：`searchPaths` 可指向人人可写的目录（如 `/tmp`）——可考虑拒绝其他用户可写的目录。
