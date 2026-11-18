@@ -85,9 +85,17 @@ export default { activate(host) {
     if (mode === "hang") { await ctx.host.util.sleep(8000); return; }
     if (mode === "throw") throw new Error("boom");
     if (mode === "tally") {
+      // A deletion waits until the test opens the gate (after the whole burst was queued), at most
+      // ~3 s per event so it stays under the 5 s handler limit; the rest of the burst piles up
+      // behind it. `early` counts deletions handled before the gate opened.
+      let early = 0;
+      if (e.change === "deleted" && (await ctx.host.storage.get("gate")) === "closed") {
+        early = 1;
+        const until = Date.now() + 3000;
+        while (Date.now() < until && (await ctx.host.storage.get("gate")) === "closed") await ctx.host.util.sleep(20);
+      }
       const t = (await ctx.host.storage.get("tally")) || {};
-      // The first deletion takes its time: the rest of the burst piles up behind it.
-      if (e.change === "deleted" && !t.slept) { t.slept = true; await ctx.host.storage.set("tally", t); await ctx.host.util.sleep(1500); }
+      t.early = (t.early || 0) + early;
       t[e.change] = (t[e.change] || 0) + 1;
       t.dropped = (t.dropped || 0) + (e.dropped || 0);
       await ctx.host.storage.set("tally", t);
@@ -992,8 +1000,12 @@ async fn review4_queues_are_bounded_and_failures_merge() {
     c.probe("test.cmd", "storage.set", json!(["mode", "tally"])).await;
     let eff = c.ok("command.execute", json!({ "id": "node.newGroup", "context": { "tree": "resources", "args": { "name": "G" } } })).await;
     let g = eff.as_array().unwrap().iter().find_map(|e| e["key"].as_str()).unwrap().to_string();
-    let id = start(c, "bulk", json!({ "n": 1100, "parent": g }), None).await;
-    assert_eq!(wait_run(c, &id).await["status"], "success");
+    // 1100 children in runs of 100: one run of 1100 sequential writes can outlast the 20 s action
+    // limit on a heavily loaded machine. The burst under test is the single deletion below.
+    for _ in 0..11 {
+        let id = start(c, "bulk", json!({ "n": 100, "parent": g }), None).await;
+        assert_eq!(wait_run(c, &id).await["status"], "success");
+    }
     let settled = |t: &Value, change: &str, n: u64| t[change].as_u64().unwrap_or(0) + t["dropped"].as_u64().unwrap_or(0) >= n;
     for _ in 0..1500 {
         if settled(&tally().await, "created", 1100) {
@@ -1004,7 +1016,11 @@ async fn review4_queues_are_bounded_and_failures_merge() {
     let before = tally().await;
     assert!(settled(&before, "created", 1100), "{before}");
     // One deletion: 1100 events at once; the queue keeps 1000, the next event says how many went.
+    // The handler is held at a gate until the whole burst is queued (`resource.delete` queues every
+    // event before it answers), so the overflow does not depend on how fast the handler runs.
+    c.probe("test.cmd", "storage.set", json!(["gate", "closed"])).await;
     c.ok("resource.delete", json!({ "id": g })).await;
+    c.probe("test.cmd", "storage.set", json!(["gate", "open"])).await;
     let base = before["dropped"].as_u64().unwrap_or(0);
     let mut t = Value::Null;
     for _ in 0..1500 {
@@ -1015,7 +1031,11 @@ async fn review4_queues_are_bounded_and_failures_merge() {
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
     let dropped = t["dropped"].as_u64().unwrap_or(0) - base;
-    assert!(dropped >= 1 && t["deleted"].as_u64().unwrap() <= 1000 + 1, "{t}");
+    // Bounded: once the gate opened, at most 1000 were waiting; `early` were taken before (1 unless
+    // the machine was so slow that the burst outlasted one handler's wait).
+    let early = t["early"].as_u64().unwrap_or(0);
+    assert!(early >= 1, "{t}");
+    assert!(dropped >= 1 && t["deleted"].as_u64().unwrap() <= 1000 + early, "{t}");
     assert_eq!(t["deleted"].as_u64().unwrap() + dropped, 1100, "{t}");
 
     // Failures of one burst: one audit row, counted.
