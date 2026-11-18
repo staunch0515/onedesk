@@ -43,3 +43,7 @@
 - 第二阶段（中日译文）。
 - 没有桌面窗口（Tauri）里的截图，只有 Chromium 预览 + 真内核。
 - 全部 e2e 的结果见下方“全套 e2e”一节。
+
+## 全套 e2e
+
+`cargo build -p onedesk-worker -p onedesk-host` 后 `E2E_PORT=1473 pnpm exec playwright test`：**237 条全部通过**（24.5 分钟）。跑完用 `git checkout -- docs/screenshots` 还原了基准截图。`pnpm test:rust`、`pnpm clippy`、完整 `pnpm check` 我没有跑（不在本阶段范围，D6 的实际运行归它们）。
