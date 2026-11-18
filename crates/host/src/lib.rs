@@ -201,7 +201,7 @@ async fn spawn_worker(cfg: &HostConfig, shared: &Shared) -> Result<Started, Host
         .kill_on_drop(true)
         .spawn()
         .map_err(|e| HostError(format!("cannot start worker {}: {e}", cfg.worker_bin.display())))?;
-    // The worker's own words go on to our stderr; the last of them explain a start that failed (for example `legacyUpgradeFailed`).
+    // The worker's own words go on to our stderr; the last of them explain a start that failed (for example why the database could not be opened).
     let tail = Arc::new(Mutex::new(String::new()));
     if let Some(stderr) = child.stderr.take() {
         let tail = tail.clone();
@@ -367,17 +367,16 @@ pub struct Host {
 }
 
 impl Host {
-    /// Prepares the data directory (moving a first-version database into place, D398), copies built-in plugins,
+    /// Prepares the data directory, copies built-in plugins,
     /// starts the worker of the most recently opened workspace and says hello.
     pub async fn start(cfg: HostConfig) -> Result<Arc<Host>, HostError> {
         std::fs::create_dir_all(&cfg.data_dir).map_err(|e| HostError(format!("data dir: {e}")))?;
-        data_dir::move_legacy_db(&cfg.data_dir).map_err(HostError)?;
         let first = match workspaces::sorted(workspaces::scan(&cfg.data_dir)).into_iter().next() {
             Some((folder, _)) => folder,
             None => {
                 let dir = workspace_dir(&cfg.data_dir);
                 std::fs::create_dir_all(&dir).map_err(|e| HostError(format!("data dir: {e}")))?;
-                let info = workspaces::InfoFile { id: workspaces::new_id(), name: "Default".into(), last_opened_at: 0 };
+                let info = workspaces::InfoFile { id: workspaces::new_id(), name: "Default".into(), last_opened_at: 0, window: None };
                 workspaces::write_info(&dir, &info).map_err(|e| HostError(format!("workspace.json: {e}")))?;
                 "default".to_string()
             }
@@ -458,7 +457,10 @@ impl Host {
             current: watch::channel(None).0,
             shutdown: watch::channel(false).0,
         });
+        // The kernel rewrites `workspace.json` when it opens the workspace; the window position is ours to keep.
+        let window = workspaces::read_info(&workspace_path(&self.data_dir, folder)).and_then(|i| i.window);
         let first = spawn_worker(&self.cfg, &shared).await.map_err(|e| err(ErrorCode::WorkerGone, e.0))?;
+        self.set_window_bounds(folder, window);
         *shared.hello.lock().unwrap() = first.hello.clone();
         shared.current.send_replace(Some(first.conn.clone()));
         let restarts = Arc::new(std::sync::atomic::AtomicU32::new(0));
@@ -708,6 +710,48 @@ impl Host {
     fn changed(&self) {
         let event = EventMessage { topic: "app.workspacesChanged".into(), payload: None, client: None };
         let _ = self.events.send(HostEvent { workspace: None, event });
+    }
+
+    /// The window position and size remembered for a workspace folder (D403).
+    pub fn window_bounds(&self, folder: &str) -> Option<workspaces::WindowBounds> {
+        workspaces::read_info(&workspace_path(&self.data_dir, folder)).and_then(|i| i.window)
+    }
+
+    /// Remembers (or, with `None`, keeps) the window position and size in the workspace's `workspace.json`.
+    pub fn set_window_bounds(&self, folder: &str, bounds: Option<workspaces::WindowBounds>) {
+        let dir = workspace_path(&self.data_dir, folder);
+        if let (Some(b), Some(mut info)) = (bounds, workspaces::read_info(&dir)) {
+            info.window = Some(b);
+            let _ = workspaces::write_info(&dir, &info);
+        }
+    }
+
+    /// The workspace folder a window or tab (`client`) uses now.
+    pub fn client_folder(&self, client: &str) -> String {
+        self.bound(Some(client))
+    }
+
+    /// Binds a new window or tab to a workspace without changing the default for others (D403). Starts the
+    /// workspace's worker if needed.
+    pub async fn bind_client(&self, client: &str, workspace_id: &str) -> Result<WorkspaceEntry, ProtocolError> {
+        let (folder, info) = self.find(workspace_id)?;
+        self.slot_for(&folder).await?;
+        self.touch_last_opened(&folder);
+        let old = self.bound(Some(client));
+        self.bindings.lock().unwrap().insert(client.to_string(), folder.clone());
+        if old != folder {
+            self.release(&old).await;
+        }
+        let info = workspaces::read_info(&workspace_path(&self.data_dir, &folder)).unwrap_or(info);
+        Ok(workspaces::entry(&folder, &info, true))
+    }
+
+    /// A window or tab went away: its worker stops when nobody else uses it (and it is not the default).
+    pub async fn unbind_client(&self, client: &str) {
+        let old = self.bindings.lock().unwrap().remove(client);
+        if let Some(folder) = old {
+            self.release(&folder).await;
+        }
     }
 
     fn touch_last_opened(&self, folder: &str) {

@@ -112,6 +112,7 @@ export function createMixedClient(kernel: KernelClient, mock: ProtocolClient): P
       switchTo: (id) => kernel.workspace.switchTo(id),
       rename: (id, name) => kernel.workspace.rename(id, name),
       remove: (id) => kernel.workspace.remove(id),
+      openWindow: (id) => kernel.workspace.openWindow(id),
       startTargets: async () => [], getConfig: (name) => kernel.workspace.getConfig(name), setConfig: (name, value) => kernel.workspace.setConfig(name, value),
       export: (folder) => kernel.workspace.export(folder),
       importPreview: (folder) => kernel.workspace.importPreview(folder),

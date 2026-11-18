@@ -36,6 +36,18 @@ pub struct InfoFile {
     pub name: String,
     #[serde(default)]
     pub last_opened_at: i64,
+    /// Where the last window of this workspace was (logical pixels); written by the main process (D403).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub window: Option<WindowBounds>,
+}
+
+/// Position and size of a window, in logical pixels.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct WindowBounds {
+    pub x: f64,
+    pub y: f64,
+    pub width: f64,
+    pub height: f64,
 }
 
 pub fn now_ms() -> i64 {
@@ -122,7 +134,7 @@ pub fn scan(data_dir: &Path) -> Vec<(String, InfoFile)> {
         let info = match read_info(&dir) {
             Some(i) if !i.id.is_empty() => i,
             _ => {
-                let i = InfoFile { id: db_id(&dir).unwrap_or_else(new_id), name: folder.clone(), last_opened_at: 0 };
+                let i = InfoFile { id: db_id(&dir).unwrap_or_else(new_id), name: folder.clone(), last_opened_at: 0, window: None };
                 let _ = write_info(&dir, &i);
                 i
             }
@@ -153,7 +165,7 @@ pub fn create(data_dir: &Path, name: &str, init_settings: Option<&serde_json::Va
     let folder = free_folder(data_dir, name);
     let dir = workspace_path(data_dir, &folder);
     std::fs::create_dir_all(&dir).map_err(|e| format!("create {}: {e}", dir.display()))?;
-    let info = InfoFile { id: new_id(), name: name.to_string(), last_opened_at: 0 };
+    let info = InfoFile { id: new_id(), name: name.to_string(), last_opened_at: 0, window: None };
     let done = write_info(&dir, &info).and_then(|_| match init_settings {
         Some(v) => std::fs::write(dir.join(INIT_SETTINGS_FILE), serde_json::to_vec_pretty(v).expect("serializes")),
         None => Ok(()),

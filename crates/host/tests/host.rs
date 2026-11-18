@@ -588,31 +588,16 @@ async fn delete_refuses_the_workspace_in_use_and_moves_the_rest_to_trash_with_it
 }
 
 #[tokio::test]
-async fn a_first_version_database_is_backed_up_and_moved_before_the_worker_starts() {
+async fn a_first_version_onedesk_db_is_not_touched() {
     let tmp = tempfile::tempdir().unwrap();
     let data = tmp.path().join("data");
     std::fs::create_dir_all(&data).unwrap();
     std::fs::write(data.join("onedesk.db"), b"first version").unwrap();
     let host = start(tmp.path()).await;
-    let ws = data.join("workspaces/default");
-    assert_eq!(std::fs::read(ws.join("workspace.db")).unwrap(), b"first version");
-    assert_eq!(std::fs::read(ws.join("backups/v1-onedesk.db")).unwrap(), b"first version");
-    assert!(!data.join("onedesk.db").exists());
-    assert_eq!(list(&host, "w").await.len(), 1);
-    host.shutdown().await;
-}
-
-#[tokio::test]
-async fn a_failed_move_keeps_onedesk_db_and_the_host_does_not_start() {
-    let tmp = tempfile::tempdir().unwrap();
-    let data = tmp.path().join("data");
-    std::fs::create_dir_all(data.join("workspaces/default/workspace.db")).unwrap();
-    std::fs::write(data.join("onedesk.db"), b"first version").unwrap();
-    let cfg = HostConfig { data_dir: data.clone(), worker_bin: fake_worker(), builtin_plugins: None, secrets: Some(memory_store().0) };
-    // A directory named workspace.db does not count as a database, so the move is tried — and fails.
-    let e = Host::start(cfg).await.err().expect("start fails");
-    assert!(e.0.starts_with("legacyMoveFailed"), "{}", e.0);
     assert_eq!(std::fs::read(data.join("onedesk.db")).unwrap(), b"first version");
+    assert!(!data.join("workspaces/default/workspace.db").exists());
+    assert!(!data.join("workspaces/default/backups").exists());
+    host.shutdown().await;
 }
 
 #[tokio::test]
@@ -637,9 +622,95 @@ async fn a_worker_that_fails_to_start_explains_itself_with_its_last_words() {
     use std::os::unix::fs::PermissionsExt;
     let tmp = tempfile::tempdir().unwrap();
     let script = tmp.path().join("worker.sh");
-    std::fs::write(&script, "#!/bin/sh\necho 'legacyUpgradeFailed table=resources' >&2\nexit 1\n").unwrap();
+    std::fs::write(&script, "#!/bin/sh\necho 'worker says why' >&2\nexit 1\n").unwrap();
     std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
     let cfg = HostConfig { data_dir: tmp.path().join("data"), worker_bin: script, builtin_plugins: None, secrets: Some(memory_store().0) };
     let e = Host::start(cfg).await.err().expect("start fails");
-    assert!(e.0.contains("legacyUpgradeFailed table=resources"), "{}", e.0);
+    assert!(e.0.contains("worker says why"), "{}", e.0);
+}
+
+/* ---------------------------------------------------------------- several windows (D403) */
+
+#[tokio::test]
+async fn windows_of_different_workspaces_run_side_by_side_and_the_last_one_out_stops_the_worker() {
+    let tmp = tempfile::tempdir().unwrap();
+    let host = start(tmp.path()).await;
+    let team = host.request(Some("main"), "app.createWorkspace", json!({ "name": "team" })).await.unwrap();
+    let id = team["id"].as_str().unwrap();
+    // Two windows on the same new workspace; the main window stays on the default one.
+    host.bind_client("win-1", id).await.unwrap();
+    host.bind_client("win-2", id).await.unwrap();
+    assert_eq!(host.running_workspaces(), ["default", "team"]);
+    assert!(host.request(Some("win-1"), "args", Value::Null).await.unwrap()["workspace"].as_str().unwrap().ends_with("workspaces/team"));
+    assert!(host.request(Some("main"), "args", Value::Null).await.unwrap()["workspace"].as_str().unwrap().ends_with("workspaces/default"));
+    // One window of two closes: the worker stays; deleting is refused while any window uses it.
+    host.unbind_client("win-1").await;
+    assert_eq!(host.running_workspaces(), ["default", "team"]);
+    let e = host.request(Some("main"), "app.deleteWorkspace", json!({ "id": id })).await.unwrap_err();
+    assert_eq!((e.code, e.params.get("reason").map(String::as_str)), (ErrorCode::Conflict, Some("inUse")));
+    // The last one closes: the worker stops and the workspace can be deleted.
+    host.unbind_client("win-2").await;
+    assert_eq!(host.running_workspaces(), ["default"]);
+    host.request(Some("main"), "app.deleteWorkspace", json!({ "id": id })).await.unwrap();
+    // Binding to a workspace that does not exist is refused.
+    assert_eq!(host.bind_client("win-3", "nope").await.unwrap_err().code, ErrorCode::NotFound);
+    host.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_new_window_does_not_change_which_workspace_other_windows_get() {
+    let tmp = tempfile::tempdir().unwrap();
+    let host = start(tmp.path()).await;
+    let team = host.request(Some("main"), "app.createWorkspace", json!({ "name": "team" })).await.unwrap();
+    host.bind_client("win-1", team["id"].as_str().unwrap()).await.unwrap();
+    let items = list(&host, "win-1").await;
+    assert_eq!(items.iter().filter(|i| i["current"] == true).map(|i| i["folder"].as_str().unwrap()).collect::<Vec<_>>(), ["team"]);
+    let items = list(&host, "main").await;
+    assert_eq!(items.iter().filter(|i| i["current"] == true).map(|i| i["folder"].as_str().unwrap()).collect::<Vec<_>>(), ["default"]);
+    // A window that switches inside itself leaves its old workspace's worker running only if another window uses it.
+    let default_id = items.iter().find(|i| i["folder"] == "default").unwrap()["id"].clone();
+    host.request(Some("win-1"), "app.switchWorkspace", json!({ "id": default_id })).await.unwrap();
+    assert_eq!(host.running_workspaces(), ["default"]);
+    host.shutdown().await;
+}
+
+#[tokio::test]
+async fn the_window_position_is_kept_in_workspace_json_across_restarts_of_the_worker() {
+    let tmp = tempfile::tempdir().unwrap();
+    let host = start(tmp.path()).await;
+    let b = onedesk_host::workspaces::WindowBounds { x: 10.0, y: 20.0, width: 1200.0, height: 800.0 };
+    host.set_window_bounds("default", Some(b));
+    assert_eq!(host.window_bounds("default"), Some(b));
+    let file: Value = serde_json::from_slice(&std::fs::read(tmp.path().join("data/workspaces/default/workspace.json")).unwrap()).unwrap();
+    assert_eq!(file["window"]["width"], 1200.0);
+    assert_eq!(file["name"], "Default", "the rest of the file is kept");
+    host.shutdown().await;
+    // A second host on the same data directory still has it.
+    let again = start(tmp.path()).await;
+    assert_eq!(again.window_bounds("default"), Some(b));
+    again.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_browser_tab_opened_with_a_workspace_parameter_is_bound_and_released_on_close() {
+    let tmp = tempfile::tempdir().unwrap();
+    let host = start(tmp.path()).await;
+    let team = host.request(None, "app.createWorkspace", json!({ "name": "team" })).await.unwrap();
+    let port = ws_server(host.clone(), "t").await;
+    let id = team["id"].as_str().unwrap();
+    let (mut tab, _) = tokio_tungstenite::connect_async(format!("ws://127.0.0.1:{port}/?token=t&client=tab-x&workspace={id}")).await.unwrap();
+    tab.send(Message::text(json!({ "id": 1, "method": "args" }).to_string())).await.unwrap();
+    let reply: Value = serde_json::from_str(tab.next().await.unwrap().unwrap().to_text().unwrap()).unwrap();
+    assert!(reply["result"]["workspace"].as_str().unwrap().ends_with("workspaces/team"), "{reply}");
+    assert_eq!(host.running_workspaces(), ["default", "team"]);
+    tab.close(None).await.unwrap();
+    drop(tab);
+    for _ in 0..50 {
+        if host.running_workspaces() == ["default"] {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert_eq!(host.running_workspaces(), ["default"]);
+    host.shutdown().await;
 }

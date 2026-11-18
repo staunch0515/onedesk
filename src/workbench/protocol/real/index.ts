@@ -13,7 +13,7 @@ export type { KernelClient } from "./real-client";
 export async function connectKernel(query: URLSearchParams, locale: () => string): Promise<KernelClient | null> {
   let transport: Transport | null = null;
   if (isTauri()) transport = await createTauriTransport();
-  else if (query.get("kernel")) transport = await createWsTransport(query.get("kernel")!, query.get("token") ?? "", browserClientId());
+  else if (query.get("kernel")) transport = await createWsTransport(query.get("kernel")!, query.get("token") ?? "", browserClientId(), query.get("workspace"));
   if (!transport) return null;
   try {
     return await createKernelClient(transport, locale);

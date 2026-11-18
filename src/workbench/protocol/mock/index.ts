@@ -242,6 +242,13 @@ export function createMockClient(options: MockOptions = {}): ProtocolClient {
 
   const savedWorkspaces = options.fresh ? null : (read(WORKSPACES_KEY) as typeof workspaces | null);
   if (savedWorkspaces?.items?.length) Object.assign(workspaces, savedWorkspaces);
+  // A tab opened with "new window" belongs to that workspace (not saved: the other tabs keep theirs).
+  try {
+    const asked = new URLSearchParams(window.location.search).get("workspace");
+    if (asked && workspaces.items.some((w) => w.id === asked)) workspaces.current = asked;
+  } catch {
+    /* no window.location (tests) */
+  }
 
   function seed(): Db {
     const now = Date.now();
@@ -1613,6 +1620,13 @@ export function createMockClient(options: MockOptions = {}): ProtocolClient {
         found.name = clean;
         saveWorkspaces();
         emit("app.workspacesChanged");
+      },
+      async openWindow(id) {
+        await wait();
+        // The demo has no windows: another tab shows it (the demo state is shared through localStorage).
+        const url = new URL(window.location.href);
+        url.searchParams.set("workspace", id);
+        window.open(url.toString(), "_blank", "noopener");
       },
       async remove(id) {
         await wait();

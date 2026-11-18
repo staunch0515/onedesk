@@ -100,6 +100,8 @@ export interface ProtocolClient {
     /** Binds this connection to the workspace. The caller reloads the interface afterwards. */
     switchTo(id: string): Promise<WorkspaceEntry>;
     rename(id: string, name: string): Promise<void>;
+    /** A new window (desktop) or browser tab that belongs to this workspace; several windows may share one (D403). */
+    openWindow(id: string): Promise<void>;
     /** Moves the workspace to the data directory's `trash/`. `conflict/inUse` for one a connection uses. */
     remove(id: string): Promise<void>;
     /** Targets to open the first time this client connects (the welcome set, D196). */

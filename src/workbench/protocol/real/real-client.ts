@@ -12,7 +12,7 @@ export const PROTOCOL_VERSION = "1";
 export interface KernelClient {
   readonly hello: HelloResult;
   readonly transport: Transport;
-  workspace: Pick<ProtocolClient["workspace"], "info" | "list" | "create" | "switchTo" | "rename" | "remove" | "getConfig" | "setConfig" | "export" | "importPreview" | "import">;
+  workspace: Pick<ProtocolClient["workspace"], "info" | "list" | "create" | "switchTo" | "rename" | "remove" | "openWindow" | "getConfig" | "setConfig" | "export" | "importPreview" | "import">;
   params: ProtocolClient["params"];
   refs: ProtocolClient["refs"];
   search: ProtocolClient["search"];
@@ -74,6 +74,10 @@ export async function createKernelClient(transport: Transport, locale?: () => st
       switchTo: (id) => call<WorkspaceEntry>("app.switchWorkspace", { id }),
       rename: async (id, name) => void (await call("app.renameWorkspace", { id, name })),
       remove: async (id) => void (await call("app.deleteWorkspace", { id })),
+      openWindow: async (id) => {
+        if (!transport.openWindow) throw new KernelError("unsupported", {});
+        await transport.openWindow(id);
+      },
       getConfig: async (name) => ((await call<string | null>("workspace.getConfig", { name })) ?? null),
       setConfig: async (name, value) => void (await call("workspace.setConfig", { name, value })),
       export: (folder) => call<ExportResult>("workspace.export", { folder }),

@@ -12,7 +12,12 @@ const MAX_NAME = 100;
 /** Switches this connection to a workspace, then loads the interface again so every part shows that workspace. */
 export async function switchWorkspace(client: { workspace: { switchTo: (id: string) => Promise<unknown> } }, id: string) {
   await client.workspace.switchTo(id);
-  window.location.reload();
+  // A tab opened for one workspace ("new window") keeps asking for it on every load: the switch replaces that.
+  const url = new URL(window.location.href);
+  if (url.searchParams.has("workspace")) {
+    url.searchParams.delete("workspace");
+    window.location.replace(url.toString());
+  } else window.location.reload();
 }
 
 /** A name field with its own validation: 1 to 100 characters. */
@@ -114,10 +119,11 @@ export function WorkspaceDialogs({ dialog, setDialog }: { dialog: WorkspaceDialo
     {
       key: "actions",
       header: "",
-      width: "sm",
+      width: "md",
       align: "end",
       render: (w) => (
         <>
+          <IconButton icon="app-window" label={t("workspace.openWindowAction", { name: w.name })} onClick={() => void client.workspace.openWindow(w.id).catch(actions.fail)} />
           <IconButton icon="pencil" label={t("workspace.renameAction", { name: w.name })} onClick={() => setDialog({ kind: "rename", entry: w })} />
           <IconButton icon="trash-2" label={t("workspace.deleteAction", { name: w.name })} disabled={w.current} onClick={() => setDialog({ kind: "delete", entry: w })} />
         </>

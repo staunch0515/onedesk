@@ -45,12 +45,12 @@ export function TopBarPart({ onSettings }: { onSettings: () => void }) {
   }, [query, client, actions]);
 
   const current = workspaces.data?.find((w) => w.current);
-  // Opening a workspace in a new window is next round (D397): it is not offered.
-  const workspaceMenu: MenuEntry[] = [
+    const workspaceMenu: MenuEntry[] = [
     { type: "label", key: "label", label: t("topbar.workspaces") },
     ...(workspaces.data ?? []).map((w): MenuEntry => ({ key: w.id, label: w.name, icon: w.current ? "check" : undefined, onSelect: () => (w.current ? undefined : void switchWorkspace(client, w.id).catch(actions.fail)) })),
     { type: "separator", key: "sep-workspaces" },
     { key: "new-workspace", label: t("topbar.newWorkspace"), icon: "plus", onSelect: () => setWorkspaceDialog({ kind: "create" }) },
+    { key: "new-window", label: t("topbar.openInNewWindow"), icon: "app-window", onSelect: () => setWorkspaceDialog({ kind: "manage" }) },
     { key: "manage-workspaces", label: t("topbar.manageWorkspaces"), icon: "settings", onSelect: () => setWorkspaceDialog({ kind: "manage" }) },
   ];
 

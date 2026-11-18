@@ -219,9 +219,8 @@ export function TreePanel({ tree }: { tree: TreeInfo }) {
           expandable: n.expandable,
           expanded: isOpen,
           loading: loading.has(n.key),
-          // A resource whose type no plugin handles (round 13, D399) is shown like a missing plugin.
-          state: (n.state as string) === "unknownKind" ? "missing-plugin" : n.state,
-          stateLabel: (n.state as string) === "unknownKind" && !n.stateReason ? t("tree.unknownKind") : n.stateReason ? (n.state === "load-failed" && typeof n.stateReason === "string" ? error({ code: n.stateReason, params: {} }) : tx(n.stateReason)) : undefined,
+          state: n.state,
+          stateLabel: n.stateReason ? (n.state === "load-failed" && typeof n.stateReason === "string" ? error({ code: n.stateReason, params: {} }) : tx(n.stateReason)) : undefined,
           badge: n.badge,
           marked: tree.id === "environments" && n.key === activeEnv,
           draggable: n.draggable && !needle,
