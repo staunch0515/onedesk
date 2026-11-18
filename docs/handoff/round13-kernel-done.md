@@ -11,7 +11,7 @@
 ## 实现（`crates/kernel/src/workspace_settings.rs`）
 
 - `workspace.settingsSnapshot`：请求带 `client` → `denied`，`reason: mainProcessOnly`；不带（主进程自己发）→ `WorkspaceSettingsSnapshot`：
-  - `config`：配置树每个根节点，递归子节点；每个节点的名称、说明、自己的参数（`{name, type, value}`）。`ref` 类参数不复制（指向别的工作区的资源没有意义）。
+  - `config`：配置树每个根节点，递归子节点；每个节点的名称、说明、自己的参数（`{name, type, value}`）。`ref` 与 `secret` 类参数不复制（指向别的工作区的资源、别的工作区钥匙串里的密钥，新工作区都没有；审查 #8）。
   - `plugins`：每个有状态记录的插件 `{plugin, enabled}`（按 id 排序）。
 - `init-settings.json`（`INIT_SETTINGS_FILE`）：`Kernel::open` 时若工作区文件夹里有它，**先删文件**；库里没有任何不是 `core` 创建的资源（即新工作区）才应用：第一个根节点取代启动时建的默认 “Workspace” 根（改名、说明、参数），其余根与子节点新建；插件开关照设（`enabled=false` 或去掉）；一个事务，审计 `workspace.initSettings`（摘要 `configNodes`、`plugins`）。解析失败或不是新工作区：记日志、不应用（文件同样删掉）。主进程把 `settingsSnapshot` 的结果原样写成这个文件即可。
 
@@ -28,7 +28,7 @@
 
 ## 测试
 
-- `crates/kernel/tests/round13.rs`：`settingsSnapshot` 只答主进程（带 client 被拒、内容含配置与插件开关）；`init-settings.json` 应用一次后删除（根节点替换、子节点、`ref` 不复制、插件停用、审计一条）、有用户内容后再放回的文件不应用但仍删除。
+- `crates/kernel/tests/round13.rs`：`settingsSnapshot` 只答主进程（带 client 被拒、内容含配置与插件开关、密钥参数不在其中）；`init-settings.json` 应用一次后删除（根节点替换、子节点、`ref`/`secret` 不复制、插件停用、审计一条）、有用户内容后再放回的文件不应用但仍删除。
 - `round11.rs`：原 `legacyKinds` 显示测试换成“带 `legacyKinds` 的清单无效（schema）”；`manifest.rs` 单测同样。
 - 检查结果见汇报消息（`cargo test` 三个包、clippy `-D warnings`、`gen-types --check`、`pnpm lint`、`pnpm typecheck`）。
 
@@ -36,7 +36,7 @@
 
 1. `PluginDetail.legacyKinds` 随清单字段一并从协议删掉（只剩它就没意义）。
 2. “新工作区”判据是“没有非 core 创建的资源”，不是“库文件刚建”，工作进程中途崩了下次还能应用。
-3. `ref` 参数不进快照。
+3. `ref` 与 `secret` 参数不进快照，文件里有也丢弃（审查 #8）。
 
 ## 没做 / 没验证
 

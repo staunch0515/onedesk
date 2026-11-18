@@ -13,6 +13,13 @@ use crate::pipeline::{NewResource, Outcome, Tx};
 use crate::store::{self, Row, KIND_CONFIG, KIND_PLUGIN_STATE, TREE_CONFIG};
 use crate::util::*;
 
+/// Review #8: references point at another workspace's resources and secret parameters name
+/// secrets of another workspace's keychain entries; neither exists in the new one, so neither is
+/// copied (left out of the snapshot, dropped when a file holds them).
+fn copied(t: ParamType) -> bool {
+    !matches!(t, ParamType::Ref | ParamType::Secret)
+}
+
 /// Audit name of applying `init-settings.json`.
 pub const AUDIT_INIT_SETTINGS: &str = "workspace.initSettings";
 
@@ -39,7 +46,7 @@ impl Tx<'_> {
     fn init_node(&mut self, n: &SettingsSnapshotNode, parent: Option<String>, reuse: Option<Row>, rows: &mut Vec<Row>) -> KResult<usize> {
         let mut table = serde_json::Map::new();
         for p in &n.params {
-            if p.name.is_empty() || p.param_type == ParamType::Ref {
+            if p.name.is_empty() || !copied(p.param_type) {
                 continue;
             }
             table.insert(p.name.clone(), json!({ "type": p.param_type, "value": p.value }));
@@ -91,7 +98,7 @@ impl Inner {
         fn node(k: &Inner, r: &Row) -> KResult<SettingsSnapshotNode> {
             let params = crate::params::params_of(r)
                 .into_iter()
-                .filter(|(_, p)| p.ty != ParamType::Ref)
+                .filter(|(_, p)| copied(p.ty))
                 .map(|(name, p)| SnapshotParam { name, param_type: p.ty, value: p.value })
                 .collect();
             let kids = k.read(|c| store::children(c, TREE_CONFIG, Some(&r.id), 0, u32::MAX))?;
