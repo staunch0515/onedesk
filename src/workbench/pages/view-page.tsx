@@ -46,7 +46,9 @@ export function FieldControl({ field, value, onChange, size, readOnly, id, secre
   const placeholder = field.envValue || (field.placeholder ? tx(field.placeholder) : undefined);
   const locked = readOnly || Boolean(field.readOnly);
   if (LANGUAGE_PARAM.test(field.bind ?? field.name) && field.kind === "text") return <LanguageSelect id={id} size={size} label={label} value={value} disabled={locked} onChange={onChange} />;
-  switch (field.kind) {
+  // D414: `ref` (a reference to a resource; the page lists the choices as `options`) is drawn like an enum, and `time` like text with presets.
+  const kind = (field.kind as string) === "ref" ? "enum" : field.kind;
+  switch (kind) {
     case "boolean":
       return <Switch id={id} aria-label={label} checked={(value || field.envValue) === "true"} disabled={locked} onCheckedChange={(on) => onChange(on ? "true" : "false")} />;
     case "enum":
@@ -70,6 +72,7 @@ export function FieldControl({ field, value, onChange, size, readOnly, id, secre
       if (secret) return <Input id={id} size={size} aria-label={label} icon="key-round" mono type="password" autoComplete="off" value={value} readOnly={locked} placeholder={secret.saved ? t("field.secretSaved") : t("field.secretUnset")} onChange={(e) => onChange(e.target.value)} />;
       return <Input id={id} size={size} aria-label={label} icon="key-round" mono value={value} readOnly placeholder={t("field.secretUnset")} />;
     default: {
+      const time = (field.kind as string) === "time";
       const type = field.kind === "date" ? "date" : field.kind === "datetime" ? "datetime-local" : "text";
       const input = (
         <Input
@@ -80,7 +83,7 @@ export function FieldControl({ field, value, onChange, size, readOnly, id, secre
           inputMode={field.kind === "number" ? "decimal" : undefined}
           value={locked && !value ? (field.envValue ?? "") : value}
           readOnly={locked}
-          placeholder={placeholder}
+          placeholder={placeholder ?? (time ? t("field.timePlaceholder") : undefined)}
           onChange={(e) => onChange(e.target.value)}
         />
       );
@@ -305,7 +308,7 @@ export function ViewPage({ tab, descriptor: initial }: { tab: TabState; descript
     const onKey = (e: KeyboardEvent) => {
       if (!(e.metaKey || e.ctrlKey) || e.altKey) return;
       const list = latest.current.descriptor.actions;
-      const action = e.key === "s" && !e.shiftKey ? list.find((a) => a.role === "save") : e.key === "Enter" ? list.find((a) => a.role === "run") : undefined;
+      const action = e.key === "s" && !e.shiftKey ? list.find((a) => a.role === "save") : e.key === "Enter" ? (list.find((a) => a.role === "run") ?? list.find((a) => a.role === "save-run")) : undefined;
       if (!action) return;
       e.preventDefault();
       if (!action.disabled && !blockedByProtection(latest.current.descriptor, action)) void invokeRef.current(action);

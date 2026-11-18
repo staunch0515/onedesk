@@ -47,6 +47,10 @@ if (existsSync(pluginsDir)) {
 const BANNED_WORDS = ["note", "sql", "postgres", "ssh", "docker", "psql", "video", "ffmpeg"];
 const wordRe = new RegExp(`(?<![A-Za-z0-9_])(${BANNED_WORDS.join("|")})(?![A-Za-z0-9_])`, "i");
 const wordReNoSql = new RegExp(`(?<![A-Za-z0-9_])(${BANNED_WORDS.filter((w) => w !== "sql").join("|")})(?![A-Za-z0-9_])`, "i");
+// Round 15 (D412): the kernel's own SQLite layer makes the word `sql` unusable as a ban there, so what is
+// banned in crates/kernel is what only a database plugin would write: a "sql" string (a language or kind
+// name), PostgreSQL's words, and read-only transaction / timeout statements.
+const kernelDbRe = /["'`]sql["'`]|postgres|pg_dump|pg_restore|statement_timeout|BEGIN\s+READ\s+ONLY|READ\s+ONLY\s*;/i;
 const kernelSide = ["crates/kernel", "crates/worker", "crates/protocol", "crates/host", "src-tauri"].map((d) => join(root, d));
 const isFixture = (f) => f.includes(`${sep}tests${sep}fixtures${sep}`) || f.includes(`${sep}gen${sep}`);
 // Doc comments and `#[cfg(test)]` modules (last in the file by convention) are not scanned for words.
@@ -73,9 +77,12 @@ for (const dir of kernelSide) {
     const isTestFile = f.includes(`${sep}tests${sep}`);
     const re = f.includes(`${sep}crates${sep}kernel${sep}`) ? wordReNoSql : wordRe;
     if (isTestFile) continue;
+    const inKernel = f.includes(`${sep}crates${sep}kernel${sep}`) && f.endsWith(".rs");
     code.split("\n").forEach((line, i) => {
       const m = re.exec(line);
       if (m) errors_.push(`${rel(f)}:${i + 1}: 出现具体插件相关的词 "${m[1]}"`);
+      const k = inKernel ? kernelDbRe.exec(line) : null;
+      if (k) errors_.push(`${rel(f)}:${i + 1}: 内核里出现数据库插件才会写的内容 "${k[0]}"`);
     });
   }
 }

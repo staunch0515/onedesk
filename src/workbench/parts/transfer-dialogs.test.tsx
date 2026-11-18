@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import "../../design/testing/jsdom-setup";
 import { act, fireEvent, screen, waitFor } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ImportPreview } from "../protocol";
 import { createMockClient } from "../protocol/mock";
 import { KernelError } from "../protocol/errors";
@@ -67,6 +67,7 @@ describe("import flow", () => {
 });
 
 describe("result export", () => {
+  beforeEach(() => localStorage.clear());
   it("uses the save dialog on the desktop and reports the rows written", async () => {
     const exportFn = vi.fn(async (_id: string, path: string) => ({ path, rows: 7 }));
     const base = createMockClient({ fresh: true, quiet: true });
@@ -76,6 +77,19 @@ describe("result export", () => {
     await act(async () => startRunExport(client, store, { fail: () => undefined }, "run1", "r.csv", done));
     expect(exportFn).toHaveBeenCalledWith("run1", "/tmp/r.csv");
     expect(done).toHaveBeenCalledWith(7, "/tmp/r.csv");
+  });
+
+  it("asks for a folder once, remembers it, and exports straight there the second time", async () => {
+    const exportFn = vi.fn(async (_id: string, path: string) => ({ path, rows: 3 }));
+    const pickFolder = vi.fn(async () => "/tmp/out");
+    const base = createMockClient({ fresh: true, quiet: true });
+    const client = kernelLikeClient(base, { run: { ...base.run, export: exportFn }, platform: { pickFolder } });
+    const { store } = renderInShell(client, <TransferDialogs />);
+    await act(async () => startRunExport(client, store, { fail: () => undefined }, "run1", "r.csv", vi.fn()));
+    await act(async () => startRunExport(client, store, { fail: () => undefined }, "run2", "r.csv", vi.fn()));
+    expect(pickFolder).toHaveBeenCalledTimes(1);
+    expect(exportFn).toHaveBeenCalledTimes(2);
+    expect(exportFn.mock.calls[1]?.[1]).toMatch(/^\/tmp\/out\/r-\d{6}\.csv$/);
   });
 
   it("says why a refused export was refused", async () => {

@@ -52,3 +52,26 @@ describe("ui.language on the configuration page (D379)", () => {
     expect((await screen.findAllByRole("option")).map((o) => o.textContent)).toEqual(["English", "日本語", "zh-CN"]);
   });
 });
+
+describe("time and reference fields (D414)", () => {
+  it("a time field is a text box with a UTC hint and its preset menu", () => {
+    const time = { name: "at", label: "At", kind: "time", presets: [{ value: "00:00", label: "Midnight" }] } as unknown as ViewField;
+    render(
+      <I18nProvider locale="en-US">
+        <FieldControl field={time} value="" onChange={vi.fn()} size="md" readOnly={false} />
+      </I18nProvider>,
+    );
+    expect((screen.getByLabelText("At") as HTMLInputElement).placeholder).toBe("HH:MM (UTC)");
+    expect(screen.getByRole("button", { name: /At/ })).toBeTruthy();
+  });
+
+  it("a reference field is a choice list of the options the page gives", () => {
+    const ref = { name: "src", label: "Source", kind: "ref", options: [{ value: "r1", label: "Main DB" }] } as unknown as ViewField;
+    render(
+      <I18nProvider locale="en-US">
+        <FieldControl field={ref} value="r1" onChange={vi.fn()} size="md" readOnly={false} />
+      </I18nProvider>,
+    );
+    expect(screen.getByRole("combobox", { name: "Source" })).toBeTruthy();
+  });
+});
