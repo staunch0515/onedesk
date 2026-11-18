@@ -218,6 +218,8 @@ export interface ProtocolClient {
     setKept(id: string, kept: boolean): Promise<void>;
     /** Writes a finished run's table to a new file as CSV (§9.5). */
     export(id: string, path: string): Promise<RunExportResult>;
+    /** A page of a `paged` table result (D414): `limit` 1–1000. Absent in the demo, whose tables are whole. */
+    rows?(id: string, offset: number, limit: number): Promise<{ rows: Array<Array<string | number | null>>; total: number }>;
   };
 
   search: {

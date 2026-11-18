@@ -9,10 +9,14 @@
 - **⌘Enter**：页面没有 `run` 动作时运行 `save-run` 动作（B4/B7）。
 - 已经存在、本轮核对无需改：日期/日期时间/枚举/密钥字段与预设值下拉（`FieldControl`）、SQL 着色（`sql-tokens.ts`）、`new:` 标签页首次保存（`state/save.ts`）、保存并运行、表格排序/列宽/表头固定（DataGrid）。
 
+## 按 D414 名字补做的（类型还没生成，用局部类型断言，内核合并后可去掉）
+- `run.rows(id, offset, limit)`：client 接口（可选）、real/mixed 客户端；`paged: true` 的表格只带前 200 行，其余每页 1000 行连续读取（`usePagedRows`，有测试）；复制时读全量；导出仍走 `run.export`。
+- `time` 字段：带 “HH:MM (UTC)” 提示的文本框 + 预设下拉；`ref` 字段：按枚举下拉画，选项由页面给（`options`）。有测试。
+- 打开 `new:` 目标带 `params`：成为该标签页的初始草稿（未保存状态），其他目标仍是页面参数。有测试。
+- 新文字键：`result.elapsed`、`field.timePlaceholder`（仅英语，中日由插件会话补）。
+
 ## 没做 / 没验证
-- 时间字段（`time` 种类，含常用时间）、资源引用字段：等内核的 `FieldKind` 新名字。
-- 结果表格读数据文件句柄（X2，D8）：等内核的输出形态与读取接口。
-- 打开 `new:` 时带初始页面状态：等内核参数名。
+- 以上补做的部分只对着假数据测过，没连真内核；`ref` 的选项是否由页面给要等内核/插件确认。
 - 新文字键 `result.elapsed` 只加了英语；中日译文在 `plugins/`，由插件会话补。
 - 没跑 e2e、`pnpm check` 全量、cargo。已跑：`pnpm typecheck`、`pnpm lint`、`vitest src/workbench`（191 通过）。
 

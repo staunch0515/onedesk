@@ -15,11 +15,48 @@ function useGridWidths(key: string) {
   return { widths, onWidthsChange: (next: Record<string, number>) => store.set((s) => ({ gridWidths: { ...s.gridWidths, [key]: next } })) };
 }
 
+const PAGE_ROWS = 1000;
+
+/**
+ * A `paged` table (D414) carries only its first rows; the rest is read from the kernel a page at a time, so a big result never
+ * arrives in one message and the grid (which draws only the visible rows) stays responsive. Null when the output is whole.
+ */
+export function usePagedRows(run: Run): OutputCell[][] | null {
+  const { client, actions } = useWorkbench();
+  const out = run.output;
+  const paged = out?.type === "table" && (out as { paged?: boolean }).paged === true;
+  const first = out?.type === "table" ? (out.rows as OutputCell[][]) : [];
+  const total = out?.type === "table" ? (out as { total?: number }).total ?? first.length : 0;
+  const [rows, setRows] = useState<OutputCell[][]>(first);
+  useEffect(() => {
+    setRows(first);
+    if (!paged || !client.run.rows) return;
+    let cancelled = false;
+    void (async () => {
+      let have = first.length;
+      let acc = first;
+      while (!cancelled && have < total) {
+        const page = await client.run.rows!(run.id, have, PAGE_ROWS);
+        if (cancelled || page.rows.length === 0) return;
+        acc = acc.concat(page.rows as OutputCell[][]);
+        have = acc.length;
+        setRows(acc);
+      }
+    })().catch((e) => !cancelled && actions.fail(e));
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [run.id, paged, total]);
+  return paged ? rows : null;
+}
+
 function OutputTable({ run, widthKey }: { run: Run; widthKey: string }) {
   const { t } = useI18n();
   const grid = useGridWidths(widthKey);
   if (run.output?.type !== "table") return null;
   const out = run.output;
+  const more = usePagedRows(run);
   const columns: Array<DataGridColumn<OutputCell[]>> = out.columns.map((c, i) => ({
     key: c.key,
     header: c.label,
@@ -31,7 +68,7 @@ function OutputTable({ run, widthKey }: { run: Run; widthKey: string }) {
     <DataGrid
       label={t("result.result")}
       columns={columns}
-      rows={out.rows as OutputCell[][]}
+      rows={more ?? (out.rows as OutputCell[][])}
       getRowKey={(_row, i) => String(i)}
       rowNumbers
       {...grid}
@@ -81,12 +118,12 @@ export function useElapsed(since: number | undefined, active: boolean): number |
 }
 
 /** The result as tab-separated text (header first): what "copy" puts on the clipboard. */
-export function resultText(run: Run): string | null {
+export function resultText(run: Run, all?: OutputCell[][]): string | null {
   const out = run.output;
   if (out?.type === "text") return out.text;
   if (out?.type !== "table") return null;
   const cell = (v: OutputCell) => (v === null ? "" : String(v).replace(/[\t\r\n]+/g, " "));
-  return [out.columns.map((c) => c.label).join("\t"), ...(out.rows as OutputCell[][]).map((r) => r.map(cell).join("\t"))].join("\n");
+  return [out.columns.map((c) => c.label).join("\t"), ...(all ?? (out.rows as OutputCell[][])).map((r) => r.map(cell).join("\t"))].join("\n");
 }
 
 function OutputTab({ tab, run, widthKey }: { tab: TabState; run: Run | null | undefined; widthKey: string }) {
@@ -259,9 +296,27 @@ export function ResultArea({ tab, descriptor }: { tab: TabState; descriptor: Pag
             }
           />
           <IconButton icon="copy" size="sm" label={noExport ? t("restrict.noExportShort") : t("result.copy")} disabled={!canCopy || noExport} onClick={() => {
-            const text = r ? resultText(r) : null;
-            if (text === null) return;
-            navigator.clipboard.writeText(text).then(() => toast({ tone: "success", title: t("result.copied") }), actions.fail);
+            if (!r) return;
+            // A paged table holds only its first rows here: the whole result is read page by page for the clipboard.
+            const out = r.output;
+            const paged = out?.type === "table" && (out as { paged?: boolean }).paged === true;
+            const gather = async (): Promise<OutputCell[][] | undefined> => {
+              if (!paged || out?.type !== "table" || !client.run.rows) return undefined;
+              let all = out.rows as OutputCell[][];
+              const total = (out as { total?: number }).total ?? all.length;
+              while (all.length < total) {
+                const page = await client.run.rows!(r.id, all.length, PAGE_ROWS);
+                if (page.rows.length === 0) break;
+                all = all.concat(page.rows as OutputCell[][]);
+              }
+              return all;
+            };
+            void gather()
+              .then((all) => {
+                const text = resultText(r, all);
+                return text === null ? undefined : navigator.clipboard.writeText(text).then(() => toast({ tone: "success", title: t("result.copied") }));
+              })
+              .catch(actions.fail);
           }} />
           <IconButton icon="eraser" size="sm" label={t("result.clear")} disabled={!tab.runId || Boolean(descriptor.runId)} onClick={() => actions.updateTab(tab.id, { runId: null })} />
           <IconButton icon={panelOpen ? "panel-bottom-close" : "panel-bottom-open"} size="sm" label={panelOpen ? t("result.collapse") : t("result.expand")} shortcut={["⌘", "J"]} onClick={() => store.set({ panelOpen: !panelOpen })} />

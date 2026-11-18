@@ -147,6 +147,7 @@ export async function createKernelClient(transport: Transport, locale?: () => st
       clearFinished: async () => void (await call("run.clearFinished")),
       render: (id, tabId) => call<ViewNode[]>("run.render", compact({ id, tabId, locale: locale?.() })),
       setKept: async (id, kept) => void (await call("run.setKept", { id, kept })),
+      rows: (id, offset, limit) => call<{ rows: Array<Array<string | number | null>>; total: number }>("run.rows", { id, offset, limit }),
       export: (id, path) => call<RunExportResult>("run.export", { run: id, path, format: "csv" }),
     },
     command: {
