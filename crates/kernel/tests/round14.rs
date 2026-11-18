@@ -93,7 +93,7 @@ async fn a_readonly_refusal_names_the_layer() {
 }
 
 /// Round 2 review #14: a cycle in a damaged database (the protocol cannot make one) does not hang
-/// deleting, purging or listing environments.
+/// deleting or purging, and each does what it should: both rows of the cycle once, then gone.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_parent_cycle_in_the_database_does_not_hang_the_walks() {
     let tmp = tempfile::tempdir().unwrap();
@@ -109,10 +109,21 @@ async fn a_parent_cycle_in_the_database_does_not_hang_the_walks() {
         let moved = conn.execute("UPDATE resources SET parent_id = ?1 WHERE id = ?2", [&b, &a]).unwrap();
         assert_eq!(moved, 1);
     }
-    let walks = async {
-        let _ = c.call("resource.delete", json!({ "id": a })).await;
-        let _ = c.call("resource.purge", json!({ "id": a })).await;
-        let _ = c.call("params.envOptions", Value::Null).await;
+    let state = |id: &str| -> Option<(bool, Option<String>)> {
+        let conn = Connection::open(env.kernel.db_path()).unwrap();
+        conn.query_row("SELECT deleted_at IS NOT NULL, delete_batch FROM resources WHERE id = ?1", [id], |r| Ok((r.get(0)?, r.get(1)?)))
+            .ok()
     };
-    tokio::time::timeout(Duration::from_secs(20), walks).await.expect("the walks end");
+    // A hang here shows up as the test never ending (the walk runs on a blocking thread).
+    c.ok("resource.delete", json!({ "id": a })).await;
+    let (sa, sb) = (state(&a).unwrap(), state(&b).unwrap());
+    assert!(sa.0 && sb.0, "both rows of the cycle are deleted: {sa:?} {sb:?}");
+    assert!(sa.1.is_some() && sa.1 == sb.1, "in one deletion batch: {sa:?} {sb:?}");
+    c.ok("resource.purge", json!({ "id": a })).await;
+    assert_eq!((state(&a), state(&b)), (None, None), "both rows are gone");
+    let purges = Connection::open(env.kernel.db_path())
+        .unwrap()
+        .query_row("SELECT summary FROM audit WHERE op = 'resource.purge'", [], |r| r.get::<_, String>(0))
+        .unwrap();
+    assert_eq!(serde_json::from_str::<Value>(&purges).unwrap()["count"], json!(2), "each row counted once");
 }

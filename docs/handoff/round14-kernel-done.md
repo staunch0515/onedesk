@@ -9,7 +9,7 @@
 | 1 | 第十三轮审查 #10：改名后 `workspace.info` 到重启前是旧名 | `Workspace::current_name()` 每次重读 `workspace.json`（主进程改名就是改写这个文件）；读不到或名字为空时用打开时的名字。`workspace.info`、`hello`、导出清单里的工作区名都用它 | `workspace_info_follows_a_rename_of_workspace_json` |
 | 2 | 第十三轮审查 #9：只改过设置、没建过资源的旧工作区会被 `init-settings.json` 覆盖 | “新工作区”的判断加一条：没有内核以外的审计行（改设置会留审计，见 K2）。文件照旧用后即删 | `init_settings_leave_a_workspace_with_only_changed_settings_alone` |
 | 3 | 第八轮验收：拒绝里的 `layer` 是节点 id，外壳说不出是哪一层 | 网络和外部程序的拒绝早已带 `layerName`；本轮补上禁止策略（`readonly`、`noExport`）的 `denied`：多带 `layerName`（该配置/环境节点的名字） | `a_readonly_refusal_names_the_layer` |
-| 4 | 第二轮审查 #14：库里成环数据让遍历死循环 | `store::descendants`、永久删除的后代遍历、`params.envOptions` 加“已访问”集合 | `a_parent_cycle_in_the_database_does_not_hang_the_walks` |
+| 4 | 第二轮审查 #14：库里成环数据让遍历死循环 | `store::descendants`、永久删除的后代遍历加“已访问”集合。`params.envOptions` 从根往下走，成环的节点没有根、走不到，不需要（审查 #9 后去掉） | `a_parent_cycle_in_the_database_does_not_hang_the_walks` |
 
 四条测试都先在没改的代码上跑过：前三条失败，第四条卡住不结束（遍历在阻塞线程里，`tokio::time::timeout` 打断不了它，所以没修时表现为挂住而不是失败）；改后全过。
 
@@ -55,11 +55,17 @@
 | 审计“合并计数”（week1） | 已修（之前） | 迁移 `0011_audit_counts_last` |
 | 根 `Cargo.toml` 未用的 workspace 依赖警告；`check-arch.mjs` 规则 | 不在本会话范围 | 根 `Cargo.toml`、`scripts/` 不在允许修改里 |
 
+## 第十四轮审查的修改（协调分支 `round14-review.md`）
+
+- #3：`workspace.json` 只按安全方式读（`workspace::read_info`，`Workspace::open` 和 `current_name()` 共用）：`O_NOFOLLOW | O_NONBLOCK` 打开（不跟随符号链接、FIFO 不挂住），在打开的文件上查是普通文件且 ≤ 64 KiB，再限量读；名字按字符截到 100。读不了时 `open` 用文件夹名、`current_name` 用打开时的名字；`open` 之后照旧写回一个正常的 `workspace.json`（顶掉符号链接）。测试 `workspace::tests::workspace_json_is_read_only_as_a_small_regular_file`（符号链接到 `/dev/zero`、FIFO、超大文件、150 字名字、带符号链接打开工作区）。
+- #9：防环测试改为断言结果：删除后两行都删了且同一批，永久删除后两行都没了、审计 `count` = 2；`envOptions` 里无用的防环去掉（理由见上表 #4）。
+
 ## 我做的决定
 
 - K1：工作区名以 `workspace.json` 为准、每次读（文件很小；只在 `hello`、`workspace.info`、导出时读）。不加“改名”协议方法：主进程已经改写这个文件，内核跟着读就够了，不需要主进程与工作进程之间多一条消息。
 - K2：“新工作区”= 没有用户建的资源 **且** 没有内核以外（`actor <> 'core'`）的审计行。内核的启动命令（建默认节点）在新库里就会写 `core` 的审计行，所以不能要求审计表为空（第一次这样写时第十三轮的测试挂了，已改）；用户改设置、插件写入都是非 `core` 的行。
 - K3：所有带 `layer` 的拒绝都同时带 `layerName`；名字取那一层节点当前的名字，节点读不到时为空串。
+- K4：`workspace.json` 读不了（符号链接、非普通文件、超过 64 KiB、坏 JSON、名字为空）一律当作“没有”，不报错；名字超过 100 字符截断而不是拒绝，与主进程的上限一致。
 
 ## 外壳的内核配合
 
@@ -76,4 +82,5 @@
 - `cargo test -p onedesk-host`：全过（34 + 46）。
 - `cargo clippy -p onedesk-kernel -p onedesk-worker -p onedesk-protocol --all-targets -- -D warnings`：无警告。
 - `pnpm lint`（架构 + 界面规范）：通过。
+- 审查修改之后（机器 load ~150）又跑了一遍 kernel/worker/protocol/host：25 组全过，唯一例外 `round6.rs` 的 `review4_queues_are_bounded_and_failures_merge`，单独重跑 5 次失败 3 次。失败时删除事件总数仍是 1100（如 `deleted 1100, dropped 0`、`deleted 1036, dropped 64`），即高负载下插件消费够快、队列没溢出到“丢 ≥1 且送达 ≤1001”这一断言要的程度——是测试对时序的假设，与本轮改动无关（防环集合只跳过重复出现的 id，无环时从不触发；第一次全量跑时它是过的）。没改这条测试（不在本轮范围），建议记 todo：把队列上限或事件数做成让溢出必然发生。
 - 没跑：完整 `pnpm check`、`pnpm exec playwright test`（本轮只改内核，界面无改动；合并后由协调会话跑完整检查）。

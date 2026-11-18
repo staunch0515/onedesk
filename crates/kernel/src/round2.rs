@@ -1,7 +1,7 @@
 //! Round-2 methods (docs/handoff/round2-plan.md §3): parameters and environments, workspace
 //! configuration, history and restore, deleted, favorites, search, audit.
 
-use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::collections::{BTreeMap, BTreeSet};
 
 use onedesk_protocol::method2 as M;
 use onedesk_protocol::*;
@@ -197,19 +197,17 @@ impl Inner {
     }
 
     pub fn env_options(&self) -> KResult<Vec<EnvOption>> {
-        // Round 2 review #14: `seen` keeps a cycle in a damaged database from recursing forever.
-        fn walk(k: &Inner, parent: Option<&str>, depth: u32, seen: &mut HashSet<String>, out: &mut Vec<EnvOption>) -> KResult<()> {
+        // No cycle guard needed (round 14 review #9): the walk starts at the roots, and a cycle of parents
+        // contains no root, so it is never reached from here.
+        fn walk(k: &Inner, parent: Option<&str>, depth: u32, out: &mut Vec<EnvOption>) -> KResult<()> {
             for r in k.read(|c| store::children(c, store::TREE_ENV, parent, 0, u32::MAX))? {
-                if !seen.insert(r.id.clone()) {
-                    continue;
-                }
                 out.push(EnvOption { id: r.id.clone(), name: r.name.clone(), depth });
-                walk(k, Some(&r.id), depth + 1, seen, out)?;
+                walk(k, Some(&r.id), depth + 1, out)?;
             }
             Ok(())
         }
         let mut out = Vec::new();
-        walk(self, None, 0, &mut HashSet::new(), &mut out)?;
+        walk(self, None, 0, &mut out)?;
         Ok(out)
     }
 
