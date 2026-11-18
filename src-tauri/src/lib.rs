@@ -94,19 +94,22 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![protocol_request, pick_folder, pick_save_file, open_external])
         .setup(|app| {
-            let cfg = HostConfig { data_dir: default_data_dir(), worker_bin: resolve_worker_bin(), builtin_plugins: builtin_plugins_dir() };
+            let cfg = HostConfig { data_dir: default_data_dir(), worker_bin: resolve_worker_bin(), builtin_plugins: builtin_plugins_dir(), secrets: None };
             let state = match tauri::async_runtime::block_on(Host::start(cfg)) {
                 Ok(host) => {
                     let handle = app.handle().clone();
                     let mut events = host.events();
+                    let events_host = host.clone();
                     tauri::async_runtime::spawn(async move {
                         loop {
                             match events.recv().await {
                                 Ok(ev) => {
-                                    let _ = match &ev.client {
-                                        Some(label) => handle.emit_to(label.as_str(), "protocol-event", &ev),
-                                        None => handle.emit("protocol-event", &ev),
-                                    };
+                                    // Each window sees the events of the workspace it uses (D400).
+                                    for label in handle.webview_windows().keys() {
+                                        if events_host.visible_to(&ev, label) {
+                                            let _ = handle.emit_to(label.as_str(), "protocol-event", &ev.event);
+                                        }
+                                    }
                                 }
                                 Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
                                 Err(tokio::sync::broadcast::error::RecvError::Closed) => break,

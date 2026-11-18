@@ -53,6 +53,10 @@ async fn main() {
                 "hello" => {
                     ok(json!({ "protocol": "1", "workspace": { "id": "ws-fake", "name": "Fake" } }));
                 }
+                "workspace.settingsSnapshot" => {
+                    // The settings the kernel would hand over; the folder name shows which workspace answered.
+                    ok(json!({ "from": std::path::Path::new(&workspace).file_name().map(|n| n.to_string_lossy().into_owned()) }));
+                }
                 "echo" => {
                     ok(params);
                 }

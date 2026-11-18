@@ -84,13 +84,13 @@ async fn connection(host: Arc<Host>, stream: TcpStream, token: String, anon: u64
         }
     });
     let mut events = host.events();
-    let (etx, own) = (tx.clone(), client.clone());
+    let (etx, own, pusher_host) = (tx.clone(), client.clone(), host.clone());
     let pusher = tokio::spawn(async move {
         loop {
             match events.recv().await {
                 Ok(ev) => {
-                    if ev.client.as_deref().is_none_or(|c| c == own) {
-                        let _ = etx.send(serde_json::to_string(&ev).expect("event serializes"));
+                    if pusher_host.visible_to(&ev, &own) {
+                        let _ = etx.send(serde_json::to_string(&ev.event).expect("event serializes"));
                     }
                 }
                 Err(broadcast::error::RecvError::Lagged(_)) => continue,
