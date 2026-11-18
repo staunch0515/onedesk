@@ -20,6 +20,11 @@ pub const MAX_STORAGE_KEY: usize = 200;
 pub const MAX_STORAGE_KEYS: usize = 1000;
 pub const MAX_STORAGE_TOTAL: usize = 16 * 1024 * 1024;
 
+/// Round 12 (D394): writes a kind's `drop` may not make (only `resources.update`, kept and
+/// written together with the drop).
+pub const DROP_REFUSED: &[&str] =
+    &["resources.create", "resources.move", "resources.remove", "files.writeText", "storage.set", "storage.remove"];
+
 pub struct PluginHost {
     pub kernel: Weak<Inner>,
     /// The version this runtime runs: host calls act as `plugin:<id>@<version>`.
@@ -103,6 +108,9 @@ impl Inner {
             Err(denied("pureCall"))
         } else if !info.pure && method == "storage.readFrom" {
             Err(denied("notInMigrate"))
+        } else if info.drop_writes.is_some() && DROP_REFUSED.contains(&method) {
+            // D394: a drop writes nothing but updates of its resources, all kept until it answers.
+            Err(denied("inDrop"))
         } else {
             self.host_dispatch(plugin, info, cap, op, method, &args).await
         };
@@ -279,6 +287,11 @@ impl Inner {
                     serde_json::from_value(arg(args, 1)).map_err(|_| invalid_params("changes must be an object"))?;
                 let changes = Changes::from_bind_map(&changes)?;
                 let basis = args.get(2).and_then(|v| v.as_i64().or_else(|| v.as_str().and_then(|s| s.parse().ok())));
+                if let Some(buf) = &info.drop_writes {
+                    // D394: written with the drop, or not at all; the new rev is not known yet.
+                    buf.lock().unwrap().push(Command::Update { id, changes, basis, overwrite: vec![] });
+                    return Ok(json!({ "rev": null }));
+                }
                 self.execute_quiet(actor, Command::Update { id: id.clone(), changes, basis, overwrite: vec![] }, quiet).await?;
                 Ok(json!({ "rev": self.live_row(&id)?.rev }))
             }

@@ -136,6 +136,9 @@ pub struct CallInfo {
     pub external_opens: Arc<std::sync::atomic::AtomicUsize>,
     /// Round 7 (D345): held while a host call waits for the user; that time is not counted.
     pub hold: Arc<crate::install::Hold>,
+    /// Round 12 (D394): set while a kind's `drop` runs — its `resources.update` calls are kept
+    /// here and written together after it answers `handled: true`; other writes are refused.
+    pub drop_writes: Option<Arc<std::sync::Mutex<Vec<crate::pipeline::Command>>>>,
 }
 
 /// The only capability a plugin has. One instance per plugin version.

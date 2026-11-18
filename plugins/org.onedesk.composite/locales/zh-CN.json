@@ -10,5 +10,10 @@
   "col.name": "名称",
   "col.kind": "类型",
   "message.added": "已加入 {n} 项",
-  "message.removed": "已从综合中移除"
+  "message.removed": "已从综合中移除",
+  "action.up": "上移",
+  "action.down": "下移",
+  "action.remove": "移除",
+  "field.item": "条目",
+  "message.pick": "请先选一条。"
 }

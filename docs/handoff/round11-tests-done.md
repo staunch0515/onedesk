@@ -66,3 +66,17 @@
 ## 审查 #10（笔记页 `recompute: true`）：保留，原因
 外壳只有一条重画页面的路径：`view-page.tsx` 里的 recompute 效果——页面声明了 `recompute`，且草稿或页面参数变了，才在 300 ms 后重新 `page.resolve`。页面事件的返回值（`params`、`changes`）只改标签页状态/草稿，**不会**触发重画。所以去掉 `recompute` 后，点“阅读 / 编辑”改了 `mode` 参数，页面不会变。代价是编辑时每次停顿多一次 `render`（笔记的 render 很轻，不调宿主接口）。要真正去掉，需要外壳在页面事件返回 `params` 后主动重新 resolve（外壳的文件，我没改）；那之后把 `recompute` 删掉即可，vitest 里对应一行断言要改。已在 `main.test.ts` 的测试里写明原因。
 Markdown 的界面断言本来就按渲染结果（角色、文字、`a.od-markdown__ref--broken`）写，不依赖具体库；`[bad link](javascript:alert(1))` 一条断言的是“保留为纯文本”，换库后若输出不同需要对一下。
+
+## 验收三处（合并 `2f7f60a` 之后）
+1. **欢迎页切语言后介绍/标题不变——外壳问题，`test.fixme`**。插件按 `ctx.locale` 取字（vitest 里 zh 已测），入口是 Label 所以会变；`text` 节点和 `title` 是插件按渲染时的语言解析出的字符串，外壳在界面语言变化后不会重新 `page.resolve`（`view-page.tsx` 里唯一的重取是 `recompute` 效果，只看草稿和页面参数）。重新打开页面后就是新语言。位置：`src/workbench/pages/view-page.tsx` 的 recompute 效果（缺“语言变了就重取”）。`e2e/round11.spec.ts` 里 `test.fixme("shell: the welcome page's title and intro follow a language change…")`，修好后去掉 fixme 即可（中、日、英三个来回）。
+2. **网址 `open` 输出**：本来就走 `ctx.t`（用 `ctx.locale`）。新增界面检查：日语界面运行“開く”后结果区是“example.com を開きました”（通过）。我试过把输出 `label` 做成各语言的 Label 让它随语言变，**内核拒绝**（`badOutput`：动作的 link 输出 `label` 必须是字符串），已还原。所以运行输出是运行时语言的字符串，切语言后不会变——这是协议类型（`RunOutput::Link.label: String`）的限制，要变就得改协议（接口决定）。
+3. **笔记“模式”下拉默认值**：给 `mode` 字段加了 `envValue: "edit"`（外壳的枚举控件显示 `value || envValue`），首次打开显示“Edit”而不是占位符；没有 `envSource` 所以没有“来自环境”的提示。vitest 和界面检查（`combobox "Mode"` 含 Edit）已加。
+4. markdown 库换成 `marked` 后，把“`[bad link](javascript:alert(1))` 保留为纯文本”那条文字断言去掉了（输出细节因库而异），仍保留“没有 javascript: 的 `<a>`、没有名为 bad link 的链接”。
+
+结果：`e2e/round11.spec.ts` 19 通过、1 fixme（跳过）。
+
+## 内核词表补进语言插件（D387）
+- `zh-CN.json`、`ja-JP.json` 各补 305 条（303 条 `kernel.*`、`permission.resourcesAll`、`link.openFailed`）。中文取自 `round11-shell-done.md` 的表（表里的 `\|` 还原成 `|`），表里没有的两条自己译：`permission.resourcesAll`＝读取本工作区所有内容的名称、类型和位置（不含正文）；`link.openFailed`＝系统无法打开该链接：{reason}。日语逐条自译，没有母语者审阅。`lang-check` 通过（键集合与占位符与 `en-US.ts` 一致）。
+- `e2e/round11.spec.ts` 加断言：中文下活动栏“工作区配置”“运行记录”“资源”；日语下“ワークスペース設定”“実行記録”“リソース”；命令面板里内核命令“打开审计/監査ログを開く”，审计页的操作名“新建资源/リソースを作成”（都是内核词表）。**没有**做“内核错误文字”的界面断言：我试了两种触发（空名称、清除后保存已被永久删除的笔记），前者外壳不发内核错误，后者按钮/流程卡住（两次尝试都超时），已放弃，改成上面的命令/审计词条。
+- 结果：`round11.spec.ts` **20 通过、1 fixme**（欢迎页切语言，外壳）；`workbench.spec.ts`（假数据）23 通过、1 跳过（原本就跳过）。假数据截图跑完有 9 张像素变化，我逐个看了：差别是演示数据里相对“现在”的日期/时间（例如 11/16 18:31 → 11/17 06:01），不是文字；没有更新基准，已 `git checkout -- docs/screenshots`。
+- `pnpm test`：546 通过，**1 个失败不是我的**：`src/workbench/i18n/kernel-texts.test.ts` “has words for every error reason the kernel gives”——en-US 缺内核原因 `badDropAnswer` 的文字（合并进来的协调分支上的外壳/内核问题）。`pnpm lint`、`pnpm typecheck` 通过。

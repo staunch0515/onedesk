@@ -1,0 +1,9 @@
+{
+  "plugin.name": "Nopeek",
+  "plugin.description": "Test fixture: runs resources.search with the query in its field and outputs the raw result.",
+  "kind.probe": "Probe",
+  "kind.probe.new": "Untitled probe",
+  "action.peek": "Peek",
+  "action.save": "Save",
+  "field.query": "Query (JSON)"
+}

@@ -23,10 +23,35 @@ async function probe(ctx, context) {
 }
 "#;
 
+/// D393: a page with a table whose rows carry keys, targets and actions; `body.mode` breaks it.
+const SHEET: &str = r#"
+function sheet(host) {
+  host.pages.handle("sheet", {
+    render(ctx) {
+      const b = ctx.resource.body;
+      const targets = b.targets || [];
+      const rows = targets.map((t, i) => ["row " + i]);
+      const table = { type: "table", id: "t", columns: [{ key: "n", label: "N" }], rows, rowTargets: targets,
+        rowKeys: targets.map((_, i) => "k" + i),
+        rowActions: [{ id: "remove", label: "Remove", icon: "x" }, { id: "up", label: { "en-US": "Up" } }] };
+      if (b.mode === "shortTargets") table.rowTargets = targets.slice(1);
+      if (b.mode === "shortKeys") table.rowKeys = [];
+      if (b.mode === "manyActions") table.rowActions = [1, 2, 3, 4, 5].map((i) => ({ id: "a" + i, label: "a" }));
+      if (b.mode === "unknownField") table.rowColor = "red";
+      return { view: [table] };
+    },
+    onEvent(ctx, event) {
+      return { message: { "en-US": event + "@" + (ctx.row === undefined ? "none" : String(ctx.row)) } };
+    },
+  });
+}
+"#;
+
 /// Has `requires.resources`: a `hub` kind that takes drops and supplies children.
 const REACH_MAIN: &str = r#"
 export default {
   activate(host) {
+    sheet(host);
     host.commands.handle("probe", probe);
     host.commands.handle("fill", async (ctx, context) => {
       const n = (context && context.args && context.args.n) || 0;
@@ -46,9 +71,18 @@ export default {
         if (mode === "bad") return 42;
         if (mode === "none") return undefined;
         if (mode === "pass") return { handled: false };
-        if (mode === "writeThenThrow") {
-          await ctx.host.resources.update(ctx.resource.id, { "body.items": ["x"] });
-          throw new Error("late");
+        if (mode.startsWith("write")) {
+          const r = await ctx.host.resources.update(ctx.resource.id, { "body.items": ["x"] });
+          if (mode === "writeThenThrow") throw new Error("late");
+          if (mode === "writeThenHang") { await ctx.host.util.sleep(60000); return { handled: true }; }
+          if (mode === "writeThenBad") return { handled: "yes" };
+          if (mode === "writeThenPass") return { handled: false };
+          if (mode === "writeThenCreate") { await ctx.host.resources.create({ kind: "card", name: "side" }); return { handled: true }; }
+          if (mode === "writeThenStorage") { await ctx.host.storage.set("k", "v"); return { handled: true }; }
+          if (mode === "writeTwice") {
+            await ctx.host.resources.update(ctx.resource.id, { "name": "Renamed" });
+            return { handled: true, message: JSON.stringify(r) };
+          }
         }
         const items = (ctx.resource.body.items || []).slice();
         for (const s of ev.sources) if (!items.includes(s.id)) items.push(s.id);
@@ -68,6 +102,7 @@ export default {
 const BLIND_MAIN: &str = r#"
 export default {
   activate(host) {
+    sheet(host);
     host.commands.handle("probe", probe);
     host.kinds.handle("shelf", {
       children(ctx) {
@@ -98,7 +133,7 @@ fn write_pkg(root: &Path, id: &str, requires: Value, contributes: Value, main: &
     let m = json!({ "id": id, "version": "0.1.0", "apiVersion": "2", "name": "n", "icon": "box",
                     "main": "main.js", "requires": requires, "contributes": contributes });
     std::fs::write(pkg.join("manifest.json"), serde_json::to_vec_pretty(&m).unwrap()).unwrap();
-    std::fs::write(pkg.join("main.js"), format!("{PROBE}\n{main}")).unwrap();
+    std::fs::write(pkg.join("main.js"), format!("{PROBE}\n{SHEET}\n{main}")).unwrap();
 }
 
 fn plugins(dir: &Path) -> PathBuf {
@@ -111,8 +146,13 @@ fn plugins(dir: &Path) -> PathBuf {
         json!({
             "kinds": [
                 { "id": "hub", "label": "hub", "icon": "layers", "tree": "resources", "children": true, "drop": true, "accepts": ["hub"] },
-                { "id": "card", "label": "card", "icon": "box", "tree": "resources", "draggable": true }
+                { "id": "card", "label": "card", "icon": "box", "tree": "resources", "draggable": true },
+                { "id": "loose", "label": "loose", "icon": "box" },
+                { "id": "pin", "label": "pin", "icon": "pin", "tree": "shelf" },
+                { "id": "sheet", "label": "sheet", "icon": "table", "tree": "resources", "page": "sheet" }
             ],
+            "trees": [ { "id": "shelf", "label": "shelf", "icon": "box", "source": "stored" } ],
+            "pages": [ { "id": "sheet" } ],
             "commands": [probe, { "id": "fill", "label": "fill", "icon": "box" }]
         }),
         REACH_MAIN,
@@ -124,8 +164,10 @@ fn plugins(dir: &Path) -> PathBuf {
         json!({
             "kinds": [
                 { "id": "shelf", "label": "shelf", "icon": "box", "tree": "resources", "children": true },
-                { "id": "bin", "label": "bin", "icon": "box", "tree": "resources", "drop": true }
+                { "id": "bin", "label": "bin", "icon": "box", "tree": "resources", "drop": true },
+                { "id": "sheet", "label": "sheet", "icon": "table", "tree": "resources", "page": "sheet" }
             ],
+            "pages": [ { "id": "sheet" } ],
             "commands": [probe]
         }),
         BLIND_MAIN,
@@ -479,4 +521,143 @@ async fn sources_need_no_permission_and_the_drop_kind_of_a_plugin_without_it_wor
     assert_eq!(c.ok("tree.move", mv(&item, &bin)).await["handled"], true);
     assert_eq!(get(&c, &item).await.get("parentId"), None);
     assert_eq!(audits(&c, "tree.drop").await.len(), 1);
+}
+
+/* ------------------------------------------------------------------ review #1 (D393) table rows */
+
+async fn env_root(c: &Client, tree: &str) -> String {
+    c.ok("tree.children", json!({ "tree": tree })).await["nodes"][0]["key"].as_str().unwrap().to_string()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn table_rows_carry_actions_keys_and_checked_targets() {
+    let (_env, c) = world(5000).await;
+    let foreign = create(&c, "test.alpha:item", None, json!({ "name": "F" })).await;
+    let env = env_root(&c, "env").await;
+    let targets = json!([format!("resource:{foreign}"), null, format!("resource:{env}"), "nonsense", "plugin:test.reach"]);
+    let sheet = create(&c, "test.reach:sheet", None, json!({ "body.targets": targets })).await;
+    let p = c.ok("page.resolve", json!({ "target": format!("resource:{sheet}"), "context": {} })).await;
+    let t = &p["view"][0];
+    // With resourcesAll: the foreign resource stays; environments are never targets (D395).
+    assert_eq!(t["rowTargets"], json!([format!("resource:{foreign}"), null, null, null, "plugin:test.reach"]), "{t}");
+    assert_eq!(t["rowKeys"], json!(["k0", "k1", "k2", "k3", "k4"]));
+    assert_eq!(t["rowActions"], json!([{ "id": "remove", "label": "Remove", "icon": "x" }, { "id": "up", "label": { "en-US": "Up" } }]));
+    // Without the permission the foreign resource is not a target.
+    let blind = create(&c, "test.blind:sheet", None, json!({ "body.targets": [format!("resource:{foreign}")] })).await;
+    let p = c.ok("page.resolve", json!({ "target": format!("resource:{blind}"), "context": {} })).await;
+    assert_eq!(p["view"][0]["rowTargets"], json!([null]));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn bad_tables_are_plugin_errors() {
+    let (_env, c) = world(5000).await;
+    let t = json!(["plugin:test.reach", "plugin:test.reach"]);
+    for mode in ["shortTargets", "shortKeys", "manyActions", "unknownField"] {
+        let s = create(&c, "test.reach:sheet", None, json!({ "body.targets": t })).await;
+        c.probe("test.reach", "resources.update", json!([s, { "body.mode": mode }])).await;
+        let e = c.call("page.resolve", json!({ "target": format!("resource:{s}"), "context": {} })).await.unwrap_err();
+        assert_eq!(e.code, ErrorCode::PluginError, "{mode}: {e:?}");
+    }
+    // Exactly 4 row actions are fine.
+    let s = create(&c, "test.reach:sheet", None, json!({ "body.targets": t })).await;
+    c.ok("page.resolve", json!({ "target": format!("resource:{s}"), "context": {} })).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_row_action_event_hands_the_row_to_ctx_row() {
+    let (_env, c) = world(5000).await;
+    let s = create(&c, "test.reach:sheet", None, json!({ "body.targets": ["plugin:test.reach"] })).await;
+    let target = format!("resource:{s}");
+    let r = c.ok("page.event", json!({ "target": target, "event": "remove", "context": { "row": "k0" } })).await;
+    assert_eq!(r["message"], json!({ "en-US": "remove@k0" }));
+    let r = c.ok("page.event", json!({ "target": target, "event": "up", "context": {} })).await;
+    assert_eq!(r["message"], json!({ "en-US": "up@none" }));
+    let e = c.call("page.event", json!({ "target": target, "event": "up", "context": { "row": "x".repeat(1001) } })).await.unwrap_err();
+    assert_eq!(e.code, ErrorCode::InvalidParams);
+}
+
+/* ------------------------------------------------------------------ review #2 (D394) one transaction */
+
+#[tokio::test(flavor = "multi_thread")]
+async fn writes_made_before_a_failure_are_not_kept() {
+    let (_env, c) = world(800).await;
+    let item = create(&c, "test.alpha:item", None, json!({})).await;
+    for mode in ["writeThenThrow", "writeThenHang", "writeThenBad", "writeThenCreate", "writeThenStorage"] {
+        let hub = create(&c, "test.reach:hub", None, json!({ "body.mode": mode })).await;
+        let rev = get(&c, &hub).await["rev"].clone();
+        let e = c.call("tree.move", mv(&item, &hub)).await.unwrap_err();
+        assert_eq!(e.code, ErrorCode::PluginError, "{mode}: {e:?}");
+        let h = get(&c, &hub).await;
+        assert_eq!((h["body"].get("items"), h["rev"].clone()), (None, rev), "{mode}");
+        assert_eq!(get(&c, &item).await.get("parentId"), None, "{mode}");
+    }
+    // Nothing else was created or stored either.
+    let cards = search(&c, "test.reach", json!({ "kinds": ["test.reach:card"] })).await;
+    assert_eq!(cards["ok"]["total"], 0);
+    assert!(audits(&c, "tree.drop").await.iter().all(|a| a["result"] != "ok"));
+    // The refused create was recorded as refused.
+    let denied = c.ok("audit.list", json!({ "result": "denied" })).await;
+    assert!(denied.as_array().unwrap().iter().any(|a| a["operation"] == "resources.create"), "{denied}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn not_handled_drops_the_kept_writes_too() {
+    let (_env, c) = world(5000).await;
+    let hub = create(&c, "test.reach:hub", None, json!({ "body.mode": "writeThenPass" })).await;
+    let item = create(&c, "test.alpha:item", None, json!({})).await;
+    let e = c.call("tree.move", mv(&item, &hub)).await.unwrap_err();
+    assert_eq!(e.params.get("reason").map(String::as_str), Some("notAccepted"));
+    assert_eq!(get(&c, &hub).await["body"].get("items"), None);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_handled_drop_writes_everything_together_with_its_audit() {
+    let (_env, c) = world(5000).await;
+    let hub = create(&c, "test.reach:hub", None, json!({ "body.mode": "writeTwice", "name": "H" })).await;
+    let item = create(&c, "test.alpha:item", None, json!({})).await;
+    let r = c.ok("tree.move", mv(&item, &hub)).await;
+    // The update answered before the commit: no rev yet.
+    assert_eq!(r, json!({ "handled": true, "message": "{\"rev\":null}" }));
+    let h = get(&c, &hub).await;
+    assert_eq!((h["body"]["items"].clone(), h["name"].as_str()), (json!(["x"]), Some("Renamed")));
+    assert_eq!(audits(&c, "tree.drop").await.len(), 1);
+}
+
+/* ------------------------------------------------------------------ review #3 (D395) stored trees only */
+
+#[tokio::test(flavor = "multi_thread")]
+async fn search_and_any_targets_only_reach_stored_trees() {
+    let (_env, c) = world(5000).await;
+    let env = env_root(&c, "env").await;
+    let cfg = env_root(&c, "config").await;
+    // A resource without a tree, with a word only it has.
+    let loose = c.probe("test.reach", "resources.create", json!([{ "kind": "loose", "name": "Loose quokka" }])).await;
+    let loose = loose["ok"]["id"].as_str().expect("created").to_string();
+    // A plugin's stored tree is in.
+    let pin = c.probe("test.reach", "resources.create", json!([{ "kind": "pin", "name": "Pinned quokka" }])).await;
+    let pin = pin["ok"]["id"].as_str().expect("created").to_string();
+    let item = create(&c, "test.alpha:item", None, json!({ "name": "Plain quokka" })).await;
+
+    let all = search(&c, "test.reach", json!({ "limit": 500 })).await;
+    let got = ids(&all);
+    for (id, want) in [(&env, false), (&cfg, false), (&loose, false), (&pin, true), (&item, true)] {
+        assert_eq!(got.contains(id), want, "{id}");
+    }
+    assert!(all["ok"]["items"].as_array().unwrap().iter().all(|i| ["resources", "test.reach:shelf"].contains(&i["tree"].as_str().unwrap())));
+    // Not by text, not by id, not by kind.
+    let mut q = ids(&search(&c, "test.reach", json!({ "text": "quokka" })).await);
+    q.sort();
+    let mut want = vec![pin.clone(), item.clone()];
+    want.sort();
+    assert_eq!(q, want);
+    assert_eq!(ids(&search(&c, "test.reach", json!({ "ids": [env, cfg, loose, pin] })).await), vec![pin.clone()]);
+    assert_eq!(search(&c, "test.reach", json!({ "kinds": ["core:env", "core:config", "test.reach:loose"] })).await["ok"]["total"], 0);
+
+    // Supplied children of a resourcesAll plugin: the same boundary.
+    let hub = create(&c, "test.reach:hub", None, json!({ "body.items": [env, cfg, pin, item] })).await;
+    let t: Vec<Value> = kids(&c, &hub).await.iter().map(|n| n["target"].clone()).collect();
+    assert_eq!(t, vec![Value::Null, Value::Null, json!(format!("resource:{pin}")), json!(format!("resource:{item}"))]);
+    // A loose resource of another plugin is never a target; its own still is (as before).
+    let hub2 = create(&c, "test.reach:hub", None, json!({ "body.items": [loose] })).await;
+    assert_eq!(kids(&c, &hub2).await[0]["target"], json!(format!("resource:{loose}")));
 }

@@ -10,5 +10,10 @@
   "col.name": "名前",
   "col.kind": "種類",
   "message.added": "{n} 件を追加しました",
-  "message.removed": "コンポジットから外しました"
+  "message.removed": "コンポジットから外しました",
+  "action.up": "上へ",
+  "action.down": "下へ",
+  "action.remove": "外す",
+  "field.item": "項目",
+  "message.pick": "先に項目を選んでください。"
 }

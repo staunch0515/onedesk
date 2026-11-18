@@ -242,6 +242,8 @@ pub enum Command {
     RebuildRefs,
     /// Review #7: follows changed reference-field declarations after the plugins were read again.
     SyncRefDecls,
+    /// Round 12 (D394): one drop's writes — `Update`s and `Audit` rows only — in one transaction.
+    Batch(Vec<Command>),
 }
 
 /// What the kernel needs to know about a kind to validate writes.
@@ -556,6 +558,26 @@ impl Writer {
                     cx.touched.borrow_mut().extend(t);
                     Outcome { changed, ..Default::default() }
                 }
+                Command::Batch(cmds) => {
+                    let mut all = Outcome::default();
+                    for c in cmds {
+                        let o = match c {
+                            Command::Update { id, changes, basis, overwrite } => cx.update(&id, &changes, basis, &overwrite)?,
+                            Command::Audit { op, object, summary } => {
+                                cx.audit(&op, &object, &summary)?;
+                                Outcome { changed: true, ..Default::default() }
+                            }
+                            _ => return Err(internal("batch: only updates and audit rows")),
+                        };
+                        all.changed |= o.changed;
+                        if all.id.is_none() {
+                            all.id = o.id;
+                        }
+                        all.rows.extend(o.rows);
+                        all.touched.extend(o.touched);
+                    }
+                    all
+                }
                 Command::UiSet { .. } => unreachable!("handled above"),
             };
             let touched = std::mem::take(&mut *cx.touched.borrow_mut());
@@ -601,6 +623,12 @@ fn describe(cmd: &Command) -> (String, String) {
         Command::Import(plan) => ("workspace.import".into(), plan.source.clone()),
         Command::RebuildRefs => ("refs.rebuild".into(), String::new()),
         Command::SyncRefDecls => ("refs.sync".into(), String::new()),
+        Command::Batch(cmds) => cmds
+            .iter()
+            .rev()
+            .find(|c| matches!(c, Command::Audit { .. }))
+            .map(describe)
+            .unwrap_or_else(|| ("batch".into(), String::new())),
     }
 }
 
@@ -621,6 +649,7 @@ fn blocked_by_readonly(cmd: &Command) -> bool {
         Command::Upgrade { items, .. } => !items.is_empty(),
         // Review #9: an empty save writes nothing; an undo that restores nothing is checked in place.
         Command::Update { changes, .. } => !changes.is_empty() && !changes.params_only(),
+        Command::Batch(cmds) => cmds.iter().any(blocked_by_readonly),
         _ => false,
     }
 }

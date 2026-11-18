@@ -8,7 +8,10 @@
   "main": "main.js",
   "author": "OneDesk",
   "license": "MIT",
-  "requires": { "files": false, "resources": true },
+  "requires": {
+    "files": false,
+    "resources": true
+  },
   "contributes": {
     "kinds": [
       {
@@ -18,9 +21,13 @@
         "tree": "resources",
         "page": "editor",
         "newName": "kind.composite.new",
-        "defaults": { "items": [] },
+        "defaults": {
+          "items": []
+        },
         "draggable": true,
-        "accepts": ["composite"],
+        "accepts": [
+          "composite"
+        ],
         "children": true,
         "drop": true
       }
@@ -29,11 +36,47 @@
       {
         "id": "editor",
         "actions": [
-          { "id": "save", "role": "save", "label": "action.save", "icon": "save", "primary": true, "shortcut": ["Mod", "S"] }
+          {
+            "id": "up",
+            "role": "event",
+            "label": "action.up",
+            "icon": "arrow-up"
+          },
+          {
+            "id": "down",
+            "role": "event",
+            "label": "action.down",
+            "icon": "arrow-down"
+          },
+          {
+            "id": "remove",
+            "role": "event",
+            "label": "action.remove",
+            "icon": "trash-2",
+            "danger": true
+          },
+          {
+            "id": "save",
+            "role": "save",
+            "label": "action.save",
+            "icon": "save",
+            "shortcut": [
+              "Mod",
+              "S"
+            ]
+          }
         ]
       }
     ],
-    "menus": { "new": ["composite"] },
-    "locales": { "en-US": "locales/en-US.json", "zh-CN": "locales/zh-CN.json", "ja-JP": "locales/ja-JP.json" }
+    "menus": {
+      "new": [
+        "composite"
+      ]
+    },
+    "locales": {
+      "en-US": "locales/en-US.json",
+      "zh-CN": "locales/zh-CN.json",
+      "ja-JP": "locales/ja-JP.json"
+    }
   }
 }

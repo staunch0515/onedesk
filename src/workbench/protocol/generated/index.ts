@@ -113,6 +113,7 @@ export type * from "./SecretNameParams";
 export type * from "./SecretSetParams";
 export type * from "./SetFavoriteParams";
 export type * from "./SwitchFailure";
+export type * from "./TableRowAction";
 export type * from "./TextFormat";
 export type * from "./ToastTone";
 export type * from "./Tone";

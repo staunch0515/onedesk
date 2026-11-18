@@ -14,4 +14,9 @@ locale?: string,
  * Round 8 (D358): current values of the page's `param: true` fields (the same map as
  * `RunStartParams.params`); given to `render`, `onEvent` and recompute as `ctx.params`.
  */
-params?: { [key in string]: string }, };
+params?: { [key in string]: string }, 
+/**
+ * Round 12 (D393): with a row action's page event, the key of that row (its `rowKeys`
+ * entry, else the row number as text); given to `onEvent` as `ctx.row`.
+ */
+row?: string, };

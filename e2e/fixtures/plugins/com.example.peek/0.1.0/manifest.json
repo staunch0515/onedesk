@@ -1,0 +1,78 @@
+{
+  "id": "com.example.peek",
+  "version": "0.1.0",
+  "apiVersion": "2",
+  "name": "plugin.name",
+  "description": "plugin.description",
+  "icon": "search",
+  "main": "main.js",
+  "author": "OneDesk",
+  "license": "MIT",
+  "requires": {
+    "files": false,
+    "resources": true
+  },
+  "contributes": {
+    "kinds": [
+      {
+        "id": "probe",
+        "label": "kind.probe",
+        "icon": "search",
+        "tree": "resources",
+        "page": "editor",
+        "newName": "kind.probe.new",
+        "defaults": {
+          "query": "{}"
+        },
+        "draggable": true,
+        "accepts": []
+      }
+    ],
+    "actions": [
+      {
+        "id": "peek",
+        "label": "action.peek",
+        "icon": "search",
+        "kinds": [
+          "probe"
+        ],
+        "output": "text",
+        "saveFirst": false,
+        "confirm": null
+      }
+    ],
+    "pages": [
+      {
+        "id": "editor",
+        "actions": [
+          {
+            "id": "peek",
+            "role": "run",
+            "action": "peek",
+            "label": "action.peek",
+            "icon": "search"
+          },
+          {
+            "id": "save",
+            "role": "save",
+            "label": "action.save",
+            "icon": "save",
+            "shortcut": [
+              "Mod",
+              "S"
+            ]
+          }
+        ]
+      }
+    ],
+    "menus": {
+      "new": [
+        "probe"
+      ]
+    },
+    "locales": {
+      "en-US": "locales/en-US.json",
+      "zh-CN": "locales/zh-CN.json"
+    }
+  }
+}

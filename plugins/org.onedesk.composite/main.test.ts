@@ -110,33 +110,38 @@ describe("composite: page", () => {
     expect(checkView(out.view)).toEqual([]);
     expect(out.view).toEqual([{ type: "text", id: "empty", text: "Drag items onto this node.", tone: "muted" }]);
   });
-  it("a table of icon, name and type; rows open the resource, a missing one has no target", async () => {
+  it("a pick list and a table of icon, name and type; rows open the resource, a missing one has no target", async () => {
     const host = fakeHost(["a"]);
     const out = await pages.editor.render(ctxOf(host, ["a", "gone"]));
     expect(checkView(out.view)).toEqual([]);
     expect(onlyKeys(out, RENDER_KEYS)).toEqual([]);
-    expect(out.view[0].rows).toEqual([["file-text", "Name a", "org.onedesk.note:note"], ["unlink", "(no longer exists)", ""]]);
-    expect(out.view[0].rowTargets).toEqual(["resource:a", ""]);
+    expect(out.view[0].fields[0]).toMatchObject({ name: "item", kind: "enum", param: true });
+    expect(out.view[0].fields[0].options).toEqual([{ value: "a", label: "1. Name a" }, { value: "gone", label: "2. (no longer exists)" }]);
+    expect(out.view[1].rows).toEqual([["file-text", "Name a", "org.onedesk.note:note"], ["unlink", "(no longer exists)", ""]]);
+    expect(out.view[1].rowTargets).toEqual(["resource:a", ""]);
   });
-  it("the unsaved draft wins over the saved list; kindLabel is shown when given", async () => {
+  it("kindLabel is shown when the host gives one", async () => {
     const host = { resources: { search: vi.fn(async () => ({ items: [info("b", { kindLabel: "Note" })], total: 1 })) } };
-    const out = await pages.editor.render(ctxOf(host, ["a"], { draft: { "body.items": ["b"] } }));
-    expect(out.view[0].rows).toEqual([["file-text", "Name b", "Note"]]);
+    const out = await pages.editor.render(ctxOf(host, ["b"]));
+    expect(out.view[1].rows).toEqual([["file-text", "Name b", "Note"]]);
   });
-  it("events remove, up and down change the draft list and leave the resource alone", async () => {
+  it("the buttons remove, move up and move down the chosen item, writing through the host", async () => {
+    const run = async (name: string, item: string | undefined, items = ["a", "b", "c"]) => {
+      const host = fakeHost();
+      const out = await pages.editor.onEvent(ctxOf(host, items, { params: item ? { item } : {} }), name);
+      return { out, writes: host.resources.update.mock.calls.map((c: any[]) => c[1]["body.items"]) };
+    };
+    expect(await run("remove", "b")).toEqual({ out: { message: "Removed from this composite", params: { item: "" } }, writes: [["a", "c"]] });
+    expect((await run("up", "c")).writes).toEqual([["a", "c", "b"]]);
+    expect((await run("down", "a")).writes).toEqual([["b", "a", "c"]]);
+    expect((await run("up", "a")).writes).toEqual([["a", "b", "c"]]);
+  });
+  it("with nothing (or something unknown) chosen the button only says so; unknown events fail", async () => {
     const host = fakeHost();
-    const ev = (name: string, items = ["a", "b", "c"]) => pages.editor.onEvent(ctxOf(host, items), name);
-    expect(await ev("remove:b")).toEqual({ changes: { "body.items": ["a", "c"] }, message: "Removed from this composite" });
-    expect((await ev("up:c")).changes).toEqual({ "body.items": ["a", "c", "b"] });
-    expect((await ev("down:a")).changes).toEqual({ "body.items": ["b", "a", "c"] });
-    expect((await ev("up:a")).changes).toEqual({ "body.items": ["a", "b", "c"] });
-    await expect(ev("remove:zzz")).rejects.toThrow();
-    await expect(ev("nope:a")).rejects.toThrow();
+    expect(await pages.editor.onEvent(ctxOf(host, ["a"], { params: {} }), "remove")).toEqual({ message: "Pick an item first." });
+    expect(await pages.editor.onEvent(ctxOf(host, ["a"], { params: { item: "zzz" } }), "up")).toEqual({ message: "Pick an item first." });
     expect(host.resources.update).not.toHaveBeenCalled();
-  });
-  it("events work on the draft list, not only the saved one", async () => {
-    const out = await pages.editor.onEvent(ctxOf(fakeHost(), ["a"], { draft: { "body.items": ["x", "y"] } }), "remove:x");
-    expect(out.changes).toEqual({ "body.items": ["y"] });
+    await expect(pages.editor.onEvent(ctxOf(host, ["a"]), "nope")).rejects.toThrow();
   });
 });
 
@@ -147,6 +152,7 @@ describe("composite: package", () => {
     expect(Object.keys(r.kinds)).toEqual(["composite"]);
     expect(Object.keys(r.pages)).toEqual(["editor"]);
     expect(Object.keys(r.kinds.composite).sort()).toEqual(["children", "drop"]);
+    expect(m.contributes.pages[0].actions.filter((a: any) => a.role === "event").map((a: any) => a.id)).toEqual(["up", "down", "remove"]);
   });
   it("the kind is a droppable, self-supplying resource node that accepts composites; resources are required", () => {
     expect(m.requires.resources).toBe(true);
