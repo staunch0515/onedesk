@@ -540,3 +540,8 @@
 - **D394** 一次放置（`drop`）里插件的资源写入是一个整体：处理函数出错、超时或返回不合法时全部不落库。
 - **D395** `resources.search` 和有 `resourcesAll` 时自供子节点可指向的目标，只限用户在资源树里看得到的资源（存储树里的）；环境、配置、插件状态节点和没有树的资源不在其内。
 - **D396** 表格单元格只放文字或数字：插件把 `Label`（如 `ResourceInfo.kindLabel`）按 `ctx.locale` 取成文字再放进去（缺省取英语）；表格没有“图标”单元格，综合与集合的页面表格去掉“图标”列（图标在树里看）。表格的图标列和外壳按语言显示单元格里的 `Label` 记 `todo.md`。（第十二轮验收发现单元格显示 `[object Object]`、图标列显示图标名。）
+- **D397** 第十三轮范围：第一版旧库升级与多工作区（新建、切换、改名、删除）；多窗口、第一版插件设置、第一版钥匙串里的密钥值迁移放下一轮（密钥名字迁移，值需重新填写）。
+- **D398** 旧库升级分两步：主进程在只有 `onedesk.db` 时先复制备份到 `workspaces/default/backups/v1-onedesk.db` 再移动为 `workspace.db`；内核识别第一版结构后在一个事务里转换（`group_name` 按 `/` 变成分组、集合变成短类型名 `collection` 的资源、插件存储与密钥名字原样、少数设置键映射），失败回滚、原因码 `legacyUpgradeFailed`。
+- **D399** `legacyKinds` 认领在插件启用时进行，宿主接口只增 `kinds.handle` 的 `upgrade(ctx, { body, legacyKind })`，一批认领在一个事务里，任一条出错整批不认领并审计；没被认领的资源不丢，节点显示为没有插件处理的类型。
+- **D400** 多工作区由主进程管理：`app.workspaces`、`app.createWorkspace`、`app.switchWorkspace`、`app.renameWorkspace`、`app.deleteWorkspace`、事件 `app.workspacesChanged`；新建时经内核的 `workspace.settingsSnapshot`（只接受主进程）与新文件夹里的 `init-settings.json` 复制配置树与插件启用状态，不复制数据；切换是本连接改绑，界面整页重载。
+- **D401** 删除工作区不真删：文件夹移到数据目录的 `trash/workspaces/`，钥匙串条目删除；当前的或正被别的连接使用的不能删（`conflict/inUse`）。
