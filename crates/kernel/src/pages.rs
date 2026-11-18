@@ -74,6 +74,9 @@ pub fn is_target(t: &str) -> bool {
         .any(|p| t.strip_prefix(p).is_some_and(|rest| !rest.is_empty()))
 }
 
+/// D414: most choices the kernel lists for a `ref` field.
+pub const MAX_REF_OPTIONS: usize = 1000;
+
 /// What a page handler's `render` may return; anything else is a `pluginError`.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -210,6 +213,9 @@ fn param_form(r: &Row) -> (Vec<ViewNode>, JsonMap) {
             env_value: None,
             env_source: None,
             read_only: None,
+            required: None,
+            max_length: None,
+            kinds: None,
         });
     }
     (vec![ViewNode::Form { id: "params".into(), layout: FormLayout::Stack, label: None, fields }], values)
@@ -338,7 +344,35 @@ impl Inner {
         // D393: table rows (lengths, row actions, row targets).
         let own = ctx["resource"]["id"].as_str().filter(|i| !i.is_empty());
         self.check_tables(plugin, own, &mut out.view)?;
+        self.fill_ref_options(plugin, &mut out.view)?;
         Ok(out)
+    }
+
+    /// D414: a `ref` field with `kinds` and no `options` lists the resources of those kinds the
+    /// plugin may see (its own kinds; others' with `requires.resources` or exported for reading),
+    /// by name, at most `MAX_REF_OPTIONS`.
+    fn fill_ref_options(&self, plugin: &Plugin, view: &mut [ViewNode]) -> KResult<()> {
+        for node in view.iter_mut() {
+            let ViewNode::Form { fields, .. } = node else { continue };
+            for f in fields.iter_mut().filter(|f| f.kind == FieldKind::Ref && f.options.is_none()) {
+                let Some(kinds) = &f.kinds else { continue };
+                let mut opts: Vec<(String, String)> = Vec::new();
+                for k in kinds {
+                    let full = plugin.kind_ref(k);
+                    let own = self.registry.kind(&full).is_some_and(|(o, _)| o.id == plugin.id);
+                    if !(own || plugin.manifest.requires.resources || self.export_allows(plugin, &full, true)) {
+                        continue;
+                    }
+                    for r in self.read(|c| store::of_kind(c, &full))? {
+                        opts.push((r.name, r.id));
+                    }
+                }
+                opts.sort();
+                opts.truncate(MAX_REF_OPTIONS);
+                f.options = Some(opts.into_iter().map(|(name, id)| FieldOption { value: id, label: Label::Text(name) }).collect());
+            }
+        }
+        Ok(())
     }
 
     async fn resolve_resource(

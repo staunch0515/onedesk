@@ -53,8 +53,8 @@ fn db(env: &Env) -> Connection {
     Connection::open(env.kernel.db_path()).unwrap()
 }
 
-fn count(env: &Env, sql: &str, arg: &str) -> i64 {
-    db(env).query_row(sql, [arg], |r| r.get(0)).unwrap()
+fn count(env: &Env, stmt_text: &str, arg: &str) -> i64 {
+    db(env).query_row(stmt_text, [arg], |r| r.get(0)).unwrap()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

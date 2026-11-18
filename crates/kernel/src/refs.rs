@@ -72,7 +72,7 @@ fn path_key(conn: &Connection, r: &Row) -> rusqlite::Result<PathKey> {
 /// under the source's parent first, then the one nearest the top of the tree.
 pub fn resolve(conn: &Connection, name: &str, source: &Row) -> rusqlite::Result<Option<String>> {
     let mut st = conn.prepare_cached(&format!("SELECT {} FROM resources WHERE name = ?1 AND deleted_at IS NULL", store::COLUMNS))?;
-    let all: Vec<Row> = st.query_map([name], store::from_sql)?.collect::<Result<Vec<_>, _>>()?;
+    let all: Vec<Row> = st.query_map([name], store::from_row)?.collect::<Result<Vec<_>, _>>()?;
     let mut cands: Vec<Row> = all.into_iter().filter(referenceable).collect();
     if cands.len() > 1 {
         let near: Vec<Row> =
@@ -283,7 +283,7 @@ pub fn sync_decls(conn: &Connection, rules: &HashMap<String, KindRule>) -> rusql
         }
         let Some(rule) = rules.get(kind) else { continue };
         let mut st = conn.prepare(&format!("SELECT {} FROM resources WHERE kind = ?1", store::COLUMNS))?;
-        let rows: Vec<Row> = st.query_map([kind], store::from_sql)?.collect::<Result<_, _>>()?;
+        let rows: Vec<Row> = st.query_map([kind], store::from_row)?.collect::<Result<_, _>>()?;
         drop(st);
         for r in &rows {
             touched.extend(update(conn, rule, r, Some(&added))?);
@@ -335,7 +335,7 @@ pub fn import_rows(conn: &Connection, rule: &KindRule, row: &Row, hints: &[RefRo
 pub fn rebuild(conn: &Connection, rules: &HashMap<String, KindRule>) -> rusqlite::Result<usize> {
     conn.execute("DELETE FROM refs", [])?;
     let mut st = conn.prepare(&format!("SELECT {} FROM resources ORDER BY tree, parent_id, pos, id", store::COLUMNS))?;
-    let all: Vec<Row> = st.query_map([], store::from_sql)?.collect::<Result<_, _>>()?;
+    let all: Vec<Row> = st.query_map([], store::from_row)?.collect::<Result<_, _>>()?;
     drop(st);
     for r in &all {
         if let Some(rule) = rules.get(&r.kind) {
@@ -483,8 +483,8 @@ mod migration_tests {
     fn migration_0010_marks_rows_that_had_a_target() {
         let mut conn = Connection::open_in_memory().unwrap();
         let tx = conn.transaction().unwrap();
-        for (_, sql) in &crate::workspace::MIGRATIONS[..9] {
-            tx.execute_batch(sql).unwrap();
+        for (_, stmt_text) in &crate::workspace::MIGRATIONS[..9] {
+            tx.execute_batch(stmt_text).unwrap();
         }
         tx.execute("INSERT INTO meta (key, value) VALUES ('schema_version', '9')", []).unwrap();
         tx.execute_batch(

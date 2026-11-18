@@ -11,8 +11,8 @@ fn db(env: &Env) -> Connection {
     Connection::open_with_flags(env.kernel.db_path(), OpenFlags::SQLITE_OPEN_READ_WRITE).unwrap()
 }
 
-fn count(conn: &Connection, sql: &str, p: &str) -> i64 {
-    conn.query_row(sql, [p], |r| r.get(0)).unwrap()
+fn count(conn: &Connection, stmt_text: &str, p: &str) -> i64 {
+    conn.query_row(stmt_text, [p], |r| r.get(0)).unwrap()
 }
 
 async fn setup() -> (Env, Client) {

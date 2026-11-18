@@ -1,7 +1,9 @@
 //! OneDesk kernel (kernel-design §3–§5, §7.4–7.5, §9, §12). No Tauri, no interface text, and no
 //! knowledge of any particular plugin: it knows resources, plugins and views.
 
+mod calls;
 mod carry;
+pub mod datafile;
 mod commands;
 pub mod deps;
 mod install;

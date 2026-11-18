@@ -245,6 +245,11 @@ impl Inner {
         Ok(best.map(|(_, r, p)| (r, p)))
     }
 
+    /// `host.params.config` (round 15): the value and the name of the node that holds it.
+    pub(crate) fn config_param(&self, name: &str) -> KResult<Option<(String, String)>> {
+        Ok(self.config_holder(name)?.map(|(r, p)| (r.name, p.value)))
+    }
+
     fn get_config(&self, p: KResult<ConfigGetParams>) -> KResult<Option<String>> {
         Ok(self.config_holder(&p?.name)?.map(|(_, p)| p.value))
     }
@@ -493,7 +498,7 @@ impl Inner {
             })
             .collect();
         args.push(limit.to_string());
-        let sql = format!(
+        let stmt_text = format!(
             "SELECT r.id FROM search s JOIN resources r ON r.rowid = s.rowid
              LEFT JOIN resource_meta m ON m.resource_id = r.id
              WHERE {}
@@ -504,7 +509,7 @@ impl Inner {
             args.len()
         );
         let ids: Vec<String> = self.read(|c| {
-            let mut st = c.prepare(&sql)?;
+            let mut st = c.prepare(&stmt_text)?;
             let rows = st.query_map(rusqlite::params_from_iter(args.iter()), |r| r.get(0))?;
             rows.collect()
         })?;
@@ -563,12 +568,12 @@ impl Inner {
             );
         }
         let limit = f.limit.unwrap_or(200).clamp(1, 1000);
-        let sql = format!(
+        let stmt_text = format!(
             "SELECT seq, at, actor, op, object, summary, result FROM audit WHERE {} ORDER BY seq DESC LIMIT {limit}",
             wheres.join(" AND ")
         );
         let rows: Vec<(i64, i64, String, String, String, String, String)> = self.read(|c| {
-            let mut st = c.prepare(&sql)?;
+            let mut st = c.prepare(&stmt_text)?;
             let params: Vec<rusqlite::types::Value> = args
                 .iter()
                 .map(|v| match v {
@@ -631,8 +636,8 @@ impl Inner {
     }
 
     fn audit_facets(&self) -> KResult<AuditFacets> {
-        let col = |c: &rusqlite::Connection, sql: &str| -> rusqlite::Result<Vec<String>> {
-            let mut st = c.prepare(sql)?;
+        let col = |c: &rusqlite::Connection, stmt_text: &str| -> rusqlite::Result<Vec<String>> {
+            let mut st = c.prepare(stmt_text)?;
             let rows = st.query_map([], |r| r.get(0))?;
             rows.collect()
         };

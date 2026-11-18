@@ -301,6 +301,46 @@ fn is_executable(p: &Path) -> bool {
     std::fs::metadata(p).is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
 }
 
+/// Round 15 (X1): the candidates of a system program's `searchPaths`, in order; a `*` component
+/// stands for each folder there, highest name first.
+pub fn search_candidates(paths: &[String], name: &str) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    for p in paths {
+        match p.split_once("/*") {
+            Some((head, tail)) if tail.is_empty() || tail.starts_with('/') => {
+                let mut dirs: Vec<PathBuf> = std::fs::read_dir(if head.is_empty() { "/" } else { head })
+                    .into_iter()
+                    .flatten()
+                    .flatten()
+                    .filter(|e| e.path().is_dir())
+                    .map(|e| e.path())
+                    .collect();
+                dirs.sort_by(|a, b| natural(b).cmp(&natural(a)));
+                out.extend(dirs.into_iter().map(|d| d.join(tail.trim_start_matches('/')).join(name)));
+            }
+            _ => out.push(Path::new(p).join(name)),
+        }
+    }
+    out
+}
+
+/// Sort key comparing digit runs as numbers (`16` after `9`).
+fn natural(p: &Path) -> Vec<(u64, String)> {
+    let s = p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    let mut out = Vec::new();
+    let mut cur = String::new();
+    for ch in s.chars() {
+        if ch.is_ascii_digit() == cur.chars().next().is_some_and(|c| c.is_ascii_digit()) || cur.is_empty() {
+            cur.push(ch);
+        } else {
+            out.push(std::mem::take(&mut cur));
+            cur.push(ch);
+        }
+    }
+    out.push(cur);
+    out.into_iter().map(|c| (c.parse::<u64>().unwrap_or(0), c)).collect()
+}
+
 /// The first existing candidate, or why there is none.
 fn pick(candidates: &[PathBuf]) -> Result<PathBuf, NotReady> {
     match candidates.iter().find(|c| c.is_file()) {
@@ -508,7 +548,11 @@ impl Inner {
             }
             pick(&c)
         } else {
-            pick(&SYSTEM_DIRS.iter().map(|d| Path::new(d).join(name)).collect::<Vec<_>>())
+            let fixed = pick(&SYSTEM_DIRS.iter().map(|d| Path::new(d).join(name)).collect::<Vec<_>>());
+            match (fixed, &decl.search_paths) {
+                (Err(NotReady::NotFound), Some(more)) => pick(&search_candidates(more, name)),
+                (r, _) => r,
+            }
         }
     }
 
@@ -856,5 +900,38 @@ impl Inner {
             return Err(err_p(ErrorCode::NotFound, &[("what", "folder")]));
         }
         Ok(real)
+    }
+}
+
+#[cfg(test)]
+mod search_tests {
+    use super::*;
+
+    #[test]
+    fn search_paths_try_the_highest_version_first_then_in_order() {
+        let d = tempfile::tempdir().unwrap();
+        let root = d.path().join("Vendor");
+        for v in ["9", "15", "16"] {
+            std::fs::create_dir_all(root.join(v).join("bin")).unwrap();
+        }
+        let exe = |p: PathBuf| {
+            std::fs::write(&p, "#!/bin/sh\n").unwrap();
+            std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+        };
+        exe(root.join("15/bin/tool"));
+        exe(root.join("9/bin/tool"));
+        std::fs::write(root.join("16/bin/tool"), "not executable").unwrap();
+        let star = format!("{}/*/bin", root.display());
+        let c = search_candidates(&[star.clone()], "tool");
+        assert_eq!(c[0], root.join("16/bin/tool"));
+        assert_eq!(c[1], root.join("15/bin/tool"));
+        assert_eq!(c[2], root.join("9/bin/tool"));
+        // The first existing file decides: 16's is not executable.
+        assert!(matches!(pick(&c), Err(NotReady::NotExecutable)));
+        std::fs::remove_file(root.join("16/bin/tool")).unwrap();
+        assert_eq!(pick(&search_candidates(&[star], "tool")).unwrap(), root.join("15/bin/tool"));
+        let plain = root.join("9/bin").display().to_string();
+        assert_eq!(pick(&search_candidates(&["/nonexistent/x".into(), plain], "tool")).unwrap(), root.join("9/bin/tool"));
+        assert!(matches!(pick(&search_candidates(&["/nonexistent/*/bin".into()], "tool")), Err(NotReady::NotFound)));
     }
 }

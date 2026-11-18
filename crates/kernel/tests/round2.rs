@@ -298,7 +298,7 @@ async fn favorites_list_and_leave_no_history() {
     let (env, c) = setup().await;
     let id = item(&c, "Fav", "x").await;
     let conn = db(&env);
-    let count = |sql: &str| -> i64 { conn.query_row(sql, [&id], |r| r.get(0)).unwrap() };
+    let count = |stmt_text: &str| -> i64 { conn.query_row(stmt_text, [&id], |r| r.get(0)).unwrap() };
     let (revs, audits) = (count("SELECT count(*) FROM revisions WHERE resource_id = ?1"), count("SELECT count(*) FROM audit WHERE object = ?1"));
     c.ok("command.execute", json!({ "id": "node.favorite", "context": { "tree": "resources", "nodeKey": id } })).await;
     c.event(|e| e.topic == "tree:favorites").await;

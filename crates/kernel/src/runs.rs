@@ -20,7 +20,7 @@ use crate::util::*;
 pub const METHODS: &[&str] = &[
     M::RUN_START, M::RUN_GET, M::RUN_CANCEL, M::RUN_LIST_FOR, M::RUN_TASKS, M::RUN_CLEAR_FINISHED, M::RUN_SET_KEPT,
     M::RUN_RENDER, M::PAGE_EVENT, M::PLUGIN_GET, M::PLUGIN_SET_ENABLED, M::PLUGIN_SET_SETTING, M::PLUGIN_RELOAD,
-    M::COMMAND_PALETTE,
+    M::COMMAND_PALETTE, onedesk_protocol::method15::RUN_ROWS,
 ];
 
 /// D377: rows of a table output handed to the interface (more → `truncated`, with `total`).
@@ -118,6 +118,9 @@ struct TableIn {
     total: Option<u64>,
     #[serde(default)]
     truncated: Option<bool>,
+    /// D414: set by the kernel for a table read from a data file (`datafile`).
+    #[serde(default)]
+    paged: Option<bool>,
 }
 
 /// Checks the plugin's output against the declared type, truncates tables, limits the size.
@@ -140,7 +143,7 @@ fn check_output(declared: OutputType, out: Value) -> Result<RunOutput, String> {
             let mut rows = t.rows;
             rows.truncate(MAX_ROWS);
             let truncated = t.truncated.unwrap_or(false) || total > rows.len() as u64;
-            RunOutput::Table { columns: t.columns, rows, total, truncated }
+            RunOutput::Table { columns: t.columns, rows, total, truncated, paged: t.paged.filter(|p| *p) }
         }
         _ => serde_json::from_value::<RunOutput>(out).map_err(|e| e.to_string())?,
     };
@@ -163,6 +166,7 @@ impl Inner {
                 Ok(p) => self.run_start(p, client).await.and_then(to_value),
                 Err(e) => Err(e),
             },
+            onedesk_protocol::method15::RUN_ROWS => parse::<RunRowsParams>(params).and_then(|p| self.run_rows(p)).and_then(to_value),
             M::RUN_GET => parse::<RunIdParams>(params).and_then(|p| self.run_get(&p.id, true)).and_then(to_value),
             M::RUN_CANCEL => match parse::<RunIdParams>(params) {
                 Ok(p) => self.run_cancel(&p.id).await.map(|_| Value::Null),
@@ -424,7 +428,7 @@ impl Inner {
             let (status, summary, error, output) = match (stopped, res) {
                 (Some("pluginDisabled"), _) => ("error", None, Some(run_error("pluginDisabled", "", None)), None),
                 (Some(_), _) | (None, Err(SandboxError::Cancelled)) => ("cancelled", None, None, None),
-                (None, Ok(v)) => match serde_json::from_value::<ActionOut>(v).map_err(|e| e.to_string()).and_then(|o| {
+                (None, Ok(v)) => match me.output_from_file(runner, &run_id, v).await.and_then(|v| serde_json::from_value::<ActionOut>(v).map_err(|e| e.to_string())).and_then(|o| {
                     let out = check_output(declared, o.output)?;
                     Ok((out, o.summary))
                 }) {
@@ -469,6 +473,38 @@ impl Inner {
         Ok(())
     }
 
+    /// X2 (round 15): an output that names a data file is read by the kernel (`datafile`).
+    async fn output_from_file(&self, p: &'static Plugin, run: &str, mut v: Value) -> Result<Value, String> {
+        let Some(out) = v.get_mut("output").and_then(Value::as_object_mut) else { return Ok(v) };
+        let Some(file) = out.remove("file") else { return Ok(v) };
+        let raw = file.as_str().ok_or("file must be a path")?.to_string();
+        let (grants, abs) = self.transfer_end(p, &raw).map_err(|e| format!("data file {raw}: {:?}", e.params))?;
+        let real = crate::files::resolve(&grants, &abs).map_err(|e| format!("data file {raw}: {:?}", e.params))?;
+        let own = self.plugin_data_dir(&p.id).and_then(|d| d.canonicalize().map_err(internal)).map_err(|e| format!("{e:?}"))?;
+        let take = real.starts_with(&own);
+        let header = out.get("header").and_then(Value::as_bool).unwrap_or(true);
+        let o = out.clone();
+        let (ws, run) = (self.ws.dir.clone(), run.to_string());
+        let read = tokio::task::spawn_blocking(move || {
+            let r = crate::datafile::read(&real, &o);
+            if let Ok(r) = &r {
+                if r.cut {
+                    if let Err(e) = crate::datafile::keep(&ws, &run, &real, header, take) {
+                        eprintln!("onedesk: could not keep the full result of run {run}: {e}");
+                    }
+                }
+            }
+            if take {
+                let _ = std::fs::remove_file(&real);
+            }
+            r
+        })
+        .await
+        .map_err(|e| e.to_string())??;
+        v["output"] = serde_json::to_value(read.output).map_err(|e| e.to_string())?;
+        Ok(v)
+    }
+
     async fn run_end(
         &self,
         id: &str,
@@ -486,6 +522,10 @@ impl Inner {
             eprintln!("onedesk: could not record the end of run {id}: {e:?}");
         }
         self.procs.end_run(id);
+        // X2: full results kept for export go with their runs (pruned to 200 per resource, §8).
+        if self.ws.dir.join(crate::datafile::RUN_FILES).is_dir() {
+            crate::datafile::sweep(&self.ws.dir, |r| self.read(|c| store::run_get(c, r)).ok().flatten().is_some());
+        }
         self.run_events(id);
         // Round 6 (D335): the plugin whose action it was hears that it ended.
         if let Ok(Some(r)) = self.read(|c| store::run_get(c, id)) {
@@ -578,12 +618,58 @@ impl Inner {
             progress: r.progress.and_then(|v| serde_json::from_value(v).ok()),
             summary: r.summary.and_then(|v| serde_json::from_value(v).ok()),
             error: r.error.and_then(|v| serde_json::from_value(v).ok()),
-            output: if with_output { r.output.and_then(|v| serde_json::from_value(v).ok()) } else { None },
+            output: if with_output {
+                // D414: a paged table goes out with its first rows only (`run.rows` has the rest).
+                r.output.and_then(|v| serde_json::from_value(v).ok()).map(|mut o: RunOutput| {
+                    if let RunOutput::Table { rows, paged: Some(true), .. } = &mut o {
+                        rows.truncate(PAGED_FIRST_ROWS);
+                    }
+                    o
+                })
+            } else {
+                None
+            },
             kept: r.kept,
             kept_name: r.kept_name,
             in_task_panel: r.in_task_panel,
             cancellable,
         }
+    }
+
+    /// D414: a page of a finished run's table — from the kept full file when there is one
+    /// (`datafile`), else from the rows the run stored.
+    pub fn run_rows(&self, p: RunRowsParams) -> KResult<RunRowsResult> {
+        if p.limit == 0 || p.limit > RUN_ROWS_MAX_LIMIT {
+            return Err(invalid_params("limit must be 1–1000"));
+        }
+        let run = self.read(|c| store::run_get(c, &p.id))?.ok_or_else(|| not_found("run"))?;
+        let Some(raw) = run.output.filter(|o| !o.is_null()) else { return Err(invalid("noOutput")) };
+        let Ok(RunOutput::Table { rows, total, .. }) = serde_json::from_value::<RunOutput>(raw) else { return Err(invalid("notTable")) };
+        let (offset, limit) = (p.offset as usize, p.limit as usize);
+        if let Some((full, header)) = crate::datafile::kept(&self.ws.dir, &p.id) {
+            let f = std::fs::File::open(&full).map_err(internal)?;
+            let mut rd = crate::datafile::CsvReader::new(f);
+            if header {
+                rd.record().map_err(internal)?;
+            }
+            let (mut i, mut out) = (0usize, Vec::new());
+            while let Some(rec) = rd.record().map_err(internal)? {
+                // Blank lines are no records (as when the file was read, `datafile::read`).
+                if rec.len() == 1 && rec[0].is_none() {
+                    continue;
+                }
+                if i >= offset {
+                    out.push(rec.into_iter().map(|c| c.map_or(Value::Null, Value::String)).collect());
+                    if out.len() == limit {
+                        break;
+                    }
+                }
+                i += 1;
+            }
+            return Ok(RunRowsResult { rows: out, total });
+        }
+        let rows = rows.into_iter().skip(offset).take(limit).collect();
+        Ok(RunRowsResult { rows, total })
     }
 
     pub fn run_get(&self, id: &str, with_output: bool) -> KResult<Option<Run>> {

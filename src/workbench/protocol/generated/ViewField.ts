@@ -25,4 +25,18 @@ fill?: boolean,
 /**
  * Language for colouring a code field.
  */
-language?: string, hint?: Label, placeholder?: Label, envValue?: string, envSource?: string, readOnly?: boolean, };
+language?: string, hint?: Label, placeholder?: Label, envValue?: string, envSource?: string, readOnly?: boolean, 
+/**
+ * Round 15 (X4, sqlpool C2): the field must have a value; the shell marks it and refuses
+ * to run (or save) while it is empty. The kernel does not check it.
+ */
+required?: boolean, 
+/**
+ * Round 15 (sqlpool C2): most characters the shell lets the user type (text fields).
+ */
+maxLength?: number, 
+/**
+ * Round 15 (D414): for a `ref` field, the kinds it may point at (full `<pluginId>:<kind>`, or
+ * the page's own plugin's short name).
+ */
+kinds?: Array<string>, };

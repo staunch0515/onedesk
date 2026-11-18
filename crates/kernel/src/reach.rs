@@ -217,10 +217,10 @@ impl Inner {
             c.query_row(&format!("SELECT count(*) {from}"), rusqlite::params_from_iter(args.iter()), |r| r.get(0))
         })?;
         let cols = store::COLUMNS.split(", ").map(|c| format!("r.{c}")).collect::<Vec<_>>().join(", ");
-        let sql = format!("SELECT {cols} {from} ORDER BY {order} LIMIT {limit} OFFSET {offset}");
+        let stmt_text = format!("SELECT {cols} {from} ORDER BY {order} LIMIT {limit} OFFSET {offset}");
         let rows: Vec<Row> = self.read(|c| {
-            let mut st = c.prepare(&sql)?;
-            let rows = st.query_map(rusqlite::params_from_iter(args.iter()), store::from_sql)?;
+            let mut st = c.prepare(&stmt_text)?;
+            let rows = st.query_map(rusqlite::params_from_iter(args.iter()), store::from_row)?;
             rows.collect()
         })?;
         let mut memo = HashMap::new();

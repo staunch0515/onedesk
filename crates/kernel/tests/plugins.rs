@@ -267,9 +267,9 @@ async fn unknown_or_undeclared_commands_are_not_found() {
     }
 }
 
-fn audit_rows(env: &Env, sql: &str) -> Vec<(String, String, String)> {
+fn audit_rows(env: &Env, stmt_text: &str) -> Vec<(String, String, String)> {
     let conn = rusqlite::Connection::open(env.kernel.db_path()).unwrap();
-    let mut st = conn.prepare(sql).unwrap();
+    let mut st = conn.prepare(stmt_text).unwrap();
     st.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))).unwrap().map(|r| r.unwrap()).collect()
 }
 

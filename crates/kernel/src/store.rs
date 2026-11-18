@@ -56,7 +56,7 @@ fn parse_json<T: for<'de> Deserialize<'de> + Default>(s: String) -> T {
     serde_json::from_str(&s).unwrap_or_default()
 }
 
-pub fn from_sql(r: &SqlRow<'_>) -> rusqlite::Result<Row> {
+pub fn from_row(r: &SqlRow<'_>) -> rusqlite::Result<Row> {
     Ok(Row {
         id: r.get(0)?,
         kind: r.get(1)?,
@@ -82,7 +82,7 @@ pub fn from_sql(r: &SqlRow<'_>) -> rusqlite::Result<Row> {
 
 /// Including deleted rows.
 pub fn get_any(conn: &Connection, id: &str) -> rusqlite::Result<Option<Row>> {
-    conn.query_row(&format!("SELECT {COLUMNS} FROM resources WHERE id = ?1"), [id], from_sql).optional()
+    conn.query_row(&format!("SELECT {COLUMNS} FROM resources WHERE id = ?1"), [id], from_row).optional()
 }
 
 /// Live (not deleted) rows only.
@@ -101,7 +101,7 @@ pub fn children(
         "SELECT {COLUMNS} FROM resources WHERE tree = ?1 AND parent_id IS ?2 AND deleted_at IS NULL \
          ORDER BY pos, id LIMIT ?3 OFFSET ?4"
     ))?;
-    let rows = st.query_map(params![tree, parent, limit, offset], from_sql)?;
+    let rows = st.query_map(params![tree, parent, limit, offset], from_row)?;
     rows.collect()
 }
 
@@ -140,7 +140,7 @@ pub fn descendants(conn: &Connection, id: &str) -> rusqlite::Result<Vec<Row>> {
         "SELECT {COLUMNS} FROM resources WHERE parent_id = ?1 AND deleted_at IS NULL ORDER BY pos, id"
     ))?;
     while let Some(p) = queue.pop() {
-        for r in st.query_map([&p], from_sql)? {
+        for r in st.query_map([&p], from_row)? {
             let r = r?;
             if !seen.insert(r.id.clone()) {
                 continue;
@@ -158,7 +158,7 @@ pub fn list(conn: &Connection, kinds: &[String], parent: Option<Option<&str>>) -
         "SELECT {COLUMNS} FROM resources WHERE kind = ?1 AND deleted_at IS NULL ORDER BY tree, parent_id, pos, id"
     ))?;
     for k in kinds {
-        for r in st.query_map([k], from_sql)? {
+        for r in st.query_map([k], from_row)? {
             let r = r?;
             if parent.is_none_or(|p| r.parent_id.as_deref() == p) {
                 out.push(r);
@@ -173,7 +173,7 @@ pub fn plugin_state(conn: &Connection, plugin: &str) -> rusqlite::Result<Option<
     conn.query_row(
         &format!("SELECT {COLUMNS} FROM resources WHERE kind = ?1 AND name = ?2 AND deleted_at IS NULL"),
         params![KIND_PLUGIN_STATE, plugin],
-        from_sql,
+        from_row,
     )
     .optional()
 }
@@ -217,7 +217,7 @@ pub fn favorites(conn: &Connection) -> rusqlite::Result<Vec<Row>> {
          WHERE m.favorite = 1 AND r.deleted_at IS NULL AND r.tree IS NOT ?1
          ORDER BY r.name COLLATE NOCASE, r.id"
     ))?;
-    let rows = st.query_map([TREE_PLUGIN_STATE], from_sql)?;
+    let rows = st.query_map([TREE_PLUGIN_STATE], from_row)?;
     rows.collect()
 }
 
@@ -231,7 +231,7 @@ pub fn deleted_tops(conn: &Connection) -> rusqlite::Result<Vec<Row>> {
                            AND p.delete_batch IS r.delete_batch AND p.deleted_at IS NOT NULL)
          ORDER BY r.deleted_at DESC, r.id"
     ))?;
-    let rows = st.query_map([TREE_PLUGIN_STATE], from_sql)?;
+    let rows = st.query_map([TREE_PLUGIN_STATE], from_row)?;
     rows.collect()
 }
 
@@ -242,7 +242,7 @@ pub fn delete_batch(conn: &Connection, id: &str) -> rusqlite::Result<Option<Stri
 /// Every row of a deletion batch.
 pub fn batch_rows(conn: &Connection, batch: &str) -> rusqlite::Result<Vec<Row>> {
     let mut st = conn.prepare_cached(&format!("SELECT {COLUMNS} FROM resources WHERE delete_batch = ?1 ORDER BY id"))?;
-    let rows = st.query_map([batch], from_sql)?;
+    let rows = st.query_map([batch], from_row)?;
     rows.collect()
 }
 
@@ -292,7 +292,7 @@ fn json_col(s: Option<String>) -> Option<Value> {
     s.and_then(|s| serde_json::from_str(&s).ok())
 }
 
-pub fn run_from_sql(r: &SqlRow<'_>) -> rusqlite::Result<RunRow> {
+pub fn run_from_row(r: &SqlRow<'_>) -> rusqlite::Result<RunRow> {
     Ok(RunRow {
         id: r.get(0)?,
         seq: r.get(1)?,
@@ -324,7 +324,7 @@ pub fn run_from_sql(r: &SqlRow<'_>) -> rusqlite::Result<RunRow> {
 }
 
 pub fn run_get(conn: &Connection, id: &str) -> rusqlite::Result<Option<RunRow>> {
-    conn.query_row(&format!("SELECT {RUN_COLUMNS} FROM runs WHERE id = ?1"), [id], run_from_sql).optional()
+    conn.query_row(&format!("SELECT {RUN_COLUMNS} FROM runs WHERE id = ?1"), [id], run_from_row).optional()
 }
 
 /// Runs matching `where_` (a fixed SQL condition with `?1`), newest first.
@@ -332,7 +332,7 @@ pub fn runs_where(conn: &Connection, where_: &str, arg: &str, limit: u32) -> rus
     let mut st = conn.prepare_cached(&format!(
         "SELECT {RUN_COLUMNS} FROM runs WHERE {where_} ORDER BY seq DESC LIMIT {limit}"
     ))?;
-    let rows = st.query_map([arg], run_from_sql)?;
+    let rows = st.query_map([arg], run_from_row)?;
     rows.collect()
 }
 

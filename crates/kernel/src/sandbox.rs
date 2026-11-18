@@ -139,6 +139,8 @@ pub struct CallInfo {
     /// Round 12 (D394): set while a kind's `drop` runs — its `resources.update` calls are kept
     /// here and written together after it answers `handled: true`; other writes are refused.
     pub drop_writes: Option<Arc<std::sync::Mutex<Vec<crate::pipeline::Command>>>>,
+    /// Round 15 (D413): plugins whose `host.actions.call` led to this invocation, outermost first.
+    pub callers: Vec<String>,
 }
 
 /// The only capability a plugin has. One instance per plugin version.
@@ -427,7 +429,7 @@ const BOOTSTRAP: &str = r#"
         readText: c("files.readText"), writeText: c("files.writeText"),
       }),
       ui: Object.freeze({ open: c("ui.open"), notify: c("ui.notify"), copy: c("ui.copy"), openExternal: c("ui.openExternal") }),
-      params: Object.freeze({ get: c("params.get") }),
+      params: Object.freeze({ get: c("params.get"), config: c("params.config") }),
       storage: Object.freeze({
         get: c("storage.get"), set: c("storage.set"), remove: c("storage.remove"), keys: c("storage.keys"),
         readFrom: c("storage.readFrom"),
@@ -443,6 +445,7 @@ const BOOTSTRAP: &str = r#"
         upload: (opts) => runTransfer(callId, "transfer.upload", opts),
         capture: (opts) => runTransfer(callId, "transfer.capture", opts),
       }),
+      actions: Object.freeze({ call: c("actions.call") }),
       events,
     });
   };
