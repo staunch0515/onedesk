@@ -426,6 +426,11 @@ test("shell: choosing Chinese and Japanese in the workspace configuration change
     await page.getByRole("menuitem", { name: "简体中文" }).click();
     await expect(page.getByRole("navigation", { name: "视图" })).toBeVisible({ timeout: 15_000 });
     await expect(page.getByRole("button", { name: "语言" })).toBeVisible();
+    // the kernel's own words (activity-bar and tree titles) come from the language plugin too
+    const views = page.getByRole("navigation", { name: "视图" });
+    await expect(views.getByRole("button", { name: "工作区配置" })).toBeVisible();
+    await expect(views.getByRole("button", { name: "运行记录" })).toBeVisible();
+    await expect(views.getByRole("button", { name: "资源", exact: true })).toBeVisible();
     expect(JSON.stringify(await call(page, "workspace.getConfig", { name: "ui.language" }))).toContain("zh-CN");
     await page.reload();
     await expect(page.getByRole("navigation", { name: "视图" })).toBeVisible({ timeout: 20_000 });
@@ -435,6 +440,10 @@ test("shell: choosing Chinese and Japanese in the workspace configuration change
     await page.getByRole("menuitem", { name: "日本語" }).click();
     await expect(page.getByRole("navigation", { name: "ビュー" })).toBeVisible({ timeout: 15_000 });
     await expect(page.getByRole("button", { name: "言語" })).toBeVisible();
+    const viewsJa = page.getByRole("navigation", { name: "ビュー" });
+    await expect(viewsJa.getByRole("button", { name: "ワークスペース設定" })).toBeVisible();
+    await expect(viewsJa.getByRole("button", { name: "実行記録" })).toBeVisible();
+    await expect(viewsJa.getByRole("button", { name: "リソース", exact: true })).toBeVisible();
     await page.reload();
     await expect(page.getByRole("navigation", { name: "ビュー" })).toBeVisible({ timeout: 20_000 });
     await shot(page, "lang-ja");
@@ -550,4 +559,26 @@ test("shell: a note's mode selector starts on Edit, not on the placeholder", asy
   await openKernel(page, host);
   await openResource(page, "Mode note");
   await expect(page.getByRole("combobox", { name: "Mode" })).toHaveText(/Edit/, { timeout: 15_000 });
+});
+
+test("shell: the kernel's command and audit wording is in the interface language (palette entry, audit operation names)", async ({ page }) => {
+  await page.goto("/workbench.html?reset&quiet");
+  await create(page, NOTE, { name: "Audit probe", "body.text": "x" });
+  try {
+    for (const [locale, query, entry, operation] of [
+      ["ja-JP", "コマンドパレット", "監査ログを開く", "リソースを作成"],
+      ["zh-CN", "命令面板", "打开审计", "新建资源"],
+    ] as const) {
+      await setLanguage(page, locale);
+      await openKernel(page, host);
+      await expect(page.getByRole("navigation").first()).toBeVisible({ timeout: 20_000 });
+      await page.getByRole("button", { name: query, exact: true }).click();
+      const item = page.getByText(entry, { exact: true }).first();
+      await expect(item).toBeVisible({ timeout: 15_000 });
+      await item.click();
+      await expect(page.getByText(operation).first()).toBeVisible({ timeout: 15_000 });
+    }
+  } finally {
+    await setLanguage(page, "en-US");
+  }
 });

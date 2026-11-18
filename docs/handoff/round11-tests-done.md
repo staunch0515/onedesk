@@ -74,3 +74,9 @@ Markdown 的界面断言本来就按渲染结果（角色、文字、`a.od-markd
 4. markdown 库换成 `marked` 后，把“`[bad link](javascript:alert(1))` 保留为纯文本”那条文字断言去掉了（输出细节因库而异），仍保留“没有 javascript: 的 `<a>`、没有名为 bad link 的链接”。
 
 结果：`e2e/round11.spec.ts` 19 通过、1 fixme（跳过）。
+
+## 内核词表补进语言插件（D387）
+- `zh-CN.json`、`ja-JP.json` 各补 305 条（303 条 `kernel.*`、`permission.resourcesAll`、`link.openFailed`）。中文取自 `round11-shell-done.md` 的表（表里的 `\|` 还原成 `|`），表里没有的两条自己译：`permission.resourcesAll`＝读取本工作区所有内容的名称、类型和位置（不含正文）；`link.openFailed`＝系统无法打开该链接：{reason}。日语逐条自译，没有母语者审阅。`lang-check` 通过（键集合与占位符与 `en-US.ts` 一致）。
+- `e2e/round11.spec.ts` 加断言：中文下活动栏“工作区配置”“运行记录”“资源”；日语下“ワークスペース設定”“実行記録”“リソース”；命令面板里内核命令“打开审计/監査ログを開く”，审计页的操作名“新建资源/リソースを作成”（都是内核词表）。**没有**做“内核错误文字”的界面断言：我试了两种触发（空名称、清除后保存已被永久删除的笔记），前者外壳不发内核错误，后者按钮/流程卡住（两次尝试都超时），已放弃，改成上面的命令/审计词条。
+- 结果：`round11.spec.ts` **20 通过、1 fixme**（欢迎页切语言，外壳）；`workbench.spec.ts`（假数据）23 通过、1 跳过（原本就跳过）。假数据截图跑完有 9 张像素变化，我逐个看了：差别是演示数据里相对“现在”的日期/时间（例如 11/16 18:31 → 11/17 06:01），不是文字；没有更新基准，已 `git checkout -- docs/screenshots`。
+- `pnpm test`：546 通过，**1 个失败不是我的**：`src/workbench/i18n/kernel-texts.test.ts` “has words for every error reason the kernel gives”——en-US 缺内核原因 `badDropAnswer` 的文字（合并进来的协调分支上的外壳/内核问题）。`pnpm lint`、`pnpm typecheck` 通过。
