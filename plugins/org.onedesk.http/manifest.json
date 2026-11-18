@@ -5,7 +5,6 @@
   "name": "plugin.name",
   "description": "plugin.description",
   "icon": "globe",
-  "legacyKinds": [{ "name": "http-request", "kind": "request" }],
   "main": "main.js",
   "author": "OneDesk",
   "license": "MIT",

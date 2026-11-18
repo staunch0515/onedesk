@@ -73,9 +73,8 @@ describe("link plugin", () => {
     expect(hostOf("mailto:a@b.com?x=1")).toBe("a@b.com");
   });
 
-  it("the manifest: kind link with url/profile, action open, legacyKinds, three locales", () => {
+  it("the manifest: kind link with url/profile, action open, three locales", () => {
     const m = JSON.parse(readFileSync(new URL("./manifest.json", import.meta.url), "utf8"));
-    expect(m.legacyKinds).toEqual(["link"]);
     expect(m.contributes.kinds[0]).toMatchObject({ id: "link", tree: "resources", fields: { url: { type: "text" }, profile: { type: "text" } } });
     expect(m.contributes.actions[0]).toMatchObject({ id: "open", output: "link" });
     expect(Object.keys(m.contributes.locales)).toEqual(["en-US", "zh-CN", "ja-JP"]);

@@ -142,17 +142,6 @@ test("protocol: i18n.languages is English, Japanese, Chinese; i18n.shell has tex
   expect((await call<{ texts: Record<string, string> }>(page, "i18n.shell", { locale: "xx-XX" })).texts).toEqual({});
 });
 
-test("protocol: legacyKinds show in plugin.get; the language and welcome plugins have none", async ({ page }) => {
-  await page.goto("/workbench.html?reset&quiet");
-  const legacy = async (id: string) => (await call<{ legacyKinds: string[] }>(page, "plugin.get", { plugin: id })).legacyKinds;
-  expect(await legacy("org.onedesk.note")).toEqual(["note"]);
-  expect(await legacy("org.onedesk.http")).toEqual(["http-request"]);
-  expect(await legacy("org.onedesk.link")).toEqual(["link"]);
-  expect(await legacy("org.onedesk.prompt")).toEqual(["prompt"]);
-  expect(await legacy("org.onedesk.welcome")).toEqual([]);
-  expect(await legacy(JA)).toEqual([]);
-});
-
 test("protocol: workspace.info lists the welcome page as the startup page", async ({ page }) => {
   await page.goto("/workbench.html?reset&quiet");
   const info = await call<{ startupPages?: string[] }>(page, "workspace.info");

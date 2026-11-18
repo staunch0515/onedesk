@@ -48,33 +48,9 @@ function pick(ctx, name) {
   return typeof v === "string" ? v : "";
 }
 
-// First-version short kind names and the full kinds their plugins now provide. A name not in the table
-// (no built-in plugin claims it) and a name that already has a colon are kept as written.
-export const LEGACY_KIND_NAMES = {
-  link: "org.onedesk.link:link",
-  note: "org.onedesk.note:note",
-  prompt: "org.onedesk.prompt:prompt",
-  "http-request": "org.onedesk.http:request",
-  collection: "org.onedesk.collection:collection",
-};
-
-// First-version body { ruleType: "tag" | "kind", ruleValue } becomes the conditions { kinds, tags, text }
-// (comma-separated texts). Anything else (bad type, no value, non-object body) becomes no conditions.
-export function upgradeBody(body) {
-  const old = body && typeof body === "object" && !Array.isArray(body) ? body : {};
-  const value = typeof old.ruleValue === "string" ? old.ruleValue.trim() : "";
-  const out = { kinds: "", tags: "", text: "" };
-  if (old.ruleType === "tag") out.tags = value;
-  else if (old.ruleType === "kind") out.kinds = value.split(",").map((k) => k.trim()).filter((k) => k).map((k) => LEGACY_KIND_NAMES[k] || k).join(",");
-  return out;
-}
-
 export default {
   activate(host) {
     host.kinds.handle("collection", {
-      upgrade(ctx, args) {
-        return { body: upgradeBody(args && args.body) };
-      },
       async children(ctx, node, offset) {
         if (node) return { nodes: [] };
         const start = Number(offset) > 0 ? Math.floor(Number(offset)) : 0;
