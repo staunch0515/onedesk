@@ -39,7 +39,6 @@ const create = async (page: Page, kind: string, changes: Record<string, unknown>
 const getRes = (page: Page, id: string) => call<Res>(page, "resource.get", { id });
 const direct = (name: string, over: Record<string, unknown> = {}) => ({ name, "body.mode": "direct", "body.host": "127.0.0.1", "body.port": String(pg.port), "body.database": DB1, "body.user": PG_USER, ...over });
 const tb = (page: Page, n: string) => page.getByRole("textbox", { name: n, exact: true });
-const resultArea = (page: Page) => page.getByRole("region", { name: /Result/i }).or(page.locator("main")).first();
 const ids: Record<string, string> = {};
 
 type Node = { key: string; label: string; kind?: string };
@@ -145,7 +144,6 @@ const pickSource = async (page: Page, name: string) => {
 };
 
 const runBtn = (page: Page) => page.getByRole("button", { name: "Run", exact: true });
-const statusLine = (page: Page) => page.locator("footer, [role=status]").first();
 const newSql = async (page: Page, sql: string, source = "") => {
   await page.getByRole("button", { name: "New", exact: true }).first().click();
   await page.getByRole("menuitem", { name: "SQL", exact: true }).click();
@@ -167,7 +165,7 @@ test("B1/B3/B4/B5/B7: a new SQL is an unsaved tab; Save & run creates it with it
   await expect(page.getByText("4 rows").first()).toBeVisible();
   const made = (await nodes(page, "resources")).find((n) => n.label === "Untitled SQL")!;
   const res = await getRes(page, made.key);
-  expect(res.body).toMatchObject({ sql: "SELECT id, customer, amount, note FROM orders ORDER BY id", source: ids.shop });
+  expect(res.body).toMatchObject({ sql: "SELECT id, customer, amount, note FROM orders ORDER BY id", source: ids.shop! });
   ids.orders = made.key;
   await tb(page, "Name").fill("Orders by id");
   await tb(page, "Name").press("Enter");
@@ -219,18 +217,18 @@ test("C1/C2/C3/C4/C6: :name parameters get a form by declared type; required, en
 test("C2: the declared checks stop a bad value before anything is sent (the form already refuses to type it; the run checks too)", async ({ page }) => {
   await openKernel(page, host);
   const sql = "-- @param n type=number\n-- @param k values=a|b\n-- @param c max=3\nSELECT :n AS n, :k AS k, :c AS c";
-  const rid = await create(page, SQLK, { name: "Checked", "body.sql": sql, "body.source": ids.shop });
+  const rid = await create(page, SQLK, { name: "Checked", "body.sql": sql, "body.source": ids.shop! });
   for (const [params, why] of [
     [{ n: "12x" }, /must be a number/],
     [{ n: "1; DROP TABLE orders" }, /must be a number/],
     [{ k: "z" }, /allowed values/],
     [{ c: "abcd" }, /longer than 3/],
   ] as const) {
-    const r = await runSaved(page, rid, sql, ids.shop, params);
+    const r = await runSaved(page, rid, sql, ids.shop!, params);
     expect(r.status).toBe("error");
     expect(JSON.stringify(r.error)).toMatch(why);
   }
-  const ok = await runSaved(page, rid, sql, ids.shop, { n: "5", k: "a", c: "abc" });
+  const ok = await runSaved(page, rid, sql, ids.shop!, { n: "5", k: "a", c: "abc" });
   expect(ok.status).toBe("success");
 });
 
@@ -247,12 +245,6 @@ test("C5: a parameter takes the environment's value when the form is empty, and 
 });
 
 const DS_PLUGIN = "org.onedesk.datasource";
-const runSql = async (page: Page, sql: string, source = "Local shop") => {
-  await openKernel(page, host);
-  await newSql(page, sql, source);
-  await runBtn(page).click();
-};
-
 test("D1: a write that looks like a read (a data-changing WITH, a function) is stopped by the read-only transaction itself and changes nothing", async ({ page }) => {
   await openKernel(page, host);
   await newSql(page, "WITH gone AS (DELETE FROM orders RETURNING id) SELECT * FROM gone", "Local shop");
@@ -351,8 +343,8 @@ const runSaved = async (page: Page, resourceId: string, sql: string, source: str
 test("D8/D7: a result of 25,000 rows does not go through the plugin's memory: all rows are counted, 10,000 kept in the run, pages and the export read every row; the export starts with a BOM", async ({ page }) => {
   await openKernel(page, host);
   const sql = "SELECT g AS n, md5(g::text) AS h, 'multi\nline' || g AS m FROM generate_series(1, 25000) g ORDER BY g";
-  const rid = await create(page, SQLK, { name: "Big", "body.sql": sql, "body.source": ids.shop });
-  const run = await runSaved(page, rid, sql, ids.shop);
+  const rid = await create(page, SQLK, { name: "Big", "body.sql": sql, "body.source": ids.shop! });
+  const run = await runSaved(page, rid, sql, ids.shop!);
   expect(run.status).toBe("success");
   const got = await call<RunInfo>(page, "run.get", { id: run.id });
   expect(got.output).toMatchObject({ type: "table", total: 25000, paged: true });
@@ -374,8 +366,8 @@ test("D8/D7: a result of 25,000 rows does not go through the plugin's memory: al
 test("D4: the Sent SQL tab of a run renders from the run (checked through the protocol)", async ({ page }) => {
   await openKernel(page, host);
   const sql = "SELECT :a AS a";
-  const rid = await create(page, SQLK, { name: "Sent", "body.sql": sql, "body.source": ids.shop });
-  const run = await runSaved(page, rid, sql, ids.shop, { a: "x'y" });
+  const rid = await create(page, SQLK, { name: "Sent", "body.sql": sql, "body.source": ids.shop! });
+  const run = await runSaved(page, rid, sql, ids.shop!, { a: "x'y" });
   expect(run.status).toBe("success");
   const view = await call<{ nodes?: { text?: string }[] } | { text?: string }[]>(page, "run.render", { id: run.id, tabId: "sent", locale: "en-US" });
   expect(JSON.stringify(view)).toContain("SELECT 'x''y' AS a");
@@ -414,7 +406,7 @@ test("F5: the data source of a statement: its own, else the environment's, else 
   expect(await db()).toMatch(/error.*No data source/s);
   await call(page, "params.set", { node: cfg, name: "datasource.default", value: ids.other, type: "ref" });
   expect(await db()).toBe(DB2); // the workspace default
-  await call(page, "params.set", { node: envId, name: "datasource", value: ids.shop, type: "ref" });
+  await call(page, "params.set", { node: envId, name: "datasource", value: ids.shop!, type: "ref" });
   expect(await db()).toBe(DB1); // the environment beats the default
   expect(await db(ids.other)).toBe(DB2); // the statement's own beats both
   await call(page, "params.unset", { node: envId, name: "datasource" });
