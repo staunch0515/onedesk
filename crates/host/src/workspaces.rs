@@ -10,26 +10,10 @@ use crate::data_dir::workspace_path;
 
 pub const INFO_FILE: &str = "workspace.json";
 pub const DB_FILE: &str = "workspace.db";
-/// Written by the main process into a new folder; the kernel applies it once when it opens the empty database (D400).
-pub const INIT_SETTINGS_FILE: &str = "init-settings.json";
+pub use onedesk_protocol::INIT_SETTINGS_FILE;
 pub const MAX_NAME_CHARS: usize = 100;
 
-/// What `app.workspaces` returns for each workspace.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct WorkspaceEntry {
-    pub id: String,
-    pub name: String,
-    pub folder: String,
-    /// True while `id` is `pending:<folder>`: no `workspace.json` yet. Such a workspace can be switched to, not deleted or renamed.
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub id_pending: bool,
-    /// Milliseconds since the epoch; absent for a workspace that was never opened.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub last_opened: Option<i64>,
-    /// The one the asking connection is using.
-    pub current: bool,
-}
+pub use onedesk_protocol::WorkspaceEntry;
 
 /// The same file the kernel writes (`WorkspaceFile` in `onedesk-kernel`): the main process reads it without a database.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -152,7 +136,6 @@ pub fn pending_id(folder: &str) -> String {
 pub fn entry(folder: &str, info: &InfoFile, current: bool) -> WorkspaceEntry {
     WorkspaceEntry {
         id: if info.id.is_empty() { pending_id(folder) } else { info.id.clone() },
-        id_pending: info.id.is_empty(),
         name: info.name.clone(),
         folder: folder.to_string(),
         last_opened: (info.last_opened_at > 0).then_some(info.last_opened_at),
@@ -217,7 +200,7 @@ mod tests {
         let found = scan(tmp.path());
         assert_eq!(found.len(), 1);
         let e = entry(&found[0].0, &found[0].1, false);
-        assert_eq!((e.name.as_str(), e.id.as_str(), e.id_pending), ("old-one", "pending:old-one", true));
+        assert_eq!((e.name.as_str(), e.id.as_str()), ("old-one", "pending:old-one"));
         assert!(!dir.join(INFO_FILE).exists());
         // A corrupt file counts the same.
         std::fs::write(dir.join(INFO_FILE), b"{ nope").unwrap();

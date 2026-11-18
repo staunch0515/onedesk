@@ -55,7 +55,7 @@ async fn main() {
                 }
                 "workspace.settingsSnapshot" => {
                     // The settings the kernel would hand over; the folder name shows which workspace answered.
-                    ok(json!({ "from": std::path::Path::new(&workspace).file_name().map(|n| n.to_string_lossy().into_owned()) }));
+                    ok(json!({ "from": std::path::Path::new(&workspace).file_name().map(|n| n.to_string_lossy().into_owned()), "client": req["client"] }));
                 }
                 "echo" => {
                     ok(params);

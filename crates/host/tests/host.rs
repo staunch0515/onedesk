@@ -457,7 +457,7 @@ async fn create_makes_a_folder_with_the_current_settings_and_does_not_switch() {
     let info: Value = serde_json::from_slice(&std::fs::read(dir.join("workspace.json")).unwrap()).unwrap();
     assert_eq!((info["id"].clone(), info["name"].clone()), (made["id"].clone(), json!("Team Notes")));
     let init: Value = serde_json::from_slice(&std::fs::read(dir.join("init-settings.json")).unwrap()).unwrap();
-    assert_eq!(init, json!({ "from": "default" }), "the snapshot came from the workspace the client uses");
+    assert_eq!(init, json!({ "from": "default", "client": null }), "from the workspace the client uses, asked as the main process (no client)");
     assert_eq!(host.running_workspaces(), ["default"], "no worker was started for it");
     // The same name again gets another folder.
     let again = host.request(Some("w"), "app.createWorkspace", json!({ "name": "Team Notes" })).await.unwrap();
@@ -720,7 +720,7 @@ async fn a_folder_without_workspace_json_is_listed_switchable_and_not_deletable_
     std::fs::write(dir.join("workspace.db"), b"x").unwrap();
     let items = list(&host, "w").await;
     let pending = items.iter().find(|i| i["folder"] == "copied-in").expect("listed");
-    assert_eq!((pending["name"].clone(), pending["id"].clone(), pending["idPending"].clone()), (json!("copied-in"), json!("pending:copied-in"), json!(true)));
+    assert_eq!((pending["name"].clone(), pending["id"].clone()), (json!("copied-in"), json!("pending:copied-in")));
     assert!(!dir.join("workspace.json").exists(), "the main process writes nothing for it");
     for method in ["app.deleteWorkspace", "app.renameWorkspace"] {
         let e = host.request(Some("w"), method, json!({ "id": "pending:copied-in", "name": "x" })).await.unwrap_err();

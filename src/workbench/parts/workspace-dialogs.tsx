@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Badge, Button, Dialog, FormField, IconButton, Input, Table, type TableColumn } from "../../design";
 import { useI18n } from "../i18n";
-import type { WorkspaceEntry } from "../protocol";
+import { isPendingWorkspace, type WorkspaceEntry } from "../protocol";
 import { useQuery, useWorkbench } from "../state/context";
 
 /** What the workspace menu opened (D400). */
@@ -124,8 +124,8 @@ export function WorkspaceDialogs({ dialog, setDialog }: { dialog: WorkspaceDialo
       render: (w) => (
         <>
           <IconButton icon="app-window" label={t("workspace.openWindowAction", { name: w.name })} onClick={() => void client.workspace.openWindow(w.id).catch(actions.fail)} />
-          <IconButton icon="pencil" label={t("workspace.renameAction", { name: w.name })} disabled={w.idPending} onClick={() => setDialog({ kind: "rename", entry: w })} />
-          <IconButton icon="trash-2" label={t("workspace.deleteAction", { name: w.name })} disabled={w.current || w.idPending} onClick={() => setDialog({ kind: "delete", entry: w })} />
+          <IconButton icon="pencil" label={t("workspace.renameAction", { name: w.name })} disabled={isPendingWorkspace(w)} onClick={() => setDialog({ kind: "rename", entry: w })} />
+          <IconButton icon="trash-2" label={t("workspace.deleteAction", { name: w.name })} disabled={w.current || isPendingWorkspace(w)} onClick={() => setDialog({ kind: "delete", entry: w })} />
         </>
       ),
     },
