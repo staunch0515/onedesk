@@ -92,6 +92,29 @@ describe("result export", () => {
     expect(exportFn.mock.calls[1]?.[1]).toMatch(/^\/tmp\/out\/r-\d{6}\.csv$/);
   });
 
+  it("asks for a folder again when the remembered one is gone, and adds a counter when the name is taken", async () => {
+    const calls: string[] = [];
+    const exportFn = vi.fn(async (_id: string, path: string) => {
+      calls.push(path);
+      if (path.startsWith("/gone/")) throw new KernelError("invalid", { reason: "noParent" });
+      if (calls.filter((c) => c.startsWith("/new/")).length === 1) throw new KernelError("conflict", { reason: "exists" });
+      return { path, rows: 1 };
+    });
+    const pickFolder = vi.fn(async () => "/new");
+    const base = createMockClient({ fresh: true, quiet: true });
+    const client = kernelLikeClient(base, { run: { ...base.run, export: exportFn }, platform: { pickFolder } });
+    await client.ui.set("export.dir", "/gone");
+    const { store } = renderInShell(client, <TransferDialogs />);
+    const done = vi.fn();
+    await act(async () => startRunExport(client, store, { fail: () => undefined }, "run1", "r.csv", done));
+    expect(pickFolder).toHaveBeenCalledTimes(1);
+    expect(calls[0]).toMatch(/^\/gone\//);
+    expect(calls[1]).toMatch(/^\/new\/r-\d{6}\.csv$/);
+    expect(calls[2]).toMatch(/^\/new\/r-\d{6}-2\.csv$/);
+    expect(done).toHaveBeenCalledWith(1, calls[2]);
+    expect(await client.ui.get("export.dir")).toBe("/new");
+  });
+
   it("says why a refused export was refused", async () => {
     const base = createMockClient({ fresh: true, quiet: true });
     const client = kernelLikeClient(base, { run: { ...base.run, export: async () => { throw new KernelError("denied", { reason: "noExport", layer: "c1" }); } }, platform: { pickSaveFile: async () => "/tmp/r.csv" } });

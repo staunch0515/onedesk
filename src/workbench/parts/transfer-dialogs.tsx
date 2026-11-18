@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Badge, Banner, Button, Dialog, FormField, Input, Pane, Text, useToast } from "../../design";
 import { useI18n } from "../i18n";
 import type { ProtocolClient } from "../protocol";
+import { kernelErrorCode } from "../protocol/errors";
 import type { Actions } from "../state/context";
 import { useQuery, useUi, useWorkbench } from "../state/context";
 import type { Store } from "../state/store";
@@ -41,25 +42,52 @@ export async function previewFolder(client: ProtocolClient, store: Store, folder
 export async function startRunExport(client: ProtocolClient, store: Store, actions: Fail, run: string, suggested: string, done: (rows: number, path: string) => void): Promise<void> {
   try {
     // The first export asks where; the folder is remembered (per client) and later exports go straight there under a fresh name.
-    const remembered = await client.ui.get<string>(EXPORT_DIR_KEY).catch(() => null);
-    let path: string | null = null;
-    if (remembered) {
-      path = `${remembered.replace(/\/+$/, "")}/${uniqueName(suggested)}`;
-    } else if (client.platform?.pickFolder) {
-      const folder = await client.platform.pickFolder();
-      if (folder) path = `${folder.replace(/\/+$/, "")}/${uniqueName(suggested)}`;
-    } else if (client.platform?.pickSaveFile) {
-      path = await client.platform.pickSaveFile(suggested);
-    } else {
-      return void store.set({ exportCsv: { run } });
-    }
-    if (path) {
-      const result = await client.run.export(run, path);
-      await client.ui.set(EXPORT_DIR_KEY, path.slice(0, path.lastIndexOf("/")) || "/").catch(() => undefined);
-      done(result.rows, result.path);
+    // A remembered folder that is gone (the kernel answers `noParent`) is forgotten and asked for again, once.
+    let remembered = await client.ui.get<string>(EXPORT_DIR_KEY).catch(() => null);
+    for (let attempt = 0; attempt < 2; attempt++) {
+      let folder: string | null = null;
+      let fixed: string | null = null;
+      if (remembered) {
+        folder = remembered;
+      } else if (client.platform?.pickFolder) {
+        folder = await client.platform.pickFolder();
+        if (!folder) return;
+      } else if (client.platform?.pickSaveFile) {
+        fixed = await client.platform.pickSaveFile(suggested);
+        if (!fixed) return;
+      } else {
+        return void store.set({ exportCsv: { run } });
+      }
+      try {
+        const result = await exportNamed(client, run, folder, fixed, suggested);
+        await client.ui.set(EXPORT_DIR_KEY, folder ?? (fixed!.slice(0, fixed!.lastIndexOf("/")) || "/")).catch(() => undefined);
+        done(result.rows, result.path);
+        return;
+      } catch (error) {
+        if (remembered && attempt === 0 && kernelErrorCode(error)?.params.reason === "noParent") {
+          remembered = null;
+          await client.ui.set(EXPORT_DIR_KEY, null).catch(() => undefined);
+          continue;
+        }
+        throw error;
+      }
     }
   } catch (error) {
     actions.fail(error);
+  }
+}
+
+/** Exports into `folder` under a fresh name (a counter is added when the name is taken, as in two exports within one second), or to the exact path picked. */
+async function exportNamed(client: ProtocolClient, run: string, folder: string | null, fixed: string | null, suggested: string) {
+  if (fixed) return client.run.export(run, fixed);
+  const base = uniqueName(suggested);
+  for (let n = 1; ; n++) {
+    const name = n === 1 ? base : base.replace(/(\.[^.]*)?$/, `-${n}$1`);
+    try {
+      return await client.run.export(run, `${folder!.replace(/\/+$/, "")}/${name}`);
+    } catch (error) {
+      if (n >= 50 || kernelErrorCode(error)?.params.reason !== "exists") throw error;
+    }
   }
 }
 
