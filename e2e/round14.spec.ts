@@ -47,7 +47,6 @@ type Saved = { page: { resourceId: string } };
 const create = async (page: Page, kind: string, changes: Record<string, unknown>) => (await call<Saved>(page, "page.save", { target: `new:${kind}`, changes })).page.resourceId;
 type Res = { id: string; name: string; deleted: boolean; tags?: string[]; body: Record<string, unknown> };
 const getRes = (page: Page, id: string) => call<Res>(page, "resource.get", { id });
-type Hit = { title: string; id?: string };
 
 const sideTab = (page: Page, name: string) => page.getByRole("navigation", { name: "Views" }).getByRole("button", { name, exact: true });
 const showTree = async (page: Page, name: string) => {
@@ -218,7 +217,7 @@ async function lowContrast(page: Page): Promise<Low[]> {
     const bgOf = (el: Element): number[] => {
       const chain: number[][] = [];
       for (let e: Element | null = el; e; e = e.parentElement) chain.push(parse(getComputedStyle(e).backgroundColor));
-      let acc = parse(getComputedStyle(document.body).backgroundColor);
+      let acc: number[] = parse(getComputedStyle(document.body).backgroundColor);
       if (acc[3]! < 1) acc = [255, 255, 255, 1];
       for (const c of chain.reverse()) if (c[3]! > 0) acc = over(c, acc);
       return acc;
