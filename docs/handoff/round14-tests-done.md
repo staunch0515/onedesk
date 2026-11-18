@@ -47,3 +47,16 @@
 ## 全套 e2e
 
 `cargo build -p onedesk-worker -p onedesk-host` 后 `E2E_PORT=1473 pnpm exec playwright test`：**237 条全部通过**（24.5 分钟）。跑完用 `git checkout -- docs/screenshots` 还原了基准截图。`pnpm test:rust`、`pnpm clippy`、完整 `pnpm check` 我没有跑（不在本阶段范围，D6 的实际运行归它们）。
+
+## 审查后的修改（round14-review #4–#7，D411）
+
+- **#4** D6：改成按主题列出 19 个具体 Rust 测试名，逐个断言在 `crates/kernel` 里存在；注明只查存在，执行与通过归 `pnpm test:rust`。
+- **#5** 对比度扫描按 D411：正文 4.5:1，大字（≥24px，或 ≥18.66px 粗体）与禁用态 3:1；文字色乘上元素及所有祖先的 `opacity`；`input`/`textarea` 的值与占位文字也扫（代码编辑器那种叠在高亮层上的透明 textarea 跳过，高亮层本身按文字扫）。扫描结果写到 `test-results/round14-contrast-{light,dark}.txt`；浅色、深色各一条 `D5 … contrast meets D411` 用例，有问题时 `test.fixme`，问题清零后自动变成真检查。
+  **扫出的问题（共 1 类，14 处，两套主题 × 7 页）：禁用的“保存”按钮标签 `span.od-button__label`**
+  - 浅色：文字 `rgb(162,168,177)`，背景 `rgb(243,244,246)`，**2.18:1**（需 3:1）
+  - 深色：文字 `rgb(94,99,108)`，背景 `rgb(33,35,40)`，**2.6:1**（需 3:1）
+  - 出现在：link、prompt、composite、tree-note（笔记）、collection、http、sample 页（凡有未改动的保存按钮的页面）。需要外壳改禁用态文字的 token 到 ≥3:1。
+  其余文字（含输入框的值和占位文字、灰色辅助字）全部达 4.5:1。
+- **#6** `ONEDESK_E2E_REQUIRE_DEVHOST=1` 时缺 devhost 直接失败，否则仍跳过。
+- **#7** D3 断言该资源在树里的状态是 `disabled`；D5 去掉吞错误的 `.catch(() => undefined)`（那一行本来是多余的点击）。
+- 验证：`pnpm typecheck` 通过；`round14.spec.ts` 里 D1–D4、D5 setup、D5 两套截图、D6 通过，两条 D411 用例为 fixme（上面的 14 处）。**没有**重跑全套 e2e。
