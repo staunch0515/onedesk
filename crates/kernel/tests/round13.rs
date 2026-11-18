@@ -53,6 +53,10 @@ async fn the_settings_snapshot_answers_only_the_main_process() {
     let c = Client::in_proc(env.kernel.clone());
     c.hello().await;
     c.ok("workspace.setConfig", json!({ "name": "ui.theme", "value": "dark" })).await;
+    // Review #8: a secret parameter (a secret's name) is not copied.
+    c.ok("secrets.set", json!({ "name": "api-key", "value": "s3cr3t" })).await;
+    let root = c.ok("tree.children", json!({ "tree": "config" })).await["nodes"][0]["key"].as_str().unwrap().to_string();
+    c.ok("params.set", json!({ "node": root, "name": "x.token", "value": "api-key", "type": "secret" })).await;
     set_enabled(&c, "t.two", false).await;
     let refused = c.call_as(Some("window-1"), "workspace.settingsSnapshot", json!({})).await.unwrap_err();
     assert_eq!(serde_json::to_value(refused.code).unwrap(), "denied");
@@ -74,7 +78,8 @@ async fn init_settings_are_applied_once_to_a_new_workspace_and_the_file_is_delet
     let snap = json!({
         "config": [{ "name": "Team", "description": "copied", "params": [
             { "name": "ui.theme", "type": "text", "value": "light" },
-            { "name": "x.ref", "type": "ref", "value": "someone-elses-id" }
+            { "name": "x.ref", "type": "ref", "value": "someone-elses-id" },
+            { "name": "x.token", "type": "secret", "value": "api-key" }
         ], "children": [{ "name": "Child", "params": [{ "name": "ui.language", "type": "text", "value": "ja-JP" }] }] }],
         "plugins": [{ "plugin": "t.one", "enabled": false }]
     });
@@ -86,6 +91,7 @@ async fn init_settings_are_applied_once_to_a_new_workspace_and_the_file_is_delet
     assert_eq!(c.ok("workspace.getConfig", json!({ "name": "ui.theme" })).await, json!("light"));
     assert_eq!(c.ok("workspace.getConfig", json!({ "name": "ui.language" })).await, json!("ja-JP"));
     assert_eq!(c.ok("workspace.getConfig", json!({ "name": "x.ref" })).await, Value::Null, "references are not copied");
+    assert_eq!(c.ok("workspace.getConfig", json!({ "name": "x.token" })).await, Value::Null, "secret parameters are not copied");
     assert_eq!(c.ok("plugin.get", json!({ "plugin": "t.one" })).await["enabled"], json!(false));
     let conn = db(&env);
     let roots: Vec<String> = {
