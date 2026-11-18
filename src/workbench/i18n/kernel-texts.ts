@@ -183,6 +183,7 @@ export const KERNEL_ERRORS: Table = {
   "reason.readonly": "kernel.error.reason.readonly",
   "reason.noExport": "kernel.error.reason.noExport",
   "reason.callDepth": "kernel.error.reason.callDepth",
+  "reason.notOwnResource": "kernel.error.reason.notOwnResource",
   "reason.calleeFailed": "kernel.error.reason.calleeFailed",
   "reason.readonly|layerName": "kernel.error.reason.readonly|layerName",
   "reason.noExport|layerName": "kernel.error.reason.noExport|layerName",
@@ -350,6 +351,7 @@ export const RUN_ERRORS_NAMED: Table = {
   "reason.secretNotAllowed|name": "kernel.runNamed.reason.secretNotAllowed|name",
   "reason.unknownSecret|name": "kernel.runNamed.reason.unknownSecret|name",
   "reason.notExported|export": "kernel.runNamed.reason.notExported|export",
+  "reason.notExported|action": "kernel.runNamed.reason.notExported|action",
 };
 
 /** Title and confirm-button words for the kernel's `confirm` effects, by message key. */

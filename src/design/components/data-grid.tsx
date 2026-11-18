@@ -1,4 +1,4 @@
-import { useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { cx } from "./cx";
 import { Icon } from "./icon";
 import { beginPointerDrag, setDragCursor } from "./pointer-drag";
@@ -55,9 +55,13 @@ export interface DataGridProps<Row> {
   framed?: boolean;
   /** Grow with the rows instead of filling (and scrolling inside) the parent. */
   autoHeight?: boolean;
+  /** Called when the visible rows come near the end of `rows`: the owner appends the next page (a result read piece by piece). */
+  onNeedMore?: () => void;
   className?: string;
 }
 
+/** Rows before the end of the loaded ones at which `onNeedMore` fires. */
+const NEAR_END = 100;
 const DEFAULT_WIDTH = 160;
 const MIN_WIDTH = 56;
 const MAX_WIDTH = 1200;
@@ -109,6 +113,7 @@ export function DataGrid<Row>({
   empty,
   framed,
   autoHeight,
+  onNeedMore,
   className,
 }: DataGridProps<Row>) {
   const [sort, setSort] = useState<DataGridSort>(defaultSort);
@@ -180,6 +185,11 @@ export function DataGrid<Row>({
     rowHeight: measured.row > 0 ? measured.row : undefined,
     header: measured.header,
   });
+  // Near the end of what is loaded: the owner reads the next piece (cached by the owner; it ignores calls while one is on its way).
+  const needMore = onNeedMore !== undefined && win.end >= sorted.length - NEAR_END;
+  useEffect(() => {
+    if (needMore) onNeedMore();
+  }, [needMore, sorted.length, onNeedMore]);
   const windowed = !autoHeight && win.end - win.start < sorted.length;
   const first = windowed ? win.start : 0;
   const shown = windowed ? sorted.slice(win.start, win.end) : sorted;
