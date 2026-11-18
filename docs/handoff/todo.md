@@ -156,7 +156,7 @@
 
 ## 第十五轮内核留下的（2026-11-19）
 
-- 表单字段没有“资源引用”类型（设计 9.3）；要做需 `FieldKind` 加值（协议），外壳的 `Record<FieldKind,…>` 同时改。
 - `files.*` 宿主接口未开放插件自己的目录（`transfer` 与输出文件已开放）。
-- 超过 10,000 行的结果在界面里翻看：需要 `run.rows` 分页读 `run-files/`（导出已能导出全部行）。
+- `host.actions.call` 的被调方看不到调用方的页面参数。
+- 安装确认里系统程序的 `searchPaths` 没有列给用户看（只列程序名）。
 - `scripts/check-arch.mjs` 的内核禁用词须排除迁移文件名（`include_str!` 行）与 `rusqlite`/`SQLITE_*`。
