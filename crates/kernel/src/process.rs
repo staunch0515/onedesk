@@ -315,7 +315,7 @@ pub fn search_candidates(paths: &[String], name: &str) -> Vec<PathBuf> {
                     .filter(|e| e.path().is_dir())
                     .map(|e| e.path())
                     .collect();
-                dirs.sort_by(|a, b| natural(b).cmp(&natural(a)));
+                dirs.sort_by_key(|d| std::cmp::Reverse(natural(d)));
                 out.extend(dirs.into_iter().map(|d| d.join(tail.trim_start_matches('/')).join(name)));
             }
             _ => out.push(Path::new(p).join(name)),
@@ -922,7 +922,7 @@ mod search_tests {
         exe(root.join("9/bin/tool"));
         std::fs::write(root.join("16/bin/tool"), "not executable").unwrap();
         let star = format!("{}/*/bin", root.display());
-        let c = search_candidates(&[star.clone()], "tool");
+        let c = search_candidates(std::slice::from_ref(&star), "tool");
         assert_eq!(c[0], root.join("16/bin/tool"));
         assert_eq!(c[1], root.join("15/bin/tool"));
         assert_eq!(c[2], root.join("9/bin/tool"));
