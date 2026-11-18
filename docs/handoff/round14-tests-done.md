@@ -60,3 +60,8 @@
 - **#6** `ONEDESK_E2E_REQUIRE_DEVHOST=1` 时缺 devhost 直接失败，否则仍跳过。
 - **#7** D3 断言该资源在树里的状态是 `disabled`；D5 去掉吞错误的 `.catch(() => undefined)`（那一行本来是多余的点击）。
 - 验证：`pnpm typecheck` 通过；`round14.spec.ts` 里 D1–D4、D5 setup、D5 两套截图、D6 通过，两条 D411 用例为 fixme（上面的 14 处）。**没有**重跑全套 e2e。
+
+## 第二阶段与合并后的全套 e2e
+
+- 合并协调分支（外壳 c1e654a 之后）；补了 8 个键的中日译文（`kernel.label.ui.theme/ui.density/network.allow/process.allow/protection.readonly/protection.no_export`、`kernel.error.reason.readonly|layerName`、`kernel.error.reason.noExport|layerName`）；`vitest run plugins src/workbench/i18n` 22 文件 342 条通过（含语言一致性检查）。
+- 全套 e2e（`ONEDESK_E2E_REQUIRE_DEVHOST=1`）：233 通过、3 跳过、**4 失败**，全在 `e2e/workbench.spec.ts`（假数据模式）：`screenshots light/dark › plugin page`、`tabs: pin, reorder…`、`plugin: disabling greys…`。单独重跑该文件，同样 4 条失败，不是负载问题。原因：它们 `tab(page,"SQL")` 找不到，页面快照里那个插件页标签的标题变成了 “…”（其余标签正常）。第一阶段合并前全套 237 条通过，所以是外壳在第十四轮的改动（审查 #1：切换语言后给后台标签改名/`tab-fields.ts`，假数据模式下插件页标签的标题被改成 “…”）引起的回归。属外壳文件，我没改。
