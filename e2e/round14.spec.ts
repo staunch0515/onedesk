@@ -15,7 +15,7 @@ import { startServer } from "./fixtures/transfer-server.mjs";
 
 test.use({ viewport: { width: 1280, height: 800 }, locale: "en-US" });
 test.describe.configure({ mode: "serial" });
-test.setTimeout(180_000);
+test.setTimeout(120_000);
 
 const NOTE = "org.onedesk.note:note";
 const LINK = "org.onedesk.link:link";
@@ -188,6 +188,171 @@ test("D4: search finds resources by name, tag and body; Cmd/Ctrl+K searches and 
   await page.getByRole("option", { name: /Theme: light/ }).first().click();
   await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
 });
+
+/* ------------------------------------------------------------------ D5: light and dark, main pages */
+
+type Low = { text: string; ratio: number; fg: string; bg: string };
+/** Contrast of every visible text node against its effective background (alpha blended up the ancestors). Below 3:1 is reported. */
+async function lowContrast(page: Page): Promise<Low[]> {
+  return page.evaluate(() => {
+    const parse = (c: string): [number, number, number, number] => {
+      const m = /rgba?\(([^)]+)\)/.exec(c);
+      if (!m) {
+        const cv = document.createElement("canvas").getContext("2d")!;
+        cv.fillStyle = c;
+        cv.fillRect(0, 0, 1, 1);
+        const d = cv.getImageData(0, 0, 1, 1).data;
+        return [d[0]!, d[1]!, d[2]!, d[3]! / 255];
+      }
+      const p = m[1]!.split(/[ ,/]+/).filter(Boolean).map(Number);
+      return [p[0]!, p[1]!, p[2]!, p[3] ?? 1];
+    };
+    const over = (top: number[], bot: number[]) => {
+      const a = top[3]! + bot[3]! * (1 - top[3]!);
+      return [0, 1, 2].map((i) => (top[i]! * top[3]! + bot[i]! * bot[3]! * (1 - top[3]!)) / (a || 1)).concat([a]);
+    };
+    const lum = (c: number[]) => {
+      const f = (v: number) => ((v /= 255) <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4);
+      return 0.2126 * f(c[0]!) + 0.7152 * f(c[1]!) + 0.0722 * f(c[2]!);
+    };
+    const bgOf = (el: Element): number[] => {
+      const chain: number[][] = [];
+      for (let e: Element | null = el; e; e = e.parentElement) chain.push(parse(getComputedStyle(e).backgroundColor));
+      let acc = parse(getComputedStyle(document.body).backgroundColor);
+      if (acc[3]! < 1) acc = [255, 255, 255, 1];
+      for (const c of chain.reverse()) if (c[3]! > 0) acc = over(c, acc);
+      return acc;
+    };
+    const seen: Low[] = [];
+    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+    for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+      const text = (n.textContent ?? "").trim();
+      const el = n.parentElement;
+      if (!text || !el || ["SCRIPT", "STYLE", "TEXTAREA"].includes(el.tagName)) continue;
+      const r = el.getBoundingClientRect();
+      const st = getComputedStyle(el);
+      if (r.width < 2 || r.height < 2 || st.visibility === "hidden" || st.display === "none" || Number(st.opacity) === 0) continue;
+      if (r.bottom < 0 || r.right < 0 || r.top > innerHeight || r.left > innerWidth) continue;
+      if (el.closest("[disabled],[aria-disabled=true]")) continue;
+      const fg = parse(st.color);
+      const bg = bgOf(el);
+      const f = over(fg, bg);
+      const l1 = lum(f);
+      const l2 = lum(bg);
+      const ratio = (Math.max(l1, l2) + 0.05) / (Math.min(l1, l2) + 0.05);
+      if (ratio < 3) seen.push({ text: text.slice(0, 40), ratio: Math.round(ratio * 100) / 100, fg: st.color, bg: `rgb(${bg.slice(0, 3).map(Math.round)})` });
+    }
+    return seen;
+  });
+}
+
+const seeded: Record<string, string> = {};
+
+test("D5 setup: one of every type, with something to look at", async ({ page }) => {
+  await bare(page);
+  await call(page, "params.set", { node: await configNode(page), name: "network.allow", value: `127.0.0.1:${srv.port}` });
+  seeded.request = await create(page, REQUEST, { name: "Echo request", "body.method": "POST", "body.url": `${srv.url}/echo`, "body.query": "q=1", "body.headers": "X-Test: yes", "body.body": '{"a":1}' });
+  const note = await create(page, NOTE, { name: "Weekly plan", "body.text": "# Weekly plan\n\n- **Ship** the report\n- Review [[Docs link]]\n\n> Remember the demo on Friday.\n\n`code` and a [link](https://example.com).", tags: ["work", "plan"] });
+  await create(page, LINK, { name: "Docs link", "body.url": "https://example.com/docs", tags: ["work"] });
+  await create(page, PROMPT, { name: "Meeting summary", "body.text": "Summarise the meeting in three bullets for {{team}}." });
+  seeded.note = note;
+  seeded.composite = await create(page, COMPOSITE, { name: "Friday bundle" });
+  await call(page, "tree.move", { tree: "resources", key: note, target: seeded.composite, position: "inside", locale: "en-US" });
+  await create(page, COLLECTION, { name: "Everything for work", "body.tags": "work" });
+  await call(page, "params.set", { node: (await roots(page, "env"))[0]!.key, name: "team", value: "design" });
+  await call(page, "plugin.grantFolder", { plugin: "org.onedesk.market", path: path.join(ROOT, "e2e/fixtures/market") });
+  await create(page, "org.onedesk.sample:query", { name: "Sample query" });
+});
+
+for (const theme of ["light", "dark"] as const) {
+  test(`D5 ${theme}: the main pages, photographed and scanned for low contrast`, async ({ page }) => {
+    const problems: string[] = [];
+    const snap = async (name: string) => {
+      await page.mouse.move(640, 2);
+      await page.waitForTimeout(500);
+      await page.screenshot({ path: path.join(OUT, `round14-${theme}-${name}.png`) });
+      const low = await lowContrast(page);
+      for (const l of low) problems.push(`${name}: "${l.text}" ${l.ratio}:1 (${l.fg} on ${l.bg})`);
+    };
+    const open = (n: string | RegExp) => treeItem(page, n).first().click();
+
+    await openKernel(page, host, theme);
+    await expect(page.getByRole("heading", { name: "Welcome to OneDesk" })).toBeVisible({ timeout: 20_000 });
+    await snap("welcome");
+
+    await showTree(page, "Resources");
+    await open(/^Docs link/);
+    await expect(page.getByRole("textbox", { name: "Address", exact: true })).toBeVisible();
+    await snap("link");
+    await open(/^Meeting summary/);
+    await expect(page.getByRole("textbox", { name: "Prompt", exact: true })).toBeVisible();
+    await snap("prompt");
+    await open(/^Friday bundle/);
+    await page.keyboard.press("ArrowRight");
+    await expect(treeItem(page, /^Weekly plan/).first()).toBeVisible();
+    await snap("composite");
+    await open(/^Weekly plan/);
+    await expect(page.getByRole("textbox", { name: "Content", exact: true })).toBeVisible();
+    await snap("tree-note");
+    await open(/^Everything for work/);
+    await expect(page.getByRole("tab", { name: /^Everything for work/, selected: true })).toBeVisible();
+    await page.waitForTimeout(500);
+    await snap("collection");
+
+    await page.locator(`[data-tree-key="${seeded.request}"]`).click();
+    await expect(page.getByRole("button", { name: "Send", exact: true }).first()).toBeVisible({ timeout: 15_000 });
+    await page.getByRole("button", { name: "Send", exact: true }).first().click();
+    await expect(page.getByText(/200 OK · \d+ ms/).first()).toBeVisible({ timeout: 30_000 });
+    await snap("http");
+
+    await open(/^Sample query/);
+    await page.waitForTimeout(800);
+    await snap("sample");
+
+    await showTree(page, "Plugin market");
+    await page.locator("[data-tree-key]", { hasText: "Local packages" }).first().dblclick();
+    await expect(page.getByRole("combobox", { name: "Package to install" })).toBeVisible({ timeout: 20_000 });
+    await page.waitForTimeout(500);
+    await snap("market");
+    await showTree(page, "Files");
+    await page.waitForTimeout(500);
+    await snap("files");
+
+    await showTree(page, "Environments");
+    await open(/^Default/);
+    await expect(page.getByRole("textbox", { name: "team", exact: true })).toBeVisible();
+    await snap("environment");
+
+    await showTree(page, "Settings");
+    await open(/^Workspace/);
+    await expect(page.getByRole("button", { name: "Add parameter" })).toBeVisible();
+    await snap("workspace-config");
+
+    await showTree(page, "Plugins");
+    await open(/^HTTP request/);
+    await expect(page.getByRole("tab", { name: /HTTP request/, selected: true })).toBeVisible();
+    await snap("plugin");
+
+    await settingsMenu(page).click();
+    await expect(page.getByRole("menuitem").first()).toBeVisible();
+    await snap("settings");
+    await page.keyboard.press("Escape");
+
+    await page.keyboard.press("ControlOrMeta+Shift+p");
+    await expect(page.getByPlaceholder("Type a command")).toBeFocused();
+    await snap("palette");
+    await page.keyboard.press("Escape");
+
+    await page.getByRole("button", { name: /Workspaces?$/ }).first().click().catch(() => undefined);
+    const wsButton = page.locator('button[aria-haspopup="menu"]').filter({ hasText: /\S/ }).first();
+    await wsButton.click();
+    await page.getByRole("menuitem", { name: "Manage workspaces…" }).click();
+    await expect(page.getByRole("dialog")).toBeVisible();
+    await snap("workspaces");
+
+    expect(problems, `text below 3:1 contrast in ${theme}`).toEqual([]);
+  });
+}
 
 /* ------------------------------------------------------------------ D6: kernel tests cover CRUD, plugin loading/manifest, actions */
 
