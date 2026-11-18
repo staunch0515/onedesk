@@ -244,8 +244,6 @@ pub enum Command {
     SyncRefDecls,
     /// Round 12 (D394): one drop's writes — `Update`s and `Audit` rows only — in one transaction.
     Batch(Vec<Command>),
-    /// Round 13 (D399): first-version resources taken over by a plugin version, all or none.
-    LegacyClaim { plugin: String, version: String, items: Vec<crate::legacy::ClaimItem> },
     /// Round 13 (D400): a new workspace's `init-settings.json`.
     InitSettings(Box<onedesk_protocol::WorkspaceSettingsSnapshot>),
 }
@@ -480,7 +478,6 @@ impl Writer {
                 Command::Purge { id } => cx.purge(&id)?,
                 Command::Meta { id, favorite, touch } => cx.meta(&id, favorite, touch)?,
                 Command::Startup => cx.startup()?,
-                Command::LegacyClaim { plugin, version, items } => cx.legacy_claim(&plugin, &version, items)?,
                 Command::InitSettings(s) => cx.init_settings(&s)?,
                 Command::RunInsert(r) => cx.run_insert(*r)?,
                 Command::RunProgress { id, progress } => {
@@ -614,8 +611,7 @@ fn describe(cmd: &Command) -> (String, String) {
         Command::Purge { id } => ("resource.purge".into(), id.clone()),
         Command::Meta { id, .. } => ("resource.meta".into(), id.clone()),
         Command::Startup => ("workspace.startup".into(), String::new()),
-        Command::LegacyClaim { plugin, .. } => (crate::legacy::AUDIT_CLAIM.into(), plugin.clone()),
-        Command::InitSettings(_) => (crate::legacy::AUDIT_INIT_SETTINGS.into(), String::new()),
+        Command::InitSettings(_) => (crate::workspace_settings::AUDIT_INIT_SETTINGS.into(), String::new()),
         Command::RunInsert(r) => ("run.start".into(), r.id.clone()),
         Command::RunProgress { id, .. } => ("run.progress".into(), id.clone()),
         Command::RunFinish { id, .. } => ("run.end".into(), id.clone()),

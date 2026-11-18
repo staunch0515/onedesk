@@ -42,7 +42,6 @@ export type * from "./InstallRequest";
 export type * from "./KnownParam";
 export type * from "./Label";
 export type * from "./LanguageInfo";
-export type * from "./LegacyClaimFailure";
 export type * from "./MenuCommand";
 export type * from "./NamedRef";
 export type * from "./NewItem";

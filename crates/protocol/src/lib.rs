@@ -129,12 +129,6 @@ pub enum ErrorCode {
     /// The worker died while the request was in flight (set by the main process).
     WorkerGone,
     Internal,
-    /// Round 13 (D398): the first-version database could not be converted; nothing was changed.
-    /// `params.table`: the first-version table that failed.
-    LegacyUpgradeFailed,
-    /// Round 13 (D398): the main process could not back up or move the first-version
-    /// `onedesk.db` into `workspaces/default/` (set by the main process).
-    LegacyMoveFailed,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -184,11 +178,6 @@ pub enum NodeState {
     /// D375: the node standing in for children a plugin failed to supply (error or timeout);
     /// `stateReason` holds the error code.
     LoadFailed,
-    /// Round 13 (D399): a first-version resource whose short kind (no `<plugin>:`) no plugin
-    /// claimed through `legacyKinds`. It can be deleted and moved, not opened. The wire name is
-    /// fixed by round13-plan.md §2 (not kebab-case like the others).
-    #[serde(rename = "unknownKind")]
-    UnknownKind,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -1586,16 +1575,6 @@ pub struct PluginDetail {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub runtime: Option<PluginRuntime>,
-    /// Round 11 (D383): the active version's manifest `legacyKinds` (first-version short kind
-    /// names; not taken over yet). Always present from the kernel.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub legacy_kinds: Option<Vec<String>>,
-    /// Round 13 (D399): the last claim of first-version resources that failed (the whole batch
-    /// was left unclaimed); cleared by the next successful claim.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub legacy_claim_failure: Option<LegacyClaimFailure>,
 }
 
 /// Round 9 (D365): `PluginDetail.runtime`.
@@ -2152,7 +2131,7 @@ pub struct I18nShellResult {
 }
 
 /* ================================================================== round 13 (D397–D401)
-   First-version database upgrade (claims through `legacyKinds`) and several workspaces. */
+   Several workspaces (D400, D401). The first-version database upgrade was dropped (D403). */
 
 /// Methods of round 13. `app.*` are the main process's own (never forwarded to a worker);
 /// `workspace.settingsSnapshot` is the kernel's and answers only the main process (a request
@@ -2279,23 +2258,6 @@ pub struct PluginEnabledState {
     pub enabled: bool,
 }
 
-/// `PluginDetail.legacyClaimFailure` (round 13, D399).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export)]
-pub struct LegacyClaimFailure {
-    /// The first-version short kind whose batch failed.
-    pub legacy_kind: String,
-    /// The resource whose `upgrade` failed, when one did.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub resource: Option<String>,
-    /// `upgradeFailed`, `badUpgrade`, `changedDuringClaim`, … (else the error's code).
-    pub reason: String,
-    /// Milliseconds since the epoch.
-    pub at: i64,
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2354,9 +2316,6 @@ mod tests {
 
     #[test]
     fn round13_wire_shapes() {
-        assert_eq!(serde_json::to_value(NodeState::UnknownKind).unwrap(), json!("unknownKind"));
-        assert_eq!(serde_json::to_value(ErrorCode::LegacyUpgradeFailed).unwrap(), json!("legacyUpgradeFailed"));
-        assert_eq!(serde_json::to_value(ErrorCode::LegacyMoveFailed).unwrap(), json!("legacyMoveFailed"));
         let e = WorkspaceEntry { id: "w".into(), name: "n".into(), folder: "f".into(), last_opened: None, current: true };
         assert_eq!(serde_json::to_value(e).unwrap(), json!({ "id": "w", "name": "n", "folder": "f", "current": true }));
         let s: WorkspaceSettingsSnapshot = serde_json::from_value(json!({})).unwrap();

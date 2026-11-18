@@ -194,8 +194,6 @@ impl Inner {
         if !with_deps.is_empty() {
             self.emit(topic::PLUGINS, None, None);
         }
-        // Round 13 (D399): a plugin that works now takes its first-version resources.
-        self.claim_legacy_all().await;
     }
 
     /* ---------------------------------------------------------------- exports (D342, D347) */

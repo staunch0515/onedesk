@@ -1,6 +1,6 @@
 //! Round 11 (docs/handoff/round11-plan.md §3–§4, §7): language plugins (`i18n.languages`,
 //! `i18n.shell`, the `languages` topic), `host.ui.openExternal`, `text.format`, startup pages and
-//! standalone `page:` targets, `legacyKinds`. Every plugin is generated into a temporary folder.
+//! standalone `page:` targets (`legacyKinds` was dropped in round 13, D403). Every plugin is generated into a temporary folder.
 
 mod common;
 
@@ -228,7 +228,6 @@ async fn a_bad_languages_declaration_keeps_the_package_out() {
 
 fn web_manifest() -> Value {
     json!({
-        "legacyKinds": ["link", "old-link"],
         "contributes": {
             "kinds": [{ "id": "x", "label": "X", "icon": "box", "tree": "resources", "page": "ed" }],
             "pages": [{ "id": "ed" }, { "id": "home", "startup": true, "actions": [{ "id": "go", "role": "run", "label": "Go", "action": "open" }] }],
@@ -382,23 +381,17 @@ async fn startup_pages_follow_enabling_and_resolve_as_standalone_pages() {
     assert_eq!(wait_run(&w.c, &id).await["output"]["text"], "ok");
 }
 
-/* ------------------------------------------------------------------ legacyKinds */
+/* ------------------------------------------------------------------ legacyKinds (gone, D403) */
 
 #[tokio::test(flavor = "multi_thread")]
-async fn legacy_kinds_are_shown_in_the_plugin_detail() {
+async fn a_manifest_with_legacy_kinds_is_not_valid_any_more() {
     let w = world(|r| {
-        pkg(r, "t.web", "0.1.0", web_manifest(), WEB_MAIN);
-        pkg(r, "t.none", "0.1.0", json!({}), "export default {};");
-        pkg(r, "t.bad", "0.1.0", json!({ "legacyKinds": ["a:b"] }), "export default {};");
+        pkg(r, "t.old", "0.1.0", json!({ "legacyKinds": ["link"] }), "export default {};");
     })
     .await;
-    assert_eq!(w.c.ok("plugin.get", json!({ "plugin": "t.web" })).await["legacyKinds"], json!(["link", "old-link"]));
-    assert_eq!(w.c.ok("plugin.get", json!({ "plugin": "t.none" })).await["legacyKinds"], json!([]));
-    let bad = w.c.ok("plugin.get", json!({ "plugin": "t.bad" })).await;
-    assert_eq!((bad["load"]["message"].clone(), bad["legacyKinds"].clone()), (json!("badLegacyKinds"), json!([])));
-    // Not taken over this round: nothing in the database names them.
-    let n: i64 = db(&w.env).query_row("SELECT count(*) FROM resources WHERE kind IN ('link', 'old-link')", [], |r| r.get(0)).unwrap();
-    assert_eq!(n, 0);
+    let d = w.c.ok("plugin.get", json!({ "plugin": "t.old" })).await;
+    assert_eq!(d["load"]["message"], "schema", "{d}");
+    assert!(d.get("legacyKinds").is_none());
 }
 
 /* ------------------------------------------------------------------ review fixes (round11-review.md #2, #4, #5) */
