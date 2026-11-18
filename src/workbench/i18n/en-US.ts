@@ -244,6 +244,7 @@ export const enUS = {
   "result.rows": "{count} rows",
   "result.exportCsv": "Export CSV",
   "result.copy": "Copy result",
+  "result.copyTooMany": "{count} rows is too many to copy (the limit is {limit}). Use Export CSV instead.",
   "result.copied": "Result copied",
   "result.clear": "Clear result",
   "result.collapse": "Collapse result area",

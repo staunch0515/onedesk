@@ -211,6 +211,7 @@
   "result.rows": "{count} 行",
   "result.exportCsv": "导出 CSV",
   "result.copy": "复制结果",
+  "result.copyTooMany": "共 {count} 行，超过可复制的上限 {limit} 行，请改用导出 CSV。",
   "result.copied": "已复制结果",
   "result.clear": "清空结果",
   "result.collapse": "收起结果区",

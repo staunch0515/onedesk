@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Badge, Banner, BottomPanel, Button, DataGrid, EmptyState, IconButton, LoadingState, Pane, Progress, Text, TextBlock, useToast, type DataGridColumn, type Tone } from "../../design";
 import { useI18n } from "../i18n";
 import type { OutputCell, PageDescriptor, Run, RunStatus } from "../protocol";
@@ -16,47 +16,53 @@ function useGridWidths(key: string) {
 }
 
 const PAGE_ROWS = 1000;
+/** A bigger result is not copied to the clipboard (export is for that). */
+export const COPY_ROWS_LIMIT = 10_000;
 
 /**
- * A `paged` table (D414) carries only its first rows; the rest is read from the kernel a page at a time, so a big result never
- * arrives in one message and the grid (which draws only the visible rows) stays responsive. Null when the output is whole.
+ * A `paged` table (D414) carries only its first rows; the rest is read from the kernel a page at a time, as the grid scrolls
+ * near the end of what is loaded (`more`), so a big result never arrives at once. Pages already read stay in `rows`.
+ * `rows` is null when the output is whole.
  */
-export function usePagedRows(run: Run): OutputCell[][] | null {
+export function usePagedRows(run: Run): { rows: OutputCell[][] | null; more: () => void } {
   const { client, actions } = useWorkbench();
   const out = run.output;
   const paged = out?.type === "table" && out.paged === true;
   const first = out?.type === "table" ? (out.rows as OutputCell[][]) : [];
   const total = out?.type === "table" ? out.total : 0;
   const [rows, setRows] = useState<OutputCell[][]>(first);
+  const state = useRef({ id: run.id, rows: first, busy: false });
   useEffect(() => {
+    state.current = { id: run.id, rows: first, busy: false };
     setRows(first);
-    if (!paged || !client.run.rows) return;
-    let cancelled = false;
-    void (async () => {
-      let have = first.length;
-      let acc = first;
-      while (!cancelled && have < total) {
-        const page = await client.run.rows!(run.id, have, PAGE_ROWS);
-        if (cancelled || page.rows.length === 0) return;
-        acc = acc.concat(page.rows as OutputCell[][]);
-        have = acc.length;
-        setRows(acc);
-      }
-    })().catch((e) => !cancelled && actions.fail(e));
-    return () => {
-      cancelled = true;
-    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [run.id, paged, total]);
-  return paged ? rows : null;
+  const more = useCallback(() => {
+    const cur = state.current;
+    if (!paged || !client.run.rows || cur.busy || cur.rows.length >= total) return;
+    cur.busy = true;
+    client.run.rows(cur.id, cur.rows.length, PAGE_ROWS).then(
+      (page) => {
+        cur.busy = false;
+        if (state.current !== cur || page.rows.length === 0) return;
+        cur.rows = cur.rows.concat(page.rows as OutputCell[][]);
+        setRows(cur.rows);
+      },
+      (e) => {
+        cur.busy = false;
+        if (state.current === cur) actions.fail(e);
+      },
+    );
+  }, [client, actions, paged, total]);
+  return { rows: paged ? rows : null, more };
 }
 
 function OutputTable({ run, widthKey }: { run: Run; widthKey: string }) {
   const { t } = useI18n();
   const grid = useGridWidths(widthKey);
+  const paged = usePagedRows(run);
   if (run.output?.type !== "table") return null;
   const out = run.output;
-  const more = usePagedRows(run);
   const columns: Array<DataGridColumn<OutputCell[]>> = out.columns.map((c, i) => ({
     key: c.key,
     header: c.label,
@@ -68,7 +74,8 @@ function OutputTable({ run, widthKey }: { run: Run; widthKey: string }) {
     <DataGrid
       label={t("result.result")}
       columns={columns}
-      rows={more ?? (out.rows as OutputCell[][])}
+      rows={paged.rows ?? (out.rows as OutputCell[][])}
+      onNeedMore={paged.rows ? paged.more : undefined}
       getRowKey={(_row, i) => String(i)}
       rowNumbers
       {...grid}
@@ -300,6 +307,10 @@ export function ResultArea({ tab, descriptor }: { tab: TabState; descriptor: Pag
             // A paged table holds only its first rows here: the whole result is read page by page for the clipboard.
             const out = r.output;
             const paged = out?.type === "table" && out.paged === true;
+            if (paged && out?.type === "table" && out.total > COPY_ROWS_LIMIT) {
+              toast({ tone: "neutral", title: t("result.copyTooMany", { count: number(out.total), limit: number(COPY_ROWS_LIMIT) }) });
+              return;
+            }
             const gather = async (): Promise<OutputCell[][] | undefined> => {
               if (!paged || out?.type !== "table" || !client.run.rows) return undefined;
               let all = out.rows as OutputCell[][];

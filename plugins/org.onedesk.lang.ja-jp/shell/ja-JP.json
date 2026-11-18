@@ -211,6 +211,7 @@
   "result.rows": "{count} 行",
   "result.exportCsv": "CSV をエクスポート",
   "result.copy": "結果をコピー",
+  "result.copyTooMany": "{count} 行はコピーできる上限（{limit} 行）を超えています。CSV エクスポートを使ってください。",
   "result.copied": "結果をコピーしました",
   "result.clear": "結果をクリア",
   "result.collapse": "結果エリアを折りたたむ",

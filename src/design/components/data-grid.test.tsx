@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import "../testing/jsdom-setup";
 import { fireEvent, render, screen } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fakeLayout } from "../testing/layout";
 import { DataGrid, type DataGridColumn } from "./data-grid";
 
@@ -49,5 +49,22 @@ describe("DataGrid windowing (D373)", () => {
     const { container } = render(<DataGrid label="r" columns={columns} rows={rows(12)} getRowKey={(_r, i) => String(i)} />);
     expect(container.querySelectorAll("tbody tr[data-index]").length).toBe(12);
     expect(container.querySelector(".od-grid__gap")).toBeNull();
+  });
+});
+
+describe("DataGrid reading more rows on demand", () => {
+  let restore = () => undefined as void;
+  beforeEach(() => {
+    restore = fakeLayout({ viewport: 280, tokens: { "--grid-row-height": "28px" } });
+  });
+  afterEach(() => restore());
+
+  it("asks for more only when the visible rows are near the end of the loaded ones", () => {
+    const far = vi.fn();
+    render(<DataGrid label="a" columns={columns} rows={rows(5000)} getRowKey={(_r, i) => String(i)} onNeedMore={far} />);
+    expect(far).not.toHaveBeenCalled();
+    const near = vi.fn();
+    render(<DataGrid label="b" columns={columns} rows={rows(50)} getRowKey={(_r, i) => String(i)} onNeedMore={near} />);
+    expect(near).toHaveBeenCalled();
   });
 });
