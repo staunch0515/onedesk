@@ -129,6 +129,12 @@ pub enum ErrorCode {
     /// The worker died while the request was in flight (set by the main process).
     WorkerGone,
     Internal,
+    /// Round 13 (D398): the first-version database could not be converted; nothing was changed.
+    /// `params.table`: the first-version table that failed.
+    LegacyUpgradeFailed,
+    /// Round 13 (D398): the main process could not back up or move the first-version
+    /// `onedesk.db` into `workspaces/default/` (set by the main process).
+    LegacyMoveFailed,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -178,6 +184,11 @@ pub enum NodeState {
     /// D375: the node standing in for children a plugin failed to supply (error or timeout);
     /// `stateReason` holds the error code.
     LoadFailed,
+    /// Round 13 (D399): a first-version resource whose short kind (no `<plugin>:`) no plugin
+    /// claimed through `legacyKinds`. It can be deleted and moved, not opened. The wire name is
+    /// fixed by round13-plan.md §2 (not kebab-case like the others).
+    #[serde(rename = "unknownKind")]
+    UnknownKind,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -1580,6 +1591,11 @@ pub struct PluginDetail {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub legacy_kinds: Option<Vec<String>>,
+    /// Round 13 (D399): the last claim of first-version resources that failed (the whole batch
+    /// was left unclaimed); cleared by the next successful claim.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub legacy_claim_failure: Option<LegacyClaimFailure>,
 }
 
 /// Round 9 (D365): `PluginDetail.runtime`.
@@ -2135,6 +2151,151 @@ pub struct I18nShellResult {
     pub texts: BTreeMap<String, String>,
 }
 
+/* ================================================================== round 13 (D397–D401)
+   First-version database upgrade (claims through `legacyKinds`) and several workspaces. */
+
+/// Methods of round 13. `app.*` are the main process's own (never forwarded to a worker);
+/// `workspace.settingsSnapshot` is the kernel's and answers only the main process (a request
+/// without `client`).
+pub mod method13 {
+    /// No params → `WorkspacesResult`.
+    pub const APP_WORKSPACES: &str = "app.workspaces";
+    /// `CreateWorkspaceParams` → `WorkspaceEntry`.
+    pub const APP_CREATE_WORKSPACE: &str = "app.createWorkspace";
+    /// `WorkspaceIdParams` → `WorkspaceEntry`.
+    pub const APP_SWITCH_WORKSPACE: &str = "app.switchWorkspace";
+    /// `RenameWorkspaceParams` → `null`.
+    pub const APP_RENAME_WORKSPACE: &str = "app.renameWorkspace";
+    /// `WorkspaceIdParams` → `null`.
+    pub const APP_DELETE_WORKSPACE: &str = "app.deleteWorkspace";
+    /// No params → `WorkspaceSettingsSnapshot`. Refused (`denied`, reason `mainProcessOnly`)
+    /// when the request carries a `client`.
+    pub const WORKSPACE_SETTINGS_SNAPSHOT: &str = "workspace.settingsSnapshot";
+}
+
+/// Topics of round 13.
+pub mod topic13 {
+    /// Payload-less: a workspace was created, renamed or deleted.
+    pub const APP_WORKSPACES_CHANGED: &str = "app.workspacesChanged";
+}
+
+/// Round 13 (D400): the file in a new workspace folder holding a `WorkspaceSettingsSnapshot`
+/// (as JSON). The kernel applies it when it opens a new, empty database there, then deletes it.
+pub const INIT_SETTINGS_FILE: &str = "init-settings.json";
+
+/// One workspace of the data folder (`app.workspaces`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct WorkspaceEntry {
+    pub id: String,
+    pub name: String,
+    /// The folder's name under `workspaces/`.
+    pub folder: String,
+    /// Milliseconds since the epoch.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub last_opened: Option<i64>,
+    /// The workspace this connection uses.
+    pub current: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct WorkspacesResult {
+    /// Most recently opened first.
+    pub items: Vec<WorkspaceEntry>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct CreateWorkspaceParams {
+    /// 1–100 characters.
+    pub name: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct WorkspaceIdParams {
+    pub id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct RenameWorkspaceParams {
+    pub id: String,
+    /// 1–100 characters.
+    pub name: String,
+}
+
+/// `workspace.settingsSnapshot`: what a new workspace copies from this one (D400) — the
+/// configuration tree's nodes and values, and which plugins are switched off. No data.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct WorkspaceSettingsSnapshot {
+    /// Root configuration nodes, in tree order.
+    #[serde(default)]
+    pub config: Vec<SettingsSnapshotNode>,
+    /// Every plugin with a recorded switch.
+    #[serde(default)]
+    pub plugins: Vec<PluginEnabledState>,
+}
+
+/// One configuration node of a `WorkspaceSettingsSnapshot`.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct SettingsSnapshotNode {
+    pub name: String,
+    #[serde(default)]
+    pub description: String,
+    /// The node's own parameters (not inherited ones).
+    #[serde(default)]
+    pub params: Vec<SnapshotParam>,
+    #[serde(default)]
+    pub children: Vec<SettingsSnapshotNode>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct SnapshotParam {
+    pub name: String,
+    #[serde(rename = "type")]
+    pub param_type: ParamType,
+    pub value: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct PluginEnabledState {
+    pub plugin: String,
+    pub enabled: bool,
+}
+
+/// `PluginDetail.legacyClaimFailure` (round 13, D399).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct LegacyClaimFailure {
+    /// The first-version short kind whose batch failed.
+    pub legacy_kind: String,
+    /// The resource whose `upgrade` failed, when one did.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub resource: Option<String>,
+    /// `upgradeFailed`, `badUpgrade`, `changedDuringClaim`, … (else the error's code).
+    pub reason: String,
+    /// Milliseconds since the epoch.
+    pub at: i64,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2189,6 +2350,19 @@ mod tests {
         assert_eq!(serde_json::to_value(l).unwrap(), json!({ "locale": "en-US", "name": "English" }));
         let w: WorkspaceInfo = serde_json::from_value(json!({ "id": "w", "name": "n" })).unwrap();
         assert!(w.startup_pages.is_none());
+    }
+
+    #[test]
+    fn round13_wire_shapes() {
+        assert_eq!(serde_json::to_value(NodeState::UnknownKind).unwrap(), json!("unknownKind"));
+        assert_eq!(serde_json::to_value(ErrorCode::LegacyUpgradeFailed).unwrap(), json!("legacyUpgradeFailed"));
+        assert_eq!(serde_json::to_value(ErrorCode::LegacyMoveFailed).unwrap(), json!("legacyMoveFailed"));
+        let e = WorkspaceEntry { id: "w".into(), name: "n".into(), folder: "f".into(), last_opened: None, current: true };
+        assert_eq!(serde_json::to_value(e).unwrap(), json!({ "id": "w", "name": "n", "folder": "f", "current": true }));
+        let s: WorkspaceSettingsSnapshot = serde_json::from_value(json!({})).unwrap();
+        assert_eq!(s, WorkspaceSettingsSnapshot::default());
+        let p = SnapshotParam { name: "ui.theme".into(), param_type: ParamType::Text, value: "dark".into() };
+        assert_eq!(serde_json::to_value(p).unwrap(), json!({ "name": "ui.theme", "type": "text", "value": "dark" }));
     }
 
     #[test]
