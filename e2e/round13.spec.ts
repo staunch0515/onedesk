@@ -229,6 +229,25 @@ test("switch: the connection moves to the other workspace and sees different con
   await c.closeAndWait();
 });
 
+// FIXME until the shell session lands D406 (review #2): today an unbound connection follows the global default.
+test.fixme("D406: a connection without workspace= is not carried along when another connection switches", async () => {
+  const a = await Conn.connect("e2e-d406-a"); // unbound: bound to the default at its first appearance
+  const home = (await info(a)).id;
+  const b = await Conn.connect("e2e-d406-b");
+  expect((await info(b)).id).toBe(home);
+  await b.call("app.switchWorkspace", { id: second.id });
+  expect((await info(b)).id).toBe(second.id);
+  expect((await info(a)).id).toBe(home); // a stays
+  expect((await list(a)).find((w) => w.current)!.id).toBe(home);
+  // The default only decides where NEW connections bind; it does not count as "in use" for deleting.
+  const c = await Conn.connect("e2e-d406-c");
+  expect((await info(c)).id).toBe(second.id);
+  c.close();
+  b.close();
+  a.close();
+  await new Promise((r) => setTimeout(r, 500));
+});
+
 test("rename: new name in the list, event to the other connections, bad names refused", async () => {
   const watcher = await Conn.connect("e2e-watch", mainWs.id);
   const n = watcher.changed();
@@ -351,4 +370,18 @@ test("UI: the workspace menu creates, renames, switches and deletes; a second pa
   await expect(confirm).toContainText("trash");
   await confirm.getByRole("button", { name: "Delete", exact: true }).click();
   await until(async () => !(await byName(main, "UI space 2")), "deleted through the UI");
+});
+
+// FIXME until the shell session lands review #7: the browser transport has no openWindow yet (the button does nothing).
+test.fixme("UI: \"Open in a new window\" in a browser opens a new tab bound to that workspace", async ({ page, context }) => {
+  await openKernel(page, host);
+  await menu(page, mainWs.name).click();
+  await page.getByRole("menuitem", { name: "Manage workspaces…" }).click();
+  const manage = page.getByRole("dialog");
+  const popup = context.waitForEvent("page");
+  await manage.getByRole("button", { name: /^Open .* in a new window/ }).first().click();
+  const tab = await popup;
+  await tab.waitForLoadState();
+  expect(new URL(tab.url()).searchParams.get("workspace")).toBeTruthy();
+  await tab.close();
 });
