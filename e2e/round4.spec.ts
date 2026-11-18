@@ -304,7 +304,7 @@ test("HTTP request: status, time and body; the secret reaches the server but now
   await openRequest(page, "Ping");
   await send(page).click();
   await expect(page.getByRole("region", { name: "Result area" })).toContainText("hello from server A", { timeout: 15_000 });
-  await expect(statusBar(page).getByText(/#\d+ · 200 · \d+ ms · \d+ bytes/)).toBeVisible();
+  await expect(statusBar(page).getByText(/#\d+ · 200 OK · \d+ ms · \d+ bytes/)).toBeVisible();
   await shot(page, "http-response");
 
   // the server saw the real value, and the plain header
@@ -333,7 +333,7 @@ test("HTTP request: a non-2xx answer is a successful run with the status in the 
   await openRequest(page, "Missing");
   await send(page).click();
   await expect(page.getByRole("region", { name: "Result area" })).toContainText("no such thing", { timeout: 15_000 });
-  await expect(statusBar(page).getByText(/ 404 · /)).toBeVisible();
+  await expect(statusBar(page).getByText(/ 404 Not Found · /)).toBeVisible();
 });
 
 test("HTTP request: another host than the saved address is refused and the server sees nothing", async ({ page }) => {
