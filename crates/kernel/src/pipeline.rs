@@ -393,7 +393,7 @@ struct Writer {
 /// Kind rules of every installed plugin version; replaced when the plugins folder is read again.
 pub type SharedRules = Arc<std::sync::RwLock<HashMap<String, KindRule>>>;
 
-fn sql(e: rusqlite::Error) -> onedesk_protocol::ProtocolError {
+fn db_err(e: rusqlite::Error) -> onedesk_protocol::ProtocolError {
     internal(e)
 }
 
@@ -439,13 +439,13 @@ impl Writer {
                 params![client, key, value.to_string()],
             )
         }
-        .map_err(sql)?;
+        .map_err(db_err)?;
         Ok(Outcome::default())
     }
 
     fn transact(&mut self, actor: &Actor, cmd: Command) -> KResult<Outcome> {
         let rules = self.rules.read().unwrap().clone();
-        let tx = self.conn.transaction().map_err(sql)?;
+        let tx = self.conn.transaction().map_err(db_err)?;
         let mut out = {
             let mut cx = Tx { tx: &tx, actor, rules: &rules, at: now_ms(), touched: Default::default() };
             // D327: `protection.readonly` of the workspace configuration refuses every content write.
@@ -468,7 +468,7 @@ impl Writer {
                             "INSERT INTO audit (at, actor, op, object, summary, result) VALUES (?1,?2,?3,?4,?5,?6)",
                             params![cx.at, cx.actor.as_text(), op, object, summary.to_string(), result],
                         )
-                        .map_err(sql)?;
+                        .map_err(db_err)?;
                     Outcome { changed: true, ..Default::default() }
                 }
                 Command::Refused { error, .. } => return Err(error),
@@ -484,7 +484,7 @@ impl Writer {
                     let n = cx
                         .tx
                         .execute("UPDATE runs SET progress = ?2 WHERE id = ?1 AND status = 'running'", params![id, progress.to_string()])
-                        .map_err(sql)?;
+                        .map_err(db_err)?;
                     Outcome { changed: n > 0, ..Default::default() }
                 }
                 Command::RunFinish { id, status, summary, error, output } => cx.run_finish(&id, &status, summary, error, output)?,
@@ -492,7 +492,7 @@ impl Writer {
                     let n = cx
                         .tx
                         .execute("UPDATE runs SET kept = ?2, kept_name = ?3 WHERE id = ?1", params![id, i64::from(kept), name])
-                        .map_err(sql)?;
+                        .map_err(db_err)?;
                     if n == 0 {
                         return Err(not_found("run"));
                     }
@@ -500,7 +500,7 @@ impl Writer {
                     Outcome { id: Some(id), changed: true, rows: vec![], ..Default::default() }
                 }
                 Command::RunClearFinished => {
-                    let n = cx.tx.execute("UPDATE runs SET in_task_panel = 0 WHERE status <> 'running' AND in_task_panel = 1", []).map_err(sql)?;
+                    let n = cx.tx.execute("UPDATE runs SET in_task_panel = 0 WHERE status <> 'running' AND in_task_panel = 1", []).map_err(db_err)?;
                     Outcome { changed: n > 0, ..Default::default() }
                 }
                 Command::PluginState { plugin, set } => cx.plugin_state(&plugin, &set)?,
@@ -522,9 +522,9 @@ impl Writer {
                                  ON CONFLICT(name) DO UPDATE SET updated_at = excluded.updated_at",
                                 params![name, cx.at],
                             )
-                            .map_err(sql)?;
+                            .map_err(db_err)?;
                     } else {
-                        cx.tx.execute("DELETE FROM secret_names WHERE name = ?1", [&name]).map_err(sql)?;
+                        cx.tx.execute("DELETE FROM secret_names WHERE name = ?1", [&name]).map_err(db_err)?;
                     }
                     if audit {
                         cx.audit(if present { "secrets.set" } else { "secrets.delete" }, &name, &json!({}))?;
@@ -546,17 +546,17 @@ impl Writer {
                             params![plugin, version, key],
                         ),
                     }
-                    .map_err(sql)?;
+                    .map_err(db_err)?;
                     Outcome { changed: true, ..Default::default() }
                 }
                 Command::Import(plan) => cx.import(*plan)?,
                 Command::RebuildRefs => {
-                    crate::refs::rebuild(cx.tx, cx.rules).map_err(sql)?;
-                    crate::refs::store_decls(cx.tx, &crate::refs::decls(cx.rules)).map_err(sql)?;
+                    crate::refs::rebuild(cx.tx, cx.rules).map_err(db_err)?;
+                    crate::refs::store_decls(cx.tx, &crate::refs::decls(cx.rules)).map_err(db_err)?;
                     Outcome { changed: true, ..Default::default() }
                 }
                 Command::SyncRefDecls => {
-                    let t = crate::refs::sync_decls(cx.tx, cx.rules).map_err(sql)?;
+                    let t = crate::refs::sync_decls(cx.tx, cx.rules).map_err(db_err)?;
                     let changed = !t.is_empty();
                     cx.touched.borrow_mut().extend(t);
                     Outcome { changed, ..Default::default() }
@@ -589,7 +589,7 @@ impl Writer {
         let ids: BTreeSet<&String> = out.0.rows.iter().map(|r| &r.id).collect();
         out.0.touched = out.1.into_iter().filter(|t| !ids.contains(t)).collect();
         let out = out.0;
-        tx.commit().map_err(sql)?;
+        tx.commit().map_err(db_err)?;
         Ok(out)
     }
 }
@@ -671,7 +671,7 @@ impl Tx<'_> {
     /// Recomputes the references of `row` in the fields that changed (`None` = all), §10.
     pub fn refs_after(&self, row: &Row, changed: Option<&[String]>) -> KResult<()> {
         if let Some(rule) = self.rules.get(&row.kind) {
-            let t = crate::refs::update(self.tx, rule, row, changed).map_err(sql)?;
+            let t = crate::refs::update(self.tx, rule, row, changed).map_err(db_err)?;
             self.touched.borrow_mut().extend(t);
         }
         Ok(())
@@ -679,7 +679,7 @@ impl Tx<'_> {
 
     /// D330: references waiting for the name `row` now has.
     pub fn connect_name(&self, row: &Row) -> KResult<()> {
-        let t = crate::refs::connect_name(self.tx, row).map_err(sql)?;
+        let t = crate::refs::connect_name(self.tx, row).map_err(db_err)?;
         self.touched.borrow_mut().extend(t);
         Ok(())
     }
@@ -687,10 +687,10 @@ impl Tx<'_> {
     /// Both ends of `id`'s references change how they look (rename, delete, restore, purge).
     pub fn touch_ends(&self, id: &str) -> KResult<()> {
         let mut t = self.touched.borrow_mut();
-        for (src, _) in crate::refs::sources_of(self.tx, id, true).map_err(sql)? {
+        for (src, _) in crate::refs::sources_of(self.tx, id, true).map_err(db_err)? {
             t.insert(src);
         }
-        for r in crate::refs::rows_of(self.tx, id).map_err(sql)? {
+        for r in crate::refs::rows_of(self.tx, id).map_err(db_err)? {
             t.extend(r.target);
         }
         Ok(())
@@ -717,13 +717,13 @@ impl Tx<'_> {
     }
 
     pub(crate) fn live(&self, id: &str) -> KResult<Row> {
-        store::get(self.tx, id).map_err(sql)?.ok_or_else(|| not_found("resource"))
+        store::get(self.tx, id).map_err(db_err)?.ok_or_else(|| not_found("resource"))
     }
 
     /// Checks that `parent` (live, same tree) accepts `kind`.
     pub(crate) fn check_parent(&self, kind: &str, tree: Option<&str>, parent: Option<&str>) -> KResult<()> {
         let Some(pid) = parent else { return Ok(()) };
-        let p = store::get(self.tx, pid).map_err(sql)?.ok_or_else(|| invalid("parentNotFound"))?;
+        let p = store::get(self.tx, pid).map_err(db_err)?.ok_or_else(|| invalid("parentNotFound"))?;
         if p.tree.as_deref() != tree || tree.is_none() {
             return Err(invalid("otherTree"));
         }
@@ -742,14 +742,14 @@ impl Tx<'_> {
                 params![tree, parent],
                 |r| r.get(0),
             )
-            .map_err(sql)
+            .map_err(db_err)
     }
 
     pub(crate) fn insert(&self, r: &Row) -> KResult<()> {
         self.tx.prepare_cached(&format!(
                     "INSERT INTO resources ({}) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19)",
                     store::COLUMNS
-                )).map_err(sql)?.execute(params![
+                )).map_err(db_err)?.execute(params![
                     r.id,
                     r.kind,
                     r.plugin_version,
@@ -771,25 +771,25 @@ impl Tx<'_> {
                     r.deleted_at
                 ],
             )
-            .map_err(sql)?;
+            .map_err(db_err)?;
         self.index(r)
     }
 
     /// Keeps the search text of `r` in step with the row, in the same transaction (D277).
     fn index(&self, r: &Row) -> KResult<()> {
         // The search row shares the resource's rowid (migration 0003): no table scans.
-        let rowid: i64 = self.tx.prepare_cached("SELECT rowid FROM resources WHERE id = ?1").map_err(sql)?.query_row([&r.id], |x| x.get(0)).map_err(sql)?;
-        self.tx.prepare_cached("DELETE FROM search WHERE rowid = ?1").map_err(sql)?.execute([rowid]).map_err(sql)?;
+        let rowid: i64 = self.tx.prepare_cached("SELECT rowid FROM resources WHERE id = ?1").map_err(db_err)?.query_row([&r.id], |x| x.get(0)).map_err(db_err)?;
+        self.tx.prepare_cached("DELETE FROM search WHERE rowid = ?1").map_err(db_err)?.execute([rowid]).map_err(db_err)?;
         if r.deleted_at.is_none() && r.tree.as_deref() != Some(TREE_PLUGIN_STATE) {
-            self.tx.prepare_cached("INSERT INTO search (rowid, name, text) VALUES (?1, ?2, ?3)").map_err(sql)?.execute(params![rowid, r.name, search_text(r)])
-                .map_err(sql)?;
+            self.tx.prepare_cached("INSERT INTO search (rowid, name, text) VALUES (?1, ?2, ?3)").map_err(db_err)?.execute(params![rowid, r.name, search_text(r)])
+                .map_err(db_err)?;
         }
         Ok(())
     }
 
     pub(crate) fn save(&self, r: &Row) -> KResult<()> {
         self.tx.prepare_cached("UPDATE resources SET parent_id=?2, pos=?3, name=?4, description=?5, tags=?6, body=?7, rev=?8,
-                 updated_at=?9, updated_by=?10, deleted_at=?11, plugin_version=?12 WHERE id=?1").map_err(sql)?.execute(params![
+                 updated_at=?9, updated_by=?10, deleted_at=?11, plugin_version=?12 WHERE id=?1").map_err(db_err)?.execute(params![
                     r.id,
                     r.parent_id,
                     r.pos,
@@ -804,7 +804,7 @@ impl Tx<'_> {
                     r.plugin_version
                 ],
             )
-            .map_err(sql)?;
+            .map_err(db_err)?;
         self.index(r)
     }
 
@@ -814,7 +814,7 @@ impl Tx<'_> {
 
     pub(crate) fn revision_from(&self, r: &Row, op: &str, fields: &[String], restored_from: Option<&str>) -> KResult<()> {
         self.tx.prepare_cached("INSERT INTO revisions (resource_id, rev, at, actor, op, fields, snapshot, restored_from)
-                 VALUES (?1,?2,?3,?4,?5,?6,?7,?8)").map_err(sql)?.execute(params![
+                 VALUES (?1,?2,?3,?4,?5,?6,?7,?8)").map_err(db_err)?.execute(params![
                     r.id,
                     r.rev,
                     self.at,
@@ -825,14 +825,14 @@ impl Tx<'_> {
                     restored_from
                 ],
             )
-            .map_err(sql)?;
+            .map_err(db_err)?;
         Ok(())
     }
 
     pub(crate) fn audit(&self, op: &str, object: &str, summary: &Value) -> KResult<()> {
-        self.tx.prepare_cached("INSERT INTO audit (at, actor, op, object, summary, result) VALUES (?1,?2,?3,?4,?5,'ok')").map_err(sql)?.execute(params![self.at, self.actor.as_text(), op, object, summary.to_string()],
+        self.tx.prepare_cached("INSERT INTO audit (at, actor, op, object, summary, result) VALUES (?1,?2,?3,?4,?5,'ok')").map_err(db_err)?.execute(params![self.at, self.actor.as_text(), op, object, summary.to_string()],
             )
-            .map_err(sql)?;
+            .map_err(db_err)?;
         Ok(())
     }
 
@@ -965,10 +965,10 @@ impl Tx<'_> {
         let snap: Option<String> = self
             .tx
             .prepare_cached("SELECT snapshot FROM revisions WHERE resource_id = ?1 AND rev = ?2")
-            .map_err(sql)?
+            .map_err(db_err)?
             .query_row(params![row.id, basis], |r| r.get(0))
             .optional()
-            .map_err(sql)?;
+            .map_err(db_err)?;
         let Some(old) = snap.and_then(|s| serde_json::from_str::<Row>(&s).ok()) else {
             return Ok(None);
         };
@@ -990,10 +990,10 @@ impl Tx<'_> {
         let mut st = self
             .tx
             .prepare_cached("SELECT fields FROM revisions WHERE resource_id = ?1 AND rev > ?2")
-            .map_err(sql)?;
+            .map_err(db_err)?;
         let later = st
             .query_map(params![row.id, basis], |r| r.get::<_, String>(0))
-            .map_err(sql)?
+            .map_err(db_err)?
             .filter_map(|f| f.ok())
             .flat_map(|f| serde_json::from_str::<Vec<String>>(&f).unwrap_or_default())
             .filter(|f| f.starts_with("params.") || f == "*");
@@ -1012,7 +1012,7 @@ impl Tx<'_> {
             if aid == id {
                 return Err(invalid("self"));
             }
-            store::get(self.tx, aid).map_err(sql)?.ok_or_else(|| invalid("targetNotFound"))
+            store::get(self.tx, aid).map_err(db_err)?.ok_or_else(|| invalid("targetNotFound"))
         };
         let (parent, before): (Option<String>, Option<String>) = match &dest {
             MoveDest::Inside(None) => (None, None),
@@ -1033,7 +1033,7 @@ impl Tx<'_> {
                 return Err(invalid("self"));
             }
             let pr = self.live(p).map_err(|_| invalid("targetNotFound"))?;
-            if store::ancestors(self.tx, &pr).map_err(sql)?.iter().any(|a| a.id == id) {
+            if store::ancestors(self.tx, &pr).map_err(db_err)?.iter().any(|a| a.id == id) {
                 return Err(invalid("descendant"));
             }
         }
@@ -1056,7 +1056,7 @@ impl Tx<'_> {
             } else if s.pos != i as i64 {
                 self.tx
                     .execute("UPDATE resources SET pos = ?2 WHERE id = ?1", params![s.id, i as i64])
-                    .map_err(sql)?;
+                    .map_err(db_err)?;
             }
         }
         let mut changed = Vec::new();
@@ -1083,7 +1083,7 @@ impl Tx<'_> {
 
     fn grant(&mut self, plugin: &str, folder: &str, add: bool) -> KResult<Outcome> {
         let key = GRANTS_KEY;
-        let row = store::plugin_state(self.tx, plugin).map_err(sql)?;
+        let row = store::plugin_state(self.tx, plugin).map_err(db_err)?;
         let mut folders: Vec<String> = row
             .as_ref()
             .and_then(|r| r.body.get(key).cloned())
@@ -1130,7 +1130,7 @@ impl Tx<'_> {
         if !crate::params::is_param_kind(&row.kind) {
             return Err(invalid("notParamNode"));
         }
-        let ancestors = store::ancestors(self.tx, row).map_err(sql)?;
+        let ancestors = store::ancestors(self.tx, row).map_err(db_err)?;
         let mut changed = Vec::new();
         for (name, ch) in changes {
             if name.trim().is_empty() {
@@ -1158,7 +1158,7 @@ impl Tx<'_> {
                     let known: bool = self
                         .tx
                         .query_row("SELECT EXISTS(SELECT 1 FROM secret_names WHERE name = ?1)", [&n.value], |r| r.get(0))
-                        .map_err(sql)?;
+                        .map_err(db_err)?;
                     if !known {
                         return Err(invalid("unknownSecret"));
                     }
@@ -1177,12 +1177,12 @@ impl Tx<'_> {
 
     /// §6.2: in the configuration tree a name may only repeat along one ancestor line.
     fn check_config_name(&self, row: &Row, name: &str) -> KResult<()> {
-        let mine: BTreeSet<String> = store::ancestors(self.tx, row).map_err(sql)?.into_iter().map(|a| a.id).collect();
-        for other in store::of_kind(self.tx, KIND_CONFIG).map_err(sql)? {
+        let mine: BTreeSet<String> = store::ancestors(self.tx, row).map_err(db_err)?.into_iter().map(|a| a.id).collect();
+        for other in store::of_kind(self.tx, KIND_CONFIG).map_err(db_err)? {
             if other.id == row.id || crate::params::get(&other, name).is_none() || mine.contains(&other.id) {
                 continue;
             }
-            let theirs = store::ancestors(self.tx, &other).map_err(sql)?;
+            let theirs = store::ancestors(self.tx, &other).map_err(db_err)?;
             if !theirs.iter().any(|a| a.id == row.id) {
                 return Err(err_p(ErrorCode::Invalid, &[("reason", "duplicateName"), ("name", name)]));
             }
@@ -1201,7 +1201,7 @@ impl Tx<'_> {
     /// A configuration node that moved: itself and everything below it.
     fn check_config_subtree(&self, row: &Row) -> KResult<()> {
         self.check_config_node(row)?;
-        for d in store::descendants(self.tx, &row.id).map_err(sql)? {
+        for d in store::descendants(self.tx, &row.id).map_err(db_err)? {
             if d.kind == KIND_CONFIG {
                 self.check_config_node(&d)?;
             }
@@ -1219,7 +1219,7 @@ impl Tx<'_> {
                         "UPDATE revisions SET op = 'restore', restored_from = ?3 WHERE resource_id = ?1 AND rev = ?2",
                         params![id, out.rows[0].rev, entry],
                     )
-                    .map_err(sql)?;
+                    .map_err(db_err)?;
             }
             out.id = Some(id.to_string());
             return Ok(out);
@@ -1243,13 +1243,13 @@ impl Tx<'_> {
     }
 
     fn undelete(&mut self, id: &str) -> KResult<Outcome> {
-        let row = store::get_any(self.tx, id).map_err(sql)?.ok_or_else(|| not_found("resource"))?;
+        let row = store::get_any(self.tx, id).map_err(db_err)?.ok_or_else(|| not_found("resource"))?;
         if row.deleted_at.is_none() {
             return Err(invalid("notDeleted"));
         }
         self.permit(&row.kind)?;
-        let batch_id = store::delete_batch(self.tx, id).map_err(sql)?.ok_or_else(|| invalid("notDeleted"))?;
-        let mut batch = store::batch_rows(self.tx, &batch_id).map_err(sql)?;
+        let batch_id = store::delete_batch(self.tx, id).map_err(db_err)?.ok_or_else(|| invalid("notDeleted"))?;
+        let mut batch = store::batch_rows(self.tx, &batch_id).map_err(db_err)?;
         let ids: BTreeSet<String> = batch.iter().map(|r| r.id.clone()).collect();
         // Tops first so their new positions are known before the inner rows come back.
         batch.sort_by_key(|r| r.parent_id.as_ref().is_some_and(|p| ids.contains(p)));
@@ -1258,7 +1258,7 @@ impl Tx<'_> {
             let top = !r.parent_id.as_ref().is_some_and(|p| ids.contains(p));
             if top {
                 let parent_live = match &r.parent_id {
-                    Some(p) => store::get(self.tx, p).map_err(sql)?.is_some(),
+                    Some(p) => store::get(self.tx, p).map_err(db_err)?.is_some(),
                     None => true,
                 };
                 if !parent_live {
@@ -1273,7 +1273,7 @@ impl Tx<'_> {
             r.updated_at = self.at;
             r.updated_by = self.actor.as_text();
             self.save(r)?;
-            self.tx.execute("UPDATE resources SET delete_batch = NULL WHERE id = ?1", [&r.id]).map_err(sql)?;
+            self.tx.execute("UPDATE resources SET delete_batch = NULL WHERE id = ?1", [&r.id]).map_err(db_err)?;
             self.revision(r, "undelete", &fields)?;
             self.touch_ends(&r.id)?;
         }
@@ -1288,13 +1288,13 @@ impl Tx<'_> {
     }
 
     fn purge(&mut self, id: &str) -> KResult<Outcome> {
-        let row = store::get_any(self.tx, id).map_err(sql)?.ok_or_else(|| not_found("resource"))?;
+        let row = store::get_any(self.tx, id).map_err(db_err)?.ok_or_else(|| not_found("resource"))?;
         if row.deleted_at.is_none() {
             return Err(invalid("notDeleted"));
         }
         self.permit(&row.kind)?;
         // The row and its descendants of the same deletion batch (#4: another batch is left alone).
-        let batch = store::delete_batch(self.tx, id).map_err(sql)?;
+        let batch = store::delete_batch(self.tx, id).map_err(db_err)?;
         let mut doomed = vec![row.clone()];
         let mut queue = vec![row.id.clone()];
         let mut seen = std::collections::HashSet::from([row.id.clone()]);
@@ -1304,10 +1304,10 @@ impl Tx<'_> {
                 "SELECT {} FROM resources WHERE parent_id = ?1 AND deleted_at IS NOT NULL AND delete_batch IS ?2",
                 store::COLUMNS
             ))
-            .map_err(sql)?;
+            .map_err(db_err)?;
         while let Some(p) = queue.pop() {
-            for r in st.query_map(params![&p, &batch], store::from_sql).map_err(sql)? {
-                let r = r.map_err(sql)?;
+            for r in st.query_map(params![&p, &batch], store::from_row).map_err(db_err)? {
+                let r = r.map_err(db_err)?;
                 if !seen.insert(r.id.clone()) {
                     continue;
                 }
@@ -1319,18 +1319,18 @@ impl Tx<'_> {
         for r in &doomed {
             // §10: its own references go; references to it stay, without a target ("missing").
             self.touch_ends(&r.id)?;
-            self.tx.execute("DELETE FROM refs WHERE source_id = ?1", [&r.id]).map_err(sql)?;
-            self.tx.execute("UPDATE refs SET target_id = NULL WHERE target_id = ?1", [&r.id]).map_err(sql)?;
+            self.tx.execute("DELETE FROM refs WHERE source_id = ?1", [&r.id]).map_err(db_err)?;
+            self.tx.execute("UPDATE refs SET target_id = NULL WHERE target_id = ?1", [&r.id]).map_err(db_err)?;
             self.tx
                 .execute("DELETE FROM search WHERE rowid = (SELECT rowid FROM resources WHERE id = ?1)", [&r.id])
-                .map_err(sql)?;
+                .map_err(db_err)?;
             for table in ["DELETE FROM resources WHERE id = ?1", "DELETE FROM revisions WHERE resource_id = ?1",
                           "DELETE FROM resource_meta WHERE resource_id = ?1", "DELETE FROM runs WHERE resource_id = ?1"] {
-                self.tx.execute(table, [&r.id]).map_err(sql)?;
+                self.tx.execute(table, [&r.id]).map_err(db_err)?;
             }
         }
         // Drop deleted entries from the full-text segments too.
-        self.tx.execute("INSERT INTO search (search) VALUES ('optimize')", []).map_err(sql)?;
+        self.tx.execute("INSERT INTO search (search) VALUES ('optimize')", []).map_err(db_err)?;
         self.audit("resource.purge", id, &json!({ "kind": row.kind, "count": doomed.len() }))?;
         Ok(Outcome { id: Some(id.to_string()), changed: true, rows: doomed, ..Default::default() })
     }
@@ -1342,11 +1342,11 @@ impl Tx<'_> {
         }
         self.tx
             .execute("INSERT INTO resource_meta (resource_id) VALUES (?1) ON CONFLICT(resource_id) DO NOTHING", [id])
-            .map_err(sql)?;
+            .map_err(db_err)?;
         if let Some(f) = favorite {
             self.tx
                 .execute("UPDATE resource_meta SET favorite = ?2 WHERE resource_id = ?1", params![id, i64::from(f)])
-                .map_err(sql)?;
+                .map_err(db_err)?;
         }
         if touch {
             self.tx
@@ -1354,7 +1354,7 @@ impl Tx<'_> {
                     "UPDATE resource_meta SET last_used_at = ?2, use_count = use_count + 1 WHERE resource_id = ?1",
                     params![id, self.at],
                 )
-                .map_err(sql)?;
+                .map_err(db_err)?;
         }
         Ok(Outcome { id: Some(id.to_string()), changed: true, rows: vec![], ..Default::default() })
     }
@@ -1365,8 +1365,8 @@ impl Tx<'_> {
         // §8: a run that was going when the worker stopped will never finish.
         let error = json!({ "code": "interrupted", "message": "" }).to_string();
         let leftovers: Vec<String> = {
-            let mut st = self.tx.prepare("SELECT id FROM runs WHERE status = 'running'").map_err(sql)?;
-            let ids = st.query_map([], |r| r.get(0)).map_err(sql)?.collect::<Result<_, _>>().map_err(sql)?;
+            let mut st = self.tx.prepare("SELECT id FROM runs WHERE status = 'running'").map_err(db_err)?;
+            let ids = st.query_map([], |r| r.get(0)).map_err(db_err)?.collect::<Result<_, _>>().map_err(db_err)?;
             ids
         };
         self.tx
@@ -1374,7 +1374,7 @@ impl Tx<'_> {
                 "UPDATE runs SET status = 'error', error = ?1, ended_at = ?2, progress = NULL WHERE status = 'running'",
                 params![error, self.at],
             )
-            .map_err(sql)?;
+            .map_err(db_err)?;
         for id in &leftovers {
             self.audit("run.end", id, &json!({ "status": "error", "code": "interrupted" }))?;
         }
@@ -1387,7 +1387,7 @@ impl Tx<'_> {
                     [kind],
                     |r| r.get(0),
                 )
-                .map_err(sql)?;
+                .map_err(db_err)?;
             if !has_root {
                 let out = self.create(NewResource {
                     kind: kind.into(),
@@ -1405,38 +1405,38 @@ impl Tx<'_> {
         let built: bool = self
             .tx
             .query_row("SELECT EXISTS(SELECT 1 FROM meta WHERE key = 'search_built')", [], |r| r.get(0))
-            .map_err(sql)?;
+            .map_err(db_err)?;
         if !built {
-            self.tx.execute("DELETE FROM search", []).map_err(sql)?;
+            self.tx.execute("DELETE FROM search", []).map_err(db_err)?;
             let mut st = self
                 .tx
                 .prepare(&format!("SELECT {} FROM resources WHERE deleted_at IS NULL", store::COLUMNS))
-                .map_err(sql)?;
-            let all: Vec<Row> = st.query_map([], store::from_sql).map_err(sql)?.collect::<Result<_, _>>().map_err(sql)?;
+                .map_err(db_err)?;
+            let all: Vec<Row> = st.query_map([], store::from_row).map_err(db_err)?.collect::<Result<_, _>>().map_err(db_err)?;
             drop(st);
             for r in &all {
                 self.index(r)?;
             }
-            self.tx.execute("INSERT INTO meta (key, value) VALUES ('search_built', '1')", []).map_err(sql)?;
+            self.tx.execute("INSERT INTO meta (key, value) VALUES ('search_built', '1')", []).map_err(db_err)?;
         }
         // §10 / migration 0008: references of the resources that existed before the table did.
         let refs_built: bool = self
             .tx
             .query_row("SELECT EXISTS(SELECT 1 FROM meta WHERE key = 'refs_built')", [], |r| r.get(0))
-            .map_err(sql)?;
+            .map_err(db_err)?;
         if !refs_built {
-            crate::refs::rebuild(self.tx, self.rules).map_err(sql)?;
-            crate::refs::store_decls(self.tx, &crate::refs::decls(self.rules)).map_err(sql)?;
-            self.tx.execute("INSERT INTO meta (key, value) VALUES ('refs_built', '1')", []).map_err(sql)?;
+            crate::refs::rebuild(self.tx, self.rules).map_err(db_err)?;
+            crate::refs::store_decls(self.tx, &crate::refs::decls(self.rules)).map_err(db_err)?;
+            self.tx.execute("INSERT INTO meta (key, value) VALUES ('refs_built', '1')", []).map_err(db_err)?;
         } else {
             // Review #7: plugins that changed while the worker was off.
-            crate::refs::sync_decls(self.tx, self.rules).map_err(sql)?;
+            crate::refs::sync_decls(self.tx, self.rules).map_err(db_err)?;
         }
         Ok(Outcome { changed: !rows.is_empty(), rows, ..Default::default() })
     }
 
     fn run_insert(&mut self, mut r: store::RunRow) -> KResult<Outcome> {
-        r.seq = self.tx.query_row("SELECT COALESCE(MAX(seq), 0) + 1 FROM runs", [], |x| x.get(0)).map_err(sql)?;
+        r.seq = self.tx.query_row("SELECT COALESCE(MAX(seq), 0) + 1 FROM runs", [], |x| x.get(0)).map_err(db_err)?;
         r.started_at = self.at;
         r.actor = self.actor.as_text();
         let j = |v: &Value| v.to_string();
@@ -1454,7 +1454,7 @@ impl Tx<'_> {
                     i64::from(r.in_task_panel)
                 ],
             )
-            .map_err(sql)?;
+            .map_err(db_err)?;
         self.audit("run.start", &r.id, &json!({ "action": r.action, "resource": r.resource_id }))?;
         Ok(Outcome { id: Some(r.id), changed: true, rows: vec![], ..Default::default() })
     }
@@ -1475,7 +1475,7 @@ impl Tx<'_> {
                  WHERE id = ?1 AND status = 'running'",
                 params![id, status, self.at, o(&summary), o(&error), o(&output)],
             )
-            .map_err(sql)?;
+            .map_err(db_err)?;
         if n == 0 {
             return Ok(Outcome::default());
         }
@@ -1483,7 +1483,7 @@ impl Tx<'_> {
         self.audit("run.end", id, &json!({ "status": status, "code": code }))?;
         // D288 retention: newest 200 per resource (or per action without a resource); kept ones stay.
         let (resource, action): (Option<String>, String) =
-            self.tx.query_row("SELECT resource_id, action FROM runs WHERE id = ?1", [id], |r| Ok((r.get(0)?, r.get(1)?))).map_err(sql)?;
+            self.tx.query_row("SELECT resource_id, action FROM runs WHERE id = ?1", [id], |r| Ok((r.get(0)?, r.get(1)?))).map_err(db_err)?;
         let (cond, arg) = match &resource {
             Some(rid) => ("resource_id = ?1", rid.clone()),
             None => ("resource_id IS NULL AND action = ?1", action),
@@ -1496,13 +1496,13 @@ impl Tx<'_> {
                 ),
                 [arg],
             )
-            .map_err(sql)?;
+            .map_err(db_err)?;
         Ok(Outcome { id: Some(id.to_string()), changed: true, rows: vec![], ..Default::default() })
     }
 
     /// Edits parameters of a plugin's state node, creating the node when needed.
     pub(crate) fn plugin_state(&mut self, plugin: &str, set: &[(String, Option<String>)]) -> KResult<Outcome> {
-        let existing = store::plugin_state(self.tx, plugin).map_err(sql)?;
+        let existing = store::plugin_state(self.tx, plugin).map_err(db_err)?;
         let mut row = match existing.clone() {
             Some(r) => r,
             None => {
@@ -1573,7 +1573,7 @@ impl Tx<'_> {
                     "INSERT INTO upgrade_items (batch, resource_id, old_version, old_rev, new_rev) VALUES (?1, ?2, ?3, ?4, ?5)",
                     params![batch, row.id, old_version, it.rev, row.rev],
                 )
-                .map_err(sql)?;
+                .map_err(db_err)?;
             rows.push(row);
         }
         if !rows.is_empty() {
@@ -1583,7 +1583,7 @@ impl Tx<'_> {
                     "INSERT INTO upgrade_batches (id, plugin, from_version, to_version, at, prev_active) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
                     params![batch, plugin, from_text, to, self.at, prev_active],
                 )
-                .map_err(sql)?;
+                .map_err(db_err)?;
         }
         if set_active {
             self.plugin_state(plugin, &[("active".into(), Some(to.to_string()))])?;
@@ -1606,14 +1606,14 @@ impl Tx<'_> {
             let mut st = self
                 .tx
                 .prepare("SELECT resource_id, old_version, old_rev, new_rev FROM upgrade_items WHERE batch = ?1")
-                .map_err(sql)?;
-            let v = st.query_map([batch], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))).map_err(sql)?;
-            v.collect::<Result<_, _>>().map_err(sql)?
+                .map_err(db_err)?;
+            let v = st.query_map([batch], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))).map_err(db_err)?;
+            v.collect::<Result<_, _>>().map_err(db_err)?
         };
         let mut rows = Vec::new();
         let mut modified = Vec::new();
         for (id, old_version, old_rev, new_rev) in items {
-            let Some(mut row) = store::get(self.tx, &id).map_err(sql)? else { continue };
+            let Some(mut row) = store::get(self.tx, &id).map_err(db_err)? else { continue };
             if row.rev != new_rev && !also.contains(&id) {
                 modified.push(json!({ "id": row.id, "name": row.name }));
                 continue;
@@ -1621,7 +1621,7 @@ impl Tx<'_> {
             let snap: String = self
                 .tx
                 .query_row("SELECT snapshot FROM revisions WHERE resource_id = ?1 AND rev = ?2", params![id, old_rev], |r| r.get(0))
-                .map_err(sql)?;
+                .map_err(db_err)?;
             if rows.is_empty() {
                 // D327 / review #9: refused only when the undo really rewrites resources.
                 crate::policy::check(self.tx, crate::policy::READONLY, None)?;
@@ -1637,7 +1637,7 @@ impl Tx<'_> {
             self.revision(&row, "undoUpgrade", &["body".to_string(), "pluginVersion".to_string()])?;
             rows.push(row);
         }
-        self.tx.execute("UPDATE upgrade_batches SET undone_at = ?2 WHERE id = ?1", params![batch, self.at]).map_err(sql)?;
+        self.tx.execute("UPDATE upgrade_batches SET undone_at = ?2 WHERE id = ?1", params![batch, self.at]).map_err(db_err)?;
         // D304/D314: the active version goes back to what it was before the takeover (or the
         // lowest version the batch came from, by semver), and is pinned so it is not upgraded again.
         let lowest = from
@@ -1669,7 +1669,7 @@ impl Tx<'_> {
                      WHERE run_id = ?1 AND op = ?2 AND object = ?3",
                     params![run, op, object, self.at, summary.to_string(), failed as i64],
                 )
-                .map_err(sql)?;
+                .map_err(db_err)?;
             if n > 0 {
                 return Ok(Outcome { changed: false, ..Default::default() });
             }
@@ -1682,7 +1682,7 @@ impl Tx<'_> {
                         "INSERT INTO audit (at, actor, op, object, summary, result) VALUES (?1,?2,?3,?4,?5,?6)",
                         params![self.at, self.actor.as_text(), op, object, summary.to_string(), format!("failed:{}", code_text(e.code))],
                     )
-                    .map_err(sql)?;
+                    .map_err(db_err)?;
             }
         }
         if let Some(run) = run {
@@ -1692,13 +1692,13 @@ impl Tx<'_> {
                     "INSERT INTO audit_counts (run_id, op, object, audit_seq, count, first_at, last_at, failures) VALUES (?1, ?2, ?3, ?4, 1, ?5, ?5, ?6)",
                     params![run, op, object, seq, self.at, failed as i64],
                 )
-                .map_err(sql)?;
+                .map_err(db_err)?;
         }
         Ok(Outcome { changed: true, ..Default::default() })
     }
 
     fn siblings(&self, tree: Option<&str>, parent: Option<&str>, except: &str) -> KResult<Vec<Row>> {
-        let all = store::children(self.tx, tree.unwrap_or_default(), parent, 0, u32::MAX).map_err(sql)?;
+        let all = store::children(self.tx, tree.unwrap_or_default(), parent, 0, u32::MAX).map_err(db_err)?;
         Ok(all.into_iter().filter(|r| r.id != except).collect())
     }
 
@@ -1706,7 +1706,7 @@ impl Tx<'_> {
         let root = self.live(id)?;
         self.permit(&root.kind)?;
         let mut batch = vec![root];
-        batch.extend(store::descendants(self.tx, id).map_err(sql)?);
+        batch.extend(store::descendants(self.tx, id).map_err(db_err)?);
         // All or nothing: one refused row refuses the batch.
         for r in &batch {
             self.permit(&r.kind)?;
@@ -1720,7 +1720,7 @@ impl Tx<'_> {
             self.save(r)?;
             self.tx
                 .execute("UPDATE resources SET delete_batch = ?2 WHERE id = ?1", params![r.id, batch_id])
-                .map_err(sql)?;
+                .map_err(db_err)?;
             self.revision(r, "delete", &["deleted".to_string()])?;
             self.touch_ends(&r.id)?;
         }
@@ -1735,7 +1735,7 @@ fn dest_tree(cx: &Tx<'_>, dest: &MoveDest) -> KResult<Option<String>> {
         MoveDest::Inside(None) => return Ok(None),
         MoveDest::Inside(Some(i)) | MoveDest::Before(i) | MoveDest::After(i) => i,
     };
-    Ok(store::get(cx.tx, id).map_err(sql)?.and_then(|r| r.tree))
+    Ok(store::get(cx.tx, id).map_err(db_err)?.and_then(|r| r.tree))
 }
 
 /// One resource of a takeover: the rev its new body was computed from.

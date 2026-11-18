@@ -91,8 +91,8 @@ impl W {
         let b: String = self.db().query_row("SELECT body FROM resources WHERE id = ?1", [id], |r| r.get(0)).unwrap();
         serde_json::from_str::<Value>(&b).unwrap()["text"].as_str().unwrap_or_default().to_string()
     }
-    fn count(&self, sql: &str) -> i64 {
-        self.db().query_row(sql, [], |r| r.get(0)).unwrap()
+    fn count(&self, stmt_text: &str) -> i64 {
+        self.db().query_row(stmt_text, [], |r| r.get(0)).unwrap()
     }
 }
 

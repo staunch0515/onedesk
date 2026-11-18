@@ -119,9 +119,9 @@ pub fn migrate(conn: &mut Connection) -> rusqlite::Result<usize> {
             .and_then(|v| v.parse().ok())
             .unwrap_or(0)
     };
-    for (i, (_, sql)) in MIGRATIONS.iter().enumerate().skip(current) {
+    for (i, (_, stmt_text)) in MIGRATIONS.iter().enumerate().skip(current) {
         let tx = conn.transaction()?;
-        tx.execute_batch(sql)?;
+        tx.execute_batch(stmt_text)?;
         tx.execute(
             "INSERT INTO meta (key, value) VALUES ('schema_version', ?1)
              ON CONFLICT(key) DO UPDATE SET value = excluded.value",
@@ -540,8 +540,8 @@ mod tests {
     fn migration_0011_adds_last_summary_and_failures_to_merged_audit_rows() {
         let mut conn = Connection::open_in_memory().unwrap();
         let tx = conn.transaction().unwrap();
-        for (_, sql) in &MIGRATIONS[..10] {
-            tx.execute_batch(sql).unwrap();
+        for (_, stmt_text) in &MIGRATIONS[..10] {
+            tx.execute_batch(stmt_text).unwrap();
         }
         tx.execute("INSERT INTO meta (key, value) VALUES ('schema_version', '10')", []).unwrap();
         tx.execute(
@@ -560,8 +560,8 @@ mod tests {
     fn migration_0012_indexes_parents_and_keeps_data() {
         let mut conn = Connection::open_in_memory().unwrap();
         let tx = conn.transaction().unwrap();
-        for (_, sql) in &MIGRATIONS[..11] {
-            tx.execute_batch(sql).unwrap();
+        for (_, stmt_text) in &MIGRATIONS[..11] {
+            tx.execute_batch(stmt_text).unwrap();
         }
         tx.execute("INSERT INTO meta (key, value) VALUES ('schema_version', '11')", []).unwrap();
         for (id, parent) in [("p", None), ("c", Some("p"))] {
