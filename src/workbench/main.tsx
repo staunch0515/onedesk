@@ -58,6 +58,10 @@ async function start() {
   // No tab came back (nothing saved, or all closed before the last quit): the startup page, once (D382).
   await openStartupPage(client, store);
 
+  // A reload or quit within the quiet moment of the last change must not lose it (a closed tab would come back).
+  window.addEventListener("pagehide", () => store.flush());
+  document.addEventListener("visibilitychange", () => document.visibilityState === "hidden" && store.flush());
+
   const settings = await readSettings(client);
   createRoot(document.getElementById("root")!).render(
     <StrictMode>
