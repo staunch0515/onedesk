@@ -15,3 +15,9 @@
 | 集合：按条件列出、资源变了再展开是新结果 | 通过 | 文字 `zeta` → 1 条；新建正文含 zeta 的笔记后再展开 → 2 条；按类型 `org.onedesk.link:link` → 只有网址；页面“共 2 条” |
 | HTTP：方法、查询参数、状态码、耗时、大小、响应头、JSON 排版 | 通过 | POST 带查询参数 → 服务器收到 `/echo?page=2&name=a%20b` 与正文；HEAD “0 bytes”；404 显示“404 Not Found · … ms · … bytes”；界面（截图 02）正文 JSON 排版，“响应头”页签列出全部头 |
 | 权限 `resourcesAll` | 部分 | 插件页权限表里有，且“必需”；中文界面里显示的是英语（缺 `kernel.permission.resourcesAll` 中、日译文，已派）。安装确认对话框我没亲手打开（界面检查 `round12.spec.ts` 用 `app.inspectPlugin` 覆盖） |
+
+## 第十一轮抽查（r11-tests 与外壳修改合并后）
+
+- 欢迎页：英语/中文界面下打开欢迎页，状态栏切到日语（不刷新）→ 标签“ようこそ”、标题与介绍文字变为日语（截图 `round11-accept/spot-ja-welcome-after-switch.jpg`）。通过。
+- 日语界面的活动栏、树标题：资源、环境、工作区配置、收藏、已删除、插件、运行记录、设置都是日语；但 `Files`、`Plugin market`、`Sample` 仍是英语——这三个内置插件没有 `ja-JP.json`（已派测试会话补）。`Demo resources`、`Data sources` 是假数据部分的演示文字，不算。
+- 地址里带 `lang=` 时语言被它固定，状态栏切换不生效（开发参数，不算缺陷）。
