@@ -33,6 +33,13 @@ export function queryOf(conditions, offset) {
   return q;
 }
 
+// A Label (D396: table cells hold text only) as text in the current locale; English, then the kind's full name.
+export function labelText(label, locale, fallback) {
+  if (typeof label === "string") return label;
+  if (label && typeof label === "object") return label[locale] || label["en-US"] || fallback;
+  return fallback;
+}
+
 const bodyOf = (ctx) => (ctx.resource && ctx.resource.body) || {};
 
 function pick(ctx, name) {
@@ -81,11 +88,10 @@ export default {
             type: "table",
             id: "results",
             columns: [
-              { key: "icon", label: tr(ctx, "col.icon") },
               { key: "name", label: tr(ctx, "col.name") },
               { key: "kind", label: tr(ctx, "col.kind") },
             ],
-            rows: items.map((i) => [i.icon, i.name, i.kindLabel || i.kind]),
+            rows: items.map((i) => [i.name, labelText(i.kindLabel, ctx.locale, i.kind)]),
             rowTargets: items.map((i) => `resource:${i.id}`),
           });
         }

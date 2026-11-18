@@ -35,6 +35,13 @@ async function lookup(ctx, ids) {
   return found;
 }
 
+// A Label (D396: table cells hold text only) as text in the current locale; English, then the kind's full name.
+export function labelText(label, locale, fallback) {
+  if (typeof label === "string") return label;
+  if (label && typeof label === "object") return label[locale] || label["en-US"] || fallback;
+  return fallback;
+}
+
 export function move(items, id, delta) {
   const i = items.indexOf(id);
   const j = i + delta;
@@ -88,7 +95,7 @@ export default {
         const found = await lookup(ctx, items);
         const rows = items.map((id) => {
           const info = found.get(id);
-          return info ? [info.icon, info.name, info.kindLabel || info.kind] : ["unlink", tr(ctx, "node.missing"), ""];
+          return info ? [info.name, labelText(info.kindLabel, ctx.locale, info.kind)] : [tr(ctx, "node.missing"), ""];
         });
         return {
           view: [
@@ -96,7 +103,6 @@ export default {
               type: "table",
               id: "items",
               columns: [
-                { key: "icon", label: tr(ctx, "col.icon") },
                 { key: "name", label: tr(ctx, "col.name") },
                 { key: "kind", label: tr(ctx, "col.kind") },
               ],

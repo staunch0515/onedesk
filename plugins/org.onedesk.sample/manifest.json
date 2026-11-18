@@ -177,7 +177,8 @@
     },
     "locales": {
       "en-US": "locales/en-US.json",
-      "zh-CN": "locales/zh-CN.json"
+      "zh-CN": "locales/zh-CN.json",
+      "ja-JP": "locales/ja-JP.json"
     }
   }
 }

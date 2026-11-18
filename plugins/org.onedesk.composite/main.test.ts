@@ -117,7 +117,9 @@ describe("composite: page", () => {
     expect(onlyKeys(out, RENDER_KEYS)).toEqual([]);
     expect(out.view).toHaveLength(1);
     const table = out.view[0];
-    expect(table.rows).toEqual([["file-text", "Name a", "org.onedesk.note:note"], ["unlink", "(no longer exists)", ""]]);
+    expect(table.rows).toEqual([["Name a", "org.onedesk.note:note"], ["(no longer exists)", ""]]);
+    expect(table.columns.map((c: any) => c.key)).toEqual(["name", "kind"]);
+    for (const row of table.rows) for (const cell of row) expect(typeof cell).toBe("string");
     expect(table.rowKeys).toEqual(["a", "gone"]);
     expect(table.rowTargets).toEqual(["resource:a", null]);
     expect(table.rowActions.map((x: any) => [x.id, x.icon])).toEqual([["up", "arrow-up"], ["down", "arrow-down"], ["remove", "trash-2"]]);
@@ -125,10 +127,14 @@ describe("composite: page", () => {
     expect(table.rowActions.length).toBeLessThanOrEqual(4);
     for (const k of ["rowKeys", "rowTargets"]) expect(table[k]).toHaveLength(table.rows.length);
   });
-  it("kindLabel is shown when the host gives one", async () => {
-    const host = { resources: { search: vi.fn(async () => ({ items: [info("b", { kindLabel: "Note" })], total: 1 })) } };
-    const out = await pages.editor.render(ctxOf(host, ["b"]));
-    expect(out.view[0].rows).toEqual([["file-text", "Name b", "Note"]]);
+  it("kindLabel is a Label: shown as text in the locale, else English, else the kind name — never an object", async () => {
+    const label = { "en-US": "Note", "zh-CN": "笔记" };
+    const host = { resources: { search: vi.fn(async () => ({ items: [info("a", { kindLabel: label }), info("b", { kindLabel: { "ja-JP": "メモ" } }), info("c", { kindLabel: "Plain" })], total: 3 })) } };
+    const zh = await pages.editor.render(ctxOf(host, ["a", "b", "c"], { locale: "zh-CN" }));
+    expect(zh.view[0].rows).toEqual([["Name a", "笔记"], ["Name b", "org.onedesk.note:note"], ["Name c", "Plain"]]);
+    const en = await pages.editor.render(ctxOf(host, ["a"], { locale: "de-DE" }));
+    expect(en.view[0].rows[0][1]).toBe("Note");
+    for (const row of [...zh.view[0].rows, ...en.view[0].rows]) for (const cell of row) expect(typeof cell).toBe("string");
   });
   it("the row events remove, up and down act on ctx.row and write through the host", async () => {
     const run = async (name: string, row: string | undefined, items = ["a", "b", "c"]) => {

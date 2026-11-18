@@ -26,6 +26,6 @@
         "toolbar": ["plugin.grantFolder"]
       }
     ],
-    "locales": { "en-US": "locales/en-US.json", "zh-CN": "locales/zh-CN.json" }
+    "locales": { "en-US": "locales/en-US.json", "zh-CN": "locales/zh-CN.json", "ja-JP": "locales/ja-JP.json" }
   }
 }

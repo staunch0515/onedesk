@@ -5,8 +5,8 @@ const dir = (p: string) => new URL(`../${p}`, import.meta.url);
 const read = (p: string) => JSON.parse(readFileSync(dir(p), "utf8")) as Record<string, string>;
 const holes = (s: string) => (s.replace(/\{\{[^{}]*\}\}/g, "").match(/\{[a-zA-Z_]+\}/g) ?? []).sort().join();
 
-// Round 11 plugins and the ones that gained a Japanese file: English, Chinese and Japanese carry the same keys.
-const PLUGINS = ["org.onedesk.link", "org.onedesk.prompt", "org.onedesk.note", "org.onedesk.http", "org.onedesk.welcome", "org.onedesk.lang.zh-cn", "org.onedesk.lang.ja-jp", "org.onedesk.composite", "org.onedesk.collection"];
+// Every built-in plugin: English, Chinese and Japanese carry the same keys, and the manifest names all three files.
+const PLUGINS = readdirSync(dir("")).filter((d) => d.startsWith("org.onedesk.")).sort();
 
 describe.each(PLUGINS)("%s locales", (p) => {
   it("en-US, zh-CN and ja-JP have the same keys and {holes}", () => {
@@ -16,6 +16,11 @@ describe.each(PLUGINS)("%s locales", (p) => {
       expect(Object.keys(other).sort(), l).toEqual(Object.keys(en).sort());
       for (const k of Object.keys(en)) expect(holes(other[k]!), `${l} ${k}`).toBe(holes(en[k]!));
     }
+  });
+
+  it("the manifest names en-US, zh-CN and ja-JP", () => {
+    const m = JSON.parse(readFileSync(dir(`${p}/manifest.json`), "utf8"));
+    expect(Object.keys(m.contributes.locales).sort()).toEqual(["en-US", "ja-JP", "zh-CN"]);
   });
 
   it("every file the manifest names exists", () => {

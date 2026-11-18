@@ -273,6 +273,9 @@ test("interface: the composite page lists the items with row keys, targets and r
   expect(view.view[0]).toMatchObject({ type: "table", rowKeys: [one, two], rowTargets: [`resource:${one}`, `resource:${two}`] });
   expect(view.view[0]!.rowActions!.map((a) => a.id)).toEqual(["up", "down", "remove"]);
   await expect(rows.filter({ hasText: "Two" })).toBeVisible();
+  await expect(page.getByRole("tab", { name: /^Board/, selected: true })).toBeVisible();
+  expect(await page.locator("body").innerText()).not.toContain("[object Object]");
+  await expect(rows.filter({ hasText: "Two" })).toContainText("Note");
   await shot(page, "composite-page");
 });
 
@@ -289,13 +292,16 @@ test("interface: the row buttons move a row up and down and remove it, and remov
   const rows = page.getByRole("row");
   await expect(rows.filter({ hasText: "One" })).toBeVisible({ timeout: 15_000 });
   const rowOf = (name: string) => rows.filter({ hasText: name });
-  // row buttons: "Two" up, then "Two" down, then "Two" up again, then remove "Two"
+  // wait for the table to show the new order before every next click (the page refetches after the save)
   await rowOf("Two").getByRole("button", { name: "Move up", exact: true }).click();
   await expect.poll(() => items(page, id), { timeout: 15_000 }).toEqual([two, one]);
+  await expect(rows.nth(1)).toContainText("Two"); // rows.nth(0) is the header row
   await rowOf("One").getByRole("button", { name: "Move up", exact: true }).click();
   await expect.poll(() => items(page, id), { timeout: 15_000 }).toEqual([one, two]);
+  await expect(rows.nth(1)).toContainText("One");
   await rowOf("One").getByRole("button", { name: "Move down", exact: true }).click();
   await expect.poll(() => items(page, id), { timeout: 15_000 }).toEqual([two, one]);
+  await expect(rows.nth(1)).toContainText("Two");
   await rowOf("Two").getByRole("button", { name: "Remove", exact: true }).click();
   await expect.poll(() => items(page, id), { timeout: 15_000 }).toEqual([one]);
   expect((await getRes(page, two)).deleted).toBe(false);
@@ -361,6 +367,8 @@ test("collection: the page shows the conditions, the total and a results table",
   await expect(page.getByText("2 result(s)")).toBeVisible({ timeout: 15_000 });
   await expect(page.getByRole("row").filter({ hasText: "Alpha view" })).toBeVisible();
   await expect(page.getByRole("row").filter({ hasText: "Gamma view" })).toBeVisible();
+  expect(await page.locator("body").innerText()).not.toContain("[object Object]");
+  await expect(page.getByRole("row").filter({ hasText: "Alpha view" })).toContainText("Note");
   await shot(page, "collection-page");
 });
 
@@ -379,19 +387,23 @@ test("permission: inspecting a package that declares requires.resources lists re
   expect(nope.permissions!.map((p) => p.id)).not.toContain("resourcesAll");
   const comp = await call<{ permissions?: { id: string }[] }>(page, "plugin.get", { plugin: "org.onedesk.composite" });
   expect(JSON.stringify(comp)).toContain("resourcesAll");
+  // the install dialog (before the package is installed) shows the sentence; the zh/ja texts exist under the key the shell looks up
+  await openKernel(page, host);
+  await showTree(page, "Plugins");
+  await page.getByRole("button", { name: "Install a plugin…" }).click();
+  await page.getByRole("textbox", { name: "Folder path" }).fill(path.join(FIX, "com.example.peek/0.1.0"));
+  await page.getByRole("button", { name: "Look inside" }).click();
+  await expect(page.getByRole("dialog")).toContainText("Read the name, type and location (not the content) of everything in this workspace", { timeout: 15_000 });
+  await shot(page, "permission-dialog");
+  await page.getByRole("dialog").getByRole("button", { name: "Cancel" }).click();
+  const zh = await call<{ texts: Record<string, string> }>(page, "i18n.shell", { locale: "zh-CN" });
+  expect(zh.texts["kernel.permission.resourcesAll"]).toBe("读取本工作区所有内容的名称、类型和位置（不含正文）");
+  const ja = await call<{ texts: Record<string, string> }>(page, "i18n.shell", { locale: "ja-JP" });
+  expect(ja.texts["kernel.permission.resourcesAll"]).toMatch(/[\u3040-\u30ff]/);
   await install(page, path.join(FIX, "com.example.peek/0.1.0"));
   await install(page, path.join(FIX, "com.example.nopeek/0.1.0"));
   peekId = await create(page, PROBE_PEEK, { name: "Peeker" });
   nopeekId = await create(page, PROBE_NOPEEK, { name: "Blind" });
-});
-
-test("permission: the installation confirmation shows the resourcesAll sentence", async ({ page }) => {
-  await bare(page);
-  await openKernel(page, host);
-  await showTree(page, "Resources");
-  await page.goto(`/workbench.html?kernel=${encodeURIComponent(`ws://127.0.0.1:${host.port}`)}&token=${host.token}&quiet`);
-  await page.getByRole("navigation", { name: "Views" }).getByRole("button", { name: /Plugins/ }).click().catch(() => undefined);
-  await expect(page.locator("body")).toContainText(/Plugins|Peek/, { timeout: 15_000 });
 });
 
 const peek = async (page: Page, id: string, query: Record<string, unknown>) => {
@@ -402,6 +414,7 @@ const peek = async (page: Page, id: string, query: Record<string, unknown>) => {
 test("permission: search returns basic info only — no body, no description — and honours kinds, tags, text, ids, limit and total", async ({ page }) => {
   await bare(page);
   const one = await create(page, NOTE, { name: "Peekaboo", description: "secret description", "body.text": "zebrasecretbody", tags: ["peek"] });
+  await create(page, NOTE, { name: "Peek filler", "body.text": "filler" });
   const run = await peek(page, peekId, { text: "zebrasecretbody" });
   expect(run.status).toBe("success");
   const res = JSON.parse(run.output!.text!) as { items: Record<string, unknown>[]; total: number; next?: number };
@@ -522,20 +535,29 @@ test("http: a non-2xx status is a finished run with that status; an unreachable 
 });
 
 test("http: the request page shows the method list, address, query, headers and body; Send fills the Response tab", async ({ page }) => {
-  await bare(page);
-  await allowLocal(page);
-  const id = await create(page, REQUEST, { name: "Shown request", "body.method": "POST", "body.url": `${srv.url}/echo`, "body.query": "q=1", "body.headers": "X-Test: yes", "body.body": '{"a":1}' });
-  await openKernel(page, host);
-  await showTree(page, "Resources");
-  await treeItem(page, /^Shown request/).first().click();
-  await expect(page.getByRole("tab", { name: /^Shown request/, selected: true })).toBeVisible({ timeout: 15_000 });
-  await expect(page.getByText("Query parameters")).toBeVisible({ timeout: 15_000 });
-  await expect(page.getByText("Headers", { exact: true }).first()).toBeVisible();
-  await page.getByRole("button", { name: "Send", exact: true }).first().click();
-  await expect(page.getByText(/200 OK · \d+ ms/).first()).toBeVisible({ timeout: 30_000 });
-  await expect(page.getByText('"method": "POST"').first()).toBeVisible();
-  await shot(page, "http-response");
-  void id;
+  // its own kernel with one resource: the shared workspace has dozens of resources by now and the tree is virtualized
+  const dir2 = realpathSync(mkdtempSync(path.join(tmpdir(), "od-round12b-")));
+  const host2 = await startHost(path.join(dir2, "data"));
+  try {
+    await bare(page);
+    const call2 = <T = unknown>(method: string, params: unknown = null) => rpc<T>(page, host2, method, params);
+    const cfg = (await call2<{ nodes: { key: string; label: string }[] }>("tree.children", { tree: "config" })).nodes.find((n) => n.label === "Workspace")!.key;
+    await call2("params.set", { node: cfg, name: "network.allow", value: `127.0.0.1:${srv.port}` });
+    await call2("page.save", { target: `new:${REQUEST}`, changes: { name: "Shown request", "body.method": "POST", "body.url": `${srv.url}/echo`, "body.query": "q=1", "body.headers": "X-Test: yes", "body.body": '{"a":1}' } });
+    await openKernel(page, host2);
+    await showTree(page, "Resources");
+    await treeItem(page, /^Shown request/).first().click();
+    await expect(page.getByRole("tab", { name: /^Shown request/, selected: true })).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByText("Query parameters")).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByText("Headers", { exact: true }).first()).toBeVisible();
+    await page.getByRole("button", { name: "Send", exact: true }).first().click();
+    await expect(page.getByText(/200 OK · \d+ ms/).first()).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByText('"method": "POST"').first()).toBeVisible();
+    await shot(page, "http-response");
+  } finally {
+    await stopHost(host2);
+    rmSync(dir2, { recursive: true, force: true });
+  }
 });
 
 /* last: it fills the tree with 230 notes, which would push the others out of the virtualized tree */
