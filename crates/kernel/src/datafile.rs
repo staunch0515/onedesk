@@ -30,15 +30,40 @@ pub const MAX_TEXT_BYTES: usize = 6 * 1024 * 1024;
 /// The folder (in the workspace) of full results kept for export.
 pub const RUN_FILES: &str = "run-files";
 
+/// Review #10: a longer field is cut here (and the table marked `truncated`).
+pub const MAX_FIELD_BYTES: usize = 1024 * 1024;
+/// Review #10: a record's fields together; beyond it the rest of the record is dropped.
+pub const MAX_RECORD_BYTES: usize = 4 * 1024 * 1024;
+/// Review #11: a byte offset is kept for every this many records.
+pub const INDEX_EVERY: u64 = 1000;
+
 /// Reads CSV records one at a time.
 pub struct CsvReader<R: Read> {
     r: BufReader<R>,
     done: bool,
+    /// Byte offset of the next byte to read (in the whole file).
+    pub pos: u64,
+    /// Some field or record was longer than allowed and was cut.
+    pub clipped: bool,
+}
+
+fn add(field: &mut Vec<u8>, rec_bytes: &mut usize, clipped: &mut bool, c: u8) {
+    if field.len() >= MAX_FIELD_BYTES || *rec_bytes >= MAX_RECORD_BYTES {
+        *clipped = true;
+    } else {
+        field.push(c);
+        *rec_bytes += 1;
+    }
 }
 
 impl<R: Read> CsvReader<R> {
     pub fn new(r: R) -> Self {
-        CsvReader { r: BufReader::with_capacity(64 * 1024, r), done: false }
+        Self::at(r, 0)
+    }
+
+    /// A reader of a stream already positioned at byte `pos` of the file.
+    pub fn at(r: R, pos: u64) -> Self {
+        CsvReader { r: BufReader::with_capacity(64 * 1024, r), done: false, pos, clipped: false }
     }
 
     fn byte(&mut self) -> std::io::Result<Option<u8>> {
@@ -48,6 +73,7 @@ impl<R: Read> CsvReader<R> {
         }
         let b = buf[0];
         self.r.consume(1);
+        self.pos += 1;
         Ok(Some(b))
     }
 
@@ -60,8 +86,14 @@ impl<R: Read> CsvReader<R> {
         if self.done {
             return Ok(None);
         }
+        // Review #10: a UTF-8 byte order mark at the start of the file is no data.
+        if self.pos == 0 && self.r.fill_buf()?.starts_with(b"\xEF\xBB\xBF") {
+            self.r.consume(3);
+            self.pos = 3;
+        }
         let mut rec: Vec<Option<String>> = Vec::new();
         let mut field: Vec<u8> = Vec::new();
+        let (mut rec_bytes, mut clipped) = (0usize, false);
         let mut quoted = false;
         let mut any = false;
         let finish = |field: &mut Vec<u8>, quoted: bool| -> Option<String> {
@@ -72,14 +104,14 @@ impl<R: Read> CsvReader<R> {
                 Some(String::from_utf8(f).unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned()))
             }
         };
-        loop {
+        let result = loop {
             let Some(b) = self.byte()? else {
                 self.done = true;
                 if !any {
-                    return Ok(None);
+                    break None;
                 }
                 rec.push(finish(&mut field, quoted));
-                return Ok(Some(rec));
+                break Some(rec);
             };
             any = true;
             match b {
@@ -92,12 +124,12 @@ impl<R: Read> CsvReader<R> {
                             Some(b'"') => {
                                 if self.peek()? == Some(b'"') {
                                     self.byte()?;
-                                    field.push(b'"');
+                                    add(&mut field, &mut rec_bytes, &mut clipped, b'"');
                                 } else {
                                     break;
                                 }
                             }
-                            Some(c) => field.push(c),
+                            Some(c) => add(&mut field, &mut rec_bytes, &mut clipped, c),
                         }
                     }
                 }
@@ -108,11 +140,13 @@ impl<R: Read> CsvReader<R> {
                 b'\r' if self.peek()? == Some(b'\n') => {}
                 b'\n' => {
                     rec.push(finish(&mut field, quoted));
-                    return Ok(Some(rec));
+                    break Some(rec);
                 }
-                c => field.push(c),
+                c => add(&mut field, &mut rec_bytes, &mut clipped, c),
             }
-        }
+        };
+        self.clipped |= clipped;
+        Ok(result)
     }
 }
 
@@ -129,6 +163,8 @@ pub struct FromFile {
     pub output: RunOutput,
     /// The table was cut: keep the file for a full export.
     pub cut: bool,
+    /// Review #11: byte offsets of records 0, 1000, 2000… (after the header), for `run.rows`.
+    pub offsets: Vec<u64>,
 }
 
 /// Reads an output data file. `o` is the plugin's output object (without `file`).
@@ -149,6 +185,9 @@ pub fn read(path: &Path, o: &Map<String, Value>) -> Result<FromFile, String> {
         "text" => {
             let mut buf = Vec::new();
             f.take(MAX_TEXT_BYTES as u64 + 4).read_to_end(&mut buf).map_err(|e| e.to_string())?;
+            if buf.starts_with(b"\xEF\xBB\xBF") {
+                buf.drain(..3);
+            }
             let mut text = String::from_utf8_lossy(&buf).into_owned();
             if text.len() > MAX_TEXT_BYTES {
                 let mut i = MAX_TEXT_BYTES;
@@ -157,7 +196,7 @@ pub fn read(path: &Path, o: &Map<String, Value>) -> Result<FromFile, String> {
                 }
                 text.truncate(i);
             }
-            Ok(FromFile { output: RunOutput::Text { text }, cut: false })
+            Ok(FromFile { output: RunOutput::Text { text }, cut: false, offsets: vec![] })
         }
         "table" => {
             let header = match o.get("header") {
@@ -176,7 +215,12 @@ pub fn read(path: &Path, o: &Map<String, Value>) -> Result<FromFile, String> {
             if let Some(g) = &given {
                 width = Some(g.len());
             }
-            while let Some(rec) = rd.record().map_err(|e| e.to_string())? {
+            let mut offsets: Vec<u64> = Vec::new();
+            loop {
+                if total % INDEX_EVERY == 0 && offsets.len() as u64 == total / INDEX_EVERY {
+                    offsets.push(rd.pos);
+                }
+                let Some(rec) = rd.record().map_err(|e| e.to_string())? else { break };
                 // A blank line is no record (a one-column file's empty value is written `""`).
                 if rec.len() == 1 && rec[0].is_none() {
                     continue;
@@ -216,7 +260,10 @@ pub fn read(path: &Path, o: &Map<String, Value>) -> Result<FromFile, String> {
                     })
                     .collect(),
             };
-            Ok(FromFile { output: RunOutput::Table { columns, rows, total, truncated: cut, paged: Some(true) }, cut })
+            // Review #10: a field or record that was too long makes the table `truncated` (and
+            // the file is kept, though the kept copy reads the same way).
+            let truncated = cut || rd.clipped;
+            Ok(FromFile { output: RunOutput::Table { columns, rows, total, truncated, paged: Some(true) }, cut, offsets })
         }
         other => Err(bad(format!("output type {other:?} cannot come from a file"))),
     }
@@ -231,9 +278,16 @@ pub fn kept(ws: &Path, run: &str) -> Option<(PathBuf, bool)> {
         .find(|(p, _)| p.is_file())
 }
 
-pub fn keep(ws: &Path, run: &str, from: &Path, header: bool, take: bool) -> std::io::Result<()> {
+/// Review #11: the record offsets of a kept file (`<id>.idx`), if written.
+pub fn kept_index(ws: &Path, run: &str) -> Option<Vec<u64>> {
+    let text = std::fs::read_to_string(ws.join(RUN_FILES).join(format!("{run}.idx"))).ok()?;
+    serde_json::from_str(&text).ok()
+}
+
+pub fn keep(ws: &Path, run: &str, from: &Path, header: bool, take: bool, offsets: &[u64]) -> std::io::Result<()> {
     let dir = ws.join(RUN_FILES);
     std::fs::create_dir_all(&dir)?;
+    std::fs::write(dir.join(format!("{run}.idx")), serde_json::to_vec(offsets).unwrap_or_default())?;
     let to = dir.join(if header { format!("{run}.h.csv") } else { format!("{run}.csv") });
     if take && std::fs::rename(from, &to).is_ok() {
         return Ok(());
@@ -246,7 +300,7 @@ pub fn sweep(ws: &Path, exists: impl Fn(&str) -> bool) {
     let Ok(rd) = std::fs::read_dir(ws.join(RUN_FILES)) else { return };
     for e in rd.flatten() {
         let name = e.file_name().to_string_lossy().into_owned();
-        let id = name.trim_end_matches(".csv").trim_end_matches(".h");
+        let id = name.split('.').next().unwrap_or_default();
         if !exists(id) {
             let _ = std::fs::remove_file(e.path());
         }
@@ -281,6 +335,47 @@ mod tests {
         // No final line break.
         assert_eq!(recs("a,b"), vec![vec![Some("a".into()), Some("b".into())]]);
         assert!(recs("").is_empty());
+    }
+
+    #[test]
+    fn a_bom_is_skipped_and_long_fields_and_records_are_cut() {
+        assert_eq!(recs("\u{feff}a,b\n1,2\n")[0], vec![Some("a".into()), Some("b".into())]);
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("r.csv");
+        let long = "x".repeat(MAX_FIELD_BYTES + 10);
+        std::fs::write(&p, format!("a,b\n{long},1\n2,3\n")).unwrap();
+        let r = read(&p, &o(json!({ "type": "table" }))).unwrap();
+        let RunOutput::Table { rows, total, truncated, .. } = r.output else { panic!() };
+        assert_eq!((total, truncated), (2, true));
+        assert_eq!(rows[0][0].as_str().unwrap().len(), MAX_FIELD_BYTES);
+        assert_eq!(rows[1], vec![json!("2"), json!("3")]);
+        // A record over 4 MB keeps its first 4 MB of fields (the rest of the record is dropped).
+        let field = "y".repeat(MAX_FIELD_BYTES);
+        let data = format!("{f},{f},{f},{f},{f}\nz\n", f = field).into_bytes();
+        let mut rd = CsvReader::new(data.as_slice());
+        let rec = rd.record().unwrap().unwrap();
+        let kept: usize = rec.iter().map(|c| c.as_ref().map_or(0, String::len)).sum();
+        assert!(kept <= MAX_RECORD_BYTES && rd.clipped);
+        assert_eq!(rd.record().unwrap().unwrap(), vec![Some("z".to_string())]);
+    }
+
+    #[test]
+    fn offsets_point_at_every_thousandth_record() {
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("r.csv");
+        let mut s = String::from("n\n");
+        for i in 0..2500 {
+            s.push_str(&format!("{i}\n"));
+        }
+        std::fs::write(&p, &s).unwrap();
+        let r = read(&p, &o(json!({ "type": "table" }))).unwrap();
+        assert_eq!(r.offsets.len(), 3);
+        for (k, off) in r.offsets.iter().enumerate() {
+            let mut f = std::fs::File::open(&p).unwrap();
+            std::io::Seek::seek(&mut f, std::io::SeekFrom::Start(*off)).unwrap();
+            let mut rd = CsvReader::at(f, *off);
+            assert_eq!(rd.record().unwrap().unwrap(), vec![Some((k * 1000).to_string())]);
+        }
     }
 
     #[test]

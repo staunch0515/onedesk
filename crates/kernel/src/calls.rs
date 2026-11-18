@@ -12,8 +12,8 @@
 //!   references, D318), handled by the version it is bound to (§7.6).
 //! - Nested calls at most `MAX_DEPTH` deep; deeper, or back into a plugin already on the chain →
 //!   `denied/callDepth`.
-//! - The caller's action budget does not run while it waits (D355); the call has the action
-//!   timeout of its own.
+//! - The caller's action budget keeps running while it waits (D417); the call also has the
+//!   action timeout of its own.
 //! - Input and answer are JSON. An answer whose `output.file` names a data file (X2) has that file
 //!   moved into the caller's own folder and `file` rewritten to the new relative path, so the
 //!   caller can hand it on as its own output.
@@ -44,9 +44,7 @@ impl Inner {
         let run = info.run_id.clone().ok_or_else(|| denied("notInRun"))?;
         let (pid, short) = Registry::split(&full).ok_or_else(|| invalid_params("action must be <pluginId>:<actionId>"))?;
         let not_exported = || err_p(ErrorCode::Denied, &[("reason", "notExported"), ("action", &full)]);
-        if pid == p.id || !p.manifest.deps.iter().any(|d| d.id == pid) {
-            return Err(not_exported());
-        }
+        let Some(dep) = p.manifest.deps.iter().find(|d| d.id == pid).filter(|_| pid != p.id) else { return Err(not_exported()) };
         let resource = match opts.get("resource") {
             None | Some(Value::Null) => None,
             Some(Value::String(id)) => Some(self.read(|c| store::get(c, id))?.ok_or_else(|| not_found("resource"))?),
@@ -57,11 +55,21 @@ impl Inner {
             Some(v) => self.registry.version(pid, v),
             None => self.registry.plugin(pid),
         };
-        let Some(callee) = callee.filter(|c| c.manifest.exported_actions.iter().any(|a| a == short)) else { return Err(not_exported()) };
+        // D417: the version that would run must satisfy the caller's `depends` range.
+        let Some(callee) = callee.filter(|c| c.manifest.exported_actions.iter().any(|a| a == short) && dep.req.matches(&c.semver()))
+        else {
+            return Err(not_exported());
+        };
         let action = callee.action(short).ok_or_else(not_exported)?;
         if let Some(r) = &resource {
             if self.registry.kind(&r.kind).is_none_or(|(owner, _)| owner.id != callee.id) {
                 return Err(denied("notOwnResource"));
+            }
+        }
+        // D417: an action bound to kinds is called with a resource of one of them.
+        if let Some(kinds) = &action.kinds {
+            if !resource.as_ref().is_some_and(|r| kinds.iter().any(|k| callee.kind_ref(k) == r.kind)) {
+                return Err(err_p(ErrorCode::Denied, &[("reason", "wrongKind"), ("action", &full)]));
             }
         }
         let mut callers = info.callers.clone();
@@ -97,9 +105,8 @@ impl Inner {
             ..Default::default()
         };
         let started = Instant::now();
+        // D417: the caller's budget keeps running while it waits (unlike programs and transfers).
         let res = {
-            // D355: the caller's budget does not run while it waits.
-            let _hold = info.hold.enter_wait();
             self.call_version(callee, "actions", &action.id, "", json!([ctx, input]), sub, Some(token), Some(self.cfg.action_timeout)).await
         };
         if let Some(w) = watcher {
@@ -107,7 +114,7 @@ impl Inner {
         }
         let ms = started.elapsed().as_millis() as u64;
         let res = match res {
-            Ok(v) => self.hand_over_file(callee, p, v).await,
+            Ok(v) => self.hand_over_file(callee, p, Some(&run), v).await,
             Err(SandboxError::Host(e)) => Err(e),
             Err(SandboxError::Cancelled) => Err(err_p(ErrorCode::Invalid, &[("reason", "cancelled")])),
             Err(SandboxError::Timeout) => Err(err_p(ErrorCode::Invalid, &[("reason", "timeout"), ("action", &full)])),
@@ -130,7 +137,7 @@ impl Inner {
     }
 
     /// X2 across a call: a data file in the callee's answer moves to the caller's own folder.
-    async fn hand_over_file(&self, callee: &'static Plugin, caller: &'static Plugin, mut v: Value) -> KResult<Value> {
+    async fn hand_over_file(&self, callee: &'static Plugin, caller: &'static Plugin, run: Option<&str>, mut v: Value) -> KResult<Value> {
         let Some(file) = v.get("output").and_then(|o| o.get("file")).and_then(Value::as_str).map(String::from) else { return Ok(v) };
         let bad = |why: String| {
             let mut e = err_p(ErrorCode::PluginError, &[("reason", "badOutput")]);
@@ -139,12 +146,22 @@ impl Inner {
         };
         let (grants, abs) = self.transfer_end(callee, &file).map_err(|e| bad(format!("data file {file}: {:?}", e.params)))?;
         let real = crate::files::resolve(&grants, &abs).map_err(|e| bad(format!("data file {file}: {:?}", e.params)))?;
+        // Review #12: only a regular file (never a folder such as `tmp`, nor a link).
+        if !std::fs::symlink_metadata(&real).is_ok_and(|m| m.is_file()) {
+            return Err(bad(format!("data file {file}: not a regular file")));
+        }
         let own = self.plugin_data_dir(&callee.id)?.canonicalize().map_err(internal)?;
         let name = format!("call-{}{}", crate::util::new_id(), real.extension().map(|e| format!(".{}", e.to_string_lossy())).unwrap_or_default());
         let to = self.plugin_data_dir(&caller.id)?.join("tmp").join(&name);
         let moved = real.starts_with(&own) && std::fs::rename(&real, &to).is_ok();
         if !moved {
             std::fs::copy(&real, &to).map_err(|e| bad(format!("data file {file}: {e}")))?;
+        }
+        // Review #12: removed when the caller's run ends if it was not handed on.
+        if let Some(r) = run {
+            if let Some(a) = self.runs_active.lock().unwrap().get_mut(r) {
+                a.handed.push(to.clone());
+            }
         }
         v["output"]["file"] = Value::String(format!("tmp/{name}"));
         Ok(v)

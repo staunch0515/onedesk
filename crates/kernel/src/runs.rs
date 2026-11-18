@@ -46,6 +46,9 @@ pub struct ActiveRun {
     pub stopped: Option<&'static str>,
     /// Plain secret values the action read (§7.5): scrubbed from output, summary, progress.
     pub secrets: Vec<String>,
+    /// Review #12 (round 15): data files `actions.call` moved into the plugin's folder for this
+    /// run; whatever is still there when the run ends is removed.
+    pub handed: Vec<std::path::PathBuf>,
 }
 
 pub type ActiveRuns = std::sync::Mutex<HashMap<String, ActiveRun>>;
@@ -382,7 +385,7 @@ impl Inner {
         let token = CancelToken::default();
         self.runs_active.lock().unwrap().insert(
             id.clone(),
-            ActiveRun { plugin: plugin.id.clone(), token: token.clone(), last_progress: None, stopped: None, secrets: vec![] },
+            ActiveRun { plugin: plugin.id.clone(), token: token.clone(), last_progress: None, stopped: None, secrets: vec![], handed: vec![] },
         );
         let resource = match res {
             // A dependent sees the resource without its secret fields (round 7).
@@ -419,9 +422,9 @@ impl Inner {
         tokio::spawn(async move {
             let timeout = me.cfg.action_timeout;
             let res = me.call_version(runner, "actions", &aid, "", args, info, Some(token), Some(timeout)).await;
-            let (stopped, secrets) = match me.runs_active.lock().unwrap().remove(&run_id) {
-                Some(a) => (a.stopped, a.secrets),
-                None => (None, vec![]),
+            let (stopped, secrets, handed) = match me.runs_active.lock().unwrap().remove(&run_id) {
+                Some(a) => (a.stopped, a.secrets, a.handed),
+                None => (None, vec![], vec![]),
             };
             let plugin = me.registry.plugin(&pid);
             let ms = started.elapsed().as_millis() as i64;
@@ -468,6 +471,10 @@ impl Inner {
             for v in [&mut summary, &mut output, &mut error].into_iter().flatten() {
                 crate::secrets::scrub(v, &secrets);
             }
+            // Review #12: hand-over files the action did not hand on (its output removed the one it did).
+            for f in handed {
+                let _ = std::fs::remove_file(f);
+            }
             me.run_end(&run_id, plugin, status, summary, error, output).await;
         });
         Ok(())
@@ -489,7 +496,7 @@ impl Inner {
             let r = crate::datafile::read(&real, &o);
             if let Ok(r) = &r {
                 if r.cut {
-                    if let Err(e) = crate::datafile::keep(&ws, &run, &real, header, take) {
+                    if let Err(e) = crate::datafile::keep(&ws, &run, &real, header, take, &r.offsets) {
                         eprintln!("onedesk: could not keep the full result of run {run}: {e}");
                     }
                 }
@@ -647,12 +654,25 @@ impl Inner {
         let Ok(RunOutput::Table { rows, total, .. }) = serde_json::from_value::<RunOutput>(raw) else { return Err(invalid("notTable")) };
         let (offset, limit) = (p.offset as usize, p.limit as usize);
         if let Some((full, header)) = crate::datafile::kept(&self.ws.dir, &p.id) {
-            let f = std::fs::File::open(&full).map_err(internal)?;
-            let mut rd = crate::datafile::CsvReader::new(f);
-            if header {
-                rd.record().map_err(internal)?;
-            }
-            let (mut i, mut out) = (0usize, Vec::new());
+            let mut f = std::fs::File::open(&full).map_err(internal)?;
+            let every = crate::datafile::INDEX_EVERY as usize;
+            // Review #11: start at the nearest indexed record instead of the top of the file.
+            let index = crate::datafile::kept_index(&self.ws.dir, &p.id).unwrap_or_default();
+            let (mut rd, mut i) = match index.get(offset / every) {
+                Some(&at) => {
+                    std::io::Seek::seek(&mut f, std::io::SeekFrom::Start(at)).map_err(internal)?;
+                    (crate::datafile::CsvReader::at(f, at), offset / every * every)
+                }
+                None if !index.is_empty() => return Ok(RunRowsResult { rows: vec![], total }),
+                None => {
+                    let mut rd = crate::datafile::CsvReader::new(f);
+                    if header {
+                        rd.record().map_err(internal)?;
+                    }
+                    (rd, 0)
+                }
+            };
+            let mut out = Vec::new();
             while let Some(rec) = rd.record().map_err(internal)? {
                 // Blank lines are no records (as when the file was read, `datafile::read`).
                 if rec.len() == 1 && rec[0].is_none() {

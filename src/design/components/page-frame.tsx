@@ -289,15 +289,18 @@ export interface StripFieldProps {
   /** Takes the room the other fields leave (a long text such as an address). */
   fill?: boolean;
   htmlFor?: string;
+  /** Marks the label with a required star (the star is decoration; the control carries the state). */
+  required?: boolean;
   children: ReactNode;
 }
 
-export function StripField({ label, hint, source, wide, fill, htmlFor, children }: StripFieldProps) {
+export function StripField({ label, hint, source, wide, fill, htmlFor, required, children }: StripFieldProps) {
   return (
     <div className={cx("od-strip__field", wide && "od-strip__field--wide", fill && "od-strip__field--fill")}>
       <div className="od-strip__label-row">
         <label className="od-strip__label od-mono" htmlFor={htmlFor}>
           {label}
+          {required && <span aria-hidden="true"> *</span>}
         </label>
         {hint && (
           <Tooltip content={hint}>
