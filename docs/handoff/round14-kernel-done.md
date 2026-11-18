@@ -60,6 +60,17 @@
 - #3：`workspace.json` 只按安全方式读（`workspace::read_info`，`Workspace::open` 和 `current_name()` 共用）：`O_NOFOLLOW | O_NONBLOCK` 打开（不跟随符号链接、FIFO 不挂住），在打开的文件上查是普通文件且 ≤ 64 KiB，再限量读；名字按字符截到 100。读不了时 `open` 用文件夹名、`current_name` 用打开时的名字；`open` 之后照旧写回一个正常的 `workspace.json`（顶掉符号链接）。测试 `workspace::tests::workspace_json_is_read_only_as_a_small_regular_file`（符号链接到 `/dev/zero`、FIFO、超大文件、150 字名字、带符号链接打开工作区）。
 - #9：防环测试改为断言结果：删除后两行都删了且同一批，永久删除后两行都没了、审计 `count` = 2；`envOptions` 里无用的防环去掉（理由见上表 #4）。
 
+## `review4_queues_are_bounded_and_failures_merge` 不再依赖时序（协调会话要求，只改测试）
+
+原因：`resource.delete` 在应答前把 1100 个事件逐个放进队列（每次放要查插件是否启用等）；高负载下这一串要好几秒，而插件处理第一个删除事件时只睡 1.5 秒，醒来后边放边取，队列就溢出得不够，甚至不溢出。另一个失败点：准备阶段的 `bulk` 动作在一次运行里顺序建 1100 条，负载 ~600 时超过该测试的 20 秒动作时限。
+
+改法（`crates/kernel/tests/round6.rs`，内核代码不动）：
+- 删除前测试把插件存储里的 `gate` 设为 `closed`，`resource.delete` 返回（此时全部事件已入队）后再设 `open`；插件处理删除事件时若门关着就等，每个事件最多等约 3 秒（低于 5 秒的处理时限），并把门开之前处理的删除数记为 `early`。
+- 断言：`dropped ≥ 1`、`deleted ≤ 1000 + early`（门开时最多 1000 个在等；正常 `early` = 1，即原来的 `≤ 1001`）、`deleted + dropped = 1100`；失败合并那部分不变。
+- 准备阶段改成 11 次各建 100 条。
+
+验证：另开一份 round6 全套循环跑作负载（load 440–620），本测试连跑 10 次全过；之后 round6 全套 28 条全过，clippy 干净。
+
 ## 我做的决定
 
 - K1：工作区名以 `workspace.json` 为准、每次读（文件很小；只在 `hello`、`workspace.info`、导出时读）。不加“改名”协议方法：主进程已经改写这个文件，内核跟着读就够了，不需要主进程与工作进程之间多一条消息。
@@ -82,5 +93,5 @@
 - `cargo test -p onedesk-host`：全过（34 + 46）。
 - `cargo clippy -p onedesk-kernel -p onedesk-worker -p onedesk-protocol --all-targets -- -D warnings`：无警告。
 - `pnpm lint`（架构 + 界面规范）：通过。
-- 审查修改之后（机器 load ~150）又跑了一遍 kernel/worker/protocol/host：25 组全过，唯一例外 `round6.rs` 的 `review4_queues_are_bounded_and_failures_merge`，单独重跑 5 次失败 3 次。失败时删除事件总数仍是 1100（如 `deleted 1100, dropped 0`、`deleted 1036, dropped 64`），即高负载下插件消费够快、队列没溢出到“丢 ≥1 且送达 ≤1001”这一断言要的程度——是测试对时序的假设，与本轮改动无关（防环集合只跳过重复出现的 id，无环时从不触发；第一次全量跑时它是过的）。没改这条测试（不在本轮范围），建议记 todo：把队列上限或事件数做成让溢出必然发生。
+- 审查修改之后（机器 load ~150）又跑了一遍 kernel/worker/protocol/host：全过，唯一例外 `round6.rs` 的 `review4_queues_are_bounded_and_failures_merge`（时序依赖），已按协调会话要求修掉，见下节。
 - 没跑：完整 `pnpm check`、`pnpm exec playwright test`（本轮只改内核，界面无改动；合并后由协调会话跑完整检查）。
