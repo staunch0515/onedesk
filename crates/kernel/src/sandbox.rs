@@ -427,7 +427,7 @@ const BOOTSTRAP: &str = r#"
         readText: c("files.readText"), writeText: c("files.writeText"),
       }),
       ui: Object.freeze({ open: c("ui.open"), notify: c("ui.notify"), copy: c("ui.copy"), openExternal: c("ui.openExternal") }),
-      params: Object.freeze({ get: c("params.get") }),
+      params: Object.freeze({ get: c("params.get"), config: c("params.config") }),
       storage: Object.freeze({
         get: c("storage.get"), set: c("storage.set"), remove: c("storage.remove"), keys: c("storage.keys"),
         readFrom: c("storage.readFrom"),

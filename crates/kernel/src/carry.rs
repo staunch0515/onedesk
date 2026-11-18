@@ -219,19 +219,30 @@ impl Inner {
         }
     }
 
-    /// The folders a transfer's file end may use: exactly `files`' rules (the capability asked
-    /// for, folders granted, nothing inside the data folder).
-    fn transfer_grants(&self, p: &Plugin, raw: &str) -> KResult<Vec<PathBuf>> {
+    /// A transfer's file end and the folders it may be in (round 15, X2): a relative path is in
+    /// the plugin's own folder (`plugin-data/<id>/`, §7.5: no grant needed, nobody else's); an
+    /// absolute path is either there too or follows exactly `files`' rules (the capability asked
+    /// for, folders granted, nothing inside the data folder). Returns the absolute path to use.
+    pub(crate) fn transfer_end(&self, p: &Plugin, raw: &str) -> KResult<(Vec<PathBuf>, String)> {
+        let own = self.plugin_data_dir(&p.id)?.canonicalize().map_err(internal)?;
+        let abs = if std::path::Path::new(raw).is_absolute() { raw.to_string() } else { own.join(raw).display().to_string() };
+        let mine = vec![own];
+        match crate::files::resolve(&mine, &abs) {
+            Ok(_) => return Ok((mine, abs)),
+            // Relative paths never leave the own folder.
+            Err(e) if !std::path::Path::new(raw).is_absolute() => return Err(e),
+            Err(_) => {}
+        }
         if !p.manifest.requires.files {
             return Err(denied("notRequested"));
         }
         let grants: Vec<PathBuf> = self.folder_grants(&p.id)?.into_iter().map(PathBuf::from).collect();
-        if let Ok(real) = crate::files::resolve(&grants, raw) {
+        if let Ok(real) = crate::files::resolve(&grants, &abs) {
             if self.data_roots().iter().any(|d| real.starts_with(d)) {
                 return Err(denied("insideDataDir"));
             }
         }
-        Ok(grants)
+        Ok((grants, abs))
     }
 
     async fn download(&self, p: &'static Plugin, info: &CallInfo, o: &Value, stream: Option<Arc<Stream>>) -> KResult<Done> {
@@ -239,7 +250,7 @@ impl Inner {
         let to = path_arg(m, "to")?;
         let overwrite = m.get("overwrite").and_then(Value::as_bool) == Some(true);
         let deadline = tokio::time::Instant::now() + timeout_of(m)?;
-        let grants = self.transfer_grants(p, &to)?;
+        let (grants, to) = self.transfer_end(p, &to)?;
         // Checked (and the partial file opened) before anything is sent.
         let mut part = crate::files::part_file(&grants, &to, overwrite)?;
         let sent = self.http_open(p, info, m, Request { default_method: "GET", methods: METHODS, deadline, file: None }).await?;
@@ -287,7 +298,7 @@ impl Inner {
         let m = options(o)?;
         let from = path_arg(m, "from")?;
         let deadline = tokio::time::Instant::now() + timeout_of(m)?;
-        let grants = self.transfer_grants(p, &from)?;
+        let (grants, from) = self.transfer_end(p, &from)?;
         let (path, file, size) = crate::files::open_source(&grants, &from)?;
         let counter = Arc::new(AtomicU64::new(0));
         let file = FileBody { file, size, sent: counter.clone() };
@@ -329,7 +340,7 @@ impl Inner {
         let to = path_arg(m, "to")?;
         let overwrite = m.get("overwrite").and_then(Value::as_bool) == Some(true);
         let program = m.get("program").and_then(Value::as_str).unwrap_or_default().to_string();
-        let grants = self.transfer_grants(p, &to)?;
+        let (grants, to) = self.transfer_end(p, &to)?;
         let mut part = crate::files::part_file(&grants, &to, overwrite)?;
         let path = part.path.display().to_string();
         let mut sink = Sink { file: tokio::fs::File::from_std(part.take_file()), bytes: 0, progress: Progress::new(stream, None) };

@@ -100,7 +100,7 @@ impl Inner {
         // D301: `migrate` is pure computation — only reads; `storage.readFrom` only there.
         const PURE_OK: &[&str] = &[
             "resources.get", "resources.list", "files.roots", "files.list", "files.stat", "files.readText",
-            "params.get", "storage.get", "storage.keys", "storage.readFrom", "settings.get", "process.ready",
+            "params.get", "params.config", "storage.get", "storage.keys", "storage.readFrom", "settings.get", "process.ready",
         ];
         // Review #7: `process.*` answers `notInRun` itself (and audits `run`), in `migrate` too;
         // so does `transfer.*` (round 8).
@@ -409,6 +409,15 @@ impl Inner {
     /* ---------------------------------------------------------------- params, storage, settings (D286) */
 
     fn host_params(&self, info: &CallInfo, op: &str, args: &Value) -> KResult<Value> {
+        if op == "config" {
+            // Round 15 (X4, sqlpool F5): a workspace configuration value by name (§6.2: the
+            // deepest node defining it); a secret parameter gives only its name.
+            let name = arg_str(args, 0, "name")?;
+            return Ok(match self.config_param(&name)? {
+                Some((node, v)) => json!({ "found": true, "value": v, "sourceName": node }),
+                None => json!({ "found": false, "value": "", "sourceName": "" }),
+            });
+        }
         if op != "get" {
             return Err(err_p(ErrorCode::UnknownMethod, &[("method", &format!("params.{op}"))]));
         }

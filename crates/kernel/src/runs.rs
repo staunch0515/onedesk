@@ -424,7 +424,7 @@ impl Inner {
             let (status, summary, error, output) = match (stopped, res) {
                 (Some("pluginDisabled"), _) => ("error", None, Some(run_error("pluginDisabled", "", None)), None),
                 (Some(_), _) | (None, Err(SandboxError::Cancelled)) => ("cancelled", None, None, None),
-                (None, Ok(v)) => match serde_json::from_value::<ActionOut>(v).map_err(|e| e.to_string()).and_then(|o| {
+                (None, Ok(v)) => match me.output_from_file(runner, &run_id, v).await.and_then(|v| serde_json::from_value::<ActionOut>(v).map_err(|e| e.to_string())).and_then(|o| {
                     let out = check_output(declared, o.output)?;
                     Ok((out, o.summary))
                 }) {
@@ -469,6 +469,38 @@ impl Inner {
         Ok(())
     }
 
+    /// X2 (round 15): an output that names a data file is read by the kernel (`datafile`).
+    async fn output_from_file(&self, p: &'static Plugin, run: &str, mut v: Value) -> Result<Value, String> {
+        let Some(out) = v.get_mut("output").and_then(Value::as_object_mut) else { return Ok(v) };
+        let Some(file) = out.remove("file") else { return Ok(v) };
+        let raw = file.as_str().ok_or("file must be a path")?.to_string();
+        let (grants, abs) = self.transfer_end(p, &raw).map_err(|e| format!("data file {raw}: {:?}", e.params))?;
+        let real = crate::files::resolve(&grants, &abs).map_err(|e| format!("data file {raw}: {:?}", e.params))?;
+        let own = self.plugin_data_dir(&p.id).and_then(|d| d.canonicalize().map_err(internal)).map_err(|e| format!("{e:?}"))?;
+        let take = real.starts_with(&own);
+        let header = out.get("header").and_then(Value::as_bool).unwrap_or(true);
+        let o = out.clone();
+        let (ws, run) = (self.ws.dir.clone(), run.to_string());
+        let read = tokio::task::spawn_blocking(move || {
+            let r = crate::datafile::read(&real, &o);
+            if let Ok(r) = &r {
+                if r.cut {
+                    if let Err(e) = crate::datafile::keep(&ws, &run, &real, header, take) {
+                        eprintln!("onedesk: could not keep the full result of run {run}: {e}");
+                    }
+                }
+            }
+            if take {
+                let _ = std::fs::remove_file(&real);
+            }
+            r
+        })
+        .await
+        .map_err(|e| e.to_string())??;
+        v["output"] = serde_json::to_value(read.output).map_err(|e| e.to_string())?;
+        Ok(v)
+    }
+
     async fn run_end(
         &self,
         id: &str,
@@ -486,6 +518,10 @@ impl Inner {
             eprintln!("onedesk: could not record the end of run {id}: {e:?}");
         }
         self.procs.end_run(id);
+        // X2: full results kept for export go with their runs (pruned to 200 per resource, §8).
+        if self.ws.dir.join(crate::datafile::RUN_FILES).is_dir() {
+            crate::datafile::sweep(&self.ws.dir, |r| self.read(|c| store::run_get(c, r)).ok().flatten().is_some());
+        }
         self.run_events(id);
         // Round 6 (D335): the plugin whose action it was hears that it ended.
         if let Ok(Some(r)) = self.read(|c| store::run_get(c, id)) {

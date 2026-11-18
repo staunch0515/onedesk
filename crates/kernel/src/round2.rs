@@ -245,6 +245,11 @@ impl Inner {
         Ok(best.map(|(_, r, p)| (r, p)))
     }
 
+    /// `host.params.config` (round 15): the value and the name of the node that holds it.
+    pub(crate) fn config_param(&self, name: &str) -> KResult<Option<(String, String)>> {
+        Ok(self.config_holder(name)?.map(|(r, p)| (r.name, p.value)))
+    }
+
     fn get_config(&self, p: KResult<ConfigGetParams>) -> KResult<Option<String>> {
         Ok(self.config_holder(&p?.name)?.map(|(_, p)| p.value))
     }

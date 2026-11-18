@@ -1085,9 +1085,30 @@ impl Inner {
         let mut text = String::from("\u{feff}");
         let line = |cells: Vec<String>| cells.iter().map(|c| csv_field(c)).collect::<Vec<_>>().join(",") + "\r\n";
         text.push_str(&line(columns.iter().map(|c| c.label.clone()).collect()));
-        for r in &rows {
-            // Review #10: as many fields as the header, cut or padded.
-            text.push_str(&line((0..columns.len()).map(|i| cell_text(r.get(i))).collect()));
+        let mut count = rows.len();
+        match crate::datafile::kept(&self.ws.dir, &p.run) {
+            // X2 (round 15): a table cut from a data file is exported whole from the kept copy.
+            Some((full, header)) => {
+                let f = std::fs::File::open(&full).map_err(internal)?;
+                let mut rd = crate::datafile::CsvReader::new(f);
+                if header {
+                    rd.record().map_err(internal)?;
+                }
+                count = 0;
+                while let Some(rec) = rd.record().map_err(internal)? {
+                    if rec.len() == 1 && rec[0].is_none() {
+                        continue;
+                    }
+                    count += 1;
+                    text.push_str(&line((0..columns.len()).map(|i| rec.get(i).cloned().flatten().unwrap_or_default()).collect()));
+                }
+            }
+            None => {
+                for r in &rows {
+                    // Review #10: as many fields as the header, cut or padded.
+                    text.push_str(&line((0..columns.len()).map(|i| cell_text(r.get(i))).collect()));
+                }
+            }
         }
         let mut f = std::fs::OpenOptions::new().write(true).create_new(true).open(&path).map_err(|e| {
             if e.kind() == std::io::ErrorKind::AlreadyExists {
@@ -1102,9 +1123,9 @@ impl Inner {
             return Err(write_failed(e));
         }
         let shown = path.to_string_lossy().into_owned();
-        let summary = json!({ "rows": rows.len(), "format": "csv" });
+        let summary = json!({ "rows": count, "format": "csv" });
         self.execute(Actor::User, Command::Audit { op: "run.export".into(), object: p.run.clone(), summary }).await?;
-        Ok(RunExportResult { path: shown, rows: rows.len() as u32 })
+        Ok(RunExportResult { path: shown, rows: count as u32 })
     }
 }
 

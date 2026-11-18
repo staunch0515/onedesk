@@ -2,6 +2,7 @@
 //! knowledge of any particular plugin: it knows resources, plugins and views.
 
 mod carry;
+pub mod datafile;
 mod commands;
 pub mod deps;
 mod install;
