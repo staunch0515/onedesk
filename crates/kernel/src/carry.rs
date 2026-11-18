@@ -222,12 +222,16 @@ impl Inner {
     /// A transfer's file end and the folders it may be in (round 15, X2): a relative path is in
     /// the plugin's own folder (`plugin-data/<id>/`, §7.5: no grant needed, nobody else's); an
     /// absolute path is either there too or follows exactly `files`' rules (the capability asked
-    /// for, folders granted, nothing inside the data folder). Returns the absolute path to use.
+    /// for, folders granted, nothing inside the data folder). Never the own `bin/` (review #13).
+    /// Returns the absolute path to use.
     pub(crate) fn transfer_end(&self, p: &Plugin, raw: &str) -> KResult<(Vec<PathBuf>, String)> {
         let own = self.plugin_data_dir(&p.id)?.canonicalize().map_err(internal)?;
         let abs = if std::path::Path::new(raw).is_absolute() { raw.to_string() } else { own.join(raw).display().to_string() };
+        let bin = own.join("bin");
         let mine = vec![own];
         match crate::files::resolve(&mine, &abs) {
+            // Review #13: never the plugin's own programs (`bin/`).
+            Ok(real) if real.starts_with(&bin) => return Err(denied("ownPrograms")),
             Ok(_) => return Ok((mine, abs)),
             // Relative paths never leave the own folder.
             Err(e) if !std::path::Path::new(raw).is_absolute() => return Err(e),

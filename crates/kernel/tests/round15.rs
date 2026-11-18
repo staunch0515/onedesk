@@ -152,6 +152,15 @@ async fn text_from_a_file_and_refused_paths() {
     // Transfer ends: relative paths stay in the own folder.
     let r = run(&c, "cap", json!({ "script": "echo x", "to": "../escape.csv" })).await;
     assert_eq!(r["status"], "error", "{r}");
+    // Review #13: never into (or out of) the plugin's own `bin/`.
+    std::fs::create_dir_all(own(&env).join("bin")).unwrap();
+    let r = run(&c, "cap", json!({ "script": "echo x", "to": "bin/tool" })).await;
+    assert_eq!((r["status"].as_str(), r["error"]["reason"].as_str()), (Some("error"), Some("ownPrograms")), "{r}");
+    assert!(!own(&env).join("bin/tool").exists());
+    std::fs::write(own(&env).join("bin/tool"), "a\n1\n").unwrap();
+    let r = run(&c, "direct", json!({ "script": "true", "file": "bin/tool" })).await;
+    assert_eq!(r["error"]["code"], "badOutput", "{r}");
+    assert!(own(&env).join("bin/tool").exists());
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

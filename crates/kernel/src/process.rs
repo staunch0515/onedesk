@@ -301,25 +301,32 @@ fn is_executable(p: &Path) -> bool {
     std::fs::metadata(p).is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
 }
 
-/// Round 15 (X1): the candidates of a system program's `searchPaths`, in order; a `*` component
-/// stands for each folder there, highest name first.
+/// Round 15 (X1): the candidates of a system program's `searchPaths`, in order. The component
+/// holding a `*` stands for each folder there whose name matches (`*` = any; `pg@*` = names
+/// starting `pg@`), highest name first.
 pub fn search_candidates(paths: &[String], name: &str) -> Vec<PathBuf> {
     let mut out = Vec::new();
     for p in paths {
-        match p.split_once("/*") {
-            Some((head, tail)) if tail.is_empty() || tail.starts_with('/') => {
-                let mut dirs: Vec<PathBuf> = std::fs::read_dir(if head.is_empty() { "/" } else { head })
-                    .into_iter()
-                    .flatten()
-                    .flatten()
-                    .filter(|e| e.path().is_dir())
-                    .map(|e| e.path())
-                    .collect();
-                dirs.sort_by_key(|d| std::cmp::Reverse(natural(d)));
-                out.extend(dirs.into_iter().map(|d| d.join(tail.trim_start_matches('/')).join(name)));
-            }
-            _ => out.push(Path::new(p).join(name)),
-        }
+        let parts: Vec<&str> = p.split('/').collect();
+        let Some(i) = parts.iter().position(|c| c.contains('*')) else {
+            out.push(Path::new(p).join(name));
+            continue;
+        };
+        let head = parts[..i].join("/");
+        let tail = parts[i + 1..].join("/");
+        let (pre, post) = parts[i].split_once('*').unwrap_or_default();
+        let mut dirs: Vec<PathBuf> = std::fs::read_dir(if head.is_empty() { "/" } else { head.as_str() })
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter(|e| {
+                let n = e.file_name().to_string_lossy().into_owned();
+                n.len() >= pre.len() + post.len() && n.starts_with(pre) && n.ends_with(post) && e.path().is_dir()
+            })
+            .map(|e| e.path())
+            .collect();
+        dirs.sort_by_key(|d| std::cmp::Reverse(natural(d)));
+        out.extend(dirs.into_iter().map(|d| d.join(&tail).join(name)));
     }
     out
 }
@@ -933,5 +940,15 @@ mod search_tests {
         let plain = root.join("9/bin").display().to_string();
         assert_eq!(pick(&search_candidates(&["/nonexistent/x".into(), plain], "tool")).unwrap(), root.join("9/bin/tool"));
         assert!(matches!(pick(&search_candidates(&["/nonexistent/*/bin".into()], "tool")), Err(NotReady::NotFound)));
+        // Review #5: a `*` inside a component matches by prefix and suffix.
+        for v in ["pg@14", "pg@16", "other@17"] {
+            std::fs::create_dir_all(d.path().join("opt").join(v).join("bin")).unwrap();
+        }
+        exe(d.path().join("opt/pg@14/bin/tool"));
+        exe(d.path().join("opt/other@17/bin/tool"));
+        let pat = format!("{}/opt/pg@*/bin", d.path().display());
+        let c = search_candidates(&[pat], "tool");
+        assert_eq!(c, vec![d.path().join("opt/pg@16/bin/tool"), d.path().join("opt/pg@14/bin/tool")]);
+        assert_eq!(pick(&c).unwrap(), d.path().join("opt/pg@14/bin/tool"));
     }
 }

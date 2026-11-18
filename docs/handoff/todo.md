@@ -161,3 +161,4 @@
 - 安装确认里系统程序的 `searchPaths` 没有列给用户看（只列程序名）。
 - `scripts/check-arch.mjs` 的内核禁用词须排除迁移文件名（`include_str!` 行）与 `rusqlite`/`SQLITE_*`。
 - 第十五轮审查 #15：`searchPaths` 可指向人人可写的目录（如 `/tmp`）——可考虑拒绝其他用户可写的目录。
+- （第十五轮审查 #15）`searchPaths` 可以指向任何人都能写的目录（例如别的用户放进 `/usr/local/...` 的同名程序）；内核不检查目录属主与权限。
