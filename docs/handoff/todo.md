@@ -138,3 +138,4 @@
 
 - 第十三轮（内核会话）：协议新增 `NodeState` 值 `"unknownKind"` 后，`src/workbench/parts/frame.tsx` 的三张 `Record<NodeState, …>` 表和 `side-panel.tsx` 的 `TreeNodeState` 需加上它，否则 `pnpm typecheck` 不过（外壳会话处理）。
 - 第十三轮（内核会话）：上一条作废——D403 后 `unknownKind` 已从协议删除，外壳无需改。另：清单字段 `legacyKinds` 已从内核删除，带它的清单无效（schema），`plugins/*/manifest.json` 与 `e2e/fixtures/market` 里的要由测试会话删掉。
+- 第十三轮审查 #9：只改过设置、没建过资源的旧工作区若被放进 `init-settings.json` 会被覆盖；#5：重复 id 的工作区按 §3.1 分配新 id 需要工作进程配合；#10：改名后内核 `workspace.info` 名称到重启前是旧的。
