@@ -132,6 +132,7 @@ impl Inner {
             "transfer" => self.host_transfer(plugin, info, op, &args).await,
             "secrets" if op == "get" => self.host_secret_get(plugin, info, &args).await,
             "params" => self.host_params(info, op, &args),
+            "actions" => self.host_actions(plugin, info, op, &args).await,
             "storage" => self.host_storage(plugin, op, &args).await,
             "settings" => self.host_settings(plugin, op, &args),
             "plugins" => self.host_plugins(plugin, info, op, &args).await,

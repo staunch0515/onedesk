@@ -621,8 +621,11 @@ async fn each_end_refuses_by_its_own_rules() {
     assert_eq!(why(&r), pair("denied", "outsideGrant"));
     let r = t.go("t.move", "capture", json!({ "program": "cat", "args": [], "to": t.at("linkdir/c") })).await;
     assert_eq!(why(&r), pair("denied", "outsideGrant"));
+    // Round 15 (X2): a relative path is in the plugin's own folder (here: no `rel/` there).
     let r = t.go("t.move", "download", json!({ "url": format!("{}/big", t.base()), "to": "rel/a" })).await;
-    assert_eq!(why(&r), pair("denied", "notAbsolute"));
+    assert_eq!(why(&r).0, "notFound");
+    let r = t.go("t.move", "download", json!({ "url": format!("{}/big", t.base()), "to": "../../a" })).await;
+    assert_eq!(why(&r), pair("denied", "outsideGrant"));
     assert!(!t.outside.join("a").exists() && !t.outside.join("c").exists());
     // Program end: undeclared; process.allow.
     let r = t.go("t.move", "capture", json!({ "program": "ls", "to": t.at("c") })).await;

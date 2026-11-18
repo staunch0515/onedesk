@@ -57,6 +57,10 @@ pub struct Manifest {
     /// Round 8 (D357): the validated `exports.pages` — short names of its own pages.
     #[serde(skip)]
     pub exported_pages: Vec<String>,
+    /// Round 15 (D413): the validated `exports.actions` — ids of its own actions that plugins
+    /// depending on it may call (`host.actions.call`).
+    #[serde(skip)]
+    pub exported_actions: Vec<String>,
     /// Round 11 (D379): the validated `contributes.languages`.
     #[serde(skip)]
     pub languages: Vec<LanguageDecl>,
@@ -869,7 +873,7 @@ pub fn parse_package(dir: &Path, bytes: &[u8], check_folder: bool) -> Result<Plu
         }
     }
     let has_kind = |k: &str| c.kinds.iter().any(|y| y.id == k);
-    let (exported, exported_trees, exported_pages) = parse_exports(dir, &m)?;
+    let (exported, exported_trees, exported_pages, exported_actions) = parse_exports(dir, &m)?;
     check_requires_plugins(dir, &m)?;
     for a in &c.actions {
         for k in a.kinds.iter().flatten() {
@@ -1037,6 +1041,7 @@ pub fn parse_package(dir: &Path, bytes: &[u8], check_folder: bool) -> Result<Plu
     m.exported = exported;
     m.exported_trees = exported_trees;
     m.exported_pages = exported_pages;
+    m.exported_actions = exported_actions;
     Ok(Plugin { id: m.id.clone(), version: m.version.clone(), dir: dir.to_path_buf(), manifest_hash, manifest: m, locales })
 }
 
@@ -1118,16 +1123,16 @@ fn parse_depends(dir: &Path, m: &Manifest) -> Result<Vec<Depend>, Rejection> {
 }
 
 /// What `exports` lists (round 7 kinds; round 8 trees and pages).
-type Exports = (Vec<ExportKind>, Vec<String>, Vec<String>);
+type Exports = (Vec<ExportKind>, Vec<String>, Vec<String>, Vec<String>);
 
 /// Round 7 (D342): `exports.kinds[]` names this plugin's own kinds, each once, with `actions` / `read`.
 /// Round 8 (D356–D357): `exports.trees[]` its own stored trees, `exports.pages[]` its own pages,
 /// each `{ "id" }`, each once.
 fn parse_exports(dir: &Path, m: &Manifest) -> Result<Exports, Rejection> {
     let bad = |why: String| reject(dir, "badExports", why);
-    let Some(raw) = &m.exports_raw else { return Ok((vec![], vec![], vec![])) };
+    let Some(raw) = &m.exports_raw else { return Ok((vec![], vec![], vec![], vec![])) };
     let o = raw.as_object().ok_or_else(|| bad("not an object".into()))?;
-    if let Some(k) = o.keys().find(|k| !matches!(k.as_str(), "kinds" | "trees" | "pages")) {
+    if let Some(k) = o.keys().find(|k| !matches!(k.as_str(), "kinds" | "trees" | "pages" | "actions")) {
         return Err(bad(format!("unknown field {k}")));
     }
     let list = |name: &str| -> Result<Vec<serde_json::Value>, Rejection> {
@@ -1180,7 +1185,19 @@ fn parse_exports(dir: &Path, m: &Manifest) -> Result<Exports, Rejection> {
     // D356: only its own stored trees (a provided tree has no resources to put a kind into).
     let trees = ids("trees", &|id| c.trees.iter().any(|t| t.id == id && t.source == TreeSource::Stored))?;
     let pages = ids("pages", &|id| c.pages.iter().any(|p| p.id == id))?;
-    Ok((out, trees, pages))
+    // D413: `actions` is a list of its own action ids (plain strings), each once.
+    let mut actions: Vec<String> = Vec::new();
+    for e in list("actions")? {
+        let id = e.as_str().ok_or_else(|| bad("actions: entry is not an action id".into()))?;
+        if !c.actions.iter().any(|a| a.id == id) {
+            return Err(bad(format!("actions: {id} is not its own")));
+        }
+        if actions.iter().any(|x| x == id) {
+            return Err(bad(format!("actions: {id} twice")));
+        }
+        actions.push(id.into());
+    }
+    Ok((out, trees, pages, actions))
 }
 
 /// Round 7 (D342): `requires.plugins` is `{ "install": true|false }`.
@@ -1587,6 +1604,12 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let p = load_package(&write(tmp.path(), "test.alpha", "0.1.0", &exp(json!({ "trees": [{ "id": "board" }], "pages": [{ "id": "editor" }] })))).unwrap();
         assert_eq!((p.manifest.exported_trees.clone(), p.manifest.exported_pages.clone()), (vec!["board".to_string()], vec!["editor".to_string()]));
+        // Round 15 (D413): own action ids, as strings, each once.
+        let acts = |v: Value| with(with(m.clone(), &["contributes", "actions"], json!([{ "id": "run", "label": "l", "output": "text" }])), &["exports"], v);
+        assert_eq!(reason(acts(json!({ "actions": ["run"] }))), "ok");
+        for bad in [json!({ "actions": ["nope"] }), json!({ "actions": ["run", "run"] }), json!({ "actions": [{ "id": "run" }] }), json!({ "actions": "run" })] {
+            assert_eq!(reason(acts(bad.clone())), "badExports", "{bad}");
+        }
         for bad in [
             json!({ "trees": [{ "id": "disk" }] }),
             json!({ "trees": [{ "id": "resources" }] }),
