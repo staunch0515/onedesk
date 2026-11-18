@@ -276,8 +276,7 @@ test("interface: the composite page lists the items with row keys, targets and r
   await shot(page, "composite-page");
 });
 
-// fixme until the shell sends `context.row` = the row's rowKeys value (D393): with the pre-D393 shell the click does nothing.
-test.fixme("interface: the row buttons move a row up and down and remove it, and removing never deletes the resource", async ({ page }) => {
+test("interface: the row buttons move a row up and down and remove it, and removing never deletes the resource", async ({ page }) => {
   await bare(page);
   const id = await create(page, COMPOSITE, { name: "Rows" });
   const one = await create(page, NOTE, { name: "One", "body.text": "1" });

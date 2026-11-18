@@ -512,10 +512,7 @@ test("shell: no interface shows a bare key — English, Chinese and Japanese acr
 
 /* ------------------------------------------------------------------ acceptance fixes: welcome follows the language, link output, mode default */
 
-// FIXME (shell): after a language change the page descriptor is not asked for again — only the labels (link nodes) change, the
-// plugin-resolved strings (title, intro text) stay in the old language until the page is reopened. See view-page.tsx: the only
-// re-resolve is the `recompute` effect (draft / page parameters), nothing re-resolves when the interface language changes.
-test.fixme("shell: the welcome page's title and intro follow a language change (no reload), Chinese and Japanese", async ({ page }) => {
+test("shell: the welcome page's title and intro follow a language change (no reload), Chinese and Japanese", async ({ page }) => {
   const base2 = realpathSync(mkdtempSync(path.join(tmpdir(), "od-round11b-")));
   const host2 = await startHost(path.join(base2, "data"));
   try {

@@ -489,7 +489,6 @@
   "result.exported": "已写入 {rows} 行到 {path}",
   "result.exportNeedsTable": "只有表格结果可以导出",
   "link.refused": "只能打开网页和邮件链接。",
-  "permission.resourcesAll": "读取本工作区所有内容的名称、类型和位置（不含正文）",
   "kernel.label.node.open": "打开",
   "kernel.label.node.rename": "重命名",
   "kernel.label.node.newGroup": "新建分组",
@@ -793,5 +792,11 @@
   "kernel.confirm.deleted.purge.confirm.title": "永久删除？",
   "kernel.confirm.deleted.purge.confirm.ok": "永久删除",
   "kernel.runFallback": "运行失败（原因：{code}）。",
-  "link.openFailed": "系统无法打开该链接：{reason}"
+  "link.openFailed": "系统无法打开该链接：{reason}",
+  "kernel.label.dropWithoutTree": "接受放置的类型必须属于某棵树",
+  "kernel.error.reason.inDrop": "插件正在处理一次放置；此时只能修改被放上去的那一项。",
+  "kernel.error.reason.badDropAnswer": "插件对放置的回答内核看不懂；没有移动任何东西。",
+  "kernel.audit.tree.drop": "放置到节点上",
+  "kernel.audit.resources.search": "搜索资源",
+  "kernel.permission.resourcesAll": "读取本工作区所有内容的名称、类型和位置（不含正文）"
 }

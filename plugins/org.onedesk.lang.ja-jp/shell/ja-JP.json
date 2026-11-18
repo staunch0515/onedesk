@@ -489,7 +489,6 @@
   "result.exported": "{rows} 行を {path} に書き込みました",
   "result.exportNeedsTable": "エクスポートできるのは表の結果だけです",
   "link.refused": "開けるのはウェブとメールのリンクだけです。",
-  "permission.resourcesAll": "このワークスペースのすべての項目の名前、種類、場所を読む（内容は除く）",
   "kernel.label.node.open": "開く",
   "kernel.label.node.rename": "名前を変更",
   "kernel.label.node.newGroup": "新しいグループ",
@@ -793,5 +792,11 @@
   "kernel.confirm.deleted.purge.confirm.title": "完全に削除しますか？",
   "kernel.confirm.deleted.purge.confirm.ok": "完全に削除",
   "kernel.runFallback": "実行に失敗しました（理由：{code}）。",
-  "link.openFailed": "システムがリンクを開けませんでした：{reason}"
+  "link.openFailed": "システムがリンクを開けませんでした：{reason}",
+  "kernel.label.dropWithoutTree": "ドロップを受け付ける種類はいずれかのツリーに属する必要があります",
+  "kernel.error.reason.inDrop": "プラグインがドロップを処理中です。ドロップ先の項目だけを変更できます。",
+  "kernel.error.reason.badDropAnswer": "プラグインのドロップへの応答をカーネルが理解できませんでした。何も移動していません。",
+  "kernel.audit.tree.drop": "ノードへのドロップ",
+  "kernel.audit.resources.search": "リソースの検索",
+  "kernel.permission.resourcesAll": "このワークスペースのすべての項目の名前、種類、場所を読む（内容は除く）"
 }
