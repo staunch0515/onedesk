@@ -183,3 +183,9 @@
 - **#11 核实**：标题栏与状态栏本来就用 `workspace.list` 并订阅 `app.workspacesChanged`，改名后会更新；之前没有测试，现补了（`round14-shell.test.tsx` “the title bar follows a renamed workspace”），未改代码。
 - **D411**：`package.json` 的 `check` 里 e2e 一步设了 `ONEDESK_E2E_REQUIRE_DEVHOST=1`。
 - 测试：`pnpm test` 586 过、4 失败（都是 lang-check 对新增英文键的中日译文，等测试会话）。typecheck、lint 过；这一批没重跑全部 e2e。
+
+## 禁用态文字对比度（D411）
+
+- `tokens.css` 的 `--fg-disabled`：浅色 `#a2a8b1` → `#7c828b`（在 `--bg-subtle` 上约 3.5:1、`--bg-hover` 3.3:1），深色 `#5e636c` → `#7a808a`（在 `--bg-subtle` 上约 4.3:1，`--bg-hover` 3.5:1；显式深色块与系统深色块两处都改）。仍比 `--fg-muted` 浅，禁用态仍可与普通次要文字区分。所有用这个 token 的禁用控件一起变。
+- 假数据模式 `workbench.spec.ts` 23 过；基准截图 `workbench-{light,dark}-{env,plugin,sql,tasks,tree-menu}.png` 共 10 张重新生成（内容变化只在禁用文字更深，另有时间戳类差异）；我看了 `workbench-light-sql.png`，“Save”禁用按钮清楚可读，其余没有逐张细看。`round14-*` 截图是测试会话的产物，我没提交（已还原），round14 的 D5 对比度测试我这里跑过一次（同一轮 29 过 4 失败：见下），token 改后的结果以测试会话重跑为准。
+- 这次发现并修了我自己上一批引入的回归：语言切换那次改动让“启动时给无名标签补名”跳过了 `plugin:` 目标，演示里的 “SQL” 标签没有名字（3 条 e2e 超时）；现在只跳过 `shell:secrets`，无名标签仍取页面标题。重跑 `workbench.spec.ts` 全过。

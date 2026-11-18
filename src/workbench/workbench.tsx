@@ -71,8 +71,9 @@ export function Workbench({ settings, languages, onSetting: storeSetting }: Work
   // Restored tabs get their name and icon without having to be activated first.
   useEffect(() => {
     for (const tab of store.get().tabs) {
-      if (tab.title || isSelfNamed(tab.target)) continue;
-      client.page.resolve(tab.target, { envId: tab.envId, locale }).then((d) => actions.updateTab(tab.id, tabFieldsFromPage(d)), () => undefined);
+      if (tab.title || tab.target === SECRETS_TARGET) continue;
+      // A tab without a name yet takes the page's own (the plugin page replaces it with the plugin's name once it is shown).
+      client.page.resolve(tab.target, { envId: tab.envId, locale }).then((d) => actions.updateTab(tab.id, { ...tabFieldsFromPage(d), title: d.title }), () => undefined);
     }
   }, [client, store, actions, tabs.length]);
 
