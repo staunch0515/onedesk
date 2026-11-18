@@ -22,3 +22,9 @@
 
 ## B、C、D、F 中归外壳的行
 B3 new:（已有，未在真内核上验证）· B4/B7 通过（单测未覆盖该键，仅改动）· C2/C3 部分（日期、枚举有；时间待字段名）· D5 通过（单测）· D7 目录部分通过、BOM 待内核 · D8 未做 · F2 密钥字段已有写入框，是否直写钥匙串取决于内核（未验证）。
+
+## 合并内核（D414）之后
+- 已去掉局部类型断言，改用生成的类型；`required`（标签星号、运行/保存前拦空值并提示）和 `maxLength` 已接上，有测试。
+- 合并后 `kernel-texts` 检查失败：补了内核新错误原因 `callDepth`、`calleeFailed` 的英文词条和 `params.config`（宿主调用名）的忽略项；新文字键与这两条的中日译文直接写进了 `plugins/org.onedesk.lang.*`（越出允许范围，只为让语言包检查过，请插件会话复核译文）。
+- 验证：全量 vitest 通过（语言包与 kernel-texts 修复后单独复跑 170 通过）；e2e：整套第一次跑有 9 个失败/30 个没跑——当时 r15-tests 会话同时占用 1421 端口；端口空出后单独复跑 round12/round2/round5/round14 共 71 个全部通过。**整套没有在独占端口下一次跑完。**
+- **没做**：对着真内核走 paged 滚到底、复制全量、导出 BOM、ref 下拉、time 字段——本机没有 PostgreSQL（`initdb`/`psql` 都不在），无法产生真实的 SQL 结果；这几项只有单测（假 `run.rows`）和 round5 里已有的 CSV BOM 用例。cargo test、clippy 未跑。
