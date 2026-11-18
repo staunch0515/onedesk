@@ -97,3 +97,19 @@
 - 没跑 e2e（本轮内核改动不涉及界面；Playwright 归测试会话）。
 - `files.*` 宿主接口没有开放插件自己的目录。
 - `run.rows` 分页读取超过 10,000 行：没做。
+
+## 审查修正（`round15-review.md` 中归内核的，2026-11-19）
+
+| # | 结论 | 怎么做的 | 测试 |
+|---|---|---|---|
+| 5 | 已修 | `searchPaths` 全路径至多一个 `*`，可在一段之内（`/opt/homebrew/opt/postgresql@*/bin`）：该段按前缀、后缀匹配目录名，按自然序从高到低 | `process.rs::search_tests`、`manifest.rs` 校验用例 |
+| 10 | 已修 | `CsvReader`：单字段 1 MB（`MAX_FIELD_BYTES`）、单记录 4 MB（`MAX_RECORD_BYTES`），超出的字节丢弃、记录照常结束，表格标 `truncated`；文件开头的 UTF-8 BOM 跳过（文字输出也去掉） | `datafile.rs::a_bom_is_skipped_and_long_fields_and_records_are_cut` |
+| 11 | 已修（内核部分） | 读文件时每 1000 条记录记一个字节偏移；留存整份文件时写 `run-files/<id>.idx`；`run.rows` 从最近的偏移开始读，不再从头扫。外壳按需读取归外壳 | `datafile.rs::offsets_point_at_every_thousandth_record`；`round15.rs` 的 `offset: 10000` 用例走索引 |
+| 12 | 已修 | 交接只接受普通文件（`symlink_metadata().is_file()`，`"tmp"`、`""`、`"."` 都拒绝为 `badOutput`）；移交到调用方的文件记在这次运行上，运行结束时没被当作输出交出去的删掉 | `round15_calls.rs::hand_over_takes_only_regular_files_and_unused_ones_are_removed` |
+| 13 | 已修 | `transfer` 文件端与 `output.file` 不能落在插件自己的 `bin/`（`denied/ownPrograms`；输出文件为 `badOutput`） | `round15.rs::text_from_a_file_and_refused_paths`、上一条用例 |
+| 14（D417） | 已修 | 带 `confirm` 的动作不能列进 `exports.actions`（`badExports`）；被调动作有 `kinds` 时 `resource` 必须是其中之一，否则 `denied/wrongKind`；将执行的被调方版本须满足调用方 `depends` 范围，否则 `denied/notExported`；调用方等待时预算照常计时（被调方仍有自己的时限） | `manifest.rs` 用例；`round15_calls.rs::d417_kinds_version_range_and_budget` |
+| 15 | 记 todo | — | — |
+
+测试：kernel、worker、protocol、host 共 573 通过、0 失败；clippy 通过。没跑：lint、vitest、e2e、src-tauri 的测试。
+
+新增的拒绝原因：`denied/wrongKind`（D417）、`denied/ownPrograms`（#13）。

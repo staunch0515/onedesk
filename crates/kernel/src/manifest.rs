@@ -143,8 +143,9 @@ pub struct ProgramDecl {
     #[serde(default)]
     pub path: Option<String>,
     /// Round 15 (X1): for a system program, more folders to look in when the fixed ones do not
-    /// have it, in order: absolute, no `..`, at most one component `*` (any one folder; tried in
-    /// descending name order, so `/Library/X/*/bin` finds the highest version first).
+    /// have it, in order: absolute, no `..`, at most one `*`, inside one component (`*` or
+    /// `postgresql@*`: the folders there whose names match; tried in descending name order, so
+    /// `/Library/X/*/bin` finds the highest version first).
     #[serde(default)]
     pub search_paths: Option<Vec<String>>,
 }
@@ -158,8 +159,8 @@ pub fn valid_search_path(p: &str) -> bool {
     p.starts_with('/')
         && p.len() <= 512
         && !parts.iter().any(|c| *c == ".." || *c == ".")
-        && parts.iter().filter(|c| c.contains('*')).count() <= 1
-        && parts.iter().all(|c| !c.contains('*') || *c == "*")
+        // Review #5: at most one `*` in all, inside one component (`postgresql@*`).
+        && p.matches('*').count() <= 1
 }
 
 pub const PROGRAM_SYSTEM: &str = "system";
@@ -1212,8 +1213,10 @@ fn parse_exports(dir: &Path, m: &Manifest) -> Result<Exports, Rejection> {
     let mut actions: Vec<String> = Vec::new();
     for e in list("actions")? {
         let id = e.as_str().ok_or_else(|| bad("actions: entry is not an action id".into()))?;
-        if !c.actions.iter().any(|a| a.id == id) {
-            return Err(bad(format!("actions: {id} is not its own")));
+        let Some(a) = c.actions.iter().find(|a| a.id == id) else { return Err(bad(format!("actions: {id} is not its own"))) };
+        // D417: an action that asks before running is never run by another plugin.
+        if a.confirm.is_some() {
+            return Err(bad(format!("actions: {id} asks for confirmation")));
         }
         if actions.iter().any(|x| x == id) {
             return Err(bad(format!("actions: {id} twice")));
@@ -1633,6 +1636,9 @@ mod tests {
         for bad in [json!({ "actions": ["nope"] }), json!({ "actions": ["run", "run"] }), json!({ "actions": [{ "id": "run" }] }), json!({ "actions": "run" })] {
             assert_eq!(reason(acts(bad.clone())), "badExports", "{bad}");
         }
+        // D417: not one that asks for confirmation.
+        let confirm = with(with(m.clone(), &["contributes", "actions"], json!([{ "id": "run", "label": "l", "output": "text", "confirm": "sure" }])), &["exports"], json!({ "actions": ["run"] }));
+        assert_eq!(reason(confirm), "badExports");
         for bad in [
             json!({ "trees": [{ "id": "disk" }] }),
             json!({ "trees": [{ "id": "resources" }] }),
@@ -1896,7 +1902,7 @@ mod tests {
     fn program_and_event_declarations_and_their_rejections() {
         let progs = |v: Value| with(good(), &["requires", "programs"], v);
         assert_eq!(reason(progs(json!([{ "name": "echo", "source": "system" }]))), "ok");
-        assert_eq!(reason(progs(json!([{ "name": "x", "source": "system", "searchPaths": ["/Library/X/*/bin", "/opt/x/bin"] }]))), "ok");
+        assert_eq!(reason(progs(json!([{ "name": "x", "source": "system", "searchPaths": ["/Library/X/*/bin", "/opt/x/bin", "/opt/h/opt/pg@*/bin"] }]))), "ok");
         assert_eq!(reason(progs(json!([{ "name": "x", "source": "system", "searchPaths": "/opt/x/bin" }]))), "schema");
         assert_eq!(reason(progs(json!([{ "name": "x", "source": "plugin", "path": "bin/x.sh" }]))), "ok", "a missing file is reported at run time");
         for bad in [
@@ -1916,7 +1922,7 @@ mod tests {
             json!([{ "name": "x", "source": "system", "searchPaths": ["opt/x/bin"] }]),
             json!([{ "name": "x", "source": "system", "searchPaths": ["/opt/../bin"] }]),
             json!([{ "name": "x", "source": "system", "searchPaths": ["/opt/*/*/bin"] }]),
-            json!([{ "name": "x", "source": "system", "searchPaths": ["/opt/x*/bin"] }]),
+            json!([{ "name": "x", "source": "system", "searchPaths": ["/opt/x**/bin"] }]),
             json!([{ "name": "x", "source": "system", "searchPaths": vec!["/a"; 9] }]),
         ] {
             assert_eq!(reason(progs(bad.clone())), "badPrograms", "{bad}");
