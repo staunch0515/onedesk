@@ -80,7 +80,7 @@
           "source"
         ],
         "output": "text",
-        "saveFirst": false,
+        "saveFirst": true,
         "confirm": null
       },
       {
@@ -119,6 +119,13 @@
               "Mod",
               "S"
             ]
+          },
+          {
+            "id": "save-test",
+            "role": "save-run",
+            "action": "test",
+            "label": "action.saveTest",
+            "icon": "save-all"
           },
           {
             "id": "import",

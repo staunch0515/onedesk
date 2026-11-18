@@ -40,5 +40,6 @@
   "error.cannotRun": "プログラムを実行できません",
   "error.noSource": "データソースがありません。文で選ぶか、環境で指定するか、既定のデータソースを設定してください。",
   "error.sourceMissing": "データソース「{source}」が見つかりません。",
-  "summary.ran": "{ms} ms で実行"
+  "summary.ran": "{ms} ms で実行",
+  "action.saveTest": "保存してテスト"
 }

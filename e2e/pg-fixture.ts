@@ -1,0 +1,77 @@
+/**
+ * A throw-away PostgreSQL for the round-15 specs: `initdb` into a temp directory, a random local port, scram passwords,
+ * two databases with a little data. Nothing outside the given directory is touched and nothing real is contacted.
+ * (A fake ssh server was tried and dropped: OpenSSH reads the config of the passwd home, not $HOME, and programs run
+ * by the kernel get no other environment, so a throw-away host alias cannot be given to it.)
+ */
+import { execFileSync } from "node:child_process";
+import { existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
+import net from "node:net";
+import path from "node:path";
+
+export function findPgBin(): string | null {
+  const roots = ["/Library/PostgreSQL", "/opt/homebrew/opt/postgresql@16", "/opt/homebrew/opt/postgresql@15", "/opt/homebrew/opt/libpq", "/usr/local/opt/postgresql@15"];
+  for (const r of roots) {
+    if (existsSync(path.join(r, "bin/initdb"))) return path.join(r, "bin");
+    if (existsSync(r)) for (const v of readdirSync(r).sort().reverse()) if (existsSync(path.join(r, v, "bin/initdb"))) return path.join(r, v, "bin");
+  }
+  return null;
+}
+
+export const pgBinOrNull = findPgBin();
+
+async function freePort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const s = net.createServer();
+    s.listen(0, "127.0.0.1", () => {
+      const { port } = s.address() as net.AddressInfo;
+      s.close(() => resolve(port));
+    });
+    s.on("error", reject);
+  });
+}
+
+export const PG_USER = "app";
+export const PG_PASSWORD = "e2e-Pg-pass-7x";
+export const DB1 = "shop";
+export const DB2 = "other";
+
+export type Pg = { bin: string; dir: string; port: number; stop(): void; psql(db: string, sql: string, user?: string): string };
+
+export async function startPg(dir: string): Promise<Pg> {
+  const bin = pgBinOrNull;
+  if (!bin) throw new Error("no PostgreSQL found");
+  const data = path.join(dir, "pgdata");
+  const sock = path.join(dir, "sock");
+  mkdirSync(sock, { recursive: true });
+  const port = await freePort();
+  const run = (cmd: string, args: string[], input?: string) => execFileSync(path.join(bin, cmd), args, { input, encoding: "utf8", env: { PATH: "/usr/bin:/bin", LANG: "C", LC_ALL: "C" } });
+  run("initdb", ["-D", data, "-U", "postgres", "-A", "trust", "--no-sync", "-E", "UTF8", "--locale=C"]);
+  // trust on the unix socket for the set-up below; the TCP side asks for the scram password
+  writeFileSync(path.join(data, "pg_hba.conf"), "local all all trust\nhost all all 127.0.0.1/32 scram-sha-256\nhost all all ::1/128 scram-sha-256\n");
+  run("pg_ctl", ["-D", data, "-o", `-p ${port} -k ${sock} -c listen_addresses=127.0.0.1 -c fsync=off`, "-l", path.join(dir, "pg.log"), "-w", "start"]);
+  const psql = (db: string, sql: string, user = "postgres") => run("psql", ["-X", "-q", "-h", sock, "-p", String(port), "-U", user, "-d", db, "-v", "ON_ERROR_STOP=1", "-c", sql]);
+  psql("postgres", `CREATE ROLE ${PG_USER} LOGIN PASSWORD '${PG_PASSWORD}'`);
+  for (const db of [DB1, DB2]) psql("postgres", `CREATE DATABASE ${db} OWNER ${PG_USER}`);
+  psql(
+    DB1,
+    `CREATE TABLE orders (id int PRIMARY KEY, customer text, amount numeric(10,2), placed_at timestamptz, note text);
+     INSERT INTO orders VALUES (1,'ann',10.50,'2026-01-01T10:00:00Z','first'),(2,'bob',20.00,'2026-01-02T10:00:00Z',NULL),(3,'o''neil',30.25,'2026-01-03T10:00:00Z',''),(4,'dee, "d"',5,'2026-01-04T10:00:00Z','multi
+line');`,
+    PG_USER,
+  );
+  psql(DB2, "CREATE TABLE marker (v text); INSERT INTO marker VALUES ('second database');", PG_USER);
+  return {
+    bin,
+    dir,
+    port,
+    stop: () => {
+      try {
+        run("pg_ctl", ["-D", data, "-m", "immediate", "-w", "stop"]);
+      } catch {
+        // already stopped
+      }
+    },
+    psql: (db, sql, user = PG_USER) => psql(db, sql, user),
+  };
+}

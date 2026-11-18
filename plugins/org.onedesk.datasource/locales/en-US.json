@@ -40,5 +40,6 @@
   "error.cannotRun": "Cannot run the program",
   "error.noSource": "No data source: pick one on the statement, in the environment, or set the default.",
   "error.sourceMissing": "Data source “{source}” was not found.",
-  "summary.ran": "Ran in {ms} ms"
+  "summary.ran": "Ran in {ms} ms",
+  "action.saveTest": "Save & test"
 }

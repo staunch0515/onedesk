@@ -40,5 +40,6 @@
   "error.cannotRun": "无法运行程序",
   "error.noSource": "没有数据源：请在语句上选一个、在环境里指定，或设置默认数据源。",
   "error.sourceMissing": "找不到数据源“{source}”。",
-  "summary.ran": "耗时 {ms} 毫秒"
+  "summary.ran": "耗时 {ms} 毫秒",
+  "action.saveTest": "保存并测试"
 }
