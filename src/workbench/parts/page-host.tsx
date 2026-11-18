@@ -9,6 +9,7 @@ import { SECRETS_TARGET, SecretsPage } from "../pages/secrets-page";
 import { ViewPage } from "../pages/view-page";
 import type { PageDescriptor } from "../protocol";
 import { useQuery, useWorkbench } from "../state/context";
+import { tabFieldsFromPage } from "../state/tab-fields";
 import type { TabState } from "../state/store";
 import { Frame } from "./frame";
 
@@ -85,7 +86,7 @@ function ResolvedPage({ tab }: { tab: TabState }) {
     const m = store.get().merge[tab.id];
     const typed = store.get().drafts[tab.id] ?? {};
     const hold = Boolean(m && (m.conflicts.some((f) => f in typed) || m.keep.some((f) => f in typed)));
-    actions.updateTab(tab.id, { ...(d.page === "plugin" ? {} : { title: d.title }), icon: d.icon, usesEnv: d.usesEnv, ...(hold ? {} : { basis: d.basis }), missing: !d.found, node: last?.tree && last.key ? { tree: last.tree, key: last.key } : null });
+    actions.updateTab(tab.id, { ...tabFieldsFromPage(d), ...(hold ? {} : { basis: d.basis }), node: last?.tree && last.key ? { tree: last.tree, key: last.key } : null });
   }, [d, tab.id, actions, store]);
   useEffect(() => {
     if (d?.usesEnv) store.set({ envTabId: tab.id });

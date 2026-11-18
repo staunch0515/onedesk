@@ -702,6 +702,8 @@ export const enUS = {
   "kernel.error.reason.unconfirmedVersion": "The plugin version this item is bound to has not been confirmed yet.",
   "kernel.error.reason.changedSinceInspect": "The package is no longer what you confirmed. Nothing was installed; look at it again.",
   "kernel.error.reason.readonly": "Read-only protection is on (protection.readonly), so nothing can be changed. Turn it off in the workspace configuration or the environment that sets it.",
+  "kernel.error.reason.readonly|layerName": "Read-only protection is on (protection.readonly, set by “{layerName}”), so nothing can be changed. Turn it off in “{layerName}”.",
+  "kernel.error.reason.noExport|layerName": "Export protection is on (protection.no_export, set by “{layerName}”), so nothing can be exported. Turn it off in “{layerName}”.",
   "kernel.error.reason.noExport": "Export protection is on (protection.no_export), so nothing can be exported. Turn it off in the workspace configuration or the environment that sets it.",
   "kernel.error.reason.notExport": "This folder is not an OneDesk export.",
   "kernel.error.reason.badVersion": "This export has a version this app does not understand.",

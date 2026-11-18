@@ -28,4 +28,19 @@ describe("DropdownMenu", () => {
     const items = await screen.findAllByRole("menuitem");
     expect(items[0]!.querySelector(".od-menu__icon--empty")).toBeNull();
   });
+
+  it("also keeps the slot when a checkbox entry (which has a check mark slot) sits with plain ones", async () => {
+    render(
+      <DropdownMenu
+        trigger={<Button>菜单</Button>}
+        items={[
+          { type: "checkbox", key: "c", label: "勾选", checked: true, onCheckedChange: () => undefined },
+          { key: "b", label: "普通", onSelect: () => undefined },
+        ]}
+      />,
+    );
+    fireEvent.pointerDown(screen.getByRole("button", { name: "菜单" }), { button: 0, ctrlKey: false });
+    const plain = (await screen.findByText("普通")).closest("[role=menuitem]")!;
+    expect(plain.querySelector(".od-menu__icon--empty")).not.toBeNull();
+  });
 });

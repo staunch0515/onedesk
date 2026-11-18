@@ -33,7 +33,7 @@ export interface DropdownMenuProps {
 
 export function DropdownMenu({ trigger, items, align = "start", side = "bottom", open, onOpenChange }: DropdownMenuProps) {
   // When some entry has an icon, the ones without keep an empty slot so the texts stay aligned.
-  const anyIcon = items.some((e) => !e.type && Boolean(e.icon));
+  const anyIcon = items.some((e) => e.type === "checkbox" || (!e.type && Boolean(e.icon)));
   return (
     <MenuPrimitive.Root open={open} onOpenChange={onOpenChange}>
       <MenuPrimitive.Trigger asChild>{trigger}</MenuPrimitive.Trigger>

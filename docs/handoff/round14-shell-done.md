@@ -173,3 +173,13 @@
 - `kernel-texts.ts`/`en-US.ts`：补了 `ui.theme`、`ui.density`、`network.allow`、`process.allow`、`protection.readonly`、`protection.no_export` 的文字（只加英语）；`ui.language` 故意不加（配置页用自己的字段标签，D379 的测试依赖）。测试：内核声明的参数名都有文字（`kernel-texts.test.ts`）。**新增 6 个键，`plugins/_testing/lang-check.test.ts` 的中日各两条会因此失败，需测试会话补译文。**
 - 语言切换后后台标签改名：补了单元测试（同文件；去掉修复后该条失败，已验证）。
 - 这一批没有重跑全部 e2e（只改了状态栏的显示条件与文字，没有 e2e 引用它）；单元测试 workbench 全过。
+
+## 审查后的修改（round14-review.md）
+
+- **#1 修了**：新增 `state/tab-fields.ts`（`tabFieldsFromPage` 把页面描述变成标签字段，插件页不改标题；`isSelfNamed` = `shell:`/`plugin:`）；`page-host`、启动时补名、语言切换、资源事件四处共用。语言切换：`shell:secrets` 直接设成界面语言的“密钥”标题（不再被置灰），`plugin:` 标签不动。测试 `parts/round14-shell.test.tsx`（含上一条要的“语言切换改后台标签”，去掉修复会失败）。
+- **#2 修了**：`resolve` 显式带 `locale`（`pageContext` 优先用调用方给的 `context.locale`），不再依赖 `document.documentElement.lang` 的时序。
+- **#8 修了**：`protection.readonly`/`no_export` 被拒且内核带 `layerName` 时，文字写出“由『层名』设定，到该层关闭”（`i18n/index.tsx` 的 `error` 选 `reason.<原因>|layerName`，无层名仍用原文）。测试同文件。**新增 2 个英文键（`kernel.error.reason.readonly|layerName`、`…noExport|layerName`），中日译文由测试会话补。**
+- **#10 修了**：菜单图标位的判断把勾选项也算上；有测试（`dropdown-menu.test.tsx`）。
+- **#11 核实**：标题栏与状态栏本来就用 `workspace.list` 并订阅 `app.workspacesChanged`，改名后会更新；之前没有测试，现补了（`round14-shell.test.tsx` “the title bar follows a renamed workspace”），未改代码。
+- **D411**：`package.json` 的 `check` 里 e2e 一步设了 `ONEDESK_E2E_REQUIRE_DEVHOST=1`。
+- 测试：`pnpm test` 586 过、4 失败（都是 lang-check 对新增英文键的中日译文，等测试会话）。typecheck、lint 过；这一批没重跑全部 e2e。
