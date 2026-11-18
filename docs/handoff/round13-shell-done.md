@@ -72,3 +72,9 @@
 - 浏览器标签的 WebSocket 断线重连时，只有带 `workspace` 参数的标签能回到原工作区，切换过的标签会回到默认工作区。
 - 在 `docs/decisions.md` 里补记 host 对 `onedesk-kernel` 的依赖和内核新增的 `security-framework`，需协调会话做（我无权改该文件）。
 - 钥匙串的 `delete_prefix` 真实现没运行过（只编译、clippy）。
+
+## 与内核对齐（合并协调分支后）
+
+- 主进程与外壳改用 `crates/protocol` 的 `WorkspaceEntry`、`WorkspacesResult`、`CreateWorkspaceParams`、`WorkspaceIdParams`、`RenameWorkspaceParams`、`method13::APP_*`、`topic13::APP_WORKSPACES_CHANGED`、`INIT_SETTINGS_FILE`、`WORKSPACE_SETTINGS_SNAPSHOT`；删掉自己的重复定义。**`idPending` 没进协议**：主进程内部用 id 形如 `pending:<文件夹>` 表示（外壳 `isPendingWorkspace(w)` 判断 `id.startsWith("pending:")`）；是否把它做成协议字段由协调会话定。
+- 对真工作进程走出的一个问题：内核只接受不带 `client` 的 `workspace.settingsSnapshot`（`denied/mainProcessOnly`），主进程原先转发时带了 client，新建会失败——已改为不带 client 发给该连接所绑定工作区的工作进程，并加了断言。
+- 真工作进程脚本（`/private/tmp/claude-501/smoke2.mjs`，临时目录+内存密钥库，不在仓库里）全过：A 改 `ui.density` 并停用 `org.onedesk.link`、建一个分组后新建工作区 → `init-settings.json` 写出；标签 B 以 `?workspace=<id>` 连上后：两个标签属于两个工作区；`init-settings.json` 首次打开后被删；B 里配置跟过去、插件仍停用、数据（分组）没过去；改 B 的配置不影响 A；列表里 `current` 按连接；关掉 B 后 Second 的工作进程在 2.5 秒内退出，A 不受影响。

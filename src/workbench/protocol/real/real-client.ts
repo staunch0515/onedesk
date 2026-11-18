@@ -1,6 +1,6 @@
 import type { ConnectionState, EventMessage, HelloResult, TreePage } from "../generated";
 import type { ProtocolClient } from "../client";
-import type { ExportResult, ImportPreview, ImportResult, KnownParam, RefInfo, RunExportResult, InstallPreview, InstallRequest, PluginVersionParams, SecretInfo, UndoUpgradeResult, UpgradeResult, PageEventResult, PaletteCommand, PluginDetail, Run, ViewNode, TreeMoveResult, AuditFacets, AuditFilter, AuditRow, EnvOption, EnvView, HistoryEntry, ResolvedParam, SearchHit, CommandContext, CommandEffect, NewItem, PageContext, PageDescriptor, PageSaveResult, PluginGrants, Resource, TreeInfo, TreeNode, WorkspaceEntry, WorkspaceInfo, LanguageInfo, ShellTexts } from "../types";
+import type { ExportResult, ImportPreview, ImportResult, KnownParam, RefInfo, RunExportResult, InstallPreview, InstallRequest, PluginVersionParams, SecretInfo, UndoUpgradeResult, UpgradeResult, PageEventResult, PaletteCommand, PluginDetail, Run, ViewNode, TreeMoveResult, AuditFacets, AuditFilter, AuditRow, EnvOption, EnvView, HistoryEntry, ResolvedParam, SearchHit, CommandContext, CommandEffect, NewItem, PageContext, PageDescriptor, PageSaveResult, PluginGrants, Resource, TreeInfo, TreeNode, WorkspaceEntry, WorkspacesResult, WorkspaceInfo, LanguageInfo, ShellTexts } from "../types";
 import { EventBus } from "./event-bus";
 import { KernelError } from "../errors";
 import type { Transport } from "./transport";
@@ -69,7 +69,7 @@ export async function createKernelClient(transport: Transport, locale?: () => st
     transport,
     workspace: {
       info: () => call<WorkspaceInfo>("workspace.info"),
-      list: async () => (await call<{ items: WorkspaceEntry[] }>("app.workspaces")).items,
+      list: async () => (await call<WorkspacesResult>("app.workspaces")).items,
       create: (name) => call<WorkspaceEntry>("app.createWorkspace", { name }),
       switchTo: (id) => call<WorkspaceEntry>("app.switchWorkspace", { id }),
       rename: async (id, name) => void (await call("app.renameWorkspace", { id, name })),

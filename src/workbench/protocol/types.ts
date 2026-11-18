@@ -93,6 +93,8 @@ export type {
   TreeMoveResult,
   TreePage,
   ViewField,
+  WorkspaceEntry,
+  WorkspacesResult,
   WorkspaceInfo,
   LanguageInfo,
   I18nShellResult as ShellTexts,
@@ -113,19 +115,8 @@ export type PageDescriptor = Omit<KernelPageDescriptor, "view" | "values"> & { v
 
 export type PageSaveResult = { page: PageDescriptor };
 
-/** One row of `app.workspaces` (D400). Same shape from the main process and the demo. */
-export interface WorkspaceEntry {
-  id: string;
-  name: string;
-  /** True while the workspace has no `workspace.json` yet (id `pending:<folder>`): it can be opened, not renamed or deleted (D404). */
-  idPending?: boolean;
-  /** The folder under `workspaces/`; the demo has none. */
-  folder?: string;
-  /** Milliseconds since the epoch; absent when never opened. */
-  lastOpened?: number;
-  /** The one this connection uses. */
-  current: boolean;
-}
+/** A workspace whose `workspace.json` is missing is listed under `pending:<folder>`: it can be opened, not renamed or deleted (D404). */
+export const isPendingWorkspace = (w: { id: string }) => w.id.startsWith("pending:");
 
 /** Demo only: tells the user a demo page is not built yet. Never produced by the kernel. */
 export type PlaceholderNode = { type: "placeholder"; id: string; icon: string; message: Label; action?: { label: Label; disabled?: boolean } };

@@ -13,6 +13,8 @@ use std::time::{Duration, Instant};
 
 use onedesk_kernel::secrets::SecretStoreHandle;
 use onedesk_protocol::{
+    method13::{APP_CREATE_WORKSPACE, APP_DELETE_WORKSPACE, APP_RENAME_WORKSPACE, APP_SWITCH_WORKSPACE, APP_WORKSPACES, WORKSPACE_SETTINGS_SNAPSHOT},
+    topic13::APP_WORKSPACES_CHANGED, CreateWorkspaceParams, RenameWorkspaceParams, WorkspaceIdParams, WorkspacesResult,
     ConnectionState, ErrorCode, EventMessage, HelloParams, HelloResult, AppInstallParams, PluginFolderRef, PluginVersionParams, ProtocolError, Request, Response,
     PROTOCOL_VERSION,
 };
@@ -32,7 +34,7 @@ pub mod workspaces;
 pub mod ws;
 
 pub use data_dir::{default_data_dir, resolve_worker_bin, workspace_dir, workspace_path};
-pub use workspaces::WorkspaceEntry;
+pub use onedesk_protocol::WorkspaceEntry;
 
 /// How long a request waits for a restarting worker before it gives up with `workerGone`.
 const WAIT_FOR_WORKER: Duration = Duration::from_secs(20);
@@ -489,11 +491,11 @@ impl Host {
             "app.inspectPlugin" => return self.inspect_plugin(client, params).await,
             "app.installPlugin" => return self.install_plugin(client, params).await,
             "app.removePlugin" => return self.remove_plugin(client, params).await,
-            "app.workspaces" => return self.list_workspaces(client),
-            "app.createWorkspace" => return self.create_workspace(client, params).await,
-            "app.switchWorkspace" => return self.switch_workspace(client, params).await,
-            "app.renameWorkspace" => return self.rename_workspace(params),
-            "app.deleteWorkspace" => return self.delete_workspace(client, params),
+            APP_WORKSPACES => return self.list_workspaces(client),
+            APP_CREATE_WORKSPACE => return self.create_workspace(client, params).await,
+            APP_SWITCH_WORKSPACE => return self.switch_workspace(client, params).await,
+            APP_RENAME_WORKSPACE => return self.rename_workspace(params),
+            APP_DELETE_WORKSPACE => return self.delete_workspace(client, params),
             // A client's rescan (a package copied in by hand) takes the same road as ours: refresh the index, add the
             // built-in list. Its own parameters are ignored; only the main process knows what is built in.
             "plugin.rescan" => return self.rescan(client).await,
@@ -673,22 +675,6 @@ async fn monitor(cfg: HostConfig, shared: Arc<Shared>, first: Started, restarts:
 
 /* ---------------------------------------------------------------- workspaces (D400, D401) */
 
-#[derive(serde::Deserialize)]
-struct NameParams {
-    name: String,
-}
-
-#[derive(serde::Deserialize)]
-struct IdParams {
-    id: String,
-}
-
-#[derive(serde::Deserialize)]
-struct RenameParams {
-    id: String,
-    name: String,
-}
-
 fn in_use() -> ProtocolError {
     ProtocolError { code: ErrorCode::Conflict, params: [("reason".to_string(), "inUse".to_string())].into(), detail: None }
 }
@@ -718,7 +704,7 @@ impl Host {
     }
 
     fn changed(&self) {
-        let event = EventMessage { topic: "app.workspacesChanged".into(), payload: None, client: None };
+        let event = EventMessage { topic: APP_WORKSPACES_CHANGED.into(), payload: None, client: None };
         let _ = self.events.send(HostEvent { workspace: None, event });
     }
 
@@ -776,16 +762,18 @@ impl Host {
     fn list_workspaces(&self, client: Option<&str>) -> Result<Value, ProtocolError> {
         let mine = self.bound(client);
         let items: Vec<WorkspaceEntry> = self.scanned().iter().map(|(f, i)| workspaces::entry(f, i, *f == mine)).collect();
-        Ok(json!({ "items": items }))
+        Ok(serde_json::to_value(WorkspacesResult { items }).expect("serializes"))
     }
 
     /// `app.createWorkspace { name }`: a new folder with the current workspace's settings to apply at its first open.
     /// Nothing is switched.
     async fn create_workspace(&self, client: Option<&str>, params: Value) -> Result<Value, ProtocolError> {
-        let name = workspaces::valid_name(&parse::<NameParams>(params)?.name).ok_or_else(|| err(ErrorCode::InvalidParams, "name must be 1 to 100 characters"))?;
+        let name = workspaces::valid_name(&parse::<CreateWorkspaceParams>(params)?.name).ok_or_else(|| err(ErrorCode::InvalidParams, "name must be 1 to 100 characters"))?;
         // The kernel gives the configuration tree values and plugin enablement (no data). A kernel without the method
         // yields an empty workspace.
-        let snapshot = match self.forward(client, "workspace.settingsSnapshot", Value::Null).await {
+        // The kernel answers only the main process itself: the request carries no `client`.
+        let slot = self.slot_for(&self.bound(client)).await?;
+        let snapshot = match slot.forward(None, WORKSPACE_SETTINGS_SNAPSHOT, Value::Null).await {
             Ok(v) => Some(v),
             Err(e) if e.code == ErrorCode::UnknownMethod => None,
             Err(e) => return Err(e),
@@ -798,7 +786,7 @@ impl Host {
     /// `app.switchWorkspace { id }`: binds this connection to the workspace (starting its worker if needed). The
     /// worker left behind stops when no connection uses it any more.
     async fn switch_workspace(&self, client: Option<&str>, params: Value) -> Result<Value, ProtocolError> {
-        let (folder, info) = self.find(&parse::<IdParams>(params)?.id)?;
+        let (folder, info) = self.find(&parse::<WorkspaceIdParams>(params)?.id)?;
         self.slot_for(&folder).await?;
         self.touch_last_opened(&folder);
         let old = self.bound(client);
@@ -825,7 +813,7 @@ impl Host {
 
     /// `app.renameWorkspace { id, name }`: changes the name in `workspace.json`.
     fn rename_workspace(&self, params: Value) -> Result<Value, ProtocolError> {
-        let p = parse::<RenameParams>(params)?;
+        let p = parse::<RenameWorkspaceParams>(params)?;
         let name = workspaces::valid_name(&p.name).ok_or_else(|| err(ErrorCode::InvalidParams, "name must be 1 to 100 characters"))?;
         let (folder, mut info) = self.find_with_id(&p.id)?;
         info.name = name;
@@ -837,7 +825,7 @@ impl Host {
     /// `app.deleteWorkspace { id }`: not the one in use; the folder moves to `trash/workspaces/` and its keychain
     /// entries are deleted.
     fn delete_workspace(&self, client: Option<&str>, params: Value) -> Result<Value, ProtocolError> {
-        let (folder, info) = self.find_with_id(&parse::<IdParams>(params)?.id)?;
+        let (folder, info) = self.find_with_id(&parse::<WorkspaceIdParams>(params)?.id)?;
         let used = self.bound(client) == folder
             || *self.active.lock().unwrap() == folder
             || self.bindings.lock().unwrap().values().any(|f| *f == folder)

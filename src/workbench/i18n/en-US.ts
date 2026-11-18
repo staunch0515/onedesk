@@ -763,6 +763,8 @@ export const enUS = {
   "kernel.audit.run.keep": "Keep run",
   "kernel.audit.run.unkeep": "Stop keeping run",
   "kernel.audit.workspace.startup": "Workspace startup",
+  "kernel.audit.workspace.initSettings": "Settings copied from another workspace",
+  "kernel.error.reason.mainProcessOnly": "Only the app itself can do that.",
   "kernel.audit.resource.move": "Move resource",
   "kernel.audit.files.write": "Write file",
   "kernel.audit.plugin.grant": "Grant folder",
