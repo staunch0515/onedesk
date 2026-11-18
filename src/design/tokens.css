@@ -123,6 +123,7 @@
   --tooltip-max-width: 280px;
   --toast-width: 360px;
   --textarea-min-height: 80px;
+  --stacked-fill-min-height: 200px;
   --progress-height: 4px;
   --progress-width: 160px;
   --switch-width: 32px;
@@ -160,6 +161,7 @@
   --list-max-height: 320px;
   --search-box-width: 420px;
   --grid-rownum-width: 48px;
+  --grid-action-width: 32px;
   --code-gutter-width: 48px;
   --code-tab-size: 2;
   --drag-ghost-offset: 14px;

@@ -14,7 +14,7 @@ afterEach(() => vi.restoreAllMocks());
 describe("permission resourcesAll (D389)", () => {
   it("has its own words in English, and a language's overlay wins", () => {
     expect(buildI18n("en-US").permission("resourcesAll")).toMatch(/name, type and location/);
-    expect(buildI18n("xx", { "permission.resourcesAll": "XX" }).permission("resourcesAll")).toBe("XX");
+    expect(buildI18n("xx", { "kernel.permission.resourcesAll": "XX" }).permission("resourcesAll")).toBe("XX");
     expect(buildI18n("en-US").permission("resources")).toBe("Resources"); // the old ids are untouched
   });
 });
@@ -25,10 +25,11 @@ describe("a table with row buttons", () => {
     id: "items",
     columns: [{ key: "name", label: "Name" }],
     rows: [["A"], ["B"]],
-    rowTargets: ["resource:a", "resource:b"],
+    rowTargets: ["resource:a", null],
+    rowKeys: ["ka", "kb"],
     rowActions: [
-      { event: "remove", label: "Remove", icon: "x" },
-      { event: "up", label: "Up", icon: "arrow-up" },
+      { id: "remove", label: "Remove", icon: "x" },
+      { id: "up", label: "Up", icon: "arrow-up" },
     ],
   };
   const mock = () => kernelLikeClient(createMockClient({ fresh: true, quiet: true }), {});
@@ -37,9 +38,9 @@ describe("a table with row buttons", () => {
     const onRowAction = vi.fn();
     renderInShell(mock(), <ViewNodes nodes={[table]} onRowAction={onRowAction} />);
     fireEvent.click(screen.getAllByLabelText("Up")[1]!);
-    expect(onRowAction).toHaveBeenCalledWith("up", 1);
+    expect(onRowAction).toHaveBeenCalledWith("up", "kb");
     fireEvent.click(screen.getAllByLabelText("Remove")[0]!);
-    expect(onRowAction).toHaveBeenLastCalledWith("remove", 0);
+    expect(onRowAction).toHaveBeenLastCalledWith("remove", "ka");
   });
 
   it("draws no buttons where nobody listens (a result tab)", () => {
@@ -75,7 +76,7 @@ describe("a node that accepts any resource (dropAny, D390)", () => {
     const move = vi.fn<ProtocolClient["tree"]["move"]>(async () => ({ message: "Added 1 item" }));
     setup(move);
     await dragOnto("note", "bag");
-    await waitFor(() => expect(move).toHaveBeenCalledWith("t12", "note", "bag", "inside"));
+    await waitFor(() => expect(move).toHaveBeenCalledWith("t12", "note", "bag", "inside", expect.any(String)));
     expect(await screen.findByText("Added 1 item")).toBeTruthy();
   });
 
@@ -97,5 +98,21 @@ describe("a provided node whose target is gone (state broken)", () => {
     const row = (await screen.findByText("(gone)")).closest('[role="treeitem"]')!;
     expect(row.getAttribute("data-state")).toBe("broken");
     expect(row.getAttribute("title")).toContain("No longer exists");
+  });
+});
+
+describe("table rows without rowKeys, or without a target (D393)", () => {
+  it("the row action gets the row number as text; a row without a target does not open anything", () => {
+    const onRowAction = vi.fn();
+    const node: ViewNode = { type: "table", id: "t", columns: [{ key: "n", label: "N" }], rows: [["A"], ["B"]], rowTargets: [null, null], rowActions: [{ id: "remove", label: "Remove", icon: "x" }] };
+    renderInShell(kernelLikeClient(createMockClient({ fresh: true, quiet: true }), {}), <ViewNodes nodes={[node]} onRowAction={onRowAction} />);
+    fireEvent.click(screen.getAllByLabelText("Remove")[1]!);
+    expect(onRowAction).toHaveBeenCalledWith("remove", "1");
+    fireEvent.doubleClick(screen.getByText("A"));
+  });
+  it("the action column is sized by the grid from the number of buttons, not by a pixel value", () => {
+    const node: ViewNode = { type: "table", id: "t", columns: [{ key: "n", label: "N" }], rows: [["A"]], rowActions: [{ id: "a", label: "A1" }, { id: "b", label: "B1" }] };
+    renderInShell(kernelLikeClient(createMockClient({ fresh: true, quiet: true }), {}), <ViewNodes nodes={[node]} onRowAction={() => undefined} />);
+    expect(screen.getByLabelText("A1")).toBeTruthy();
   });
 });

@@ -8,7 +8,7 @@ import type {
   UndoUpgradeResult,
   UpgradeResult,
   TreeNode,
-  Label,
+  TreeMoveResult,
   PageSaveResult,
   AuditFacets,
   AuditFilter,
@@ -122,7 +122,7 @@ export interface ProtocolClient {
     /** Keys from the root down to the node (for "reveal in tree"). */
     path(tree: string, key: string): Promise<string[]>;
     /** Moves a node; a plugin that handled the drop itself (D390) answers with an optional `message` to show instead. */
-    move(tree: string, key: string, targetKey: string | null, position: DropPosition): Promise<{ message?: Label } | void>;
+    move(tree: string, key: string, targetKey: string | null, position: DropPosition, locale?: string): Promise<TreeMoveResult | void>;
     createGroup(tree: string, parentKey: string | null, name: string): Promise<TreeNode>;
     rename(tree: string, key: string, name: string): Promise<void>;
   };

@@ -19,6 +19,8 @@ export interface DataGridColumn<Row> {
   muted?: boolean;
   /** Default width in px; the user can drag it. */
   width?: number;
+  /** A column of row buttons: as wide as that many icon buttons (no pixel value from the caller). */
+  actionCount?: number;
   sortable?: boolean;
   resizable?: boolean;
 }
@@ -59,6 +61,8 @@ export interface DataGridProps<Row> {
 const DEFAULT_WIDTH = 160;
 const MIN_WIDTH = 56;
 const MAX_WIDTH = 1200;
+/** Mirrors --grid-action-width: one row button. */
+const ACTION_WIDTH = 32;
 /** Mirrors --grid-rownum-width. */
 const ROWNUM_WIDTH = 48;
 
@@ -114,7 +118,7 @@ export function DataGrid<Row>({
   const latest = useRef({ current, onWidthsChange });
   latest.current = { current, onWidthsChange };
 
-  const widthOf = (c: DataGridColumn<Row>) => current[c.key] ?? c.width ?? DEFAULT_WIDTH;
+  const widthOf = (c: DataGridColumn<Row>) => current[c.key] ?? c.width ?? (c.actionCount ? c.actionCount * ACTION_WIDTH : DEFAULT_WIDTH);
 
   const sorted = useMemo(() => {
     if (!sort) return rows;

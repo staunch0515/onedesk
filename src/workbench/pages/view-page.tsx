@@ -132,7 +132,7 @@ function blockedByProtection(descriptor: PageDescriptor, action: ActionDecl): bo
  */
 export function ViewPage({ tab, descriptor: initial }: { tab: TabState; descriptor: PageDescriptor }) {
   const { client, store, actions } = useWorkbench();
-  const { t, tx } = useI18n();
+  const { t, tx, locale } = useI18n();
   const { toast } = useToast();
   const draft = useUi((s) => s.drafts[tab.id]) ?? EMPTY;
   const [descriptor, setDescriptor] = useState(initial);
@@ -143,6 +143,14 @@ export function ViewPage({ tab, descriptor: initial }: { tab: TabState; descript
   const isRunning = running.data?.status === "running";
 
   useEffect(() => setDescriptor(initial), [initial]);
+
+  // The plugin resolves its own words (title, intro, labels) in the interface language, so a language change means asking for the page again.
+  const seenLocale = useRef(locale);
+  useEffect(() => {
+    if (seenLocale.current === locale) return;
+    seenLocale.current = locale;
+    actions.updateTab(tab.id, { reload: (store.get().tabs.find((x) => x.id === tab.id)?.reload ?? 0) + 1 });
+  }, [locale, tab.id, actions, store]);
 
   // The saved values changed elsewhere (another client, a plugin) while this page was open (§9.3, D374): fields not typed
   // here just show the new value; a field typed here that was changed to something else asks the user (bar below).
@@ -278,7 +286,7 @@ export function ViewPage({ tab, descriptor: initial }: { tab: TabState; descript
     }
   };
   /** A row button of a table (round 12): the page event goes out with the row's index; the plugin's answer is applied like any page event. */
-  const rowEvent = async (event: string, row: number) => {
+  const rowEvent = async (event: string, row: string) => {
     const now = latest.current;
     const context = { envId: now.tab.envId, draft: typedAll({ ...now.descriptor.values, ...now.draft }), params: pageParams(now.tab.params), row };
     try {
@@ -322,9 +330,12 @@ export function ViewPage({ tab, descriptor: initial }: { tab: TabState; descript
   }));
   if (isConfig) items.push({ key: "params.add", label: t("params.add"), icon: "plus", onSelect: () => setAddingParam(true) });
 
+  const hasFill = descriptor.view.some((n) => (n.type === "form" && n.fields.some((f) => f.fill)) || (n.type === "text" && n.mono) || n.type === "table");
   const renderForm = (node: Extract<ViewNode, { type: "form" }>) => {
+    // Several forms on one page, one of them filling the rest: the others keep their own height instead of being squeezed into each other.
+    const stacked = descriptor.view.length > 1 && hasFill;
     if (node.layout === "strip") {
-      return (
+      const strip = (
         <FieldStrip key={node.id} label={tx(node.label)}>
           {node.fields.map((f) => {
             const id = `${tab.id}-${node.id}-${f.name}`;
@@ -352,13 +363,20 @@ export function ViewPage({ tab, descriptor: initial }: { tab: TabState; descript
           })}
         </FieldStrip>
       );
+      return stacked ? (
+        <Pane key={node.id} fixed>
+          {strip}
+        </Pane>
+      ) : (
+        strip
+      );
     }
     const fill = node.fields.find((f) => f.fill);
     const rest = node.fields.filter((f) => !f.fill);
     return (
-      <Pane key={node.id} grow={Boolean(fill)}>
+      <Pane key={node.id} grow={Boolean(fill)} fixed={stacked && !fill} fillMin={stacked && Boolean(fill)}>
         {rest.length > 0 && (
-          <Pane grow={!fill} scroll pad="lg" gap="md" width="form">
+          <Pane grow={!fill && !stacked} scroll={!stacked} pad="lg" gap="md" width="form">
             {rest.map((f) => (
               <FormField key={f.name} label={tx(f.label)} description={f.hint ? tx(f.hint) : undefined}>
                 <FieldControl field={f} size="md" readOnly={readOnly} value={fieldValue(f)} secret={secretOf(f)} onChange={(v) => setBound(f.bind ?? f.name, v)} />
@@ -402,13 +420,12 @@ export function ViewPage({ tab, descriptor: initial }: { tab: TabState; descript
       {t("merge.body", { fields: pending.conflicts.map(labelOf).join(", ") })}
     </Banner>
   );
-  const hasFill = descriptor.view.some((n) => (n.type === "form" && n.fields.some((f) => f.fill)) || (n.type === "text" && n.mono) || n.type === "table");
   return (
     <>
     <Frame tab={tab} descriptor={descriptor} actions={items} panel={descriptor.resultTabs.length > 0 || tab.runId ? <ResultArea tab={tab} descriptor={descriptor} /> : undefined}>
       {conflictBar}
       {descriptor.runId && <RunHeader runId={descriptor.runId} />}
-      <Pane grow scroll={!hasFill}>
+      <Pane grow scroll={!hasFill || descriptor.view.length > 1}>
         {descriptor.view.map((node) => (node.type === "form" ? renderForm(node) : <ViewNodes key={node.id} nodes={[node]} onRowAction={(event, row) => void rowEvent(event, row)} />))}
       </Pane>
     </Frame>

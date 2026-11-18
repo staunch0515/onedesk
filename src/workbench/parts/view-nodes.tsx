@@ -37,7 +37,7 @@ function MarkdownNode({ source }: { source: string }) {
 }
 
 /** Draws the read-only view nodes (text, table, link, placeholder). Forms are drawn by the view page. */
-export function ViewNodes({ nodes, onRowAction }: { nodes: ViewNode[]; onRowAction?: (event: string, row: number) => void }) {
+export function ViewNodes({ nodes, onRowAction }: { nodes: ViewNode[]; onRowAction?: (event: string, row: string) => void }) {
   const { actions } = useWorkbench();
   const { tx } = useI18n();
   return (
@@ -61,18 +61,18 @@ export function ViewNodes({ nodes, onRowAction }: { nodes: ViewNode[]; onRowActi
                 key: "__actions",
                 header: "",
                 sortable: false,
-                width: 40 * rowActions.length,
+                actionCount: rowActions.length,
                 render: (row) => (
                   <Pane direction="row" gap="xs">
                     {rowActions.map((a) => (
                       <IconButton
-                        key={a.event}
+                        key={a.id}
                         icon={a.icon ?? "circle"}
                         size="sm"
                         label={tx(a.label)}
                         onClick={(e) => {
                           e.stopPropagation();
-                          onRowAction?.(a.event, row.index);
+                          onRowAction?.(a.id, node.rowKeys?.[row.index] ?? String(row.index));
                         }}
                         onDoubleClick={(e) => e.stopPropagation()}
                       />
@@ -91,7 +91,7 @@ export function ViewNodes({ nodes, onRowAction }: { nodes: ViewNode[]; onRowActi
                 getRowKey={(row) => String(row.index)}
                 nullText=""
                 onRowSelect={targets ? () => undefined : undefined}
-                onRowActivate={targets ? (row) => targets[row.index] && actions.open(targets[row.index]!) : undefined}
+                onRowActivate={targets ? (row) => { const to = targets[row.index]; if (to) actions.open(to); } : undefined}
               />
             );
           }

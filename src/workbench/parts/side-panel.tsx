@@ -17,9 +17,6 @@ const FOLLOW_CAP = 20000;
 /** Children by parent key, per tree. Kept across activity switches so a tree does not flash empty. */
 const cache = new Map<string, Map<string, Level>>();
 
-/** `dropAny` arrives with the round-12 protocol types; until they are generated it is read as an optional field. */
-type DropAwareNode = TreeNode & { dropAny?: boolean };
-
 /**
  * Rows that are not resources: the "more is being read" row, and a plugin's own nodes (`@<resource>/<key>`, and `!…` for a
  * failed read). They are not places to drop onto, cannot be dragged, and have no tree-wide menu.
@@ -264,12 +261,12 @@ export function TreePanel({ tree }: { tree: TreeInfo }) {
     if (!container) return true; // top level of a stored tree
     for (let p: TreeNode | undefined = container; p; p = p.parentKey ? index.get(p.parentKey) : undefined) if (p.key === dragKey) return false;
     // A `dropAny` node (D390) takes any resource node dropped onto it; its plugin decides what that means.
-    if (position === "inside" && (container as DropAwareNode).dropAny) return true;
+    if (position === "inside" && container.dropAny) return true;
     return container.accepts.includes("*") || container.accepts.includes(drag.kind);
   };
 
   const drop = (dragKey: string, targetKey: string | null, position: TreeDropPosition) => {
-    client.tree.move(tree.id, dragKey, targetKey, position).then((out) => {
+    client.tree.move(tree.id, dragKey, targetKey, position, locale).then((out) => {
       // The plugin took the drop itself (a reference was added, nothing moved): show what it said.
       if (out && out.message !== undefined) toast({ tone: "success", title: tx(out.message) });
       if (position === "inside" && targetKey && !expanded.includes(targetKey)) actions.setExpanded(tree.id, [...expanded, targetKey]);
