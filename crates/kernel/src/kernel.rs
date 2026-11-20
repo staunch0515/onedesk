@@ -908,13 +908,13 @@ impl Inner {
             return self.list_tree_page(&p.tree, p.parent.as_deref(), offset);
         }
         if p.tree == store::TREE_PLUGINS || p.tree == store::TREE_RUNS {
-            if p.parent.is_some() {
+            if p.tree == store::TREE_PLUGINS && p.parent.is_some() {
                 return Ok(TreePage { nodes: vec![], next: None });
             }
             let (nodes, total) = if p.tree == store::TREE_PLUGINS {
                 self.plugins_tree_page(valid_locale(p.locale.as_deref()), offset as usize, BATCH as usize)?
             } else {
-                let all = self.runs_tree()?;
+                let all = self.runs_tree(p.parent.as_deref(), p.locale.as_deref())?;
                 let total = all.len();
                 (all.into_iter().skip(offset as usize).take(BATCH as usize).collect(), total)
             };
@@ -997,7 +997,14 @@ impl Inner {
     }
 
     async fn tree_path(&self, p: TreeNodeParams, client: Option<String>) -> KResult<Vec<String>> {
-        if [store::TREE_FAVORITES, store::TREE_DELETED, store::TREE_PLUGINS, store::TREE_RUNS].contains(&p.tree.as_str()) {
+        if p.tree == store::TREE_RUNS {
+            let run = self.read(|conn| store::run_get(conn, &p.key))?;
+            if let Some(run) = run {
+                return Ok(vec![if run.kept { "@runs:saved" } else { "@runs:recent" }.into(), p.key]);
+            }
+            return Ok(vec![p.key]);
+        }
+        if [store::TREE_FAVORITES, store::TREE_DELETED, store::TREE_PLUGINS].contains(&p.tree.as_str()) {
             return Ok(vec![p.key]);
         }
         if self.stored_tree(&p.tree).is_ok() {

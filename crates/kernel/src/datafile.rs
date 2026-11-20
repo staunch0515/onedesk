@@ -284,6 +284,14 @@ pub fn kept_index(ws: &Path, run: &str) -> Option<Vec<u64>> {
     serde_json::from_str(&text).ok()
 }
 
+/// Removes all retained result files for a run after its database row has been deleted.
+pub fn remove_kept(ws: &Path, run: &str) {
+    let dir = ws.join(RUN_FILES);
+    for name in [format!("{run}.csv"), format!("{run}.h.csv"), format!("{run}.idx")] {
+        let _ = std::fs::remove_file(dir.join(name));
+    }
+}
+
 pub fn keep(ws: &Path, run: &str, from: &Path, header: bool, take: bool, offsets: &[u64]) -> std::io::Result<()> {
     let dir = ws.join(RUN_FILES);
     std::fs::create_dir_all(&dir)?;

@@ -405,13 +405,30 @@ async fn palette_plugins_tree_and_broken_packages() {
     assert_eq!(c.ok("plugin.get", json!({ "plugin": "test.broken" })).await["load"]["state"], "error");
     let p = c.ok("page.resolve", json!({ "target": "plugin:test.runner" })).await;
     assert_eq!((p["page"].as_str(), p["title"].as_str()), (Some("plugin"), Some("Runner")));
-    // The runs tree lists runs newest first, opening `run:<id>`.
+    // The runs tree separates recent runs from results explicitly kept by the user.
     let j = job(&c, "").await;
     let a = run_text(&c, &j, "rows 1").await;
     let b = run_text(&c, &j, "rows 2").await;
     let runs = c.ok("tree.children", json!({ "tree": "runs" })).await;
-    assert_eq!(runs["nodes"][0]["key"], b["id"]);
-    assert_eq!(runs["nodes"][1]["target"], format!("run:{}", a["id"].as_str().unwrap()));
+    assert_eq!(runs["nodes"][0]["key"], "@runs:recent");
+    assert_eq!(runs["nodes"][1]["key"], "@runs:saved");
+    let recent = c.ok("tree.children", json!({ "tree": "runs", "parent": "@runs:recent" })).await;
+    assert_eq!(recent["nodes"][0]["key"], b["id"]);
+    assert_eq!(recent["nodes"][1]["target"], format!("run:{}", a["id"].as_str().unwrap()));
+    c.ok("run.setKept", json!({ "id": a["id"], "kept": true, "name": "Saved baseline" })).await;
+    let saved = c.ok("tree.children", json!({ "tree": "runs", "parent": "@runs:saved" })).await;
+    assert_eq!(saved["nodes"].as_array().unwrap().len(), 1);
+    assert_eq!(saved["nodes"][0]["label"], "#1 Saved baseline");
+    assert_eq!(saved["nodes"][0]["parentKey"], "@runs:saved");
+    let path = c.ok("tree.path", json!({ "tree": "runs", "key": a["id"] })).await;
+    assert_eq!(path, json!(["@runs:saved", a["id"]]));
+    let saved_id = a["id"].as_str().unwrap();
+    let confirmation = c.ok("command.execute", json!({ "id": "run.delete", "context": { "target": format!("run:{saved_id}") } })).await;
+    assert_eq!(confirmation[0]["type"], "confirm");
+    c.ok("command.execute", json!({ "id": "run.delete", "context": { "target": format!("run:{saved_id}"), "args": { "confirmed": true } } })).await;
+    assert!(c.ok("run.get", json!({ "id": a["id"] })).await.is_null());
+    let saved = c.ok("tree.children", json!({ "tree": "runs", "parent": "@runs:saved" })).await;
+    assert_eq!(saved["nodes"].as_array().unwrap().len(), 0);
     c.ok("plugin.reload", json!({ "plugin": "test.runner" })).await;
     assert_eq!(run_text(&c, &j, "rows 1").await["status"], "success");
 }

@@ -46,6 +46,8 @@ export const KERNEL_LABELS: Table = {
   "run.cancel": "kernel.label.run.cancel",
   "run.keep": "kernel.label.run.keep",
   "run.unkeep": "kernel.label.run.unkeep",
+  "run.delete": "kernel.label.run.delete",
+  "run.delete.confirm": "kernel.label.run.delete.confirm",
   "run.openResource": "kernel.label.run.openResource",
   "run.reuse": "kernel.label.run.reuse",
   "plugins": "kernel.label.plugins",
@@ -261,6 +263,7 @@ export const AUDIT_OPERATIONS: Table = {
   "plugin.state": "kernel.audit.plugin.state",
   "run.keep": "kernel.audit.run.keep",
   "run.unkeep": "kernel.audit.run.unkeep",
+  "run.delete": "kernel.audit.run.delete",
   "workspace.startup": "kernel.audit.workspace.startup",
   "workspace.initSettings": "kernel.audit.workspace.initSettings",
   "resource.move": "kernel.audit.resource.move",
@@ -359,6 +362,7 @@ export const RUN_ERRORS_NAMED: Table = {
 /** Title and confirm-button words for the kernel's `confirm` effects, by message key. */
 export const KERNEL_CONFIRMS: Record<string, { title: MessageKey; ok: MessageKey }> = {
   "deleted.purge.confirm": { title: "kernel.confirm.deleted.purge.confirm.title", ok: "kernel.confirm.deleted.purge.confirm.ok" },
+  "run.delete.confirm": { title: "kernel.confirm.run.delete.confirm.title", ok: "kernel.confirm.run.delete.confirm.ok" },
 };
 
 export const RUN_FALLBACK: MessageKey = "kernel.runFallback";

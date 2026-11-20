@@ -8,6 +8,7 @@ describe("the layout save waits for a quiet moment, but a page that goes away fl
   it("a closed tab is written at once by flush(), once, and the timer does not write it again", () => {
     const save = vi.fn();
     const store = createStore(null, save);
+    save.mockClear();
     store.set({ tabs: [{ id: "a", target: "resource:a", title: "A", icon: "file", pinned: false, envId: null, params: {} }], activeTabId: "a" });
     vi.advanceTimersByTime(300);
     expect(save).toHaveBeenCalledTimes(1);
@@ -23,7 +24,30 @@ describe("the layout save waits for a quiet moment, but a page that goes away fl
   it("flush with nothing waiting writes nothing", () => {
     const save = vi.fn();
     const store = createStore(null, save);
+    save.mockClear();
     store.flush();
     expect(save).not.toHaveBeenCalled();
+  });
+
+  it("keeps page parameters in memory but never writes or restores them", () => {
+    const save = vi.fn();
+    const store = createStore(
+      {
+        tabs: [{ id: "a", target: "resource:a", title: "A", icon: "file", pinned: false, envId: null, params: { connection: "postgres://user:secretpw@host/db" } }],
+        activeTabId: "a",
+      },
+      save,
+    );
+
+    // Older persisted values are cleared as soon as the saved layout is loaded.
+    expect(store.get().tabs[0]?.params).toEqual({});
+    expect(save.mock.calls.at(-1)?.[0].tabs[0]?.params).toEqual({});
+
+    const secret = "postgres://user:secretpw@host/db";
+    store.set({ tabs: [{ ...store.get().tabs[0]!, params: { connection: secret } }] });
+    expect(store.get().tabs[0]?.params).toEqual({ connection: secret });
+    store.flush();
+    expect(save.mock.calls.at(-1)?.[0].tabs[0]?.params).toEqual({});
+    expect(JSON.stringify(save.mock.calls)).not.toContain("secretpw");
   });
 });

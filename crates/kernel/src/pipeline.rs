@@ -219,6 +219,8 @@ pub enum Command {
     /// A run ends (only a `running` one); audited as `run.end`; applies the retention rule (D288).
     RunFinish { id: String, status: String, summary: Option<Value>, error: Option<Value>, output: Option<Value> },
     RunKeep { id: String, kept: bool, name: Option<String> },
+    /// Permanently removes a kept result after the user confirms (D420).
+    RunDelete { id: String },
     /// Drops finished runs from the task panel.
     RunClearFinished,
     /// Parameters of a plugin's state node (`enabled`, `settings.<name>`); `None` removes (D290).
@@ -499,6 +501,14 @@ impl Writer {
                     cx.audit(if kept { "run.keep" } else { "run.unkeep" }, &id, &json!({}))?;
                     Outcome { id: Some(id), changed: true, rows: vec![], ..Default::default() }
                 }
+                Command::RunDelete { id } => {
+                    let n = cx.tx.execute("DELETE FROM runs WHERE id = ?1 AND kept = 1", params![id]).map_err(db_err)?;
+                    if n == 0 {
+                        return Err(not_found("run"));
+                    }
+                    cx.audit("run.delete", &id, &json!({}))?;
+                    Outcome { id: Some(id), changed: true, rows: vec![], ..Default::default() }
+                }
                 Command::RunClearFinished => {
                     let n = cx.tx.execute("UPDATE runs SET in_task_panel = 0 WHERE status <> 'running' AND in_task_panel = 1", []).map_err(db_err)?;
                     Outcome { changed: n > 0, ..Default::default() }
@@ -616,6 +626,7 @@ fn describe(cmd: &Command) -> (String, String) {
         Command::RunProgress { id, .. } => ("run.progress".into(), id.clone()),
         Command::RunFinish { id, .. } => ("run.end".into(), id.clone()),
         Command::RunKeep { id, .. } => ("run.keep".into(), id.clone()),
+        Command::RunDelete { id } => ("run.delete".into(), id.clone()),
         Command::RunClearFinished => ("run.clearFinished".into(), String::new()),
         Command::PluginState { plugin, .. } => ("plugin.state".into(), plugin.clone()),
         Command::PluginStates(_) => ("plugin.state".into(), String::new()),

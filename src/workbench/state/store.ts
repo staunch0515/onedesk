@@ -136,7 +136,14 @@ export function createStore(saved: Partial<LayoutState> | null, save: (layout: L
     sideWidth: clamp(merged.sideWidth, LIMITS.side.min, LIMITS.side.max),
     infoWidth: clamp(merged.infoWidth, LIMITS.info.min, LIMITS.info.max),
     panelHeight: clamp(merged.panelHeight, LIMITS.panel.min, LIMITS.panel.max),
-    tabs: Array.isArray(merged.tabs) ? merged.tabs.filter((t) => t && typeof t.id === "string" && typeof t.target === "string" && !t.target.startsWith("new:")) : [],
+    // Page parameters are transient input. Older versions saved them with the tab layout, which
+    // could put passwords pasted into a plugin field into the workspace database. Drop any
+    // values restored from an older layout; current values remain in memory until the window closes.
+    tabs: Array.isArray(merged.tabs)
+      ? merged.tabs
+          .filter((t) => t && typeof t.id === "string" && typeof t.target === "string" && !t.target.startsWith("new:"))
+          .map((t) => ({ ...t, params: {} }))
+      : [],
     tasksOpen: false,
     notices: [],
     noticesOpen: false,
@@ -161,6 +168,8 @@ export function createStore(saved: Partial<LayoutState> | null, save: (layout: L
   let lastSaved = "";
   const saveNow = () => {
     const layout = Object.fromEntries(LAYOUT_KEYS.map((k) => [k, state[k]])) as unknown as LayoutState;
+    // Keep transient page inputs in live tab state, but never write them to ui_state.
+    layout.tabs = layout.tabs.map((tab) => ({ ...tab, params: {} }));
     const json = JSON.stringify(layout);
     if (json === lastSaved) return;
     lastSaved = json;
@@ -173,6 +182,9 @@ export function createStore(saved: Partial<LayoutState> | null, save: (layout: L
       saveNow();
     }, 200);
   };
+  // Rewrite layouts from older versions immediately so previously persisted page parameters are
+  // removed even if the user makes no further UI changes in this session.
+  saveNow();
   return {
     get: () => state,
     set: (update) => {

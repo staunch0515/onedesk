@@ -592,7 +592,23 @@ impl Inner {
     }
 
     async fn run_keep(&self, id: &str, kept: bool, name: Option<String>) -> KResult<()> {
+        let name = if kept && name.as_deref().is_none_or(|n| n.trim().is_empty()) {
+            self.read(|c| store::run_get(c, id))?.map(|r| r.title)
+        } else {
+            name
+        };
         self.pipeline.execute(Actor::User, Command::RunKeep { id: id.into(), kept, name }).await?;
+        self.run_events(id);
+        Ok(())
+    }
+
+    async fn run_delete(&self, id: &str) -> KResult<()> {
+        let row = self.read(|c| store::run_get(c, id))?.ok_or_else(|| not_found("run"))?;
+        if !row.kept {
+            return Err(not_found("run"));
+        }
+        self.pipeline.execute(Actor::User, Command::RunDelete { id: id.into() }).await?;
+        crate::datafile::remove_kept(&self.ws.dir, id);
         self.run_events(id);
         Ok(())
     }
@@ -1155,9 +1171,44 @@ impl Inner {
         }
     }
 
-    pub fn runs_tree(&self) -> KResult<Vec<TreeNode>> {
+    pub fn runs_tree(&self, parent: Option<&str>, locale: Option<&str>) -> KResult<Vec<TreeNode>> {
+        let Some(parent) = parent else {
+            let locale = crate::kernel::valid_locale(locale).unwrap_or("en-US");
+            let (recent, saved) = if locale == "zh-CN" {
+                ("最近运行", "已保留结果")
+            } else if locale == "ja-JP" {
+                ("最近の実行", "保存済みの結果")
+            } else {
+                ("Recent runs", "Saved results")
+            };
+            return Ok([("@runs:recent", recent), ("@runs:saved", saved)]
+                .into_iter()
+                .map(|(key, label)| TreeNode {
+                    key: key.into(),
+                    tree: store::TREE_RUNS.into(),
+                    parent_key: None,
+                    label: label.into(),
+                    icon: if key.ends_with("saved") { "bookmark" } else { "history" }.into(),
+                    kind: store::KIND_RUN.into(),
+                    expandable: true,
+                    state: NodeState::Ok,
+                    state_reason: None,
+                    badge: None,
+                    target: None,
+                    menu: vec![],
+                    draggable: false,
+                    accepts: vec![],
+                    drop_any: None,
+                })
+                .collect());
+        };
+        let (condition, group) = match parent {
+            "@runs:recent" => ("kept = 0 AND ?1 = ?1", parent),
+            "@runs:saved" => ("kept = 1 AND ?1 = ?1", parent),
+            _ => return Ok(vec![]),
+        };
         Ok(self
-            .read(|c| store::runs_where(c, "?1 = ?1", "", crate::pipeline::RUNS_KEPT))?
+            .read(|c| store::runs_where(c, condition, "", crate::pipeline::RUNS_KEPT))?
             .into_iter()
             .map(|r| {
                 let mut menu = vec![kernel_cmd("node.open", "external-link")];
@@ -1165,6 +1216,9 @@ impl Inner {
                     menu.push(kernel_cmd("run.cancel", "square"));
                 }
                 menu.push(if r.kept { kernel_cmd("run.unkeep", "bookmark-minus") } else { kernel_cmd("run.keep", "bookmark") });
+                if r.kept {
+                    menu.push(kernel_cmd("run.delete", "trash-2"));
+                }
                 if r.resource_id.is_some() {
                     menu.push(kernel_cmd("run.openResource", "external-link"));
                     menu.push(kernel_cmd("run.reuse", "rotate-ccw"));
@@ -1172,7 +1226,7 @@ impl Inner {
                 TreeNode {
                     key: r.id.clone(),
                     tree: store::TREE_RUNS.into(),
-                    parent_key: None,
+                    parent_key: Some(group.into()),
                     label: format!("#{} {}", r.seq, r.kept_name.clone().unwrap_or(r.title.clone())),
                     icon: r.icon.clone(),
                     kind: store::KIND_RUN.into(),
@@ -1215,6 +1269,20 @@ impl Inner {
             },
             "run.keep" | "run.unkeep" => match run_id() {
                 Ok(r) => self.run_keep(&r, id == "run.keep", arg("name")).await.map(|_| vec![]),
+                Err(e) => Err(e),
+            },
+            "run.delete" => match run_id() {
+                Ok(r) => {
+                    if !c.args.as_ref().and_then(|a| a.get("confirmed")).and_then(Value::as_bool).unwrap_or(false) {
+                        Ok(vec![CommandEffect::Confirm {
+                            message: Label::Text("run.delete.confirm".into()),
+                            command: "run.delete".into(),
+                            danger: Some(true),
+                        }])
+                    } else {
+                        self.run_delete(&r).await.map(|_| vec![])
+                    }
+                }
                 Err(e) => Err(e),
             },
             "run.openResource" | "run.reuse" => {
