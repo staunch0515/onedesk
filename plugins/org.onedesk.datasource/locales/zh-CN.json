@@ -66,7 +66,6 @@
   "backup.sourceName": "{source} → {name}（本机）",
   "backup.partialFile": "已收到的部分保存在 {file}",
   "summary.backup": "已恢复到 {name}。转储文件（{size}）保存在 {file}。",
-  "summary.backupWarning": "pg_restore 提示：{warning}",
   "error.backup.notSsh": "备份到本机需要经 ssh 连接的数据源。",
   "error.backup.backupName": "新库名只能用小写字母、数字和 _（以字母或 _ 开头），最多 63 个字符。",
   "error.backup.backupContainer": "本机容器须是 docker 容器名：只能用字母、数字和 _ . -。",
@@ -75,5 +74,6 @@
   "error.backup.noDocker": "本机没有找到 docker（{reason}）。请安装 Docker Desktop，或把 docker 放在 /usr/local/bin 或 /opt/homebrew/bin。",
   "error.backup.exists": "{container} 里已经有库“{name}”。它不会被改动，请换一个名字。",
   "error.backup.failed": "备份在“{step}”时停下：{detail}",
-  "error.backup.emptyDump": "pg_dump 没有输出任何内容。"
+  "error.backup.emptyDump": "pg_dump 没有输出任何内容。",
+  "backup.leftDb": "新库 {name}（在 {container} 里）保持原样，没有删除"
 }

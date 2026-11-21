@@ -517,16 +517,16 @@ describe("datasource: backup to this Mac", () => {
     expect(host.resources.create).not.toHaveBeenCalled();
   });
 
-  it("a failing pg_restore stops: our copy removed, no data source; only ignored errors let it go on, with a warning", async () => {
+  it("any non-zero pg_restore stops: our copy removed, no data source, the new database left as it is", async () => {
     const failing = backupHost({ docker: { restore: { code: 1, stderr: "pg_restore: error: input file does not appear to be a valid archive\n" } } });
     await expect(backupToLocal(ctxOf(failing.host), SSH, plan)).rejects.toThrow("stopped while restoring into shop_copy: pg_restore: error: input file does not appear to be a valid archive");
     expect(failing.log).toEqual(["ready docker", "docker check", "mkdir", "ssh dump", "docker copy", "docker create", "docker restore", "docker cleanup"]);
     expect(failing.host.resources.create).not.toHaveBeenCalled();
 
     const warned = backupHost({ docker: { restore: { code: 1, stderr: "pg_restore: error: could not execute query: ERROR:  must be owner of extension plpgsql\npg_restore: warning: errors ignored on restore: 1\n" } } });
-    const r = await backupToLocal(ctxOf(warned.host), SSH, plan);
-    expect(warned.log).toEqual(ALL_STEPS);
-    expect(r.warning).toBe("pg_restore: warning: errors ignored on restore: 1");
+    await expect(backupToLocal(ctxOf(warned.host), SSH, plan)).rejects.toThrow(/stopped while restoring into shop_copy: .*errors ignored on restore: 1 \(the new database shop_copy in pg-local is left as it is\)/s);
+    expect(warned.log).toEqual(["ready docker", "docker check", "mkdir", "ssh dump", "docker copy", "docker create", "docker restore", "docker cleanup"]);
+    expect(warned.host.resources.create).not.toHaveBeenCalled();
   });
 
   it("never asks the server or the local container to drop, clean or overwrite anything", async () => {

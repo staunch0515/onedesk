@@ -66,7 +66,6 @@
   "backup.sourceName": "{source} → {name} (local)",
   "backup.partialFile": "what arrived is kept in {file}",
   "summary.backup": "Restored into {name}. The dump ({size}) is saved in {file}.",
-  "summary.backupWarning": "pg_restore said: {warning}",
   "error.backup.notSsh": "Backing up to this Mac needs a data source reached over ssh.",
   "error.backup.backupName": "The new database name must be lower-case letters, digits and _ (starting with a letter or _), at most 63 characters.",
   "error.backup.backupContainer": "The local container must be a docker container name: letters, digits and _ . - only.",
@@ -75,5 +74,6 @@
   "error.backup.noDocker": "docker was not found on this Mac ({reason}). Install Docker Desktop, or put docker in /usr/local/bin or /opt/homebrew/bin.",
   "error.backup.exists": "The database “{name}” already exists in {container}. It is left as it is: choose another name.",
   "error.backup.failed": "The backup stopped while {step}: {detail}",
-  "error.backup.emptyDump": "pg_dump wrote nothing."
+  "error.backup.emptyDump": "pg_dump wrote nothing.",
+  "backup.leftDb": "the new database {name} in {container} is left as it is"
 }

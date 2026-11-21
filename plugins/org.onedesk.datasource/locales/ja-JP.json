@@ -66,7 +66,6 @@
   "backup.sourceName": "{source} → {name}（ローカル）",
   "backup.partialFile": "受信した分は {file} に残っています",
   "summary.backup": "{name} に復元しました。ダンプ（{size}）は {file} に保存されています。",
-  "summary.backupWarning": "pg_restore のメッセージ：{warning}",
   "error.backup.notSsh": "この Mac へのバックアップには ssh で接続するデータソースが必要です。",
   "error.backup.backupName": "新しいデータベース名は小文字・数字・_（先頭は英字か _）で、63 文字以内にしてください。",
   "error.backup.backupContainer": "ローカルのコンテナーは docker のコンテナー名にしてください（英数字と _ . - のみ）。",
@@ -75,5 +74,6 @@
   "error.backup.noDocker": "この Mac で docker が見つかりません（{reason}）。Docker Desktop をインストールするか、docker を /usr/local/bin か /opt/homebrew/bin に置いてください。",
   "error.backup.exists": "{container} にはデータベース「{name}」がすでにあります。そのままにしますので、別の名前を選んでください。",
   "error.backup.failed": "「{step}」の途中でバックアップが止まりました：{detail}",
-  "error.backup.emptyDump": "pg_dump が何も出力しませんでした。"
+  "error.backup.emptyDump": "pg_dump が何も出力しませんでした。",
+  "backup.leftDb": "{container} の新しいデータベース {name} はそのまま残しています"
 }

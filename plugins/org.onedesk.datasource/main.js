@@ -471,7 +471,7 @@ function formatBytes(n) {
 
 // Copies the database of an ssh data source into a new database in a local container, step by step, and makes
 // a direct data source for it. Nothing that exists is ever changed: an existing database stops the run before
-// the server is touched, and `createdb` refuses one that appeared meanwhile. Returns { created, file, bytes, warning }.
+// the server is touched, and `createdb` refuses one that appeared meanwhile. Returns { created, file, bytes }.
 export async function backupToLocal(ctx, source, plan) {
   const c = connectionOf(source && source.body);
   if (c.mode !== "ssh") throw fail(ctx, "error.backup.notSsh", {});
@@ -529,20 +529,17 @@ export async function backupToLocal(ctx, source, plan) {
   const copied = await docker(dockerArgs("copy", plan, { file: localFile, inContainer }), LONG_TIMEOUT_MS);
   if (copied.code !== 0) throw stepFailed(2, errorText(copied));
 
-  let warning = "";
   try {
     // 4. a new database; createdb itself refuses a name that exists.
     step(3);
     const made = await docker(dockerArgs("create", plan), DOCKER_TIMEOUT_MS);
     if (made.code !== 0) throw stepFailed(3, errorText(made));
 
-    // 5. pg_restore into it. Errors pg_restore only reports ("errors ignored on restore") leave a usable copy.
+    // 5. pg_restore into it. Any non-zero exit stops the backup, also "errors ignored on restore": the new
+    // database is left as it is (nothing is dropped) and no data source is made for it.
     step(4);
     const restored = await docker(dockerArgs("restore", plan, { inContainer }), LONG_TIMEOUT_MS);
-    if (restored.code !== 0) {
-      if (/errors ignored on restore: \d+/.test(String(restored.stderr || ""))) warning = errorText(restored).split("\n").slice(-1)[0];
-      else throw stepFailed(4, errorText(restored));
-    }
+    if (restored.code !== 0) throw stepFailed(4, `${errorText(restored)} (${tr(ctx, "backup.leftDb", { name: plan.name, container: plan.container })})`);
   } finally {
     try {
       await ctx.host.process.run({ program: "docker", args: dockerArgs("cleanup", plan, { inContainer }), timeoutMs: DOCKER_TIMEOUT_MS });
@@ -559,7 +556,7 @@ export async function backupToLocal(ctx, source, plan) {
     body: { mode: "direct", host: "localhost", port: plan.port, database: plan.name, user: plan.user, sshHost: "", container: "" },
   });
   ctx.progress(1, tr(ctx, "backup.done"));
-  return { created, file: localFile, bytes: dumped.bytes, warning };
+  return { created, file: localFile, bytes: dumped.bytes };
 }
 
 /* ---------------------------------------------------------------- plugin */
@@ -653,7 +650,7 @@ export default {
       if (!ctx.resource) throw fail(ctx, "error.noSource", {});
       const r = await backupToLocal(ctx, ctx.resource, backupPlanOf(ctx.params));
       const vars = { name: r.created.name || "", file: r.file, size: formatBytes(r.bytes) };
-      const message = tr(ctx, "summary.backup", vars) + (r.warning ? ` ${tr(ctx, "summary.backupWarning", { warning: r.warning })}` : "");
+      const message = tr(ctx, "summary.backup", vars);
       return { output: { type: "link", label: r.created.name || tr(ctx, "kind.source.new"), target: `resource:${r.created.id}` }, summary: { message } };
     });
 
