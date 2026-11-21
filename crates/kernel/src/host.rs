@@ -243,7 +243,7 @@ impl Inner {
                 let list = if foreign {
                     rows.iter().map(|r| self.foreign_resource(r)).collect::<KResult<Vec<_>>>()?
                 } else {
-                    rows.iter().map(|r| self.plugin_resource(r)).collect::<KResult<Vec<_>>>()?
+                    self.plugin_resources(&rows)?
                 };
                 Ok(Value::Array(list))
             }
@@ -337,13 +337,26 @@ impl Inner {
     /// A resource as a plugin gets it: the protocol's `Resource` plus (round 16) `externalKey`
     /// and `missing` (its source is gone).
     fn plugin_resource(&self, r: &store::Row) -> KResult<Value> {
-        let mut v = serde_json::to_value(self.resource(r)?).map_err(internal)?;
-        let key: Option<String> = self.read(|c| {
-            c.query_row("SELECT external_key FROM resources WHERE id = ?1", [&r.id], |x| x.get(0))
+        Ok(self.plugin_resources(std::slice::from_ref(r))?.pop().unwrap_or(Value::Null))
+    }
+
+    /// `plugin_resource` for many rows: their external keys in one query (review #15).
+    fn plugin_resources(&self, rows: &[store::Row]) -> KResult<Vec<Value>> {
+        let ids: Vec<&str> = rows.iter().map(|r| r.id.as_str()).collect();
+        let ids = serde_json::to_string(&ids).map_err(internal)?;
+        let keys: std::collections::HashMap<String, Option<String>> = self.read(|c| {
+            let mut st = c.prepare("SELECT id, external_key FROM resources WHERE id IN (SELECT value FROM json_each(?1))")?;
+            let v = st.query_map([ids], |x| Ok((x.get(0)?, x.get(1)?)))?;
+            v.collect()
         })?;
-        v["externalKey"] = json!(key);
-        v["missing"] = json!(r.state == store::STATE_MISSING);
-        Ok(v)
+        rows.iter()
+            .map(|r| {
+                let mut v = serde_json::to_value(self.resource(r)?).map_err(internal)?;
+                v["externalKey"] = json!(keys.get(&r.id).cloned().flatten());
+                v["missing"] = json!(r.state == store::STATE_MISSING);
+                Ok(v)
+            })
+            .collect()
     }
 
     /// Round 16 (parity A1, A3, A4): `resources.upsertByKey(kind, items, { othersMissing })`.
@@ -439,7 +452,7 @@ impl Inner {
         let relative = !std::path::Path::new(raw).is_absolute();
         let abs = if relative { own.join(raw).display().to_string() } else { raw.to_string() };
         match crate::files::resolve(std::slice::from_ref(&own), &abs) {
-            Ok(real) if real.starts_with(own.join("bin")) => Err(denied("ownPrograms")),
+            Ok(real) if crate::carry::in_own_bin(&own, &real) => Err(denied("ownPrograms")),
             Ok(_) => Ok(Some((vec![own], abs))),
             Err(e) if relative => Err(e),
             Err(_) => Ok(None),

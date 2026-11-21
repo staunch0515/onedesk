@@ -227,11 +227,11 @@ impl Inner {
     pub(crate) fn transfer_end(&self, p: &Plugin, raw: &str) -> KResult<(Vec<PathBuf>, String)> {
         let own = self.plugin_data_dir(&p.id)?.canonicalize().map_err(internal)?;
         let abs = if std::path::Path::new(raw).is_absolute() { raw.to_string() } else { own.join(raw).display().to_string() };
-        let bin = own.join("bin");
+        let own_dir = own.clone();
         let mine = vec![own];
         match crate::files::resolve(&mine, &abs) {
             // Review #13: never the plugin's own programs (`bin/`).
-            Ok(real) if real.starts_with(&bin) => return Err(denied("ownPrograms")),
+            Ok(real) if in_own_bin(&own_dir, &real) => return Err(denied("ownPrograms")),
             Ok(_) => return Ok((mine, abs)),
             // Relative paths never leave the own folder.
             Err(e) if !std::path::Path::new(raw).is_absolute() => return Err(e),
@@ -371,4 +371,13 @@ impl Inner {
                           "bytes": bytes, "path": path });
         Ok(Done { out, object: program, summary })
     }
+}
+
+/// Whether `real` (resolved) is inside the plugin folder's `bin/`, whatever the letter case: the
+/// file system is case-insensitive, so `BIN/x` is the same file (round 16 review #16).
+pub(crate) fn in_own_bin(own: &std::path::Path, real: &std::path::Path) -> bool {
+    real.strip_prefix(own)
+        .ok()
+        .and_then(|rest| rest.components().next())
+        .is_some_and(|c| c.as_os_str().to_string_lossy().eq_ignore_ascii_case("bin"))
 }

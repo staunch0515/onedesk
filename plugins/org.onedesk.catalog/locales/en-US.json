@@ -72,5 +72,9 @@
   "error.param.time": "{name} must be a time (HH:MM)",
   "error.param.datetime": "{name} must be a date and time",
   "error.param.enum": "{name} must be one of the listed values",
-  "error.param.max": "{name} is longer than {max} characters"
+  "error.param.max": "{name} is longer than {max} characters",
+  "badge.missing": "missing",
+  "reason.mappingNotAbsolute": "The mapping file setting must be a full path",
+  "message.truncated": "Stopped at {max} files or {depth} folder levels: nothing was marked missing.",
+  "index.more": "…and {count} more (re-index to see them all in the result)."
 }

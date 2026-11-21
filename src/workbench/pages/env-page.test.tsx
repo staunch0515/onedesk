@@ -46,7 +46,10 @@ describe("environment reference parameters (G3)", () => {
     const dialog = await screen.findByRole("dialog");
     fireEvent.click(within(dialog).getByRole("combobox"));
     fireEvent.click(await screen.findByRole("option", { name: "Resource reference" }));
-    expect((within(dialog).getByLabelText("Parameter name") as HTMLInputElement).value).toBe("datasource");
+    // No name is suggested (the shell knows no plugin's parameter names); Add stays off until one is typed.
+    const name = within(dialog).getByLabelText("Parameter name") as HTMLInputElement;
+    expect(name.value).toBe("");
+    fireEvent.change(name, { target: { value: "datasource" } });
     fireEvent.click(within(dialog).getByRole("button", { name: "Choose…" }));
     const picker = (await screen.findAllByRole("dialog")).at(-1)!;
     fireEvent.change(within(picker).getByLabelText("Search by name"), { target: { value: "ware" } });

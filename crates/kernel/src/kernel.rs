@@ -400,6 +400,23 @@ impl Inner {
                 .unwrap_or_default(),
             ),
             Command::Create(_) | Command::Undelete { .. } => Some(vec![]),
+            // Round 16 review #3: the resources these keys already name (live ones; created and
+            // restored ones count as granting nothing before).
+            Command::Upsert { kind, items, .. } => {
+                let keys: Vec<&str> = items.iter().map(|i| i.key.as_str()).collect();
+                let keys = serde_json::to_string(&keys).unwrap_or_default();
+                Some(
+                    self.read(|c| {
+                        let mut st = c.prepare(
+                            "SELECT id FROM resources WHERE kind = ?1 AND deleted_at IS NULL
+                             AND external_key IN (SELECT value FROM json_each(?2))",
+                        )?;
+                        let v = st.query_map(rusqlite::params![kind, keys], |r| r.get(0))?;
+                        v.collect()
+                    })
+                    .unwrap_or_default(),
+                )
+            }
             Command::Import(plan) => Some(plan.items.iter().filter(|i| i.update).map(|i| i.id.clone()).collect()),
             _ => None,
         };

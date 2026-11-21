@@ -1,8 +1,8 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 // @ts-ignore plain JS module, no types
-import plugin, { asOfExpr, checks, expand, groupsOf, normalizeMapping, paramDeclLines, paramNames, parseEntry, parseMapping, parseYaml, placeholders, quoteIdent, renderSql, splitHeader, sync, treeChildren, treePath, versionedSubquery } from "./main.js";
-import { checkActionResult, checkView, onlyKeys, RENDER_KEYS, TREE_NODE_KEYS } from "../_testing/view-check";
+import plugin, { rememberSent, sentOf, asOfExpr, checks, expand, groupsOf, normalizeMapping, paramDeclLines, paramNames, parseEntry, parseMapping, parseYaml, placeholders, quoteIdent, renderSql, splitHeader, sync, treeChildren, treePath, versionedSubquery } from "./main.js";
+import { checkActionResult, checkView, hostError, onlyKeys, RENDER_KEYS, TREE_NODE_KEYS } from "../_testing/view-check";
 
 const load = (f: string) => JSON.parse(readFileSync(new URL(`./locales/${f}.json`, import.meta.url), "utf8")) as Record<string, string>;
 const EN = load("en-US");
@@ -69,54 +69,77 @@ const TOP_SQL = `-- ---
 SELECT * FROM {{customer}} LIMIT :n`;
 
 // A fake file system under /work (granted), a mapping at its top, and a resource store keyed by external key.
-function fakeHost(files: Record<string, string>, over: Host = {}) {
+// `links`: folder links (link path → real path), resolved by `files.stat` like the kernel does.
+function fakeHost(files: Record<string, string>, over: Host = {}, links: Record<string, string> = {}) {
   const store = new Map<string, string>();
   const resources: any[] = [];
   let next = 1;
+  const real = (p: string): string => {
+    for (const [l, to] of Object.entries(links)) if (p === l || p.startsWith(`${l}/`)) return real(to + p.slice(l.length));
+    return p;
+  };
   const host: Host = {
     files: {
       roots: vi.fn(async () => [{ path: "/work", name: "work" }]),
+      stat: vi.fn(async (p: string) => ({ path: real(p), name: p.split("/").pop(), dir: true })),
       list: vi.fn(async (dir: string) => {
         const prefix = dir.endsWith("/") ? dir : `${dir}/`;
+        const realPrefix = `${real(dir)}/`;
         const names = new Map<string, boolean>();
         for (const p of Object.keys(files)) {
-          if (!p.startsWith(prefix)) continue;
-          const rest = p.slice(prefix.length).split("/");
+          if (!p.startsWith(realPrefix)) continue;
+          const rest = p.slice(realPrefix.length).split("/");
           names.set(rest[0]!, rest.length > 1 || names.get(rest[0]!) === true);
         }
-        return { entries: [...names].map(([name, dir]) => ({ name, path: prefix + name, dir, hidden: false })) };
+        for (const l of Object.keys(links)) if (l.startsWith(realPrefix) && !l.slice(realPrefix.length).includes("/")) names.set(l.slice(realPrefix.length), true);
+        return { entries: [...names].map(([name, isDir]) => ({ name, path: prefix + name, dir: isDir, hidden: false })) };
       }),
       readText: vi.fn(async (p: string) => {
-        if (!(p in files)) throw Object.assign(new Error("notFound"), { code: "notFound" });
-        return { text: files[p], basis: "b" };
+        const r = real(p);
+        if (!(r in files)) throw Object.assign(new Error("notFound"), { code: "notFound" });
+        return { text: files[r], basis: "b" };
       }),
     },
     settings: { get: vi.fn(async () => "") },
-    storage: { get: vi.fn(async (k: string) => store.get(k) ?? null), set: vi.fn(async (k: string, v: string) => void store.set(k, v)) },
+    storage: {
+      get: vi.fn(async (k: string) => store.get(k) ?? null),
+      set: vi.fn(async (k: string, v: string) => {
+        // the kernel's limits (host.rs): 256 KB a value, 1000 keys
+        if (JSON.stringify(v).length > 256 * 1024) throw Object.assign(new Error("invalid"), { code: "invalid", params: { reason: "tooLarge" } });
+        if (!store.has(k) && store.size >= 1000) throw Object.assign(new Error("invalid"), { code: "invalid", params: { reason: "tooManyKeys" } });
+        store.set(k, v);
+      }),
+      remove: vi.fn(async (k: string) => void store.delete(k)),
+    },
     params: { get: vi.fn(async () => ({ found: false, value: "", sourceName: "" })), config: vi.fn(async () => ({ found: false, value: "", sourceName: "" })) },
     resources: {
-      list: vi.fn(async (o: any) => (o.kind === "org.onedesk.datasource:source" ? [{ id: "s1", name: "Prod" }] : resources)),
+      list: vi.fn(async (o: any) => (o.kind === "org.onedesk.datasource:source" ? [{ id: "s1", name: "Prod" }] : resources.filter((r) => !r.deleted))),
+      get: vi.fn(async (id: string) => resources.find((r) => r.id === id && !r.deleted) ?? null),
       // Models resources.upsertByKey (round16-protocol.md §2.2): new key → create (name defaults to the last path
-      // segment); known key → write only the fields given (body keys merged); othersMissing marks the rest.
+      // segment); known key → write only the fields given (body keys merged); a deleted or missing one comes
+      // back (restored); othersMissing marks the rest.
       upsertByKey: vi.fn(async (kind: string, items: any[], opts: any) => {
         const keys = new Set(items.map((i: any) => i.key));
-        const c = { created: 0, updated: 0, unchanged: 0, restored: 0, missing: 0 };
+        const c = { created: 0, updated: 0, unchanged: 0, restored: 0, missing: 0, ids: {} as Record<string, string> };
         for (const it of items) {
           const r = resources.find((x) => x.externalKey === it.key);
           if (!r) {
-            resources.push({ id: `r${next++}`, kind: `org.onedesk.catalog:${kind}`, externalKey: it.key, name: it.name ?? it.key.split("/").pop(), description: it.description ?? "", body: it.body, tags: [], favorite: false, missing: false });
+            const id = `r${next++}`;
+            resources.push({ id, kind: `org.onedesk.catalog:${kind}`, externalKey: it.key, name: it.name ?? it.key.split("/").pop(), description: it.description ?? "", body: it.body ?? {}, tags: [], favorite: false, missing: false, deleted: false });
             c.created++;
+            c.ids[it.key] = id;
             continue;
           }
+          c.ids[it.key] = r.id;
           const before = JSON.stringify(r);
           if (it.name !== undefined) r.name = it.name;
           if (it.description !== undefined) r.description = it.description;
           if (it.body) r.body = { ...r.body, ...it.body };
-          if (r.missing) (r.missing = false), c.restored++;
+          if (r.missing || r.deleted) (r.missing = false), (r.deleted = false), c.restored++;
           else if (JSON.stringify(r) !== before) c.updated++;
           else c.unchanged++;
         }
-        if (opts && opts.othersMissing) for (const r of resources) if (!keys.has(r.externalKey) && !r.missing) (r.missing = true), c.missing++;
+        if (opts && opts.othersMissing) for (const r of resources) if (!r.deleted && !keys.has(r.externalKey) && !r.missing) (r.missing = true), c.missing++;
         return c;
       }),
     },
@@ -127,7 +150,12 @@ function fakeHost(files: Record<string, string>, over: Host = {}) {
   return { host, resources, store };
 }
 
-const ctxOf = (host: Host, extra: Record<string, unknown> = {}) => ({ locale: "en-US", host, t, params: {}, progress: vi.fn(), cancelled: () => false, ...extra });
+// Like the kernel (D421): `actions.call` only inside a run, i.e. when the ctx has a runId.
+const ctxOf = (host: Host, extra: Record<string, unknown> = {}) => {
+  const inRun = typeof extra.runId === "string";
+  const call = (...a: unknown[]) => (inRun ? host.actions.call(...a) : Promise.reject(hostError("denied", { reason: "notInRun" })));
+  return { locale: "en-US", host: { ...host, actions: { ...host.actions, call } }, t, params: {}, progress: vi.fn(), cancelled: () => false, ...extra };
+};
 const FILES = { "/work/mapping.yaml": MAPPING_YAML, "/work/sales/orders.sql": ORDERS_SQL, "/work/top.sql": TOP_SQL };
 
 describe("catalog: YAML", () => {
@@ -308,13 +336,16 @@ describe("catalog: grouping (A9)", () => {
   const res = (id: string, name: string, extra: Record<string, unknown> = {}) => ({ id: `r-${id}`, name, body: { id }, ...extra });
   const all = [res("sales.orders.recent", "Recent"), res("sales.orders.big", "Big"), res("sales.top", "Top"), res("misc", "Misc"), res("sales.orders.gone", "Gone", { missing: true, state: "broken" })];
 
-  it("builds the tree level by level; missing entries are left out", () => {
+  it("builds the tree level by level; entries whose file is gone stay, marked (D422)", () => {
     const root = treeChildren(all, "");
     expect(root.map((n: any) => n.key)).toEqual(["g:sales", "r-misc"]);
     for (const n of root) expect(onlyKeys(n, TREE_NODE_KEYS)).toEqual([]);
     expect(treeChildren(all, "g:sales").map((n: any) => n.label)).toEqual(["orders", "Top"]);
     const orders = treeChildren(all, "g:sales.orders");
-    expect(orders.map((n: any) => n.label)).toEqual(["Big", "Recent"]);
+    expect(orders.map((n: any) => n.label)).toEqual(["Big", "Gone", "Recent"]);
+    expect(orders[1]).toEqual({ key: "r-sales.orders.gone", label: "Gone", icon: "triangle-alert", expandable: false, target: "resource:r-sales.orders.gone", badge: "missing" });
+    expect(treeChildren(all, "g:sales.orders", "失效")[1].badge).toBe("失效");
+    expect(treeChildren([...all, res("x.y", "Deleted", { deleted: true })], "g:x")).toEqual([]);
     expect(orders[0]).toEqual({ key: "r-sales.orders.big", label: "Big", icon: "file-search", expandable: false, target: "resource:r-sales.orders.big" });
   });
 
@@ -330,6 +361,8 @@ describe("catalog: grouping (A9)", () => {
     const out = await registry().trees.catalog.children(ctxOf(host), "");
     expect(host.resources.list).toHaveBeenCalledWith({ kind: "entry" });
     expect(out.nodes.length).toBe(2);
+    const deep = await registry().trees.catalog.children(ctxOf(host), "g:sales.orders");
+    expect(deep.nodes.find((n: any) => n.label === "Gone").badge).toBe(EN["badge.missing"]);
   });
 });
 
@@ -338,12 +371,18 @@ describe("catalog: sync (A1, A3, A4, A5)", () => {
     const files = { ...FILES, "/work/broken.sql": "SELECT 1", "/work/notes.txt": "x", "/work/.hidden/x.sql": TOP_SQL, "/work/dup.sql": TOP_SQL };
     const { host, resources, store } = fakeHost(files);
     const report = await sync(ctxOf(host));
-    expect(host.resources.upsertByKey).toHaveBeenCalledTimes(1);
+    // one batch with the content, then one naming the new entries after their header
+    expect(host.resources.upsertByKey).toHaveBeenCalledTimes(2);
     const [kind, items, opts] = host.resources.upsertByKey.mock.calls[0];
     expect([kind, opts]).toEqual(["entry", { othersMissing: true }]);
     expect(items.map((i: any) => i.key)).toEqual(["/work/dup.sql", "/work/sales/orders.sql"]);
-    expect(items[1]).toMatchObject({ name: "Recent orders", description: "Orders since a time", body: { id: "sales.orders.recent", path: "/work/sales/orders.sql" } });
-    expect(resources.length).toBe(2);
+    expect(items.every((i: any) => !("name" in i))).toBe(true);
+    expect(items[1]).toMatchObject({ description: "Orders since a time", body: { id: "sales.orders.recent", path: "/work/sales/orders.sql" } });
+    expect(host.resources.upsertByKey.mock.calls[1][1]).toEqual([
+      { key: "/work/dup.sql", name: "sales.top" },
+      { key: "/work/sales/orders.sql", name: "Recent orders" },
+    ]);
+    expect(resources.map((r) => r.name)).toEqual(["sales.top", "Recent orders"]);
     expect(report).toMatchObject({ files: 4, indexed: 2, created: 2, missing: 0 });
     expect(report.skipped).toEqual([
       { path: "/work/broken.sql", reason: "noHeader", detail: "" },
@@ -364,7 +403,8 @@ describe("catalog: sync (A1, A3, A4, A5)", () => {
     const report = await sync(ctxOf(host));
     expect(report).toMatchObject({ created: 0, updated: 1, unchanged: 1 });
     // an entry already indexed is sent without a name
-    expect(host.resources.upsertByKey.mock.calls[1][1].every((i: any) => !("name" in i))).toBe(true);
+    expect(host.resources.upsertByKey).toHaveBeenCalledTimes(3); // nothing new: no naming batch
+    expect(host.resources.upsertByKey.mock.calls[2][1].every((i: any) => !("name" in i))).toBe(true);
     expect(r).toMatchObject({ tags: ["mine"], favorite: true, name: "Renamed by me", description: "changed", id: r.id });
   });
 
@@ -376,11 +416,64 @@ describe("catalog: sync (A1, A3, A4, A5)", () => {
     delete files["/work/top.sql"];
     expect((await sync(ctxOf(host))).missing).toBe(1);
     expect(resources.find((x) => x.id === id).missing).toBe(true);
-    expect(treeChildren(resources, "g:sales").map((n: any) => n.key)).toEqual(["g:sales.orders"]);
+    expect(treeChildren(resources, "g:sales").find((n: any) => n.key === id)).toMatchObject({ icon: "triangle-alert", badge: "missing" });
     files["/work/top.sql"] = TOP_SQL;
     expect((await sync(ctxOf(host))).restored).toBe(1);
     expect(resources.find((x) => x.id === id).missing).toBe(false);
     expect(resources.length).toBe(2);
+  });
+
+  it("a deleted entry that comes back keeps the name the user gave it (review #8)", async () => {
+    const files: Record<string, string> = { ...FILES };
+    const { host, resources } = fakeHost(files);
+    await sync(ctxOf(host));
+    const r = resources.find((x) => x.externalKey === "/work/top.sql");
+    r.name = "Mine";
+    r.deleted = true; // the user deleted it
+    files["/work/new.sql"] = TOP_SQL.replace("sales.top", "sales.new");
+    const report = await sync(ctxOf(host));
+    expect(report).toMatchObject({ created: 1, restored: 1 });
+    expect(r).toMatchObject({ deleted: false, name: "Mine" });
+    expect(resources.find((x) => x.externalKey === "/work/new.sql").name).toBe("sales.new");
+  });
+
+  it("a folder link back up is walked once; a cut-short walk marks nothing missing and says so (review #6)", async () => {
+    const files: Record<string, string> = { ...FILES };
+    const { host, resources } = fakeHost(files, {}, { "/work/sales/loop": "/work" });
+    const first = await sync(ctxOf(host));
+    expect(first).toMatchObject({ files: 2, indexed: 2, truncated: false });
+    expect(resources.map((r) => r.externalKey).sort()).toEqual(["/work/sales/orders.sql", "/work/top.sql"]);
+
+    // more than 5000 files: stop there, index what was read, mark nothing missing
+    const many: Record<string, string> = {};
+    for (let i = 0; i < 5001; i++) many[`/work/many/q${String(i).padStart(5, "0")}.sql`] = `-- ---\n-- id: many.q${i}\n-- ---\nSELECT ${i}`;
+    Object.assign(files, many);
+    delete files["/work/top.sql"];
+    const cut = await sync(ctxOf(host));
+    expect(cut.truncated).toBe(true);
+    expect(cut.files).toBe(5000);
+    expect(host.resources.upsertByKey.mock.calls[2][2]).toEqual({});
+    expect(resources.find((r) => r.externalKey === "/work/top.sql").missing).toBe(false);
+    expect(resources.find((r) => r.externalKey === "/work/sales/orders.sql").missing).toBe(false);
+    expect(await registry().commands.reindex(ctxOf(host), {})).toEqual([{ type: "toast", message: expect.stringContaining("nothing was marked missing"), tone: "warning" }]);
+  });
+
+  it("the stored report stays small and a failed write does not fail the sync (review #5)", async () => {
+    const files: Record<string, string> = { ...FILES };
+    for (let i = 0; i < 600; i++) files[`/work/bad/b${String(i).padStart(3, "0")}.sql`] = `/* ---\nid: bad id ${"x".repeat(300)}\n--- */\nSELECT 1`;
+    const { host, store } = fakeHost(files);
+    const report = await sync(ctxOf(host));
+    expect(report.skipped.length).toBe(600);
+    const stored = JSON.parse(store.get("lastReport")!);
+    expect(stored.skipped.length).toBe(300);
+    expect(stored.skippedTotal).toBe(600);
+    expect(stored.skipped[0].detail.length).toBe(200);
+    expect(JSON.stringify(stored).length).toBeLessThan(256 * 1024);
+    const page = await registry().pages.index.render(ctxOf(host));
+    expect(page.view.find((n: any) => n.id === "more").text).toContain("300 more");
+    expect(page.view.find((n: any) => n.id === "summary").text).toBe("2 queries indexed, 600 skipped, 0 missing");
+    host.storage.set = vi.fn(async () => Promise.reject(hostError("invalid", { reason: "tooLarge" })));
+    await expect(sync(ctxOf(host))).resolves.toMatchObject({ indexed: 2 });
   });
 
   it("re-indexes when the workspace opens (activation), from the toolbar command and as an action", async () => {
@@ -389,10 +482,10 @@ describe("catalog: sync (A1, A3, A4, A5)", () => {
     const reg = registry();
     const { host } = fakeHost(FILES);
     await reg.events["workspace.opened"](ctxOf(host));
-    expect(host.resources.upsertByKey).toHaveBeenCalledTimes(1);
+    expect(host.resources.upsertByKey).toHaveBeenCalledTimes(2);
     const effects = await reg.commands.reindex(ctxOf(host), {});
     expect(effects).toEqual([{ type: "toast", message: "2 queries indexed, 0 skipped, 0 missing", tone: "success" }]);
-    const res = await reg.actions.reindex(ctxOf(host));
+    const res = await reg.actions.reindex(ctxOf(host, { runId: "run-x" }));
     expect(checkActionResult(res)).toEqual([]);
     expect(res.output.columns.map((c: any) => c.key)).toEqual(["path", "reason"]);
     expect(await reg.commands.openIndex(ctxOf(host), {})).toEqual([{ type: "open", target: "page:org.onedesk.catalog/index" }]);
@@ -469,6 +562,11 @@ describe("catalog: entry page (A2, A7, A8)", () => {
     expect(JSON.parse(res.output.text)).toMatchObject({ path: "/work/other/m.json", problem: "", entities: { order: { table: "x.orders" } } });
     host.settings.get = vi.fn(async () => "/work/none.yaml");
     expect(JSON.parse((await reg.actions.mapping(ctxOf(host))).output.text).problem).toBe("mappingUnreadable");
+    // review #17: a relative path would read the plugin's own folder, so it is refused
+    host.settings.get = vi.fn(async () => "mapping.yaml");
+    const rel = JSON.parse((await reg.actions.mapping(ctxOf(host))).output.text);
+    expect(rel.problem).toBe("mappingNotAbsolute");
+    expect(host.files.readText).not.toHaveBeenCalledWith("mapping.yaml");
   });
 });
 
@@ -489,7 +587,8 @@ describe("catalog: run and save as SQL (A6, A7, A10)", () => {
     expect(input.sql).toContain("SELECT o.order_id, o.total_amount");
     expect(input.sql).toContain("o.created_at >= '2026-01-01T00:00:00Z' AND o.status = 'paid'");
     expect(input.sql).toContain("CAST('2026-02-01T00:00:00Z' AS timestamptz)");
-    expect(store.get("lastSent:run1")).toBe(input.sql);
+    expect(await sentOf(ctxOf(host), "run1")).toBe(input.sql);
+    expect([...store.keys()].filter((k) => k.startsWith("lastSent"))).toEqual([]);
   });
 
   it("checks values against the header and refuses unmapped placeholders", async () => {
@@ -505,7 +604,7 @@ describe("catalog: run and save as SQL (A6, A7, A10)", () => {
     const { host } = fakeHost(FILES);
     host.params.get = vi.fn(async (n: string) => (n === "datasource" ? { found: true, value: "Prod", sourceName: "dev" } : { found: false, value: "" }));
     const resource = await entry(host, "sales.top");
-    await registry().actions.run(ctxOf(host, { resource, params: { n: "5" } }), {});
+    await registry().actions.run(ctxOf(host, { resource, runId: "r2", params: { n: "5" } }), {});
     expect(host.actions.call.mock.calls[0][1].sql).toBe("SELECT * FROM shop.customers LIMIT '5'");
   });
 
@@ -513,7 +612,7 @@ describe("catalog: run and save as SQL (A6, A7, A10)", () => {
     const { host } = fakeHost(FILES);
     host.actions.call = vi.fn(async () => ({ output: { type: "link", label: "Recent orders", target: "resource:q9" } }));
     const resource = await entry(host, "sales.orders.recent");
-    const res = await registry().actions.saveAsSql(ctxOf(host, { resource, params: { since: "2026-01-01T00:00", status: "", as_of: "2026-02-01T00:00" } }), {});
+    const res = await registry().actions.saveAsSql(ctxOf(host, { resource, runId: "r3", params: { since: "2026-01-01T00:00", status: "", as_of: "2026-02-01T00:00" } }), {});
     expect(checkActionResult(res)).toEqual([]);
     expect(res.output.target).toBe("resource:q9");
     const [action, input] = host.actions.call.mock.calls[0];
@@ -522,6 +621,35 @@ describe("catalog: run and save as SQL (A6, A7, A10)", () => {
     expect(input.sql.split("\n").slice(0, 3)).toEqual(["-- @param since type=datetime required -- from when", "-- @param status values=paid|refunded", "-- @param as_of type=datetime"]);
     expect(input.sql).toContain("FROM (SELECT * FROM (SELECT DISTINCT ON (order_id)");
     expect(input.sql).not.toContain("{{");
+  });
+
+  it("outside a run the data source cannot be called, like the real kernel", async () => {
+    const { host } = fakeHost(FILES);
+    host.params.get = vi.fn(async (n: string) => (n === "datasource" ? { found: true, value: "Prod", sourceName: "dev" } : { found: false, value: "" }));
+    const resource = await entry(host, "sales.top");
+    await expect(registry().actions.run(ctxOf(host, { resource, params: { n: "5" } }), {})).rejects.toMatchObject({ code: "denied", params: { reason: "notInRun" } });
+  });
+
+  it("sent statements share one key: the newest 30, each cut at 6000 characters; a failed write does not fail the run (review #2)", async () => {
+    const { host, store } = fakeHost(FILES);
+    for (let i = 0; i < 1200; i++) await rememberSent(ctxOf(host), `run${i}`, `SELECT ${i}`);
+    expect(store.size).toBe(1);
+    expect(await sentOf(ctxOf(host), "run1199")).toBe("SELECT 1199");
+    expect(await sentOf(ctxOf(host), "run1170")).toBe("SELECT 1170");
+    expect(await sentOf(ctxOf(host), "run1169")).toBeNull();
+    await rememberSent(ctxOf(host), "big", `SELECT '${"x".repeat(300000)}'`);
+    expect((await sentOf(ctxOf(host), "big"))!.length).toBeLessThan(6100);
+    host.params.get = vi.fn(async (n: string) => (n === "datasource" ? { found: true, value: "Prod", sourceName: "dev" } : { found: false, value: "" }));
+    const resource = await entry(host, "sales.top");
+    host.storage.set = vi.fn(async () => Promise.reject(hostError("invalid", { reason: "tooManyKeys" })));
+    await expect(registry().actions.run(ctxOf(host, { resource, runId: "r9", params: { n: "1" } }), {})).resolves.toBeTruthy();
+  });
+
+  it("E and U& before a parameter make an escape string: backslashes are doubled too (review #9)", () => {
+    expect(renderSql("SELECT E:v, U&:v, :v, e :v, LIKE:v", { v: "a\\' OR 1=1 --" }, [])).toBe(
+      "SELECT E'a\\\\'' OR 1=1 --', U&'a\\\\'' OR 1=1 --', 'a\\'' OR 1=1 --', e 'a\\'' OR 1=1 --', LIKE'a\\'' OR 1=1 --'",
+    );
+    expect(renderSql("SELECT E:v", { v: "" }, [])).toBe("SELECT ENULL");
   });
 
   it("declaration lines follow the SQL plugin's syntax", () => {

@@ -72,5 +72,9 @@
   "error.param.time": "{name} 必须是时间（HH:MM）",
   "error.param.datetime": "{name} 必须是日期时间",
   "error.param.enum": "{name} 必须是列出的值之一",
-  "error.param.max": "{name} 超过 {max} 个字符"
+  "error.param.max": "{name} 超过 {max} 个字符",
+  "badge.missing": "失效",
+  "reason.mappingNotAbsolute": "映射文件设置必须是完整路径",
+  "message.truncated": "已在 {max} 个文件或 {depth} 层文件夹处停止：本次没有标记失效。",
+  "index.more": "……还有 {count} 个（重新索引后在结果里可看到全部）。"
 }
