@@ -51,6 +51,8 @@ pub const FLUSH_EVERY: Duration = Duration::from_millis(100);
 pub const EXIT_GRACE: Duration = Duration::from_millis(500);
 /// Round 17 (X17): the most lines `lines: true` keeps (and the largest `maxLines`).
 pub const MAX_LINES: usize = 100_000;
+/// Round 17 review #5: a longer line (or output without newlines) is cut into lines this long.
+pub const MAX_LINE_BYTES: usize = 64 * 1024;
 /// The plugin's own folder inside the workspace (§7.5).
 pub const PLUGIN_DATA: &str = "plugin-data";
 
@@ -365,27 +367,31 @@ fn natural(p: &Path) -> Vec<(u64, String)> {
     out.into_iter().map(|c| (c.parse::<u64>().unwrap_or(0), c)).collect()
 }
 
-/// Round 17 (round 15 review #15): the program and every folder above it are owned by root or the
-/// current user and not writable by others (a sticky folder like `/tmp` does not count as safe
-/// either). Links are followed: what counts is where the file really is.
-pub fn safe_location(p: &Path) -> bool {
+/// Round 17 (round 15 review #15, round 17 review #6): an owner other users cannot replace.
+/// Owned by root or the current user; not writable by others (a sticky `/tmp` is not safe
+/// either); group-writable only for group 0 (`wheel`).
+fn safe_entry(m: &std::fs::Metadata, me: u32) -> bool {
     use std::os::unix::fs::MetadataExt;
-    let Ok(real) = std::fs::canonicalize(p) else { return false };
-    // SAFETY: plain system call without arguments.
-    let me = unsafe { libc::getuid() };
-    real.ancestors().all(|a| {
-        std::fs::metadata(a).is_ok_and(|m| (m.uid() == 0 || m.uid() == me) && m.mode() & 0o002 == 0)
-    })
+    (m.uid() == 0 || m.uid() == me) && m.mode() & 0o002 == 0 && (m.mode() & 0o020 == 0 || m.gid() == 0)
 }
 
-/// `pick` for `searchPaths` candidates: the first existing one, refused in an unsafe place.
+/// The program, every folder above where it really is, and every folder above the name it was
+/// found by (a link and the folders holding it) are safe (`safe_entry`). Returns the real path.
+pub fn safe_location(p: &Path) -> Option<PathBuf> {
+    let real = std::fs::canonicalize(p).ok()?;
+    // SAFETY: plain system call without arguments.
+    let me = unsafe { libc::getuid() };
+    let real_ok = real.ancestors().all(|a| std::fs::metadata(a).is_ok_and(|m| safe_entry(&m, me)));
+    // The link itself and the folders it sits in, as written (not followed).
+    let named_ok = p.ancestors().filter(|a| !a.as_os_str().is_empty()).all(|a| std::fs::symlink_metadata(a).is_ok_and(|m| safe_entry(&m, me)));
+    (real_ok && named_ok).then_some(real)
+}
+
+/// `pick` for `searchPaths` candidates: the first existing one, refused in an unsafe place. The
+/// real path is what runs (review #6: a link cannot be swapped between the check and the start).
 fn pick_searched(candidates: &[PathBuf]) -> Result<PathBuf, NotReady> {
     let p = pick(candidates)?;
-    if safe_location(&p) {
-        Ok(p)
-    } else {
-        Err(NotReady::UnsafeLocation)
-    }
+    safe_location(&p).ok_or(NotReady::UnsafeLocation)
 }
 
 /// The first existing candidate, or why there is none.
@@ -453,6 +459,8 @@ struct Lines {
     bytes: [usize; 2],
     /// `max` lines were reached: the program is ended.
     full: bool,
+    /// The run's secret values plus the lines of multi-line ones (review #16).
+    secrets: Vec<String>,
 }
 
 const STREAMS: [&str; 2] = ["stdout", "stderr"];
@@ -461,7 +469,12 @@ impl Out {
     fn new(stream: Option<Arc<Stream>>, secrets: Vec<String>, max_lines: Option<usize>) -> Out {
         // `scrub` ignores values shorter than 3.
         let hold = secrets.iter().filter(|v| v.len() >= 3).map(|v| v.len() - 1).max().unwrap_or(0);
-        let lines = max_lines.map(|max| Lines { max, out: vec![], pending: [vec![], vec![]], bytes: [0, 0], full: false });
+        // Review #16: a secret that spans lines is scrubbed line by line too (its lines of 8+ bytes).
+        let mut line_secrets = secrets.clone();
+        for v in secrets.iter().filter(|v| v.contains('\n')) {
+            line_secrets.extend(v.split('\n').map(|l| l.trim_end_matches('\r')).filter(|l| l.len() >= 8).map(String::from));
+        }
+        let lines = max_lines.map(|max| Lines { max, out: vec![], pending: [vec![], vec![]], bytes: [0, 0], full: false, secrets: line_secrets });
         Out { buf: [vec![], vec![]], received: [0, 0], pending: [vec![], vec![]], carry: [String::new(), String::new()], streamed: [0, 0], stream, secrets, hold, lines }
     }
 
@@ -475,7 +488,7 @@ impl Out {
         let raw = &raw[..raw.len().min(MAX_OUTPUT - l.bytes[s])];
         l.bytes[s] += raw.len() + 1;
         let mut v = Value::String(String::from_utf8_lossy(raw).into_owned());
-        crate::secrets::scrub(&mut v, &self.secrets);
+        crate::secrets::scrub(&mut v, &l.secrets);
         let item = json!({ "stream": STREAMS[s], "text": v });
         l.out.push(item.clone());
         if l.out.len() >= l.max {
@@ -496,15 +509,27 @@ impl Out {
         let room = (MAX_OUTPUT + self.hold).saturating_sub(self.buf[s].len());
         self.buf[s].extend_from_slice(&bytes[..bytes.len().min(room)]);
         if self.lines.is_some() {
+            // Review #5: only the new bytes are searched for newlines, and a line without one is
+            // cut at `MAX_LINE_BYTES` (as many lines as it takes) so nothing grows without bound.
             let mut rest = std::mem::take(&mut self.lines.as_mut().expect("checked").pending[s]);
-            rest.extend_from_slice(bytes);
-            let mut start = 0;
-            while let Some(i) = rest[start..].iter().position(|b| *b == b'\n') {
-                let line = rest[start..start + i].to_vec();
-                self.line(s, &line);
-                start += i + 1;
+            for &b in bytes {
+                if b == b'\n' {
+                    let line = std::mem::take(&mut rest);
+                    self.line(s, &line);
+                } else {
+                    rest.push(b);
+                    if rest.len() >= MAX_LINE_BYTES {
+                        // Cut at a whole UTF-8 character.
+                        let cut = match std::str::from_utf8(&rest) {
+                            Ok(_) => rest.len(),
+                            Err(e) if e.valid_up_to() > 0 => e.valid_up_to(),
+                            Err(_) => rest.len(),
+                        };
+                        let line: Vec<u8> = rest.drain(..cut).collect();
+                        self.line(s, &line);
+                    }
+                }
             }
-            rest.drain(..start);
             if let Some(l) = self.lines.as_mut() {
                 l.pending[s] = rest;
             }
@@ -1127,15 +1152,30 @@ mod search_tests {
         let exe = dir.join("tool");
         std::fs::write(&exe, "#!/bin/sh\n").unwrap();
         std::fs::set_permissions(&exe, std::fs::Permissions::from_mode(0o755)).unwrap();
-        // The temporary folder may sit under a world-writable sticky folder; judge only the change.
-        let base_safe = safe_location(&exe);
+        // The temporary folder may sit under an unsafe folder; judge only the change.
+        let base_safe = safe_location(&exe).is_some();
         std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o777)).unwrap();
-        assert!(!safe_location(&exe));
+        assert!(safe_location(&exe).is_none());
         assert!(matches!(pick_searched(std::slice::from_ref(&exe)), Err(NotReady::UnsafeLocation)));
         std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).unwrap();
-        assert_eq!(safe_location(&exe), base_safe);
+        assert_eq!(safe_location(&exe).is_some(), base_safe);
         std::fs::set_permissions(&exe, std::fs::Permissions::from_mode(0o757)).unwrap();
-        assert!(!safe_location(&exe));
-        assert!(safe_location(Path::new("/bin/sh")));
+        assert!(safe_location(&exe).is_none());
+        // Review #6: group-writable is refused unless the group is 0.
+        std::fs::set_permissions(&exe, std::fs::Permissions::from_mode(0o775)).unwrap();
+        let gid = std::os::unix::fs::MetadataExt::gid(&std::fs::metadata(&exe).unwrap());
+        assert_eq!(safe_location(&exe).is_some(), base_safe && gid == 0);
+        std::fs::set_permissions(&exe, std::fs::Permissions::from_mode(0o755)).unwrap();
+        // Review #6: a link in an unsafe folder is refused even if its target is safe, and the
+        // real path is what runs.
+        let open = d.path().join("open");
+        std::fs::create_dir_all(&open).unwrap();
+        std::os::unix::fs::symlink(&exe, open.join("tool")).unwrap();
+        if base_safe {
+            assert_eq!(safe_location(&open.join("tool")), Some(std::fs::canonicalize(&exe).unwrap()));
+        }
+        std::fs::set_permissions(&open, std::fs::Permissions::from_mode(0o777)).unwrap();
+        assert!(safe_location(&open.join("tool")).is_none());
+        assert_eq!(safe_location(Path::new("/bin/sh")), Some(PathBuf::from("/bin/sh")));
     }
 }

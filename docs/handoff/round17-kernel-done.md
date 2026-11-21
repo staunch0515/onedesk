@@ -81,3 +81,25 @@
 
 - `runs.rs` 根层顺序改为 `@runs:saved`、`@runs:recent`；`tests/round3.rs` 的顺序断言一起改。`cargo test --workspace`、clippy、lint 通过。
 - 范围外：`e2e/round16.spec.ts:278` 还断言旧顺序 `["Recent runs", "Saved results"]`，需测试会话改成新顺序（e2e 没跑）。
+
+## 9. 第十七轮审查的修复（#1、#2、#3、#5、#6、#10、#13、#14、#16，D432，D433 的 `|url`）
+
+先合并了集成分支 `abe9fb4`。每条都补了测试；`round17.rs` 里新的 `review1/2/3/5/16` 和改过的 `d430` 测试，**放到修之前的代码上跑 6 个都失败**（用临时工作树核对过），修之后都通过。
+
+| # | 修法 | 测试 |
+|---|---|---|
+| 1 | `open`/`reveal` 只用于授权文件夹（自己的目录 → `outsideGrant`）；解析真实路径后再核对授权；`open` 拒绝可执行文件与会被系统执行的扩展名（`unsafeOpen`）；打开真实路径 | `review1_open_never_runs_anything…` |
+| 2 | (dev, ino) 相同时 `move` 直接改名、`copy` 报 `intoItself` | `review2_a_case_only_rename…`（卷不分大小写时才有意义；本机是） |
+| 3 | `overwrite` 的目标、`move` 的源、`trash`、`remove` 是授权根或含授权根 → `isRoot`；自己的目录同样 | `review3_overwrite_remove_and_trash…` |
+| 5 | 按行模式只扫新字节；64 KB 无换行就切一行 | `review5_output_without_newlines…` |
+| 6 | 组可写只允许组 0；链接本身所在的各层也查；执行真实路径 | `process` 单元测试 |
+| 10 | 父文件夹钉住后用 `renameatx_np(RENAME_EXCL)`、`mkdirat`、`openat(O_EXCL)`、`symlinkat`、`unlinkat` | `files` 单元测试 `review10_…` |
+| 13 | 工作进程的两个测试变量只在 `ONEDESK_TEST_HOOKS=1` 时生效 | 工作进程单元测试 `review13_…` |
+| 14 | 提供树菜单里只留 `node.open` | 改过的 `d430_…` |
+| 16 | 多行密钥按行再抹；`toneColumn`/`lineColumn` 核对列；stdout/stderr 顺序近似写进协议 | `review16_…`、`secrets` 单元测试 |
+| D433 | `{{secret:名|url}}` 百分号编码 | `secrets` 单元测试 |
+
+- 外壳文件只加了 `reason.unsafeOpen` 的英文（`en-US.ts`、`kernel-texts.ts` 各一行）。
+- 验证：`cargo test --workspace`、`pnpm clippy`、`pnpm lint`、`pnpm typecheck`、`gen-types --check` 通过；`pnpm test` 只有中日语言包那 4 个旧失败。e2e 没跑。
+- 留下的：删除**文件夹**时内部仍按路径删（标准库 `remove_dir_all`，它自己不跟随链接，但顶层父目录在检查与删除之间被换掉的窗口没有完全关上）；复制文件夹时顶层是钉住的，里面的层按路径复制到本次新建的文件夹里。
+- 给测试会话：e2e 启动工作进程要加 `ONEDESK_TEST_HOOKS=1`，否则 `ONEDESK_TRASH_DIR`、`ONEDESK_OPEN_LOG` 不生效。

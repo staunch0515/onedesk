@@ -720,6 +720,7 @@ export const enUS = {
   "kernel.error.reason.badSecretFormat": "The secret value has the wrong format for this use.",
   "kernel.error.invalid.badSecretFormat": "The secret value has the wrong format for this use.",
   "kernel.error.reason.unsafeLocation": "That program is in a folder other users can change, so it is not used.",
+  "kernel.error.reason.unsafeOpen": "This file would run a program when opened, so it is not opened.",
   "kernel.error.reason.badArgs": "The program arguments are not valid (too many, too long, or containing a NUL).",
   "kernel.error.reason.badEnv": "An environment variable is not valid (empty name, “=” or NUL in the name, or a name starting with DYLD_ or LD_).",
   "kernel.error.reason.tooManyProcesses": "Too many programs are already running at once (limit 4).",
