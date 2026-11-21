@@ -210,34 +210,9 @@ export function cleanLine(line) {
   return String(line).replace(/\r$/, "").replace(/\x1b\[[0-9;?]*[A-Za-z]/g, "").replace(/\x1b\][^\x07]*\x07/g, "");
 }
 
-// Collects a program's output chunks ({ stream, text }) as masked lines [stream, line], at most `maxLines`.
-// `push` returns false once the limit is reached (the caller stops the program).
-export function lineCollector(maxLines) {
-  const pending = { stdout: "", stderr: "" };
-  const rows = [];
-  const state = { rows, truncated: false };
-  const add = (stream, line) => {
-    if (rows.length >= maxLines) {
-      state.truncated = true;
-      return false;
-    }
-    rows.push([stream, maskLine(cleanLine(line))]);
-    return true;
-  };
-  state.push = (chunk) => {
-    const stream = chunk && chunk.stream === "stderr" ? "stderr" : "stdout";
-    const parts = (pending[stream] + String((chunk && chunk.text) || "")).split("\n");
-    pending[stream] = parts.pop();
-    for (const p of parts) if (!add(stream, p)) return false;
-    return true;
-  };
-  state.end = () => {
-    for (const stream of ["stdout", "stderr"]) {
-      if (pending[stream] !== "") add(stream, pending[stream]);
-      pending[stream] = "";
-    }
-  };
-  return state;
+// One output line as a row [stream, line]: colour codes dropped, secret-looking values masked.
+export function lineRow(line) {
+  return [line && line.stream === "stderr" ? "stderr" : "stdout", maskLine(cleanLine((line && line.text) || ""))];
 }
 
 // The output of a run: one row per line, drawn as a terminal (X10): the `stream` column names the tone.
@@ -264,46 +239,40 @@ export function intIn(text, lo, hi, fallback) {
   return n >= lo && n <= hi ? n : null;
 }
 
-// Runs one program and returns { rows, truncated, code, signal, timedOut } — the lines it wrote so far even when
-// it timed out or the line limit stopped it. While it runs the lines so far go to the shell (X17).
+// Runs one program line by line (X17: the kernel ends it at the line limit or the timeout) and returns
+// { rows, truncated, code, signal, timedOut } with the lines it wrote so far. While it runs the lines so far go to
+// the shell as the run's partial output.
 export async function runLines(ctx, spec, maxLines) {
-  const lines = lineCollector(maxLines);
-  const LIMIT = { limit: true };
   const runs = ctx.host.runs;
   const partial = runs && typeof runs.partial === "function" ? runs.partial : null;
+  const live = [];
   let last = 0;
   let shown = 0;
   const show = (force) => {
-    if (!partial || lines.rows.length === shown) return;
+    if (!partial || live.length === shown) return;
     const now = Date.now();
     if (!force && now - last < PARTIAL_EVERY_MS) return;
     last = now;
-    shown = lines.rows.length;
-    Promise.resolve(partial(linesOutput(ctx, lines.rows.slice(), false))).catch(() => {});
+    shown = live.length;
+    Promise.resolve(partial(linesOutput(ctx, live.slice(0, maxLines), false))).catch(() => {});
   };
-  let res = null;
-  let timedOut = false;
-  try {
-    res = await ctx.host.process.run({
-      ...spec,
-      onOutput: (chunk) => {
-        const more = lines.push(chunk);
-        show(false);
-        if (!more) throw LIMIT;
-      },
-    });
-  } catch (e) {
-    if (e === LIMIT) {
-      // stopped at the line limit: what was collected is the result
-    } else if (e && e.code === "invalid" && e.params && e.params.reason === "timeout") {
-      timedOut = true;
-    } else {
-      throw e;
-    }
-  }
-  lines.end();
-  show(true);
-  return { rows: lines.rows, truncated: lines.truncated, code: res ? res.code : null, signal: res ? res.signal : null, timedOut };
+  const res = await ctx.host.process.run({
+    ...spec,
+    lines: true,
+    maxLines,
+    onOutput: (line) => {
+      live.push(lineRow(line));
+      show(false);
+    },
+  });
+  const rows = (Array.isArray(res.lines) ? res.lines.map(lineRow) : live).slice(0, maxLines);
+  return {
+    rows,
+    truncated: res.stopped === "maxLines" || res.truncated === true,
+    code: res.code === undefined ? null : res.code,
+    signal: res.signal || null,
+    timedOut: res.stopped === "timeout",
+  };
 }
 
 // The run's message: how many lines, how it ended.

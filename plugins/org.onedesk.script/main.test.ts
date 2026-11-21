@@ -11,24 +11,30 @@ const JA = load("ja-JP");
 const t = (key: string) => ({ "en-US": EN[key], "zh-CN": ZH[key], "ja-JP": JA[key] });
 
 type Host = Record<string, any>;
-type Chunk = { stream: string; text: string };
+type Line = { stream: string; text: string };
 const ROOT = { path: "/Users/me/Scripts", name: "Scripts" };
 const S1 = { id: "s1", kind: "org.onedesk.script:script", name: "Disk usage", body: { script: "du -sh :folder", timeoutSec: "", maxLines: "" } };
 const S2 = { id: "s2", kind: "org.onedesk.script:script", name: "Backup/../etc", body: { script: "#!/bin/zsh\necho hi", timeoutSec: "", maxLines: "" } };
 const S3 = { id: "s3", kind: "org.onedesk.script:script", name: "disk usage", body: { script: "", timeoutSec: "", maxLines: "" } };
 
-function program(chunks: Chunk[], result: Record<string, unknown> = { code: 0, signal: null }, error?: Error) {
+// Plays the lines to `onOutput` the way the kernel does with `lines: true` (one whole line per call, at most
+// `maxLines`, then the program is ended), then answers with `lines` and `stopped`.
+function program(lines: Line[], result: Record<string, unknown> = {}) {
   return vi.fn(async (opts: any) => {
-    for (const c of chunks) if (opts.onOutput) await opts.onOutput(c);
-    if (error) throw error;
-    return { stdout: "", stderr: "", truncated: false, ...result };
+    const max = opts.maxLines ?? 100000;
+    const got = lines.slice(0, max);
+    for (const l of got) if (opts.onOutput) await opts.onOutput(l);
+    const stopped = result.stopped ?? (lines.length > max ? "maxLines" : null);
+    return { code: stopped ? null : 0, signal: null, stdout: "", stderr: "", truncated: stopped === "maxLines", lines: got, stopped, ...result };
   });
 }
+const out = (text: string): Line => ({ stream: "stdout", text });
+const err = (text: string): Line => ({ stream: "stderr", text });
 
 function fakeHost(over: Host = {}): Host {
   return {
     params: { get: vi.fn(async () => ({ found: false, value: "", sourceName: "" })) },
-    process: { run: program([{ stream: "stdout", text: "4.0K\t.\n" }]) },
+    process: { run: program([out("4.0K\t.")]) },
     runs: { partial: vi.fn(async () => null) },
     files: { roots: vi.fn(async () => [ROOT]), writeText: vi.fn(async () => ({ basis: "b" })) },
     resources: { list: vi.fn(async () => [S1, S2, S3]) },
@@ -66,9 +72,9 @@ describe("script: running", () => {
 
   it("uses the timeout and line limit of the script; refuses bad ones before bash starts", async () => {
     const { actions } = registry(plugin);
-    const run = program([{ stream: "stdout", text: "a\nb\nc\n" }, { stream: "stderr", text: "d\n" }]);
+    const run = program([out("a"), out("b"), out("c"), err("d")]);
     const res = await actions.run(ctxOf(fakeHost({ process: { run } })), input({ "body.timeoutSec": "120", "body.maxLines": "2" }));
-    expect(run.mock.calls[0]![0].timeoutMs).toBe(120000);
+    expect(run.mock.calls[0]![0]).toMatchObject({ timeoutMs: 120000, lines: true, maxLines: 2 });
     expect(res.output.rows).toEqual([["stdout", "a"], ["stdout", "b"]]);
     expect(res.summary.message).toBe("2 lines · stopped at the line limit");
     const host = fakeHost();
@@ -81,7 +87,7 @@ describe("script: running", () => {
 
   it("keeps the lines so far on a timeout, masks secrets, colours stderr through the stream column", async () => {
     const { actions } = registry(plugin);
-    const run = program([{ stream: "stderr", text: "export PGPASSWORD=hunter2\n" }], {}, hostError("invalid", { reason: "timeout" }));
+    const run = program([err("export PGPASSWORD=hunter2")], { stopped: "timeout", code: null });
     const res = await actions.run(ctxOf(fakeHost({ process: { run } })), input({ "body.timeoutSec": "3" }));
     expect(res.output.rows).toEqual([["stderr", "export PGPASSWORD=***"]]);
     expect(res.summary.message).toBe("1 lines · stopped after 3 s (timeout)");

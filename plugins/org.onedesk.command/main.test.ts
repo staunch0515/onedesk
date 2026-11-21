@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 // @ts-ignore plain JS module, no types
-import plugin, { checkValue, cleanLine, declarations, intIn, lineCollector, maskLine, paramNames, renderShell, safeHost, shellQuote, sshSpec, tokenizeShell } from "./main.js";
+import plugin, { checkValue, cleanLine, declarations, intIn, lineRow, maskLine, paramNames, renderShell, safeHost, shellQuote, sshSpec, tokenizeShell } from "./main.js";
 import { hostError, onlyKeys, registry } from "../_testing/view-check";
 
 const load = (f: string) => JSON.parse(readFileSync(new URL(`./locales/${f}.json`, import.meta.url), "utf8")) as Record<string, string>;
@@ -11,23 +11,27 @@ const JA = load("ja-JP");
 const t = (key: string) => ({ "en-US": EN[key], "zh-CN": ZH[key], "ja-JP": JA[key] });
 
 type Host = Record<string, any>;
-type Chunk = { stream: string; text: string };
+type Line = { stream: string; text: string };
 const CMD = { id: "c1", kind: "org.onedesk.command:command", name: "Logs", body: { host: "staging", command: "docker logs --tail :lines :app", timeoutSec: "", maxLines: "" } };
 
-// Plays the chunks to `onOutput` the way the sandbox does (an exception there stops the program and is what
-// `process.run` throws), then answers `result` (or throws `error`).
-function program(chunks: Chunk[], result: Record<string, unknown> = { code: 0, signal: null }, error?: Error) {
+// Plays the lines to `onOutput` the way the kernel does with `lines: true` (one whole line per call, at most
+// `maxLines`, then the program is ended), then answers with `lines` and `stopped`.
+function program(lines: Line[], result: Record<string, unknown> = {}) {
   return vi.fn(async (opts: any) => {
-    for (const c of chunks) if (opts.onOutput) await opts.onOutput(c);
-    if (error) throw error;
-    return { stdout: "", stderr: "", truncated: false, ...result };
+    const max = opts.maxLines ?? 100000;
+    const got = lines.slice(0, max);
+    for (const l of got) if (opts.onOutput) await opts.onOutput(l);
+    const stopped = result.stopped ?? (lines.length > max ? "maxLines" : null);
+    return { code: stopped ? null : 0, signal: null, stdout: "", stderr: "", truncated: stopped === "maxLines", lines: got, stopped, ...result };
   });
 }
+const out = (text: string): Line => ({ stream: "stdout", text });
+const err = (text: string): Line => ({ stream: "stderr", text });
 
 function fakeHost(over: Host = {}): Host {
   return {
     params: { get: vi.fn(async () => ({ found: false, value: "", sourceName: "" })) },
-    process: { run: program([{ stream: "stdout", text: "hello\n" }]) },
+    process: { run: program([out("hello")]) },
     runs: { partial: vi.fn(async () => null) },
     ui: { copy: vi.fn(async () => null) },
     ...over,
@@ -135,37 +139,17 @@ describe("command: masking", () => {
 });
 
 describe("command: lines", () => {
-  it("splits chunks into lines per stream, joins lines cut across chunks, keeps the order of arrival", () => {
-    const c = lineCollector(100);
-    c.push({ stream: "stdout", text: "one\ntw" });
-    c.push({ stream: "stderr", text: "warn: PASSWORD=x\n" });
-    c.push({ stream: "stdout", text: "o\nthree" });
-    c.end();
-    expect(c.rows).toEqual([
-      ["stdout", "one"],
-      ["stderr", "warn: PASSWORD=***"],
-      ["stdout", "two"],
-      ["stdout", "three"],
-    ]);
-    expect(c.truncated).toBe(false);
-  });
-
-  it("stops at the line limit", () => {
-    const c = lineCollector(2);
-    expect(c.push({ stream: "stdout", text: "a\nb\n" })).toBe(true);
-    expect(c.push({ stream: "stdout", text: "c\n" })).toBe(false);
-    expect(c.rows.length).toBe(2);
-    expect(c.truncated).toBe(true);
+  it("each line becomes a row [stream, line], masked and without colour codes", () => {
+    expect(lineRow(out("ok"))).toEqual(["stdout", "ok"]);
+    expect(lineRow(err("\x1b[33mwarn\x1b[0m: PASSWORD=x"))).toEqual(["stderr", "warn: PASSWORD=***"]);
+    expect(lineRow({ stream: "weird", text: "x" } as any)).toEqual(["stdout", "x"]);
   });
 });
 
 describe("command: running", () => {
   it("runs the rendered command over ssh and returns (stream, line) rows drawn as a terminal", async () => {
     const { actions } = registry(plugin);
-    const run = program([
-      { stream: "stdout", text: "line 1\nline 2\n" },
-      { stream: "stderr", text: "oops\n" },
-    ]);
+    const run = program([out("line 1"), out("line 2"), err("oops")]);
     const host = fakeHost({ process: { run } });
     const res = await actions.run(ctxOf(host, { params: { lines: "50", app: "web; reboot" } }), input({ "body.command": CMD.body.command }));
     const spec = run.mock.calls[0]![0];
@@ -174,6 +158,8 @@ describe("command: running", () => {
     expect(spec.args).not.toContain(CMD.body.command);
     expect(spec.stdin).toBe("docker logs --tail '50' 'web; reboot'\n");
     expect(spec.timeoutMs).toBe(60000);
+    // X17: the kernel splits the lines and ends the program at the limit or the timeout
+    expect(spec).toMatchObject({ lines: true, maxLines: 5000 });
     expect(onlyKeys(res, ["output", "summary"])).toEqual([]);
     expect(onlyKeys(res.output, ["type", "columns", "rows", "total", "appearance", "toneColumn", "lineColumn"])).toEqual([]);
     expect(res.output).toMatchObject({ type: "table", appearance: "terminal", toneColumn: "stream", lineColumn: "line", total: 3 });
@@ -205,7 +191,7 @@ describe("command: running", () => {
 
   it("masks secret-looking values in the output before it leaves the plugin, partial output included", async () => {
     const { actions } = registry(plugin);
-    const host = fakeHost({ process: { run: program([{ stream: "stdout", text: "DB_PASSWORD=hunter2\nAPI_TOKEN: abc\n" }]) } });
+    const host = fakeHost({ process: { run: program([out("DB_PASSWORD=hunter2"), out("API_TOKEN: abc")]) } });
     const res = await actions.run(ctxOf(host), input());
     expect(JSON.stringify(res)).not.toContain("hunter2");
     expect(JSON.stringify(res)).not.toContain("abc");
@@ -214,11 +200,18 @@ describe("command: running", () => {
 
   it("hands the lines so far to the shell while the program runs (runs.partial), drawn the same way", async () => {
     const { actions } = registry(plugin);
-    const host = fakeHost({ process: { run: program([{ stream: "stdout", text: "a\n" }, { stream: "stdout", text: "b\n" }]) } });
+    // at most one partial output per 300 ms: lines that come quicker wait for the next one (or the result)
+    const quick = fakeHost({ process: { run: program([out("a"), out("b")]) } });
+    await actions.run(ctxOf(quick), input());
+    expect(quick.runs.partial.mock.calls.map((c: any[]) => c[0].rows)).toEqual([[["stdout", "a"]]]);
+    let clock = 0;
+    const now = vi.spyOn(Date, "now").mockImplementation(() => (clock += 1000));
+    const host = fakeHost({ process: { run: program([out("a"), out("b")]) } });
     await actions.run(ctxOf(host), input());
+    now.mockRestore();
     const calls = host.runs.partial.mock.calls;
-    expect(calls.length).toBeGreaterThan(0);
-    expect(calls[calls.length - 1]![0]).toMatchObject({ type: "table", appearance: "terminal", rows: [["stdout", "a"], ["stdout", "b"]] });
+    expect(calls.length).toBe(2);
+    expect(calls[1]![0]).toMatchObject({ type: "table", appearance: "terminal", toneColumn: "stream", rows: [["stdout", "a"], ["stdout", "b"]] });
     // without the capability the run still works
     const old = fakeHost({ runs: undefined });
     expect((await actions.run(ctxOf(old), input())).output.rows).toEqual([["stdout", "hello"]]);
@@ -226,8 +219,9 @@ describe("command: running", () => {
 
   it("stops the program at the line limit and says so", async () => {
     const { actions } = registry(plugin);
-    const run = program([{ stream: "stdout", text: "1\n2\n3\n" }, { stream: "stdout", text: "4\n" }]);
+    const run = program([out("1"), out("2"), out("3"), out("4")]);
     const res = await actions.run(ctxOf(fakeHost({ process: { run } })), input({ "body.maxLines": "2" }));
+    expect(run.mock.calls[0]![0].maxLines).toBe(2);
     expect(res.output.rows).toEqual([["stdout", "1"], ["stdout", "2"]]);
     expect(res.output.total).toBe(3);
     expect(res.summary.message).toBe("2 lines · stopped at the line limit");
@@ -235,12 +229,12 @@ describe("command: running", () => {
 
   it("a timeout keeps the lines so far; a non-zero exit is reported, not an error", async () => {
     const { actions } = registry(plugin);
-    const slow = program([{ stream: "stdout", text: "started\n" }], {}, hostError("invalid", { reason: "timeout" }));
+    const slow = program([out("started")], { stopped: "timeout", code: null });
     const res = await actions.run(ctxOf(fakeHost({ process: { run: slow } })), input({ "body.timeoutSec": "5" }));
     expect(slow.mock.calls[0]![0].timeoutMs).toBe(5000);
     expect(res.output.rows).toEqual([["stdout", "started"]]);
     expect(res.summary.message).toBe("1 lines · stopped after 5 s (timeout)");
-    const failing = program([{ stream: "stderr", text: "grep: x: No such file\n" }], { code: 2 });
+    const failing = program([err("grep: x: No such file")], { code: 2 });
     const r2 = await actions.run(ctxOf(fakeHost({ process: { run: failing } })), input());
     expect(r2.summary.message).toBe("1 lines · exit code 2");
     expect(r2.output.rows).toEqual([["stderr", "grep: x: No such file"]]);
@@ -248,7 +242,7 @@ describe("command: running", () => {
 
   it("ssh's own failure (255, nothing on stdout) fails the run with what ssh said", async () => {
     const { actions } = registry(plugin);
-    const refused = program([{ stream: "stderr", text: "staging: Permission denied (publickey).\n" }], { code: 255 });
+    const refused = program([err("staging: Permission denied (publickey).")], { code: 255 });
     await expect(actions.run(ctxOf(fakeHost({ process: { run: refused } })), input())).rejects.toThrow("ssh could not run the command on staging: staging: Permission denied (publickey).");
   });
 
