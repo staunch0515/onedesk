@@ -1,0 +1,38 @@
+.od-terminal {
+  margin: 0;
+  min-width: 0;
+  padding: var(--space-3) var(--space-4);
+  border: var(--border-width) solid var(--term-border);
+  border-radius: var(--radius-md);
+  background: var(--term-bg);
+  color: var(--term-fg);
+  font-size: var(--text-sm);
+  line-height: var(--leading-sm);
+  overflow: auto;
+}
+
+.od-terminal__line {
+  display: flex;
+  gap: var(--space-3);
+}
+
+.od-terminal__stream {
+  flex: none;
+  width: var(--space-8);
+  color: var(--term-muted);
+  user-select: none;
+}
+
+.od-terminal__text {
+  min-width: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.od-terminal__line--default { color: var(--term-fg); }
+.od-terminal__line--muted { color: var(--term-muted); }
+.od-terminal__line--info { color: var(--term-info); }
+.od-terminal__line--success { color: var(--term-success); }
+.od-terminal__line--warning { color: var(--term-warning); }
+.od-terminal__line--danger { color: var(--term-danger); }
+.od-terminal__line--stderr { color: var(--term-stderr); }

@@ -40,6 +40,7 @@ export { isOpenableUrl, normalizeLinkHref } from "./components/open-url";
 export { MarkdownText, renderMarkdown, type MarkdownTextProps, type ReferenceState } from "./components/markdown-text";
 export { TextLink, type TextLinkProps } from "./components/text-link";
 export { TextBlock, type TextBlockProps } from "./components/text-block";
+export { TerminalText, type TerminalLine, type TerminalTextProps, type TerminalTone } from "./components/terminal-text";
 export { KeyValueList, type KeyValueListProps, type KeyValueItem } from "./components/key-value-list";
 
 // ---- Workbench (stage 0): layout and generic parts for the VS Code-style shell

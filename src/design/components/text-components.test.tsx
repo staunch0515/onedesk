@@ -6,6 +6,7 @@ import { KeyValueList } from "./key-value-list";
 import { Markdown } from "./markdown";
 import { Select } from "./select";
 import { Sidebar } from "./sidebar";
+import { TerminalText } from "./terminal-text";
 import { TextBlock } from "./text-block";
 import { TextLink } from "./text-link";
 
@@ -93,5 +94,15 @@ describe("Sidebar header", () => {
       </Sidebar>,
     );
     expect(container.querySelector(".od-sidebar__header")).toHaveClass("od-sidebar__header--between");
+  });
+});
+
+describe("TerminalText", () => {
+  it("colors each line by tone and marks stderr", () => {
+    render(<TerminalText label="output" showStreams lines={[{ text: "ok", stream: "stdout" }, { text: "bad", stream: "stderr" }, { text: "done", tone: "success" }]} />);
+    const lines = screen.getByLabelText("output").querySelectorAll(".od-terminal__line");
+    expect([...lines].map((l) => l.getAttribute("data-tone"))).toEqual(["default", "stderr", "success"]);
+    expect(screen.getByText("err")).toBeInTheDocument();
+    expect(screen.getByText("out")).toBeInTheDocument();
   });
 });

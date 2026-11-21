@@ -80,6 +80,8 @@ const pairs: Array<[fg: string, bg: string, min: number]> = [
   ["--focus-ring", "--bg-surface", UI],
   ["--focus-ring", "--bg-app", UI],
   ["--focus-ring", "--bg-selected", UI],
+  // Terminal style (round 17, X10): every line tone on the dark terminal surface.
+  ...["fg", "muted", "info", "success", "warning", "danger", "stderr"].map((tone): [string, string, number] => [`--term-${tone}`, "--term-bg", TEXT]),
 ];
 
 function report(theme: Map<string, string>) {

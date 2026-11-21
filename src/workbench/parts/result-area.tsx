@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Badge, Banner, BottomPanel, Button, DataGrid, EmptyState, ErrorState, IconButton, LoadingState, Pane, Progress, Text, TextBlock, useToast, type DataGridColumn, type Tone } from "../../design";
+import { Badge, Banner, BottomPanel, Button, DataGrid, EmptyState, ErrorState, IconButton, LoadingState, Pane, Progress, TerminalText, Text, TextBlock, useToast, type DataGridColumn, type TerminalLine, type Tone } from "../../design";
 import { useI18n } from "../i18n";
 import type { OutputCell, PageDescriptor, Run, RunStatus } from "../protocol";
 import { useQuery, useUi, useWorkbench } from "../state/context";
@@ -107,6 +107,32 @@ export function useLiveLog(run: Run | null | undefined): string[] {
   return id && log.id === id ? log.lines : [];
 }
 
+/**
+ * Like `useLiveLog`, but keeps which stream each line came from (X17). A progress update may carry `stream`
+ * ("stdout" | "stderr") next to its message, or `output`: the lines so far, which then replaces the collected list.
+ */
+export function useLiveLines(run: Run | null | undefined): TerminalLine[] {
+  const [log, setLog] = useState<{ id: string; lines: TerminalLine[] }>({ id: "", lines: [] });
+  const last = useRef<unknown>(undefined);
+  const running = run?.status === "running" ? run : null;
+  const progress = running?.progress as { message?: string; stream?: "stdout" | "stderr"; output?: Array<{ text: string; stream?: "stdout" | "stderr" }> } | undefined;
+  const id = running?.id;
+  useEffect(() => {
+    if (!id || !progress) return;
+    const token = progress.output ?? `${progress.stream ?? ""}|${progress.message ?? ""}`;
+    if (token === last.current) return;
+    last.current = token;
+    if (progress.output) {
+      const lines = progress.output.map((l) => ({ text: l.text.replace(/\n$/, ""), stream: l.stream })).slice(-LIVE_LOG_LINES);
+      setLog({ id, lines });
+    } else if (progress.message !== undefined) {
+      const line = { text: progress.message.replace(/\n$/, ""), stream: progress.stream };
+      setLog((prev) => ({ id, lines: [...(prev.id === id ? prev.lines : []), line].slice(-LIVE_LOG_LINES) }));
+    }
+  }, [id, progress]);
+  return id && log.id === id ? log.lines : [];
+}
+
 /** Streamed chunks usually end with their own line break (whole lines); only add one where it is missing. */
 export function liveText(chunks: string[]): string {
   return chunks.map((c) => (c.endsWith("\n") ? c : `${c}\n`)).join("").replace(/\n$/, "");
@@ -136,7 +162,7 @@ export function resultText(run: Run, all?: OutputCell[][]): string | null {
 function OutputTab({ tab, run, widthKey }: { tab: TabState; run: Run | null | undefined; widthKey: string }) {
   const { client, actions } = useWorkbench();
   const { t, runError, duration } = useI18n();
-  const live = useLiveLog(run);
+  const live = useLiveLines(run);
   const elapsed = useElapsed(run?.startedAt, run?.status === "running");
   if (run === undefined) return <LoadingState layout="inline" label={t("common.loading")} />;
   if (run === null) return <EmptyState layout="inline" icon="play" message={tab.target.startsWith("run:") ? t("result.gone") : t("result.empty")} />;
@@ -151,7 +177,7 @@ function OutputTab({ tab, run, widthKey }: { tab: TabState; run: Run | null | un
         )}
         {live.length > 1 ? (
           <Pane grow scroll width="form">
-            <TextBlock variant="code" label={t("result.liveOutput")}>{liveText(live)}</TextBlock>
+            <TerminalText label={t("result.liveOutput")} lines={live} showStreams={live.some((l) => l.stream)} streamLabels={{ stdout: t("stream.stdout"), stderr: t("stream.stderr") }} />
           </Pane>
         ) : (
           <Text size="sm" tone="muted" tabular>
