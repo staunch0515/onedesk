@@ -22,6 +22,14 @@ const fail = (e) => ({ error: e.code || String(e), params: e.params || {} });
 const COLS = [{ key: "stream", label: "Stream" }, { key: "line", label: "Line" }];
 export default { activate(host) {
   host.commands.handle("probe", probe);
+  host.commands.handle("ask", async (ctx, context) => {
+    const a = (context && context.args) || {};
+    if (a.confirmed) return [{ type: "copy", text: "chose " + a.conflict }];
+    const mode = a.mode || "own";
+    const command = mode === "other" ? "deleted.purge" : "t.r17:ask";
+    const choices = mode === "bad" ? [] : [{ id: "overwrite", danger: true }, { id: "skip" }, { id: "keepBoth", label: "Keep both" }];
+    return [{ type: "confirm", message: "Exists", command, choices, choiceArg: "conflict", irreversible: true }];
+  });
   host.pages.handle("p", { async render() {
     return { view: [{ type: "text", id: "t", text: "ok\nbad\nplain", mono: true,
                       lineTones: ["success", "stderr"], appearance: "terminal" }] };
@@ -67,12 +75,13 @@ fn manifest() -> Value {
         "requires": { "files": true, "resources": true, "programs": [{ "name": "sh", "source": "system" }] },
         "contributes": {
             "kinds": [{ "id": "k", "label": "K", "icon": "box", "tree": "resources", "page": "p", "newName": "k" }],
-            "pages": [{ "id": "p" }],
             "actions": [{ "id": "lines", "label": "a", "output": "text" },
                         { "id": "table", "label": "a", "output": "table" },
                         { "id": "text", "label": "a", "output": "text" },
                         { "id": "badpartial", "label": "a", "output": "table" }],
-            "commands": [{ "id": "probe", "label": "p" }],
+            "commands": [{ "id": "probe", "label": "p" }, { "id": "ask", "label": "a" }],
+            "pages": [{ "id": "p", "actions": [{ "id": "go", "role": "run", "label": "Go", "command": "ask" },
+                                               { "id": "run", "role": "run", "label": "Run", "action": "text" }] }],
             "events": ["resource.changed"]
         }
     })
@@ -196,6 +205,37 @@ async fn x10_line_tones_and_terminal_appearance_reach_the_shell() {
     let r = wait_run(&w.c, &start(&w.c, "text", json!({})).await).await;
     assert_eq!(r["output"]["lineTones"], json!([null, "danger"]));
     assert_eq!(r["output"]["appearance"], "plain");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn d428_confirm_choices_pass_through_and_d429_page_items_name_commands() {
+    let w = world().await;
+    let eff = w.c.ok("command.execute", json!({ "id": "t.r17:ask", "context": {} })).await;
+    assert_eq!(
+        eff,
+        json!([{ "type": "confirm", "message": "Exists", "command": "t.r17:ask", "choiceArg": "conflict", "irreversible": true,
+                 "choices": [{ "id": "overwrite", "danger": true }, { "id": "skip" }, { "id": "keepBoth", "label": "Keep both" }] }])
+    );
+    // What the shell sends back after a choice.
+    let eff = w.c.ok("command.execute", json!({ "id": "t.r17:ask", "context": { "args": { "confirmed": true, "conflict": "keepBoth" } } })).await;
+    assert_eq!(eff[0]["text"], "chose keepBoth");
+    // Only its own commands; no empty choice list.
+    for mode in ["other", "bad"] {
+        let e = w.c.call("command.execute", json!({ "id": "t.r17:ask", "context": { "args": { "mode": mode } } })).await.unwrap_err();
+        assert_eq!(e.code, onedesk_protocol::ErrorCode::PluginError, "{mode}");
+    }
+    // D429: the page item carries the full command id, the other one its action.
+    let page = w.c.ok("page.resolve", json!({ "target": "new:t.r17:k" })).await;
+    let items = page["actions"].as_array().unwrap();
+    assert_eq!(items[0]["command"], "t.r17:ask");
+    assert!(items[0].get("action").is_none());
+    assert_eq!(items[1]["action"], "t.r17:text");
+    assert!(items[1].get("command").is_none());
+    // Kernel confirmations say they cannot be undone.
+    let id = wait_run(&w.c, &start(&w.c, "text", json!({})).await).await["id"].as_str().unwrap().to_string();
+    w.c.ok("run.setKept", json!({ "id": id, "kept": true })).await;
+    let eff = w.c.ok("command.execute", json!({ "id": "run.delete", "context": { "args": { "run": id } } })).await;
+    assert_eq!(eff[0]["irreversible"], true);
 }
 
 /* ------------------------------------------------------------------ X17 */
@@ -477,6 +517,27 @@ async fn x18_pick_folder_effects_carry_replace() {
     w.ok("files.replaceRoot", json!([g])).await;
     let e = c.event(|e| e.topic == "ui").await;
     assert_eq!(e.payload.unwrap(), json!({ "type": "pick-folder", "plugin": "t.r17", "replace": g }));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn x18_write_text_can_make_executables_and_handle_name_conflicts() {
+    use std::os::unix::fs::PermissionsExt;
+    let w = world().await;
+    let mode = |p: &str| std::fs::metadata(w.grant.join(p)).unwrap().permissions().mode() & 0o777;
+    let r = w.ok("files.writeText", json!([w.p("run.sh"), "#!/bin/sh\necho hi\n", { "executable": true }])).await;
+    assert_eq!((r["path"].as_str().unwrap(), r["skipped"].as_bool().unwrap()), (w.p("run.sh").as_str(), false));
+    assert_eq!(mode("run.sh"), 0o755);
+    // Without options an existing file is replaced, as before (and keeps its mode).
+    w.ok("files.writeText", json!([w.p("run.sh"), "#!/bin/sh\necho two\n"])).await;
+    assert_eq!(mode("run.sh"), 0o755);
+    assert_eq!(w.err("files.writeText", json!([w.p("run.sh"), "x", { "conflict": "fail" }])).await, ("conflict".into(), "exists".into()));
+    assert_eq!(w.ok("files.writeText", json!([w.p("run.sh"), "x", { "conflict": "skip" }])).await, json!({ "skipped": true }));
+    let r = w.ok("files.writeText", json!([w.p("run.sh"), "x", { "conflict": "keepBoth", "executable": true }])).await;
+    assert_eq!(r["path"], w.p("run 2.sh"));
+    assert_eq!(mode("run 2.sh"), 0o755);
+    assert_eq!(std::fs::read_to_string(w.grant.join("run.sh")).unwrap(), "#!/bin/sh\necho two\n");
+    w.ok("files.writeText", json!([w.p("plain.txt"), "x"])).await;
+    assert_eq!(mode("plain.txt"), 0o644);
 }
 
 /* ------------------------------------------------------------------ X6 */

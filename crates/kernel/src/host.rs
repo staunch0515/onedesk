@@ -519,7 +519,17 @@ impl Inner {
             "writeText" => {
                 let p = arg_str(args, 0, "path")?;
                 let text = arg_str(args, 1, "text")?;
-                let basis = arg(args, 2).get("basis").and_then(Value::as_str).map(String::from);
+                let o = arg(args, 2);
+                let basis = o.get("basis").and_then(Value::as_str).map(String::from);
+                // Round 17: `executable`, `conflict` (absent: replace, as before).
+                let wo = crate::files::WriteOpts {
+                    executable: o.get("executable").and_then(Value::as_bool).unwrap_or(false),
+                    conflict: if o.get("conflict").is_some_and(|v| !v.is_null()) {
+                        Some(crate::files::Conflict::parse(&o)?)
+                    } else {
+                        None
+                    },
+                };
                 let len = text.len();
                 let me = self.me.upgrade().ok_or_else(|| internal("kernel stopped"))?;
                 let actor = plugin.actor();
@@ -527,23 +537,26 @@ impl Inner {
                 // cancelled meanwhile, a file that was written is still audited (review #2).
                 let task = tokio::spawn(async move {
                     let (path, basis) = tokio::task::spawn_blocking(move || {
-                        crate::files::write_text(&grants, &p, &text, basis.as_deref())
+                        crate::files::write_text_opts(&grants, &p, &text, basis.as_deref(), wo)
                     })
                     .await
                     .map_err(internal)??;
+                    let Some(path) = path else { return Ok::<_, ProtocolError>(None) };
                     let path = path.display().to_string();
                     me.execute(
                         actor,
                         Command::Audit { op: "files.write".into(), object: path.clone(), summary: json!({ "bytes": len }) },
                     )
                     .await?;
-                    Ok::<_, ProtocolError>(basis)
+                    Ok::<_, ProtocolError>(Some((path, basis)))
                 });
-                let basis = task.await.map_err(internal)??;
+                let Some((path, basis)) = task.await.map_err(internal)?? else {
+                    return Ok(json!({ "skipped": true }));
+                };
                 for t in plugin.manifest.contributes.trees.iter().filter(|t| t.source == TreeSource::Provided) {
                     self.emit(format!("{}{}", topic::TREE, plugin.full(&t.id)), None, None);
                 }
-                Ok(json!({ "basis": basis }))
+                Ok(json!({ "basis": basis, "path": path, "skipped": false }))
             }
             _ => Err(err_p(ErrorCode::UnknownMethod, &[("method", &format!("files.{op}"))])),
         }
@@ -602,6 +615,8 @@ impl Inner {
                 };
                 let effect = CommandEffect::PickFolder { plugin: plugin.id.clone(), replace };
                 self.emit(topic::UI, Some(serde_json::to_value(effect).map_err(internal)?), info.client.clone());
+                // The user answers in the shell's dialog later; the grant arrives as a `plugins`
+                // event and a refresh of the plugin's provided trees.
                 return Ok(Value::Null);
             }
             "removeRoot" => {

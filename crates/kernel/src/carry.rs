@@ -34,7 +34,8 @@ use crate::sandbox::CallInfo;
 use crate::util::*;
 
 pub const DEFAULT_TIMEOUT_MS: u64 = 600_000;
-pub const MAX_TIMEOUT_MS: u64 = 3_600_000;
+/// Round 17: two hours, as `process.run`.
+pub const MAX_TIMEOUT_MS: u64 = 7_200_000;
 /// `onProgress` is called at most this often.
 pub const PROGRESS_EVERY: Duration = Duration::from_millis(100);
 /// Methods that send a body (`upload`).

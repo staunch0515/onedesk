@@ -650,6 +650,9 @@ pub struct ActionDecl {
     pub action: Option<String>,
     /// Ask before running (D289): the shell confirms, the kernel only executes.
     pub confirm: Option<Label>,
+    /// Round 17 (D429): instead of `action`, the full command id `<pluginId>:<name>` this item
+    /// executes (`command.execute` with the page as context and the page's inputs as `args`).
+    pub command: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -854,7 +857,18 @@ pub enum CommandEffect {
         replace: Option<String>,
     },
     /// Ask for confirmation, then execute `command` again with `args.confirmed = true`.
-    Confirm { message: Label, command: String, danger: Option<bool> },
+    Confirm {
+        message: Label,
+        command: String,
+        danger: Option<bool>,
+        /// Round 17 (D428): answers to pick from instead of one OK button (at most 8); the chosen
+        /// `id` goes back as `args[choiceArg]` (with `confirmed: true`). The kernel does not read them.
+        choices: Option<Vec<ConfirmChoice>>,
+        /// Round 17 (D428): the argument the chosen `id` is sent back in; absent = `conflict`.
+        choice_arg: Option<String>,
+        /// Round 17 (D428): the dialog says it cannot be undone (danger colours).
+        irreversible: Option<bool>,
+    },
     /// Copy text to the clipboard.
     Copy { text: String },
     Reload,
@@ -863,6 +877,18 @@ pub enum CommandEffect {
     /// plan names it (the other tags are kebab-case).
     #[serde(rename = "openExternal")]
     OpenExternal { url: String },
+}
+
+/// Round 17 (D428): one answer of a `confirm` effect.
+#[skip_serializing_none]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, optional_fields)]
+pub struct ConfirmChoice {
+    pub id: String,
+    /// Absent: the shell's own words for the id (`overwrite`, `skip`, `keepBoth`), else the id.
+    pub label: Option<Label>,
+    pub danger: Option<bool>,
 }
 
 #[skip_serializing_none]

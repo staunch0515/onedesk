@@ -186,12 +186,56 @@ pub fn write_text(grants: &[PathBuf], raw: &str, text: &str, basis: Option<&str>
     write_text_with(grants, raw, text, basis, || {})
 }
 
+/// Round 17: `writeText` options beyond `basis`.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct WriteOpts {
+    /// Executable for its owner, group and others where they can read (`0644` → `0755`).
+    pub executable: bool,
+    /// `None`: replace an existing file (as before round 17).
+    pub conflict: Option<Conflict>,
+}
+
+/// `writeText` with round 17's options. Returns the path written (`None`: skipped) and the basis.
+pub fn write_text_opts(grants: &[PathBuf], raw: &str, text: &str, basis: Option<&str>, o: WriteOpts) -> KResult<(Option<PathBuf>, String)> {
+    let mut raw = raw.to_string();
+    match o.conflict {
+        None | Some(Conflict::Overwrite) => {}
+        Some(c) => {
+            let (p, _) = resolve_entry(grants, &raw)?;
+            if exists_no_follow(&p) {
+                match c {
+                    Conflict::Fail => return Err(err_p(ErrorCode::Conflict, &[("reason", "exists")])),
+                    Conflict::Skip => return Ok((None, String::new())),
+                    _ => {
+                        let dir = p.parent().ok_or_else(|| invalid_params("path"))?;
+                        let name = p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+                        raw = free_name(dir, &name)?.display().to_string();
+                    }
+                }
+            }
+        }
+    }
+    let (p, b) = write_text_full(grants, &raw, text, basis, o.executable, || {})?;
+    Ok((Some(p), b))
+}
+
 /// `write_text` with a hook that runs right after the folder is pinned (tests swap the folder there).
 pub fn write_text_with(
     grants: &[PathBuf],
     raw: &str,
     text: &str,
     basis: Option<&str>,
+    after_pin: impl FnOnce(),
+) -> KResult<(PathBuf, String)> {
+    write_text_full(grants, raw, text, basis, false, after_pin)
+}
+
+fn write_text_full(
+    grants: &[PathBuf],
+    raw: &str,
+    text: &str,
+    basis: Option<&str>,
+    executable: bool,
     after_pin: impl FnOnce(),
 ) -> KResult<(PathBuf, String)> {
     use std::io::Read;
@@ -233,7 +277,11 @@ pub fn write_text_with(
         }
     }
     let tmp = cstr(&format!(".{name}.onedesk-{}.tmp", crate::util::new_id())).map_err(internal)?;
-    let mode = if exists && (st.st_mode & libc::S_IFMT) == libc::S_IFREG { st.st_mode & 0o7777 } else { 0o644 };
+    let mut mode = if exists && (st.st_mode & libc::S_IFMT) == libc::S_IFREG { st.st_mode & 0o7777 } else { 0o644 };
+    if executable {
+        // Execute where there is read.
+        mode |= (mode & 0o444) >> 2;
+    }
     let res = (|| -> std::io::Result<()> {
         // SAFETY: valid descriptor and C string; result checked.
         let fd = unsafe {
@@ -249,6 +297,13 @@ pub fn write_text_with(
         }
         // SAFETY: fresh descriptor we own.
         let mut f = unsafe { std::fs::File::from_raw_fd(fd) };
+        if executable {
+            // Exactly that mode, whatever the umask.
+            // SAFETY: valid descriptor we own.
+            if unsafe { libc::fchmod(f.as_raw_fd(), mode) } != 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+        }
         f.write_all(text.as_bytes())?;
         f.sync_all()?;
         // SAFETY: both names are relative to the same pinned folder.

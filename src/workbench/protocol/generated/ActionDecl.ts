@@ -10,4 +10,9 @@ action?: string,
 /**
  * Ask before running (D289): the shell confirms, the kernel only executes.
  */
-confirm?: Label, };
+confirm?: Label, 
+/**
+ * Round 17 (D429): instead of `action`, the full command id `<pluginId>:<name>` this item
+ * executes (`command.execute` with the page as context and the page's inputs as `args`).
+ */
+command?: string, };

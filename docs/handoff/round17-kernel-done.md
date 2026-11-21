@@ -54,3 +54,19 @@
 - 外壳要做的：`pick-folder` 带 `replace` 时调 `plugin.replaceFolder`；运行中读 `Run.partial` 并在 `run:<id>` 时重取；`lineTones`/`appearance`/`toneColumn`/`lineColumn` 的显示；新原因码 `intoItself`、`isRoot`、`trashUnavailable`、`notFound/grant` 的文字。
 - 测试会话：e2e 启动工作进程时请设 `ONEDESK_TRASH_DIR`（临时目录，且与测试文件同卷）和 `ONEDESK_OPEN_LOG`，否则 `files.trash` 会进真的废纸篓、`files.open` 会真的打开（内核源码里指向 `~/.Trash` 的只有 `default_trash_dir()` 一处）。
 - `decisions.md` 需要主会话为 §3 的决定编号（我没有改它）。
+
+## 6. 第二批（协调会话补充的项，提交 f6fe796，先快进合并了 `claude/onedesk-r17` 的 c8eb5d7）
+
+| 项 | 内容 | 测试 |
+|---|---|---|
+| D428 | `confirm` 加 `choices`（`ConfirmChoice { id, label?, danger? }`，1–8 个）、`choiceArg`（外壳默认 `conflict`）、`irreversible`；插件命令可以返回指向**本插件自己命令**的 `confirm`（之前一律拒绝），否则 `pluginError`；内核的 `run.delete`、`deleted.purge` 带 `irreversible: true` | `round17.rs` `d428_confirm_choices…` |
+| D429 | 清单页面动作 `command`（与 `action` 二选一，`actionAndCommand`、`unknownCommand`）；`ActionDecl.command` 为全名 | 同上；`manifest` 单元测试 |
+| Basic | `{{secret:名|basic:用户}}`、`{{secret:名|base64}}`，内核自带 base64（无新依赖）；编码后的值也抹除；不认识的写法 `invalid/badSecretFormat` | `secrets` 单元测试；`round4.rs` 对本地服务器核对实际请求头 |
+| `~/` | `searchPaths` 接受 `~/`；`searchPaths` 找到的程序所在位置（含上级文件夹）属于他人或他人可写时不用：`unsafeLocation`（补第十五轮审查 #15） | `process` 单元测试（不碰真的家目录里的程序） |
+| writeText | `executable`、`conflict`（不给 = 照旧替换） | `x18_write_text_can_make_executables…` |
+| 时长 | `process.run`、`transfer.capture` 上限 2 小时（默认不变） | `process` 单元测试 |
+
+- 文件接口名：按协调会话的要求**保持第一版的名字**，曾短暂加过的 `createFolder/addFolder/renameFolder/removeFolder/onConflict` 已全部去掉（没有提交过）。`files.addRoot()`、`replaceRoot()` 返回 `null`。
+- 外壳文件只动了两行（协调会话同意）：`en-US.ts` 与 `kernel-texts.ts` 的 `reason.unsafeLocation`。
+- 验证：`cargo test --workspace`、`pnpm clippy`、`pnpm lint`、`pnpm typecheck`、`gen-types --check` 通过。`pnpm test`：920 过、4 个失败，全在 `plugins/_testing/lang-check.test.ts`（中日语言包缺 11 个键：10 个是外壳本轮新加的 `confirm.choice.*`、`kernel.error.*` 等，1 个是我的 `unsafeLocation`）。合并前集成分支上就缺那 10 个，译文归测试会话。e2e 没跑。
+- 范围外：`plugins/_testing/view-check.ts` 还不认识 X10 的新字段和 D429 的 `command`（测试会话的文件）；外壳要为清单原因 `actionAndCommand` 和 `invalid/badSecretFormat` 配文字。

@@ -1389,6 +1389,9 @@ impl Inner {
                             message: Label::Text("run.delete.confirm".into()),
                             command: "run.delete".into(),
                             danger: Some(true),
+                            choices: None,
+                            choice_arg: None,
+                            irreversible: Some(true),
                         }])
                     } else {
                         self.run_delete(&r).await.map(|_| vec![])
