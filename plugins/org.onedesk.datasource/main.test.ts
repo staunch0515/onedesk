@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 // @ts-ignore plain JS module, no types
-import plugin, { captureReadonly, checkConnection, connectionOf, errorText, parseConnectionUrl, parseCsv, positiveInt, processSpec, readonlyScript, refuse, scanSql, runReadonly, safePart } from "./main.js";
+import plugin, { BACKUP_STEPS, backupPlanOf, backupToLocal, checkBackup, dockerArgs, dumpSpec, safeContainer, safeDbName, stampOf, suggestDbName, captureReadonly, checkConnection, connectionOf, errorText, parseConnectionUrl, parseCsv, positiveInt, processSpec, readonlyScript, refuse, scanSql, runReadonly, safePart } from "./main.js";
 import { RENDER_KEYS, checkActionResult, checkView, hostError, onlyKeys, registry } from "../_testing/view-check";
 
 const load = (f: string) => JSON.parse(readFileSync(new URL(`./locales/${f}.json`, import.meta.url), "utf8")) as Record<string, string>;
@@ -229,7 +229,7 @@ describe("datasource: page and actions", () => {
   it("registers what the manifest declares", () => {
     const r = registry(plugin);
     expect(Object.keys(r.pages)).toEqual(["editor"]);
-    expect(Object.keys(r.actions).sort()).toEqual(["query", "test"]);
+    expect(Object.keys(r.actions).sort()).toEqual(["backup", "query", "test"]);
   });
 
   it("query with inline: true returns the rows themselves (capped by maxRows) and writes no data file", async () => {
@@ -257,7 +257,7 @@ describe("datasource: page and actions", () => {
 
     const ssh = await pages.editor.render(ctxOf(fakeHost(), { resource: SSH }));
     expect(checkView(ssh.view)).toEqual([]);
-    expect(ssh.view.map((n: any) => n.id)).toEqual(["mode", "server", "database", "sshNote", "readonly", "import"]);
+    expect(ssh.view.map((n: any) => n.id)).toEqual(["mode", "server", "database", "sshNote", "readonly", "backup", "backupNote", "import"]);
     expect(ssh.view[1].fields.map((f: any) => f.name)).toEqual(["sshHost", "container"]);
     expect(JSON.stringify(ssh.view)).not.toContain('"secret"');
 
@@ -319,14 +319,250 @@ describe("datasource: page and actions", () => {
 
 describe("datasource: manifest", () => {
   const m = JSON.parse(readFileSync(new URL("./manifest.json", import.meta.url), "utf8"));
-  it("declares both programs as the system's (psql also looked for where PostgreSQL installers put it), the password as a secret field and no network access", () => {
-    expect(m.requires.programs.map((p: any) => `${p.name}:${p.source}`)).toEqual(["psql:system", "ssh:system"]);
+  it("declares the programs as the system's (psql and docker also looked for where their installers put them), the password as a secret field and no network access", () => {
+    expect(m.requires.programs.map((p: any) => `${p.name}:${p.source}`)).toEqual(["psql:system", "ssh:system", "docker:system"]);
+    expect(m.requires.programs[2].searchPaths).toContain("/Applications/Docker.app/Contents/Resources/bin");
     expect(m.requires.programs[0].searchPaths).toContain("/Library/PostgreSQL/*/bin");
     expect(m.exports.actions).toEqual(["query"]);
     expect(m.requires.network).toBeUndefined();
     expect(m.contributes.kinds[0].fields.password).toEqual({ type: "secret" });
   });
   it("every action the plugin handles is declared", () => {
-    expect(m.contributes.actions.map((a: any) => a.id).sort()).toEqual(["query", "test"]);
+    expect(m.contributes.actions.map((a: any) => a.id).sort()).toEqual(["backup", "query", "test"]);
+    expect(m.contributes.actions.find((a: any) => a.id === "backup")).toMatchObject({ kinds: ["source"], output: "link", saveFirst: true });
+    expect(m.contributes.pages[0].actions.find((a: any) => a.id === "backup")).toMatchObject({ role: "run", action: "backup" });
+  });
+});
+
+/* ---------------------------------------------------------------- backup to this Mac (J1–J4) */
+
+type Res = { code: number | null; signal?: string | null; stdout?: string; stderr?: string };
+const res = (r: Partial<Res> = {}) => ({ code: 0, signal: null, stdout: "", stderr: "", truncated: false, ...r });
+const PLAN = { backupName: "shop_copy", backupContainer: "pg-local", backupPort: "5544", backupUser: "postgres" };
+const DATA = "/ws/plugin-data/org.onedesk.datasource";
+
+// A fake host for the backup: `docker` answers by step (what a test overrides), `ssh` only through
+// `transfer.capture`; every call is logged in order. Nothing real runs.
+function backupHost(o: { docker?: Record<string, Res>; dump?: Partial<Res> & { bytes?: number }; ready?: any; mkdir?: () => Promise<unknown> } = {}) {
+  const log: string[] = [];
+  const stepOf = (args: string[]) => (args[0] === "cp" ? "copy" : args[2] === "psql" ? "check" : args[2] === "createdb" ? "create" : args[2] === "pg_restore" ? "restore" : args[2] === "rm" ? "cleanup" : "?");
+  const host: Host = fakeHost({
+    process: {
+      ready: vi.fn(async (name: string) => (log.push(`ready ${name}`), o.ready ?? { ready: true })),
+      run: vi.fn(async (spec: any) => {
+        const step = stepOf(spec.args);
+        log.push(`${spec.program} ${step}`);
+        return res(o.docker?.[step] ?? {});
+      }),
+    },
+    transfer: {
+      capture: vi.fn(async (spec: any) => {
+        log.push(`${spec.program} dump`);
+        spec.onProgress?.({ bytes: 3 * 1024 * 1024 });
+        const d = { bytes: 3 * 1024 * 1024, ...(o.dump ?? {}) };
+        return { ...res(d), bytes: d.bytes, path: `${DATA}/${spec.to}` };
+      }),
+    },
+    files: { mkdir: vi.fn(o.mkdir ?? (async () => (log.push("mkdir"), null))) },
+    resources: { create: vi.fn(async (spec: any) => (log.push("create source"), { id: "s9", name: spec.name, kind: spec.kind, body: spec.body })) },
+  });
+  return { host, log };
+}
+const ALL_STEPS = ["ready docker", "docker check", "mkdir", "ssh dump", "docker copy", "docker create", "docker restore", "docker cleanup", "create source"];
+
+describe("datasource: backup helpers", () => {
+  it("database and container names accept only safe characters", () => {
+    for (const ok of ["shop", "shop_copy", "_x", "a1", "x".repeat(63)]) expect(safeDbName(ok), ok).toBe(true);
+    for (const bad of ["", "Shop", "1shop", "shop-copy", "shop;drop", "a b", "x".repeat(64), "shop'", undefined]) expect(safeDbName(bad as any), String(bad)).toBe(false);
+    for (const ok of ["pg", "pg-local", "my_pg.1"]) expect(safeContainer(ok), ok).toBe(true);
+    for (const bad of ["", "-pg", ".pg", "pg local", "pg;rm", "$(x)"]) expect(safeContainer(bad), bad).toBe(false);
+  });
+
+  it("reads the page's fields with defaults and names the first bad one", () => {
+    expect(backupPlanOf({ backupName: " shop_copy ", backupContainer: "pg" })).toEqual({ name: "shop_copy", container: "pg", port: "5432", user: "postgres" });
+    const ok = backupPlanOf(PLAN);
+    expect(checkBackup(ok)).toBe("");
+    expect(checkBackup({ ...ok, name: "Shop" })).toBe("backupName");
+    expect(checkBackup({ ...ok, container: "-x" })).toBe("backupContainer");
+    expect(checkBackup({ ...ok, port: "99999" })).toBe("backupPort");
+    expect(checkBackup({ ...ok, user: "-U" })).toBe("backupUser");
+    expect(suggestDbName("Shop-Prod")).toBe("shop_prod_copy");
+    expect(suggestDbName("")).toBe("db_copy");
+    expect(stampOf(new Date(Date.UTC(2026, 10, 21, 9, 5, 7)))).toBe("20261121-090507");
+  });
+
+  it("pg_dump runs on the server over ssh (never asking), in custom format, into a file that must not exist yet", () => {
+    expect(dumpSpec(connectionOf(SSH.body), "backups/shop-x.dump")).toEqual({
+      program: "ssh",
+      args: ["-T", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "staging", "docker exec postgres pg_dump -Fc --no-password -U postgres -d shop"],
+      to: "backups/shop-x.dump",
+      overwrite: false,
+      timeoutMs: 3600000,
+    });
+  });
+
+  it("the local docker calls: look up, copy, createdb, pg_restore, remove our copy — nothing that drops or overwrites", () => {
+    const plan = backupPlanOf(PLAN);
+    const x = { file: "/d/backups/f.dump", inContainer: "/tmp/onedesk-restore-1.dump" };
+    expect(dockerArgs("check", plan)).toEqual(["exec", "pg-local", "psql", "-X", "-q", "-tA", "-U", "postgres", "-d", "postgres", "-c", "SELECT 1 FROM pg_database WHERE datname = 'shop_copy'"]);
+    expect(dockerArgs("copy", plan, x)).toEqual(["cp", "/d/backups/f.dump", "pg-local:/tmp/onedesk-restore-1.dump"]);
+    expect(dockerArgs("create", plan)).toEqual(["exec", "pg-local", "createdb", "-U", "postgres", "shop_copy"]);
+    expect(dockerArgs("restore", plan, x)).toEqual(["exec", "pg-local", "pg_restore", "--no-owner", "--no-acl", "-U", "postgres", "-d", "shop_copy", "/tmp/onedesk-restore-1.dump"]);
+    expect(dockerArgs("cleanup", plan, x)).toEqual(["exec", "pg-local", "rm", "-f", "/tmp/onedesk-restore-1.dump"]);
+    const all = JSON.stringify(["check", "copy", "create", "restore", "cleanup"].map((s) => dockerArgs(s, plan, x)));
+    expect(all).not.toMatch(/dropdb|DROP|--clean|--create|-c\b.*DROP/);
+    expect(BACKUP_STEPS).toEqual(["check", "dump", "copy", "create", "restore", "source"]);
+  });
+});
+
+describe("datasource: backup to this Mac", () => {
+  const plan = backupPlanOf(PLAN);
+
+  it("runs every step in order with progress, saves the dump in the backup folder and makes a direct data source", async () => {
+    const { host, log } = backupHost();
+    const ctx = ctxOf(host, { resource: SSH });
+    const r = await backupToLocal(ctx, SSH, plan);
+    expect(log).toEqual(ALL_STEPS);
+    expect(host.files.mkdir).toHaveBeenCalledWith("backups");
+    const cap = host.transfer.capture.mock.calls[0]![0];
+    expect(cap.to).toMatch(/^backups\/shop-\d{8}-\d{6}\.dump$/);
+    expect(cap.overwrite).toBe(false);
+    expect(r.file).toBe(`${DATA}/${cap.to}`);
+    const cp = host.process.run.mock.calls.find((c: any[]) => c[0].args[0] === "cp")![0];
+    expect(cp.args[1]).toBe(r.file);
+    expect(host.resources.create).toHaveBeenCalledWith({
+      kind: "source",
+      name: "Staging → shop_copy (local)",
+      body: { mode: "direct", host: "localhost", port: "5544", database: "shop_copy", user: "postgres", sshHost: "", container: "" },
+    });
+    const progress = ctx.progress.mock.calls.map((c: any[]) => c[1]);
+    expect(progress).toEqual([
+      "Step 1 of 6: checking the local container",
+      "Step 2 of 6: running pg_dump on staging and downloading",
+      "Step 2 of 6: running pg_dump on staging and downloading (3.0 MB)",
+      "Step 3 of 6: copying the dump into pg-local",
+      "Step 4 of 6: creating the database shop_copy",
+      "Step 5 of 6: restoring into shop_copy",
+      "Step 6 of 6: adding the data source",
+      "Backup restored.",
+    ]);
+    const fractions = ctx.progress.mock.calls.map((c: any[]) => c[0]);
+    expect(fractions[0]).toBe(0);
+    expect(fractions[fractions.length - 1]).toBe(1);
+  });
+
+  it("refuses before anything runs: not an ssh source, bad names, a bad source", async () => {
+    for (const [source, p, msg] of [
+      [SOURCE, plan, "needs a data source reached over ssh"],
+      [SSH, { ...plan, name: "shop; DROP DATABASE shop" }, "lower-case letters"],
+      [SSH, { ...plan, name: "Shop" }, "lower-case letters"],
+      [SSH, { ...plan, container: "pg;rm -rf" }, "docker container name"],
+      [SSH, { ...plan, port: "0" }, "1 to 65535"],
+      [{ ...SSH, body: { ...SSH.body, container: "x;y" } }, plan, "“container”"],
+    ] as const) {
+      const { host, log } = backupHost();
+      await expect(backupToLocal(ctxOf(host), source, p), msg).rejects.toThrow(msg);
+      expect(log, msg).toEqual([]);
+    }
+  });
+
+  it("stops before the server is touched when docker is missing, the container does not answer, or the database exists", async () => {
+    const missing = backupHost({ ready: { ready: false, reason: "notFound" } });
+    await expect(backupToLocal(ctxOf(missing.host), SSH, plan)).rejects.toThrow("docker was not found on this Mac (notFound)");
+    expect(missing.log).toEqual(["ready docker"]);
+
+    const down = backupHost({ docker: { check: { code: 1, stderr: "Error response from daemon: container pg-local is not running\n" } } });
+    await expect(backupToLocal(ctxOf(down.host), SSH, plan)).rejects.toThrow("The backup stopped while checking the local container: Error response from daemon: container pg-local is not running");
+    expect(down.log).toEqual(["ready docker", "docker check"]);
+
+    const exists = backupHost({ docker: { check: { code: 0, stdout: "1\n" } } });
+    await expect(backupToLocal(ctxOf(exists.host), SSH, plan)).rejects.toThrow("The database “shop_copy” already exists in pg-local. It is left as it is");
+    expect(exists.log).toEqual(["ready docker", "docker check"]);
+    expect(exists.host.transfer.capture).not.toHaveBeenCalled();
+  });
+
+  it("a failing or empty pg_dump stops the run and says where the partial file is", async () => {
+    const failing = backupHost({ dump: { code: 1, stderr: 'pg_dump: error: connection to server failed: FATAL:  role "postgres" does not exist\n', bytes: 12 } });
+    await expect(backupToLocal(ctxOf(failing.host), SSH, plan)).rejects.toThrow(/stopped while running pg_dump on staging and downloading: pg_dump: error: .*role "postgres" does not exist \(what arrived is kept in \/ws\/plugin-data\/org\.onedesk\.datasource\/backups\/shop-/);
+    expect(failing.log).toEqual(["ready docker", "docker check", "mkdir", "ssh dump"]);
+    const empty = backupHost({ dump: { bytes: 0 } });
+    await expect(backupToLocal(ctxOf(empty.host), SSH, plan)).rejects.toThrow("pg_dump wrote nothing");
+    expect(empty.log).toEqual(["ready docker", "docker check", "mkdir", "ssh dump"]);
+    const refused = backupHost();
+    refused.host.transfer.capture = vi.fn(async () => {
+      throw hostError("denied", { reason: "blockedByPolicy", program: "ssh" });
+    });
+    await expect(backupToLocal(ctxOf(refused.host), SSH, plan)).rejects.toThrow("Cannot run the program ssh (denied/blockedByPolicy)");
+  });
+
+  it("a backup folder that already exists is fine; another folder error stops", async () => {
+    const exists = backupHost({ mkdir: async () => { throw hostError("conflict", { reason: "exists" }); } });
+    await backupToLocal(ctxOf(exists.host), SSH, plan);
+    expect(exists.host.resources.create).toHaveBeenCalled();
+    const denied = backupHost({ mkdir: async () => { throw hostError("denied", { reason: "outsideGrant" }); } });
+    await expect(backupToLocal(ctxOf(denied.host), SSH, plan)).rejects.toThrow("(denied/outsideGrant)");
+    expect(denied.host.transfer.capture).not.toHaveBeenCalled();
+  });
+
+  it("a failing copy into the container stops before a database is made", async () => {
+    const { host, log } = backupHost({ docker: { copy: { code: 1, stderr: "Error: No such container: pg-local\n" } } });
+    await expect(backupToLocal(ctxOf(host), SSH, plan)).rejects.toThrow("stopped while copying the dump into pg-local: Error: No such container: pg-local");
+    expect(log).toEqual(["ready docker", "docker check", "mkdir", "ssh dump", "docker copy"]);
+  });
+
+  it("createdb refusing (a database that appeared meanwhile) stops: nothing restored, our copy removed, no data source", async () => {
+    const { host, log } = backupHost({ docker: { create: { code: 1, stderr: 'createdb: error: database creation failed: ERROR:  database "shop_copy" already exists\n' } } });
+    await expect(backupToLocal(ctxOf(host), SSH, plan)).rejects.toThrow('stopped while creating the database shop_copy: createdb: error: database creation failed: ERROR:  database "shop_copy" already exists');
+    expect(log).toEqual(["ready docker", "docker check", "mkdir", "ssh dump", "docker copy", "docker create", "docker cleanup"]);
+    expect(host.resources.create).not.toHaveBeenCalled();
+  });
+
+  it("a failing pg_restore stops: our copy removed, no data source; only ignored errors let it go on, with a warning", async () => {
+    const failing = backupHost({ docker: { restore: { code: 1, stderr: "pg_restore: error: input file does not appear to be a valid archive\n" } } });
+    await expect(backupToLocal(ctxOf(failing.host), SSH, plan)).rejects.toThrow("stopped while restoring into shop_copy: pg_restore: error: input file does not appear to be a valid archive");
+    expect(failing.log).toEqual(["ready docker", "docker check", "mkdir", "ssh dump", "docker copy", "docker create", "docker restore", "docker cleanup"]);
+    expect(failing.host.resources.create).not.toHaveBeenCalled();
+
+    const warned = backupHost({ docker: { restore: { code: 1, stderr: "pg_restore: error: could not execute query: ERROR:  must be owner of extension plpgsql\npg_restore: warning: errors ignored on restore: 1\n" } } });
+    const r = await backupToLocal(ctxOf(warned.host), SSH, plan);
+    expect(warned.log).toEqual(ALL_STEPS);
+    expect(r.warning).toBe("pg_restore: warning: errors ignored on restore: 1");
+  });
+
+  it("never asks the server or the local container to drop, clean or overwrite anything", async () => {
+    const { host } = backupHost();
+    await backupToLocal(ctxOf(host), SSH, plan);
+    const sent = JSON.stringify([...host.process.run.mock.calls, ...host.transfer.capture.mock.calls]);
+    expect(sent).not.toMatch(/dropdb|DROP |--clean|--if-exists|"overwrite":true/);
+  });
+});
+
+describe("datasource: backup action and page", () => {
+  it("the action takes the page's fields and links to the new data source", async () => {
+    const { actions } = registry(plugin);
+    const { host } = backupHost();
+    const out = await actions.backup(ctxOf(host, { resource: SSH, params: PLAN }), {});
+    expect(checkActionResult(out)).toEqual([]);
+    expect(out.output).toEqual({ type: "link", label: "Staging → shop_copy (local)", target: "resource:s9" });
+    expect(out.summary.message).toMatch(/^Restored into Staging → shop_copy \(local\)\. The dump \(3\.0 MB\) is saved in \/ws\/plugin-data\/org\.onedesk\.datasource\/backups\/shop-\d{8}-\d{6}\.dump\.$/);
+    await expect(actions.backup(ctxOf(host, { params: PLAN }), {})).rejects.toThrow("No data source");
+  });
+
+  it("ssh sources show the backup fields (a safe name suggested); direct ones do not; a backup run shows its values read only", async () => {
+    const { pages } = registry(plugin);
+    const ssh = await pages.editor.render(ctxOf(fakeHost(), { resource: SSH }));
+    expect(checkView(ssh.view)).toEqual([]);
+    const form = ssh.view.find((n: any) => n.id === "backup");
+    expect(form.fields.map((f: any) => f.name)).toEqual(["backupName", "backupContainer", "backupPort", "backupUser"]);
+    expect(form.fields.every((f: any) => f.param === true)).toBe(true);
+    expect(form.fields[0]).toMatchObject({ placeholder: "shop_copy", required: true, maxLength: 63 });
+    const direct = await pages.editor.render(ctxOf(fakeHost(), { resource: SOURCE }));
+    expect(direct.view.some((n: any) => n.id === "backup")).toBe(false);
+    const run = await pages.editor.render(ctxOf(fakeHost(), { resource: SSH, run: { id: "r", action: "backup", input: {}, params: PLAN } }));
+    const rf = run.view.find((n: any) => n.id === "backup");
+    expect(rf.fields[0]).toMatchObject({ readOnly: true, envValue: "shop_copy" });
+    expect(run.view.some((n: any) => n.id === "backupNote")).toBe(false);
+    const testRun = await pages.editor.render(ctxOf(fakeHost(), { resource: SSH, run: { id: "r", action: "test", input: {}, params: {} } }));
+    expect(testRun.view.some((n: any) => n.id === "backup")).toBe(false);
   });
 });
