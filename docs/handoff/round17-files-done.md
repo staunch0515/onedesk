@@ -1,6 +1,6 @@
 # 第十七轮：文件与 API 连接插件（r17-files）完成说明
 
-改动范围：`plugins/org.onedesk.files/**`、`plugins/org.onedesk.connection/**`（新）、`plugins/org.onedesk.http/**`。`pnpm test`（79 个文件 841 项）、`pnpm lint`、`pnpm typecheck` 通过。`pnpm check` 里的 Rust 与 e2e 部分没有跑（只改了插件）。最后提交号见文末。
+改动范围：`plugins/org.onedesk.files/**`、`plugins/org.onedesk.connection/**`（新）、`plugins/org.onedesk.http/**`。`pnpm lint`、`pnpm typecheck` 通过；`pnpm test` 只剩 `plugins/_testing/lang-check.test.ts` 的 4 项失败（中日语言包缺外壳新键，属 r17-tests 范围），本插件的测试全过。`pnpm check` 里的 Rust 与 e2e 部分没有跑（只改了插件）。最后提交号见文末。
 
 ## 需求逐条
 
@@ -56,7 +56,7 @@
 
 ## 最后提交
 
-提交 `1502022`（plugin/files、plugin/connection、plugin/http，一个提交）。
+插件的最后一次代码提交是 `f438a28`（Basic 用 `|basic:`、文件树节点 menu/draggable/accepts）。此前：`1502022`（首版）、`ab4a480`（按 protocol 改名）、`aaf9598`（D428 冲突流程）、`7de7de4`（D429 页面按钮命令）、`0fc7f6d`（授权树标签修复）、`5779d33`（http `fetch`）。真内核验证记录 `cf2951c`。
 
 ## 第二批（真内核验证）
 

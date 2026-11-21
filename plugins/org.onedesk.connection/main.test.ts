@@ -46,10 +46,10 @@ describe("connection: request building", () => {
     const r = buildRequest(ctxOf({}, null), body, { path: "/x", headers: { "X-API-KEY": "evil", "X-Other": "1" } });
     expect(r.headers).toEqual({ Accept: "a/b", "X-Other": "1", "X-Api-Key": `{{secret:${SECRET}}}` });
   });
-  it("query: appends name={{secret}} after the caller's own pairs, encoded", () => {
+  it("query: appends name={{secret|url}} (the host percent-encodes it) after the caller's own pairs, encoded", () => {
     const body = conn({ auth: "query", authName: "api_key", secret: { secret: SECRET } }).body;
     const r = buildRequest(ctxOf({}, null), body, { path: "/x", query: { q: "a b&c" } });
-    expect(r.url).toBe(`https://api.example.com/v1/x?q=a%20b%26c&api_key={{secret:${SECRET}}}`);
+    expect(r.url).toBe(`https://api.example.com/v1/x?q=a%20b%26c&api_key={{secret:${SECRET}|url}}`);
   });
   it("an auth method that needs a secret refuses to run without one; a bad header name is refused", () => {
     expect(() => buildRequest(ctxOf({}, null), conn({ auth: "bearer" }).body, {})).toThrow(EN["error.noSecret"]);
@@ -75,6 +75,32 @@ describe("connection: request building", () => {
   it("environment: :name in the address is filled from the values", () => {
     expect(paramNames("https://:env_host/v1")).toEqual(["env_host"]);
     expect(fillParams("https://:env_host/v1", { env_host: "test.example.com" })).toBe("https://test.example.com/v1");
+  });
+});
+
+describe("connection: a caller cannot name secrets", () => {
+  const body = conn({ auth: "bearer", secret: { secret: SECRET } }).body;
+  const ref = "{{secret:other}}";
+  const bad: [string, Record<string, unknown>][] = [
+    ["path", { path: `/x/${ref}` }],
+    ["query value", { query: { a: ref } }],
+    ["query name", { query: { [ref]: "1" } }],
+    ["header value", { headers: { "X-Leak": `Bearer ${ref}` } }],
+    ["header name", { headers: { [ref]: "1" } }],
+    ["body text", { method: "POST", body: `a=${ref}` }],
+    ["body object", { method: "POST", body: { nested: [{ k: ref }] } }],
+    ["the connection's own secret", { path: `/x?k={{secret:${SECRET}}}` }],
+  ];
+  it.each(bad)("%s: refused before anything is sent", async (_name, input) => {
+    expect(() => buildRequest(ctxOf({}, null), body, input)).toThrow(EN["error.secretRef"]);
+    const { actions } = registry(plugin);
+    const host = fakeHost();
+    await expect(actions.request(ctxOf(host, conn({ auth: "bearer", secret: { secret: SECRET } })), input)).rejects.toThrow(EN["error.secretRef"]);
+    expect(host.network.request).not.toHaveBeenCalled();
+  });
+  it("ordinary braces and the word secret are fine; the connection's own authentication still works", () => {
+    const r = buildRequest(ctxOf({}, null), body, { method: "POST", path: "/secret", query: { q: "{{x}}" }, body: '{"secret": "{{name}}"}' });
+    expect(r.headers).toEqual({ Authorization: `Bearer {{secret:${SECRET}}}` });
   });
 });
 

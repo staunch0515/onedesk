@@ -44,5 +44,6 @@
   "field.username": "ユーザー名",
   "field.username.placeholder": "ユーザー名",
   "error.badUsername": "Basic のユーザー名に「:」は使えません。",
-  "error.noUsername": "Basic のユーザー名を入力してください。"
+  "error.noUsername": "Basic のユーザー名を入力してください。",
+  "error.secretRef": "リクエストにシークレット参照（{{secret:…}}）があります。接続自身の認証だけがそのシークレットを使えます。"
 }

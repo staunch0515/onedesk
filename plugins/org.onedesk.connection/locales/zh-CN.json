@@ -44,5 +44,6 @@
   "field.username": "用户名",
   "field.username.placeholder": "用户名",
   "error.badUsername": "Basic 的用户名不能含“:”。",
-  "error.noUsername": "请填写 Basic 的用户名。"
+  "error.noUsername": "请填写 Basic 的用户名。",
+  "error.secretRef": "请求里写了密钥引用（{{secret:…}}）。只有连接自己的认证可以使用它的密钥。"
 }
