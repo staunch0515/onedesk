@@ -733,7 +733,7 @@ describe("files plugin: tree node menu (D430)", () => {
     const { trees } = registry(plugin);
     const files = { list: async () => ({ entries: [entry("a.md"), entry("sub", true)] }) };
     const out = await trees.files.children(ctxOf(files, ROOT), ROOT, 0);
-    const menu = ["org.onedesk.files:move", "org.onedesk.files:copy", "org.onedesk.files:rename", "org.onedesk.files:delete", "node.open"];
+    const menu = ["org.onedesk.files:move", "org.onedesk.files:copy", "org.onedesk.files:rename", "org.onedesk.files:trash", "org.onedesk.files:delete", "node.open"];
     const [folder, file] = out.nodes;
     expect(folder).toMatchObject({ label: "sub", menu, draggable: true, accepts: ["*"] });
     expect(file).toMatchObject({ label: "a.md", menu, draggable: true });
@@ -748,5 +748,28 @@ describe("files plugin: actions run on tree nodes", () => {
   it("no action is limited to a kind: the kernel refuses a kind-limited action on a node page (\"does not apply to this resource\")", () => {
     const m = JSON.parse(readFileSync(new URL("./manifest.json", import.meta.url), "utf8"));
     for (const a of m.contributes.actions) expect(a.kinds, a.id).toBeUndefined();
+  });
+});
+
+describe("files plugin: delete in the menu", () => {
+  const cmd = (name: string, d: ReturnType<typeof fakeDisk>, nodeKey: string) => registry(plugin).commands[name]({ locale: "en-US", host: { files: d.files }, t: tt }, { nodeKey, args: {} });
+  it("“Move to Trash” comes before “Delete permanently”, and only the second asks", async () => {
+    const manifest = JSON.parse(readFileSync(new URL("./manifest.json", import.meta.url), "utf8"));
+    const ids = manifest.contributes.commands.map((c: any) => c.id);
+    expect(ids.indexOf("trash")).toBeLessThan(ids.indexOf("delete"));
+    const label = (id: string) => manifest.contributes.commands.find((c: any) => c.id === id).label;
+    expect([EN[label("trash")], EN[label("delete")]]).toEqual(["Move to Trash", "Delete permanently"]);
+    const d = fakeDisk({ [`${ROOT}/a.txt`]: 1, [`${ROOT}/b.txt`]: 1 });
+    const [toast] = await cmd("trash", d, `${ROOT}/a.txt`);
+    expect(toast).toMatchObject({ type: "toast", tone: "success" });
+    expect(d.trash).toEqual([`${ROOT}/a.txt`]);
+    expect(d.files.remove).not.toHaveBeenCalled();
+    expect((await cmd("delete", d, `${ROOT}/b.txt`))[0]).toMatchObject({ type: "confirm", irreversible: true });
+    expect(d.trash).toEqual([`${ROOT}/a.txt`]);
+  });
+  it("outside the authorized folders it only shows a danger toast", async () => {
+    const d = fakeDisk({});
+    expect((await cmd("trash", d, "/etc/passwd"))[0]).toMatchObject({ tone: "danger" });
+    expect(d.files.trash).not.toHaveBeenCalled();
   });
 });
