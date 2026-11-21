@@ -369,105 +369,98 @@ describe("files plugin: operations", () => {
 
 describe("files plugin: a name that is taken (copy and move)", () => {
   const setup = () => fakeDisk({ [`${ROOT}/a.txt`]: 1, [SUB]: null, [`${SUB}/a.txt`]: 99, [`${SUB}/a copy.txt`]: 5 });
-  const go = (op: string, d: ReturnType<typeof setup>, conflict?: string) => run(op, { files: d.files }, `${ROOT}/a.txt`, { destination: SUB, ...(conflict ? { conflict } : {}) });
+  const cmd = (name: string, d: ReturnType<typeof setup>, args: Record<string, unknown>, nodeKey = `${ROOT}/a.txt`) =>
+    registry(plugin).commands[name]({ locale: "en-US", host: { files: d.files }, t: tt }, { nodeKey, args });
+  const go = (op: string, d: ReturnType<typeof setup>, conflict?: string) => cmd(op, d, { destination: SUB, ...(conflict ? { conflict, confirmed: true } : {}) });
 
-  it("without a choice it stops and asks, touching nothing", async () => {
+  it("the first call uses conflict fail, and the clash becomes a confirm with the three choices; nothing is touched", async () => {
     const d = setup();
-    await expect(go("copy", d)).rejects.toThrow("already exists there");
-    await expect(go("move", d, "ask")).rejects.toThrow("Overwrite, Skip or Keep both");
+    const effects = await go("copy", d);
+    expect(d.files.copy).toHaveBeenCalledWith(`${ROOT}/a.txt`, `${SUB}/a.txt`, { conflict: "fail" });
+    expect(effects).toEqual([
+      {
+        type: "confirm",
+        message: expect.stringContaining("a.txt"),
+        command: "org.onedesk.files:copy",
+        danger: false,
+        choices: [{ id: "overwrite", danger: true }, { id: "skip" }, { id: "keepBoth" }],
+        choiceArg: "conflict",
+      },
+    ]);
+    expect(d.calls).toEqual([]);
+    expect((await go("move", d))[0]).toMatchObject({ type: "confirm", command: "org.onedesk.files:move" });
+  });
+
+  it("the page action has no choice: a clash is an error in the result area, the host is asked to fail", async () => {
+    const d = setup();
+    await expect(run("copy", { files: d.files }, `${ROOT}/a.txt`, { destination: SUB })).rejects.toThrow("already exists");
     expect(d.calls).toEqual([]);
   });
 
-  it("overwrite: the host is told to overwrite", async () => {
+  it("overwrite: the rerun tells the host to overwrite", async () => {
     const d = setup();
-    const r = await go("copy", d, "overwrite");
-    expect(d.calls).toEqual([`copy ${ROOT}/a.txt ${SUB}/a.txt overwrite`]);
-    expect(d.files.copy).toHaveBeenCalledWith(`${ROOT}/a.txt`, `${SUB}/a.txt`, { conflict: "overwrite" });
+    const [toast] = await go("copy", d, "overwrite");
+    expect(d.files.copy).toHaveBeenLastCalledWith(`${ROOT}/a.txt`, `${SUB}/a.txt`, { conflict: "overwrite" });
     expect(d.fs.get(`${SUB}/a.txt`)?.size).toBe(1);
-    expect(r.output.text).toContain("Copied");
+    expect(toast).toMatchObject({ type: "toast", tone: "success" });
+    expect(toast.message).toContain("Copied");
   });
 
   it("skip: nothing is written, the source stays", async () => {
     const d = setup();
-    const r = await go("move", d, "skip");
+    const [toast] = await go("move", d, "skip");
     expect(d.calls).toEqual([]);
     expect(d.fs.has(`${ROOT}/a.txt`)).toBe(true);
     expect(d.fs.get(`${SUB}/a.txt`)?.size).toBe(99);
-    expect(r.output.text).toContain("Skipped");
+    expect(toast.message).toContain("Skipped");
   });
 
-  it("keep both: the host names the new one, the old one is untouched, the result path is the new one", async () => {
+  it("keep both: the host names the new one, the old one is untouched, the toast names the new path", async () => {
     const d = setup();
-    const r = await go("copy", d, "keepBoth");
-    expect(d.files.copy).toHaveBeenCalledWith(`${ROOT}/a.txt`, `${SUB}/a.txt`, { conflict: "keepBoth" });
+    const [toast] = await go("copy", d, "keepBoth");
+    expect(d.files.copy).toHaveBeenLastCalledWith(`${ROOT}/a.txt`, `${SUB}/a.txt`, { conflict: "keepBoth" });
     expect(d.fs.get(`${SUB}/a.txt`)?.size).toBe(99);
     expect(d.fs.get(`${SUB}/a 2.txt`)?.size).toBe(1);
-    expect(r.output.text).toContain(`${SUB}/a 2.txt`);
+    expect(toast.message).toContain(`${SUB}/a 2.txt`);
     const m = setup();
     await go("move", m, "keepBoth");
     expect(m.fs.has(`${ROOT}/a.txt`)).toBe(false);
     expect(m.fs.has(`${SUB}/a 2.txt`)).toBe(true);
   });
 
-  it("no conflict: the host is asked to fail on a clash (the default), so nothing is overwritten by accident", async () => {
+  it("no clash: it just works on the first call, with conflict fail", async () => {
     const d = fakeDisk({ [`${ROOT}/a.txt`]: 1, [SUB]: null });
-    await go("copy", d);
+    const [toast] = await go("copy", d);
+    expect(toast).toMatchObject({ type: "toast" });
     expect(d.files.copy).toHaveBeenCalledWith(`${ROOT}/a.txt`, `${SUB}/a.txt`, { conflict: "fail" });
   });
 
   it("host codes become words: into itself, authorized folder itself, Trash unavailable", async () => {
     const d = fakeDisk({ [`${ROOT}/a.txt`]: 1, [SUB]: null });
     d.files.copy.mockRejectedValueOnce(hostError("invalid", { reason: "intoItself" }));
-    await expect(go("copy", d)).rejects.toThrow(EN["error.intoItself"]);
+    await expect(run("copy", { files: d.files }, `${ROOT}/a.txt`, { destination: SUB })).rejects.toThrow(EN["error.intoItself"]);
     d.files.move.mockRejectedValueOnce(hostError("invalid", { reason: "isRoot" }));
-    await expect(go("move", d)).rejects.toThrow(EN["error.isRoot"]);
+    await expect(run("move", { files: d.files }, `${ROOT}/a.txt`, { destination: SUB })).rejects.toThrow(EN["error.isRoot"]);
     d.files.trash.mockRejectedValueOnce(hostError("invalid", { reason: "trashUnavailable" }));
     await expect(run("trash", { files: d.files }, `${ROOT}/a.txt`)).rejects.toThrow(EN["error.trashUnavailable"]);
     d.files.removeRoot.mockRejectedValueOnce(hostError("notFound", { reason: "grant" }));
     await expect(run("grantRemove", { files: d.files }, ROOT)).rejects.toThrow(EN["error.notGranted"]);
   });
 
-  describe("commands (the shell's conflict dialog)", () => {
-    const cmd = (name: string, d: ReturnType<typeof setup>, args: Record<string, unknown>, nodeKey = `${ROOT}/a.txt`) =>
-      registry(plugin).commands[name]({ locale: "en-US", host: { files: d.files }, t: tt }, { nodeKey, args });
-
-    it("a taken name returns a confirm effect with overwrite / skip / keep both, answered through args.conflict", async () => {
-      const d = setup();
-      const effects = await cmd("copy", d, { destination: SUB });
-      expect(effects).toEqual([
-        {
-          type: "confirm",
-          message: expect.stringContaining("a.txt"),
-          command: "org.onedesk.files:copy",
-          choices: [{ id: "overwrite", danger: true }, { id: "skip" }, { id: "keepBoth" }],
-          choiceArg: "conflict",
-        },
-      ]);
-      expect(d.calls).toEqual([]);
-    });
-    it("run again with the answer", async () => {
-      const d = setup();
-      const [toast] = await cmd("copy", d, { destination: SUB, conflict: "keepBoth", confirmed: true });
-      expect(toast).toMatchObject({ type: "toast", tone: "success" });
-      expect(d.fs.has(`${SUB}/a 2.txt`)).toBe(true);
-      const [skipped] = await cmd("move", d, { destination: SUB, conflict: "skip", confirmed: true });
-      expect(skipped.message).toContain("Skipped");
-      expect(d.fs.has(`${ROOT}/a.txt`)).toBe(true);
-    });
-    it("rename asks too, and a path outside is a danger toast without touching the host", async () => {
-      const d = fakeDisk({ [`${ROOT}/a.txt`]: 1, [`${ROOT}/b.txt`]: 2 });
-      expect((await cmd("rename", d, { newName: "b.txt" }, `${ROOT}/a.txt`))[0]).toMatchObject({ type: "confirm", command: "org.onedesk.files:rename" });
-      const out = await cmd("move", d, { destination: ROOT }, "/etc/passwd");
-      expect(out[0]).toMatchObject({ type: "toast", tone: "danger" });
-      expect(d.calls).toEqual([]);
-    });
+  it("rename asks too (and keeps both with the host's naming); a path outside is a danger toast without touching the host", async () => {
+    const d = fakeDisk({ [`${ROOT}/a.txt`]: 1, [`${ROOT}/b.txt`]: 2 });
+    expect((await cmd("rename", d, { newName: "b.txt" }))[0]).toMatchObject({ type: "confirm", command: "org.onedesk.files:rename", choiceArg: "conflict" });
+    await cmd("rename", d, { newName: "b.txt", conflict: "keepBoth", confirmed: true });
+    expect([...d.fs.keys()].sort()).toEqual([ROOT, `${ROOT}/b.txt`, `${ROOT}/b 2.txt`].sort());
+    const out = await cmd("move", d, { destination: ROOT }, "/etc/passwd");
+    expect(out[0]).toMatchObject({ type: "toast", tone: "danger" });
   });
 
-  it("rename onto a taken name follows the same choice", async () => {
-    const d = fakeDisk({ [`${ROOT}/a.txt`]: 1, [`${ROOT}/b.txt`]: 2 });
-    await expect(run("rename", { files: d.files }, `${ROOT}/a.txt`, { newName: "b.txt" })).rejects.toThrow("already exists");
-    await run("rename", { files: d.files }, `${ROOT}/a.txt`, { newName: "b.txt", conflict: "keepBoth" });
-    expect([...d.fs.keys()].sort()).toEqual([ROOT, `${ROOT}/b.txt`, `${ROOT}/b 2.txt`].sort());
+  it("the page has no conflict dropdown any more", async () => {
+    const d = fakeDisk({ [`${ROOT}/a.txt`]: 1 });
+    const { pages } = registry(plugin);
+    const out = await pages.text.render(ctxOf({ roots: d.files.roots, stat: d.files.stat, readText: async () => ({ text: "", basis: "b" }) }, `${ROOT}/a.txt`));
+    expect(out.view.find((n: any) => n.id === "ops").fields.map((f: any) => f.name)).not.toContain("conflict");
   });
 });
 
@@ -492,6 +485,17 @@ describe("files plugin: delete", () => {
     expect(d.files.remove).toHaveBeenCalledWith(`${ROOT}/a.txt`);
     expect(d.files.trash).not.toHaveBeenCalled();
     expect(d.fs.has(`${ROOT}/a.txt`)).toBe(false);
+  });
+
+  it("permanent delete as a command: first an irreversible confirm, only the rerun deletes", async () => {
+    const d = fakeDisk({ [`${ROOT}/a.txt`]: 1 });
+    const cmd = (args: Record<string, unknown>) => registry(plugin).commands.delete({ locale: "en-US", host: { files: d.files }, t: tt }, { nodeKey: `${ROOT}/a.txt`, args });
+    const [ask] = await cmd({});
+    expect(ask).toMatchObject({ type: "confirm", command: "org.onedesk.files:delete", danger: true, irreversible: true });
+    expect(d.files.remove).not.toHaveBeenCalled();
+    const [done] = await cmd({ confirmed: true });
+    expect(d.files.remove).toHaveBeenCalledWith(`${ROOT}/a.txt`);
+    expect(done).toMatchObject({ type: "toast", tone: "success" });
   });
 
   it("an authorized folder itself is not deleted (its authorization is removed instead)", async () => {
@@ -684,8 +688,7 @@ describe("files plugin: package", () => {
   it("every key the code uses exists in en, zh and ja", () => {
     const src = readFileSync(new URL("./main.js", import.meta.url), "utf8");
     const keys = [...src.matchAll(/(?:tr2?\(ctx, |ctx\.t\(|fail\(ctx, |done\(ctx, )"([a-zA-Z.]+)"/g)].map((m) => m[1]!);
-    for (const c of ["ask", "overwrite", "skip", "keepBoth"]) keys.push(`conflict.${c}`);
-    for (const k of keys) for (const L of [EN, ZH, JA]) expect(L[k], k).toBeTypeOf("string");
+        for (const k of keys) for (const L of [EN, ZH, JA]) expect(L[k], k).toBeTypeOf("string");
     const mkeys = [...JSON.stringify(manifest).matchAll(/"((?:plugin|kind|action|tab|tree|confirm)\.[A-Za-z.]+)"/g)].map((m) => m[1]!);
     for (const k of mkeys.filter((k) => k !== "plugin.grantFolder")) for (const L of [EN, ZH, JA]) expect(L[k], k).toBeTypeOf("string");
   });

@@ -154,10 +154,6 @@ function param(ctx, name) {
   return typeof v === "string" ? v.trim() : v === undefined || v === null ? "" : String(v);
 }
 
-function conflictMode(ctx) {
-  const c = param(ctx, "conflict");
-  return CONFLICTS.includes(c) ? c : "ask";
-}
 
 // The folder a "new item" or "search" action works in: the node itself when it is a folder, else its parent.
 async function folderOf(ctx, path) {
@@ -190,7 +186,7 @@ export async function transfer(ctx, op, from, destDir, name, mode) {
 export function explain(ctx, err, name) {
   const code = err && err.code;
   const reason = err && err.params && err.params.reason;
-  if (code === "conflict") return Object.assign(fail(ctx, "conflict.exists", { name: name || "" }), { isConflict: true, conflictName: name || "" });
+  if (code === "conflict") return Object.assign(fail(ctx, "error.exists", { name: name || "" }), { isConflict: true, conflictName: name || "" });
   if (code === "invalid" && reason === "intoItself") return fail(ctx, "error.intoItself");
   if (code === "invalid" && reason === "isRoot") return fail(ctx, "error.isRoot");
   if (code === "invalid" && reason === "trashUnavailable") return fail(ctx, "error.trashUnavailable");
@@ -303,15 +299,15 @@ export function conflictAsk(ctx, command, name) {
     type: "confirm",
     message: tr2(ctx, "conflict.exists", { name }),
     command,
+    danger: false,
     choices: [{ id: "overwrite", danger: true }, { id: "skip" }, { id: "keepBoth" }],
     choiceArg: "conflict",
   };
 }
 
-function opsForm(ctx, { withConflict }) {
+function opsForm(ctx) {
   const f = (name, kind, extra) => ({ name, label: ctx.t(`field.${name}`), kind, param: true, ...(extra || {}) });
   const fields = [f("newName", "text", { placeholder: ctx.t("field.newName.placeholder") }), f("destination", "text", { placeholder: ctx.t("field.destination.placeholder") })];
-  if (withConflict) fields.push(f("conflict", "enum", { options: CONFLICTS.map((c) => ({ value: c, label: ctx.t(`conflict.${c}`) })) }));
   fields.push(f("query", "text", { placeholder: ctx.t("field.query.placeholder") }), f("recursive", "boolean"));
   return { type: "form", id: "ops", layout: "strip", fields };
 }
@@ -416,7 +412,7 @@ export default {
             ...head,
             icon: "folder",
             readOnly: true,
-            view: [opsForm(ctx, { withConflict: true }), { type: "text", id: "dir", text: tr2(ctx, "folder.note"), tone: "muted" }],
+            view: [opsForm(ctx), { type: "text", id: "dir", text: tr2(ctx, "folder.note"), tone: "muted" }],
             values: {},
           };
         }
@@ -434,7 +430,7 @@ export default {
           if (language) field.language = language;
           return {
             ...head,
-            view: [opsForm(ctx, { withConflict: true }), { type: "form", id: "content", layout: "stack", fields: [field] }],
+            view: [opsForm(ctx), { type: "form", id: "content", layout: "stack", fields: [field] }],
             values: { content: file.text },
             basis: file.basis,
           };
@@ -442,7 +438,7 @@ export default {
           return {
             ...head,
             readOnly: true,
-            view: [opsForm(ctx, { withConflict: true }), { type: "text", id: "reason", text: tr(ctx, reasonOf(err)), tone: "muted" }],
+            view: [opsForm(ctx), { type: "text", id: "reason", text: tr(ctx, reasonOf(err)), tone: "muted" }],
             values: {},
           };
         }
@@ -546,7 +542,7 @@ export default {
       const { path } = await scoped(ctx, targetOf(ctx));
       const name = param(ctx, "newName");
       if (!validName(name)) throw fail(ctx, "error.badName");
-      const r = await transfer(ctx, "move", path, dirName(path), name, conflictMode(ctx));
+      const r = await transfer(ctx, "move", path, dirName(path), name, "ask");
       return r.skipped ? done(ctx, "done.skipped", { path: r.path }) : done(ctx, "done.renamed", { path: r.path });
     });
 
@@ -558,7 +554,7 @@ export default {
         await scoped(ctx, dest);
         const info = await ctx.host.files.stat(dest);
         if (!info || !info.dir) throw fail(ctx, "error.destNotFolder");
-        const r = await transfer(ctx, op, path, dest, baseName(path), conflictMode(ctx));
+        const r = await transfer(ctx, op, path, dest, baseName(path), "ask");
         if (r.skipped) return done(ctx, "done.skipped", { path: r.path });
         return done(ctx, op === "move" ? "done.moved" : "done.copied", { path: r.path });
       });
@@ -575,7 +571,7 @@ export default {
       return done(ctx, "done.trashed", { path });
     });
 
-    // Permanent: the manifest asks the user to confirm before this runs.
+    // Permanent: the manifest asks the user to confirm before this runs (the command below asks with "cannot be undone").
     host.actions.handle("delete", async (ctx) => {
       const { path, roots } = await scoped(ctx, targetOf(ctx));
       if (roots.some((r) => normalize(r.path) === path)) throw fail(ctx, "error.isRoot");
@@ -623,6 +619,25 @@ export default {
         },
         summary: { rows: rows.length, message },
       };
+    });
+
+    // Permanent delete as a command: the first call only asks (an irreversible confirm), the rerun with
+    // `args.confirmed` deletes.
+    host.commands.handle("delete", async (ctx, context) => {
+      const args = (context && context.args) || {};
+      const path = String((context && context.nodeKey) || "");
+      try {
+        const { path: p, roots } = await scoped({ ...ctx, node: { key: path } }, path);
+        if (roots.some((r) => normalize(r.path) === p)) throw fail(ctx, "error.isRoot");
+        if (args.confirmed !== true) {
+          return [{ type: "confirm", message: tr2(ctx, "confirm.delete.named", { name: baseName(p) }), command: `${PLUGIN}:delete`, danger: true, irreversible: true }];
+        }
+        await ctx.host.files.remove(p);
+        return [{ type: "toast", message: tr2(ctx, "done.deleted", { path: p }), tone: "success" }];
+      } catch (err) {
+        const e = explain(ctx, err, "");
+        return [{ type: "toast", message: String((e && e.message) || e), tone: "danger" }];
+      }
     });
 
     // Commands (the shell's conflict dialog reruns a command with the chosen `args.conflict`): the same operations

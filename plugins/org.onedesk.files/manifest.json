@@ -240,7 +240,13 @@
           "folder": ""
         },
         "draggable": false,
-        "accepts": []
+        "accepts": [],
+        "menu": [
+          "copy",
+          "move",
+          "rename",
+          "delete"
+        ]
       },
       {
         "id": "disk-folder",
@@ -406,6 +412,12 @@
         "id": "rename",
         "label": "action.rename",
         "icon": "pencil",
+        "palette": false
+      },
+      {
+        "id": "delete",
+        "label": "action.delete",
+        "icon": "trash",
         "palette": false
       }
     ]
