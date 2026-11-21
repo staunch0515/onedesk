@@ -115,6 +115,17 @@ D421（`actions.call` 只能在运行里）：内核不用改。
 
 测试：`ONEDESK_SECRET_STORE=memory cargo test --workspace --no-fail-fast` **588 通过、0 失败**（`round16.rs` 15 条）；`pnpm clippy`、`pnpm typecheck`、`pnpm lint` 通过。提交：`f2a16e5`。
 
+## `upsertByKey` 改名批次的平方耗时（插件 e2e ⑥，2026-11-21）
+
+先合入协调分支 `5028d1b`。
+
+- 来源：不是名字唯一性或祖先计算，是搜索索引。每条资源改写时 `Tx::index` 先删旧的搜索行；`search` 开着 FTS5 的 `secure-delete`（D283，迁移 0004），这种删除要把旧文字每个三字组的整条条目表走一遍。同一类型的资源文字大多相同（查询目录里的 SQL），这些条目表的长度就是条数，于是 n 条改名约 n²。取样显示约八成时间在 `fts5FlushSecureDelete`。
+- 改法（`pipeline.rs`）：一个事务里改写的搜索行到第 `BULK_INDEX` = 256 行时关掉 `secure-delete`，之后的旧条目只标删除；提交前 `transact` 做一次 `optimize`（与 purge 相同），把标删的条目从段里去掉，再打开 `secure-delete`。少于 256 行的写入照旧逐条抹除。都在同一事务里，失败时一起回滚。D283 不变：合并后旧文字不留在全文段里，连接的 `secure_delete` 仍把释放的页清零。
+- 代价：大批次多一次整个索引的合并（与永久删除相同），和工作区的搜索数据量成正比，不随批次条数平方增长。
+- 实测（调试构建，每条都带相同 SQL 文字）：改名 2000 条 4.1 s → 1.1 s；5000 条之前超过 15 s 的命令时限，现在约 1.6 s。
+
+测试：`round16.rs` `e2e_upsert_of_a_named_batch_is_linear`（`round16.rs` 共 16 条；全工作区 589 通过、0 失败，clippy、lint、typecheck 通过）。先各建 1000 条、5000 条，再整批改名。断言 5000 条少于 15 s，并且少于 1000 条耗时的 12 倍加 1 s（平方会是 25 倍）；搜索只找到新名字，`secure-delete` 恢复为 1。把阈值改成不可能达到时，这条测试超时失败。
+
 ## 没运行过的
 
 - e2e（Playwright）、`pnpm test`（vitest）、完整 `pnpm check`：本轮内核改动不涉及界面，归测试会话与协调会话。

@@ -718,3 +718,60 @@ async fn e2e22_link_output_carries_params() {
         assert_eq!((r["status"].as_str(), r["error"]["code"].as_str()), (Some("error"), Some("badOutput")), "{r}");
     }
 }
+
+/// Plugin e2e: renaming a batch of resources whose text shares most trigrams grew with the square
+/// of its size (1500 in 5.4 s, 3000 in 27 s): every search row was rewritten with a scrubbing
+/// delete. Now from the 256th row on old entries are only marked deleted and the index is merged
+/// once before commit. A loose bound and a ratio (n² would be 25× for 5× the rows); the search
+/// finds the new names only, and scrubbing is back on afterwards.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn e2e_upsert_of_a_named_batch_is_linear() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("plugins");
+    pkg(&root, "t.n", json!({
+        "contributes": {
+            "kinds": [{ "id": "q", "label": "Q", "icon": "file", "page": "p", "defaults": { "text": "" } }],
+            "pages": [{ "id": "p" }],
+            "commands": [{ "id": "probe", "label": "p" }]
+        }
+    }), r#"export default { activate(host) { host.commands.handle("probe", probe);
+      host.pages.handle("p", { async render() { return { view: [] }; } }); } };"#);
+    let env = open_exact(tmp, &root, config_for(&root));
+    let c = Client::in_proc(env.kernel.clone());
+    c.hello().await;
+    // Like a query folder: the same text in every file, a name from its header.
+    let batch = |n: usize, tag: &str, named: bool| -> Value {
+        Value::Array(
+            (0..n)
+                .map(|i| {
+                    let mut it = json!({ "key": format!("/{tag}/{i}.sql"), "description": "d",
+                        "body": { "path": format!("/{tag}/{i}.sql"), "sql": "select * from orders where a = :a and b = :b -- shared text" } });
+                    if named {
+                        it["name"] = json!(format!("Entry {tag} {i}"));
+                    }
+                    it
+                })
+                .collect(),
+        )
+    };
+    let mut took = vec![];
+    for (n, tag) in [(1000usize, "a"), (5000, "b")] {
+        let u = c.probe("t.n", "resources.upsertByKey", json!(["q", batch(n, tag, false), {}])).await;
+        assert_eq!(u["ok"]["created"], n, "{u}");
+        let t = std::time::Instant::now();
+        let u = c.probe("t.n", "resources.upsertByKey", json!(["q", batch(n, tag, true), {}])).await;
+        assert_eq!(u["ok"]["updated"], n, "{u}");
+        took.push(t.elapsed());
+    }
+    let (small, large) = (took[0], took[1]);
+    assert!(large < Duration::from_secs(15), "5000 renames took {large:?}");
+    assert!(large < small * 12 + Duration::from_secs(1), "1000 renames {small:?}, 5000 renames {large:?}");
+    // The search has the new names, not the old ones.
+    let hits = c.ok("search.query", json!({ "text": "Entry b 4999" })).await;
+    assert_eq!(hits.as_array().unwrap().len(), 1, "{hits}");
+    let conn = rusqlite::Connection::open(env.kernel.db_path()).unwrap();
+    let old: i64 = conn.query_row("SELECT count(*) FROM search WHERE name MATCH '\"4999.sql\"'", [], |r| r.get(0)).unwrap();
+    assert_eq!(old, 0);
+    let scrub: i64 = conn.query_row("SELECT v FROM search_config WHERE k = 'secure-delete'", [], |r| r.get(0)).unwrap();
+    assert_eq!(scrub, 1, "scrubbing is back on");
+}
