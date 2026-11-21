@@ -54,5 +54,6 @@
   "tree.notLoaded": "未読み込み — 開いて更新",
   "warn.sourceFailed": "データベースを読めなかったため、欠落の表示はありません：{error}",
   "error.snapshotTooLarge": "マッピングが大きすぎて保存できません",
-  "action.tablesHere": "このデータベースのテーブルを読む"
+  "action.tablesHere": "このデータベースのテーブルを読む",
+  "error.noRows": "データソースが行を返しませんでした（結果を直接返す機能が必要です）"
 }

@@ -646,6 +646,41 @@ function catalogId(r) {
   return (r.body && typeof r.body.id === "string" && r.body.id) || r.name || r.id;
 }
 
+// One level of the tree from the index: the group keys and the entries (`{ id, cid }`) directly under `parentKey`.
+export function levelOf(entries, parentKey) {
+  const parent = parentKey ? parentKey.slice(GROUP.length) : "";
+  const groups = new Set();
+  const here = [];
+  for (const e of entries) {
+    const gs = groupsOf(e.cid);
+    if ((gs.length ? gs[gs.length - 1] : "") === parent) here.push(e);
+    const idx = parent ? gs.indexOf(parent) : -1;
+    const child = parent ? (idx >= 0 ? gs[idx + 1] : undefined) : gs[0];
+    if (child) groups.add(child);
+  }
+  here.sort((a, b) => (a.cid < b.cid ? -1 : a.cid > b.cid ? 1 : 0));
+  return { groups: [...groups].sort(), entries: here };
+}
+
+export const TREE_PAGE = 200;
+
+// Tree nodes from the index: groups first (first page only), then up to TREE_PAGE entries from `offset`, each read
+// with `resources.get` for its current name and state; deleted ones are left out.
+export async function indexChildren(ctx, index, parentKey, offset, missingBadge) {
+  const { groups, entries } = levelOf([...index.values()], parentKey);
+  const start = offset || 0;
+  const nodes = start === 0 ? groups.map((k) => ({ key: GROUP + k, label: k.split(".").pop(), icon: "folder", expandable: true })) : [];
+  const page = entries.slice(start, start + TREE_PAGE);
+  for (const e of page) {
+    const r = await ctx.host.resources.get(e.id);
+    if (!r || r.deleted) continue;
+    const n = { key: r.id, label: r.name || e.cid, icon: "file-search", expandable: false, target: `resource:${r.id}` };
+    if (isMissing(r)) (n.icon = "triangle-alert"), (n.badge = missingBadge || "missing");
+    nodes.push(n);
+  }
+  return start + TREE_PAGE < entries.length ? { nodes, next: start + TREE_PAGE } : { nodes };
+}
+
 export function treePath(resources, key) {
   if (key.startsWith(GROUP)) {
     const k = key.slice(GROUP.length);
@@ -760,15 +795,24 @@ export async function sync(ctx) {
       body: { id: e.id, path, sql: e.sql, params: e.params, permissions: e.permissions, datasource: e.datasource, tags: e.tags },
     });
   }
-  // One batch keyed by external key (round16-protocol.md §2.2). Only description and body are sent, so a name
-  // the user gave an entry stays — also when a deleted entry comes back (review #8). Indexed files not in the
-  // batch are marked missing, unless the walk was cut short: then nothing is (review #6).
-  const existing = new Set(
-    ((await ctx.host.resources.list({ kind: KIND })) || []).map((r) => r.externalKey).filter((k) => typeof k === "string"),
+  // One batch keyed by external key (round16-protocol.md §2.2). A file indexed before gets only its description
+  // and body, so a name the user gave it stays — also when the user had deleted the entry and it comes back
+  // (review #8); a new file also gets its name. Which keys were indexed before is kept in INDEX_FILE in the
+  // plugin's own folder (e2e ⑥: renaming thousands of entries in a second batch, or listing them all, does not
+  // fit the time and memory limits). Indexed files not in the batch are marked missing, unless the walk was
+  // cut short (review #6).
+  const index = (await readIndex(ctx)) || new Map();
+  const known = await knownPaths(ctx, index.size ? index : null);
+  const batch = items.map((it) =>
+    known.has(it.externalKey) ? { key: it.externalKey, description: it.description, body: it.body } : { key: it.externalKey, name: it.name, description: it.description, body: it.body },
   );
-  const batch = items.map((it) => ({ key: it.externalKey, description: it.description, body: it.body }));
   const result = (await ctx.host.resources.upsertByKey(KIND, batch, truncated ? {} : { othersMissing: true })) || {};
-  await nameNew(ctx, items.filter((it) => !existing.has(it.externalKey)), result);
+  const ids = result.ids || {};
+  for (const it of items) {
+    const id = ids[it.externalKey] || (index.get(it.externalKey) || {}).id;
+    if (id) index.set(it.externalKey, { id, cid: it.body.id });
+  }
+  await saveIndex(ctx, index);
   const report = {
     at: Date.now(),
     files: paths.length,
@@ -785,21 +829,50 @@ export async function sync(ctx) {
   return report;
 }
 
-// New entries are named after their header (title or id). The kernel names a new resource after the last part
-// of its key; a deleted entry that came back keeps its name, so when anything was restored only entries still
-// carrying that default name are renamed.
-async function nameNew(ctx, fresh, result) {
-  if (fresh.length === 0) return;
-  let rename = fresh;
-  if (Number(result.restored || 0) > 0) {
-    const ids = result.ids || {};
-    rename = [];
-    for (const it of fresh) {
-      const r = ids[it.externalKey] ? await ctx.host.resources.get(ids[it.externalKey]) : null;
-      if (r && r.name === it.externalKey.split("/").pop()) rename.push(it);
-    }
+// What this plugin has indexed, in its own folder (a relative path): one line per file, `path<TAB>resource id<TAB>
+// catalog id`. It is not data — losing it only means the next sync and the tree ask the kernel instead. It lets a
+// sync tell new files from known ones without listing every entry, and the tree build its groups without loading
+// every resource (e2e ⑥: thousands of full resources do not fit the sandbox's memory).
+export const INDEX_FILE = "index.tsv";
+
+export function parseIndex(text) {
+  const out = new Map();
+  for (const line of String(text || "").split("\n")) {
+    const [path, id, cid] = line.split("\t");
+    if (path && id) out.set(path, { id, cid: cid || "" });
   }
-  if (rename.length) await ctx.host.resources.upsertByKey(KIND, rename.map((it) => ({ key: it.externalKey, name: it.name })), {});
+  return out;
+}
+
+export function formatIndex(index) {
+  return [...index.keys()]
+    .sort()
+    .map((p) => `${p}\t${index.get(p).id}\t${index.get(p).cid}`)
+    .join("\n");
+}
+
+// The index, or null when there is none yet.
+export async function readIndex(ctx) {
+  try {
+    return parseIndex((await ctx.host.files.readText(INDEX_FILE)).text);
+  } catch (e) {
+    return null;
+  }
+}
+
+// Paths indexed before: from the index, else (first sync, or the file is gone) the entries the kernel lists.
+async function knownPaths(ctx, index) {
+  if (index) return new Set(index.keys());
+  const all = (await ctx.host.resources.list({ kind: KIND })) || [];
+  return new Set((Array.isArray(all) ? all : all.items || []).map((r) => r.externalKey).filter((k) => typeof k === "string"));
+}
+
+async function saveIndex(ctx, index) {
+  try {
+    await ctx.host.files.writeText(INDEX_FILE, formatIndex(index));
+  } catch (e) {
+    /* the next sync and the tree fall back to the kernel's list */
+  }
 }
 
 // Review #5: the stored report stays well under the 256 KB value limit (the run's own output has the whole list);
@@ -1079,11 +1152,15 @@ export default {
     });
 
     host.trees.handle("catalog", {
-      async children(ctx, parentKey) {
+      async children(ctx, parentKey, offset) {
+        const index = await readIndex(ctx);
+        if (index && index.size) return indexChildren(ctx, index, parentKey || "", offset, tr(ctx, "badge.missing"));
         const all = (await ctx.host.resources.list({ kind: KIND })) || [];
         return { nodes: treeChildren(Array.isArray(all) ? all : all.items || [], parentKey || "", tr(ctx, "badge.missing")) };
       },
       async path(ctx, key) {
+        const index = await readIndex(ctx);
+        if (index && index.size) return treePath([...index.values()].map((e) => ({ id: e.id, body: { id: e.cid } })), key);
         const all = (await ctx.host.resources.list({ kind: KIND })) || [];
         return treePath(Array.isArray(all) ? all : all.items || [], key);
       },

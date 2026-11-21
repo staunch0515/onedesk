@@ -1,7 +1,7 @@
 # 第十六轮：新插件会话完成记录（r16-plugins）
 
 分支 `claude/r16-plugins-fd9132`。只改了 `plugins/org.onedesk.catalog/**`、`plugins/org.onedesk.table/**` 和本文件。
-插件代码的最后提交：**`fd0bdda`**（e2e #21；之前 `813a875` 审查修正、`52dd001`、`d4ccbc9`），本文件在其后单独提交。已合入协调分支 `claude/onedesk-coord-6` 的 `2e37488`。
+插件代码的最后提交：**`c5e67d5`**（e2e ⑤⑥；之前 `fd0bdda` e2e #21、`813a875` 审查修正、`52dd001`、`d4ccbc9`），本文件在其后单独提交。已合入协调分支 `claude/onedesk-coord-6` 的 `192982a`。
 
 验证：`pnpm test`（74 个文件 727 条全过，其中查询目录 35 条、表 18 条，另有公共的语言文件检查覆盖两个新插件）、`pnpm lint`（架构检查：16 个内置插件、沙箱全局对象检查通过；界面规范通过）、`pnpm typecheck` 通过。没有做 Rust 构建，也没有在真内核上跑过两个插件（需要合并内核分支后由第二阶段 e2e 验证）。没有新依赖：YAML 头与映射文件由插件自带的小解析器读取（规则 9 不涉及）。
 
@@ -61,6 +61,33 @@
 测试：两个插件各一条清单检查（照内核规则：有外部类型的动作，且依赖数据源插件），以及两个动作的行为测试。参考补丁里 `entityOfNode` 从 `target` 取键的改动没有采用，那是内核 #20（动作 ctx 缺 `node`）的绕过，应由内核修。
 
 建议（内核/主会话）：“能否读依赖方导出的类型”现在取决于是否在那个类型上声明了动作，这一点不直观；可以考虑让 `depends` + `exports.kinds[].read` 本身就够，或在清单里加一个显式的“读取”声明。
+
+## e2e ⑤⑥（`round16-tests-done.md` 末尾）
+
+真内核验证：从本分支构建 `onedesk-devhost`（共用 `/Users/chloe/onedesk/repo/target`），数据目录放在 scratchpad，并设 `ONEDESK_SECRET_STORE=memory`。用探针脚本和 `e2e/round16.spec.ts` 测。spec 里 H3 和“超过 5000 个文件”两条的 fixme 只在本地临时去掉，未提交。
+
+**⑥ 5100 个文件索引不完。** 加计时测出：
+- 读文件约 0.3 ms 一个，`upsertByKey` 新建 1500 条约 0.35 s，都不慢。
+- 慢的是第二个批次给新条目改名（审查 #8 时加的），内核里随条数平方增长：1500 条 5.4 s，3000 条 27 s。命令（15 s）和运行（60 s）都因此超时。
+- `quickjs: Null` 是内存不够：同步和目录树都把 5000 条完整资源 `resources.list` 进沙箱，超过 32 MB。
+
+改法：插件自有目录里放 `index.tsv`，每个文件一行：路径、资源 id、目录 id。
+- 同步据此区分新旧文件：新文件在同一批次里带名字，已索引过的（包括被删后恢复的）不带，#8 仍成立。没有索引时才退回 `resources.list`。
+- 目录树按索引分组，每页 200 条，逐个 `resources.get` 取当前名字和失效状态。
+
+结果（真内核）：5100 个文件作为命令和运行都约 4 秒完成，报告 “Stopped at 5000 files … nothing was marked missing”。原来的 12 条仍在、不标失效。5000 条的分组一页约 0.2 秒，`round16.spec.ts` 的这条单独运行通过。
+
+**⑤ 缺失表不标记。** 数据源的 `query` 把结果写成它自己目录里的数据文件（X2），表插件读不到行，“库里有哪些表”因此为空。#21 修好之前，连数据源也取不到。
+
+改法：表插件请求 `{ sql, inline: true, maxRows: 10000 }`；拿到的不是行时不标缺失，并在概览页写明原因。
+
+**数据源插件需要支持 `inline`（测试会话负责 `org.onedesk.datasource`）。** 参考补丁在共享笔记目录的 `datasource-inline.diff`：`inline: true` 时用已有的 `runReadonly` 返回行（最多 `maxRows` 行，上限 1 万）。打上这个补丁后，真内核上 H1/H3 与 H3 通过，全文件 19 通过；唯一失败的是 spec 自身的问题：“超过 5000 个文件”那条和前一条用同一个 `big-12` 目录，`symlink` 报 `EEXIST`，单独运行通过。
+
+测试：
+- 目录：索引的读写、第二次同步和目录树不再 `resources.list`、失效与删除在树里的表现、分页（200 一页、`next`）。
+- 表：请求带 `inline`；只给数据文件时不标缺失并写明原因。
+
+全量 `pnpm test` 78 个文件 765 条全过，`pnpm lint`、`pnpm typecheck` 通过。
 
 ## 需要别的会话做的（插件里没有绕过）
 

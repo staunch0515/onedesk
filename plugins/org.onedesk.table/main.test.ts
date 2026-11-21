@@ -222,6 +222,21 @@ describe("table: tree (H1–H3)", () => {
     expect(out.nodes.some((n: any) => n.icon === "triangle-alert")).toBe(false);
   });
 
+  it("asks the data source for the rows themselves; a data file instead of rows marks nothing missing (e2e ⑤)", async () => {
+    const { host } = fakeHost();
+    await refreshed(host);
+    expect(host.actions.call.mock.calls[1][1]).toEqual({ sql: expect.stringContaining("information_schema.tables"), inline: true, maxRows: 10000 });
+    const call = host.actions.call;
+    // a data source without inline results answers with a file handle in its own folder, which this plugin cannot read
+    host.actions.call = vi.fn(async (id: string, input: any, o: any) => (id.endsWith(":query") ? { output: { type: "table", file: "tmp/q-1.csv", header: true } } : call(id, input, o)));
+    const res = await refreshed(host);
+    expect(res.output.text).toBe("6 tables read; no data source to compare with");
+    const reg = registry(plugin);
+    expect((await reg.trees.tables.children(ctxOf(host), "")).nodes.some((n: any) => n.icon === "triangle-alert")).toBe(false);
+    const page = await reg.pages.overview.render(ctxOf(host));
+    expect(page.view.find((n: any) => n.id === "error").text).toContain(EN["error.noRows"]);
+  });
+
   it("a database that cannot be read marks nothing missing and says why on the overview", async () => {
     const { host } = fakeHost();
     const call = host.actions.call;

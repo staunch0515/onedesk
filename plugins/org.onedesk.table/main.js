@@ -147,6 +147,8 @@ export function deletedSql(entity, chosen, limit) {
 export const EXISTING_SQL =
   "SELECT table_schema, table_name FROM information_schema.tables WHERE table_schema NOT IN ('pg_catalog', 'information_schema') ORDER BY 1, 2";
 
+export const EXISTING_MAX = 10000;
+
 export function existingSet(rows) {
   const out = new Set();
   for (const r of rows || []) {
@@ -346,8 +348,8 @@ export async function sourceId(ctx) {
   return hit ? hit.id : "";
 }
 
-async function query(ctx, sql, source) {
-  const res = await ctx.host.actions.call(`${DATASOURCE}:query`, { sql }, { resource: source });
+async function query(ctx, sql, source, extra) {
+  const res = await ctx.host.actions.call(`${DATASOURCE}:query`, { sql, ...(extra || {}) }, { resource: source });
   if (res && typeof res.error === "string") throw new Error(res.error);
   if (!res || !res.output || res.output.type !== "table") throw new Error(tr(ctx, "error.noResult"));
   return res;
@@ -363,7 +365,11 @@ export async function refreshSnapshot(ctx, sourceGiven) {
   const source = sourceGiven || (await sourceId(ctx));
   if (source) {
     try {
-      const all = existingSet((await query(ctx, EXISTING_SQL, source)).output.rows);
+      // The rows themselves, not a data file (e2e ⑤): the data source hands its result back as a file in its own
+      // folder, which this plugin cannot read. Without rows nothing is marked missing — "all missing" would be wrong.
+      const out = (await query(ctx, EXISTING_SQL, source, { inline: true, maxRows: EXISTING_MAX })).output;
+      if (!Array.isArray(out.rows)) throw new Error(tr(ctx, "error.noRows"));
+      const all = existingSet(out.rows);
       // only what the tree needs: the mapping's tables the database has
       existing = Object.keys(mapping.entities)
         .map((n) => mapping.entities[n].table)
