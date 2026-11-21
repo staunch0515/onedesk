@@ -292,6 +292,12 @@ function reasonOf(err) {
 const PLUGIN = "org.onedesk.files";
 const nodeTarget = (tree, key) => `node:${PLUGIN}:${tree}/${encodeURIComponent(key)}`;
 const ADD_KEY = "~add";
+// D430: the shell wires drag and drop, "move to / copy to" and renaming by the command ids ending in :move, :copy, :rename.
+const NODE_MENU = [`${PLUGIN}:move`, `${PLUGIN}:copy`, `${PLUGIN}:rename`, `${PLUGIN}:delete`, "node.open"];
+const fileNode = (e) =>
+  e.dir
+    ? { key: e.path, label: e.name, icon: "folder", expandable: true, target: nodeTarget("files", e.path), menu: NODE_MENU, draggable: true, accepts: ["*"] }
+    : { key: e.path, label: e.name, icon: "file-text", expandable: false, target: nodeTarget("files", e.path), menu: NODE_MENU, draggable: true };
 
 // A page button runs a command with the inputs' current values as `args` (D429): the names may arrive bare or as
 // the page's parameter path.
@@ -352,11 +358,7 @@ export default {
         }
         const start = offset || 0;
         const page = await ctx.host.files.list(parentKey, { offset: start, limit: PAGE_SIZE });
-        const nodes = arrange(page.entries).map((e) =>
-          e.dir
-            ? { key: e.path, label: e.name, icon: "folder", expandable: true, target: nodeTarget("files", e.path) }
-            : { key: e.path, label: e.name, icon: "file-text", expandable: false, target: nodeTarget("files", e.path) },
-        );
+        const nodes = arrange(page.entries).map(fileNode);
         return page.next === undefined || page.next === null ? { nodes } : { nodes, next: page.next };
       },
 

@@ -88,8 +88,11 @@ export function authParts(body) {
   const value = `{{secret:${ref}}}`;
   const name = String(body.authName || "").trim();
   if (mode === "bearer") return { header: ["Authorization", `Bearer ${value}`], query: null, mode };
-  // Basic: the secret holds the ready "user:password" in base64 (the host can only substitute, not encode).
-  if (mode === "basic") return { header: ["Authorization", `Basic ${value}`], query: null, mode };
+  // Basic: the host puts base64("user:secret") in place of the reference (the user name never holds a colon).
+  if (mode === "basic") {
+    const user = String(body.username || "").trim();
+    return { header: user && !user.includes(":") ? ["Authorization", `Basic {{secret:${ref}|basic:${user}}}`] : null, query: null, mode, badUser: user === "" ? "noUsername" : user.includes(":") ? "badUsername" : "" };
+  }
   if (mode === "header") return { header: name ? [name, value] : null, query: null, mode, badName: !HEADER_NAME.test(name) };
   return { header: null, query: name ? [name, value] : null, mode, badName: !name };
 }
@@ -106,6 +109,7 @@ export function buildRequest(ctx, body, input, values) {
   if (joined === null) throw fail(ctx, "error.badPath");
   const auth = authParts(body);
   if (auth.missingSecret) throw fail(ctx, "error.noSecret");
+  if (auth.badUser) throw fail(ctx, `error.${auth.badUser}`);
   if (auth.badName || (auth.mode === "header" && !auth.header) || (auth.mode === "query" && !auth.query)) throw fail(ctx, "error.noAuthName");
 
   const pairs = [];
@@ -204,6 +208,7 @@ export default {
         const authFields = [
           f("auth", "enum", { options: AUTH.map((a) => ({ value: a, label: ctx.t(`auth.${a}`) })) }),
         ];
+        if (auth === "basic") authFields.push(f("username", "text", { placeholder: ctx.t("field.username.placeholder") }));
         if (auth === "header" || auth === "query") authFields.push(f("authName", "text", { placeholder: ctx.t(auth === "header" ? "field.authName.header" : "field.authName.query") }));
         if (auth !== "none") authFields.push(f("secret", "secret", { hint: ctx.t(auth === "basic" ? "field.secret.hintBasic" : "field.secret.hint") }));
         view.push({ type: "form", id: "auth", layout: "strip", fields: authFields });

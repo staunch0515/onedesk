@@ -19,7 +19,7 @@
   "field.authName.query": "Query parameter name, e.g. api_key",
   "field.secret": "Secret",
   "field.secret.hint": "Written to the keychain only; never shown again.",
-  "field.secret.hintBasic": "Written to the keychain only. Enter the base64 of user:password.",
+  "field.secret.hintBasic": "Written to the keychain only: the password.",
   "field.headers": "Default headers",
   "field.headers.placeholder": "One per line: Name: value. Sent with every request.",
   "auth.none": "None",
@@ -40,5 +40,9 @@
   "test.ok": "Connected: {status} in {ms} ms",
   "test.failed": "The server answered {status}.",
   "summary.test": "{status} · {ms} ms",
-  "summary.request": "{status}"
+  "summary.request": "{status}",
+  "field.username": "User name",
+  "field.username.placeholder": "The user name",
+  "error.badUsername": "The Basic user name must not contain “:”.",
+  "error.noUsername": "Give the Basic user name."
 }

@@ -31,8 +31,15 @@ describe("connection: request building", () => {
     const r = buildRequest(ctxOf({}, null), conn({ auth: "bearer", secret: { secret: SECRET } }).body, { path: "items" });
     expect(r.headers).toEqual({ Authorization: `Bearer {{secret:${SECRET}}}` });
   });
-  it("basic: Authorization: Basic with the secret reference", () => {
-    expect(authParts(conn({ auth: "basic", secret: { secret: SECRET } }).body).header).toEqual(["Authorization", `Basic {{secret:${SECRET}}}`]);
+  it("basic: the host builds base64(user:secret); only the reference and the user name are in the request", () => {
+    const body = conn({ auth: "basic", username: "aladdin", secret: { secret: SECRET } }).body;
+    expect(authParts(body).header).toEqual(["Authorization", `Basic {{secret:${SECRET}|basic:aladdin}}`]);
+    expect(buildRequest(ctxOf({}, null), body, {}).headers).toEqual({ Authorization: `Basic {{secret:${SECRET}|basic:aladdin}}` });
+  });
+  it("basic: a user name is required and cannot hold a colon", () => {
+    const base = { auth: "basic", secret: { secret: SECRET } };
+    expect(() => buildRequest(ctxOf({}, null), conn({ ...base }).body, {})).toThrow(EN["error.noUsername"]);
+    expect(() => buildRequest(ctxOf({}, null), conn({ ...base, username: "a:b" }).body, {})).toThrow(EN["error.badUsername"]);
   });
   it("custom header: uses the given name and replaces a caller's header of the same name", () => {
     const body = conn({ auth: "header", authName: "X-Api-Key", secret: { secret: SECRET }, headers: "x-api-key: old\nAccept: a/b" }).body;
@@ -95,7 +102,7 @@ describe("connection: plugin", () => {
     expect(await names("none")).toEqual(["auth"]);
     expect(await names("header")).toEqual(["auth", "authName", "secret"]);
     expect(await names("query")).toEqual(["auth", "authName", "secret"]);
-    expect(await names("basic")).toEqual(["auth", "secret"]);
+    expect(await names("basic")).toEqual(["auth", "username", "secret"]);
   });
 
   it("render: an environment parameter in the address gets a strip with the environment value", async () => {

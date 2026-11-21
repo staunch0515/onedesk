@@ -43,7 +43,7 @@
 - 授权文件夹的“改”现在是 **更换文件夹**（动作 `grantReplace` → `replaceRoot(path)`，弹外壳的选择框），不再是改显示名；“增”是 `grantAdd` → `addRoot()`。
 - 原因码：`conflict/exists`（同名）、`invalid/intoItself`、`invalid/isRoot`、`invalid/trashUnavailable`、`notFound/grant` 都转成用户的话（`explain`）。
 - 冲突与永久删除按 D428：插件命令 `move`、`copy`、`rename`、`delete`（读 `context.nodeKey` 与 `context.args`）。同名：先用 `conflict:"fail"` 调宿主，遇 `conflict/exists` 返回 `confirm` 效果（`choices` overwrite/skip/keepBoth、`choiceArg:"conflict"`），外壳带选择重跑，插件再用该值调一次。永久删除：第一次返回 `irreversible:true` 的 `confirm`，带 `confirmed` 重跑才删。页面上的“同名时”下拉已去掉。
-- 页面按钮（D429）：复制、移动、重命名、永久删除四个按钮改成 `command`（指向同名命令，不再写 `action`），命令从 `args` 里读 `destination`、`newName`（裸名或 `params.<名>` 都认），在 `disk-file` 资源上用资源记的路径。**待核对**：内核把 `command` 与表单值的确切名字写进 `round17-protocol.md` 后，对一遍输入框的 args 名；在内核支持之前，清单里的 `command` 字段会让旧内核拒绝加载本插件。
+- 页面按钮（D429）：复制、移动、重命名、永久删除四个按钮改成 `command`（指向同名命令，不再写 `action`），命令从 `args` 里读 `destination`、`newName`（裸名或 `params.<名>` 都认），在 `disk-file` 资源上用资源记的路径。真内核（含 `command`）已加载本插件清单，命令用 `copy` 的同名/保留两份/永久删除都走通；页面表单里点按钮时的 args 名（`newName`、`destination`）还没在界面里点过。
 
 ## 限制与范围外
 
@@ -57,3 +57,10 @@
 ## 最后提交
 
 提交 `1502022`（plugin/files、plugin/connection、plugin/http，一个提交）。
+
+## 第二批（真内核验证）
+
+- Basic 认证改用 `Authorization: Basic {{secret:名字|basic:用户名}}`，表单为“用户名 + 密码（密钥字段）”；用户名为空或含 `:` 都拒绝。真内核：本机 HTTP 服务收到 `Basic base64(用户名:密钥)`，Bearer、请求头、查询参数也都对；资源页的值里密钥只是 `true`，数据目录和日志里没有密钥值；HTTP 插件选连接发请求带 Basic 成功；审计有 `network.request` 和 `actions.call`。
+- 文件树节点（D430）：文件与文件夹带 `menu`（`org.onedesk.files:move/copy/rename/delete`、`node.open`）和 `draggable`，文件夹加 `accepts: ["*"]`。**注意**：现在的内核还不认节点的这三个字段（真内核回 `bad tree page: unknown field accepts`），内核的 D430 透传合并之前文件树会整棵报错。
+- 树刷新：内核在授权/更换授权时已经发 `tree:<树>` 主题（`commands.rs` 的 `set_grant_as`），插件没有别的办法；刚授权后要切换才刷新应是外壳没有重取该主题。
+- HTTP 插件的 `fetch` 动作是为了让它能列出连接（内核要求清单里有一个作用在 `org.onedesk.connection:connection` 上的动作）。

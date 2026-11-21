@@ -19,7 +19,7 @@
   "field.authName.query": "クエリパラメーター名（例：api_key）",
   "field.secret": "シークレット",
   "field.secret.hint": "キーチェーンにのみ保存され、再表示されません。",
-  "field.secret.hintBasic": "キーチェーンにのみ保存されます。user:password を base64 にしたものを入力します。",
+  "field.secret.hintBasic": "キーチェーンにのみ保存されます：パスワード。",
   "field.headers": "既定のヘッダー",
   "field.headers.placeholder": "1 行に 1 つ：名前: 値。すべてのリクエストに付きます。",
   "auth.none": "なし",
@@ -40,5 +40,9 @@
   "test.ok": "接続しました：{status}、{ms} ms",
   "test.failed": "サーバーが {status} を返しました。",
   "summary.test": "{status} · {ms} ms",
-  "summary.request": "{status}"
+  "summary.request": "{status}",
+  "field.username": "ユーザー名",
+  "field.username.placeholder": "ユーザー名",
+  "error.badUsername": "Basic のユーザー名に「:」は使えません。",
+  "error.noUsername": "Basic のユーザー名を入力してください。"
 }

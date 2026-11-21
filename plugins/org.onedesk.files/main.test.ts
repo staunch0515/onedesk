@@ -36,7 +36,7 @@ describe("files plugin: tree", () => {
     expect(out.nodes[2].target).toBe(`node:org.onedesk.files:files/${encodeURIComponent(`${ROOT}/a.md`)}`);
     expect(out.next).toBe(200);
     expect(onlyKeys(out, TREE_PAGE_KEYS)).toEqual([]);
-    for (const n of out.nodes) expect(onlyKeys(n, TREE_NODE_KEYS)).toEqual([]);
+    for (const n of out.nodes) expect(onlyKeys(n, [...TREE_NODE_KEYS, "menu", "draggable", "accepts"])).toEqual([]);
     expect(files.list).toHaveBeenCalledWith(ROOT, { offset: 0, limit: 200 });
   });
 
@@ -725,5 +725,21 @@ describe("files plugin: page buttons run commands (D429)", () => {
     expect(ask).toMatchObject({ type: "confirm", irreversible: true });
     await registry(plugin).commands.delete({ locale: "en-US", host, t: tt }, { nodeKey: "r1", args: { confirmed: true } });
     expect(d.files.remove).toHaveBeenCalledWith(`${ROOT}/a.txt`);
+  });
+});
+
+describe("files plugin: tree node menu (D430)", () => {
+  it("files and folders carry move, copy, rename, delete and open, and can be dragged; folders accept drops", async () => {
+    const { trees } = registry(plugin);
+    const files = { list: async () => ({ entries: [entry("a.md"), entry("sub", true)] }) };
+    const out = await trees.files.children(ctxOf(files, ROOT), ROOT, 0);
+    const menu = ["org.onedesk.files:move", "org.onedesk.files:copy", "org.onedesk.files:rename", "org.onedesk.files:delete", "node.open"];
+    const [folder, file] = out.nodes;
+    expect(folder).toMatchObject({ label: "sub", menu, draggable: true, accepts: ["*"] });
+    expect(file).toMatchObject({ label: "a.md", menu, draggable: true });
+    expect(file.accepts).toBeUndefined();
+    const manifest = JSON.parse(readFileSync(new URL("./manifest.json", import.meta.url), "utf8"));
+    const own = manifest.contributes.commands.map((c: any) => `org.onedesk.files:${c.id}`);
+    for (const id of menu.filter((m) => m.includes(":"))) expect(own).toContain(id);
   });
 });
