@@ -141,7 +141,9 @@ export function deletedSql(entity, chosen, limit) {
   return `SELECT ${selectList(entity, chosen)} FROM (${latest}) AS od_v WHERE ${cond} LIMIT ${limitOf(limit)}`;
 }
 
-// Which tables the database has: every `schema.table`, and `table` alone for the public schema.
+// Which tables the database has: every `schema.table`, and `table` alone for the public schema. Names keep
+// their case: a query names a table exactly as the mapping writes it (quoteIdent quotes anything that is not
+// plain lower case), so `Orders` exists only if the database has `Orders`, not `orders`.
 export const EXISTING_SQL =
   "SELECT table_schema, table_name FROM information_schema.tables WHERE table_schema NOT IN ('pg_catalog', 'information_schema') ORDER BY 1, 2";
 
@@ -149,15 +151,15 @@ export function existingSet(rows) {
   const out = new Set();
   for (const r of rows || []) {
     const [schema, name] = [String(r[0]), String(r[1])];
-    out.add(`${schema}.${name}`.toLowerCase());
-    if (schema === "public") out.add(name.toLowerCase());
+    out.add(`${schema}.${name}`);
+    if (schema === "public") out.add(name);
   }
   return out;
 }
 
 export function isMissing(entity, existing) {
   if (!existing) return false;
-  const t = String(entity.table).replace(/"/g, "").toLowerCase();
+  const t = String(entity.table);
   return !existing.has(t) && !(t.indexOf(".") < 0 && existing.has(`public.${t}`));
 }
 
@@ -241,7 +243,77 @@ export function treePath(snapshot, key, depth) {
   return key.startsWith(C) ? [...chain, key] : chain;
 }
 
-/* ---------------------------------------------------------------- host */
+/* ---------------------------------------------------------------- storage */
+
+// D421: `actions.call` works only inside a run. The "refresh" action reads the mapping and the database's
+// tables there and stores them; the tree and the page only read what was stored.
+const CHUNK = 100000; // characters per storage value: stays under 256 KB even if every character is escaped
+const MAX_CHUNKS = 40;
+
+// Writes `text` as `key` (a small header) plus `key.0`, `key.1`, …; removes chunks left from a longer value.
+export async function putChunked(ctx, key, text) {
+  const n = Math.max(1, Math.ceil(text.length / CHUNK));
+  if (n > MAX_CHUNKS) throw new Error(tr(ctx, "error.snapshotTooLarge"));
+  const old = await readHeader(ctx, key);
+  for (let i = 0; i < n; i++) await ctx.host.storage.set(`${key}.${i}`, text.slice(i * CHUNK, (i + 1) * CHUNK));
+  for (let i = n; i < (old ? old.chunks : 0); i++) await ctx.host.storage.remove(`${key}.${i}`);
+  await ctx.host.storage.set(key, JSON.stringify({ chunks: n, length: text.length }));
+}
+
+async function readHeader(ctx, key) {
+  const raw = await ctx.host.storage.get(key);
+  if (!raw) return null;
+  try {
+    const h = JSON.parse(raw);
+    return h && Number.isInteger(h.chunks) ? h : null;
+  } catch (e) {
+    return null;
+  }
+}
+
+export async function getChunked(ctx, key) {
+  const h = await readHeader(ctx, key);
+  if (!h) return null;
+  let text = "";
+  for (let i = 0; i < h.chunks; i++) {
+    const part = await ctx.host.storage.get(`${key}.${i}`);
+    if (typeof part !== "string") return null;
+    text += part;
+  }
+  return text.length === h.length ? text : null;
+}
+
+// The statements runs sent, newest first, in one key: at most SENT_RUNS of them and SENT_MAX characters each
+// (review #2: one key per run would fill the plugin's 1000 keys). Writing it never fails the run.
+const SENT_KEY = "sent";
+const SENT_RUNS = 30;
+const SENT_MAX = 6000;
+
+export async function rememberSent(ctx, runId, sql) {
+  try {
+    let list = [];
+    const raw = await ctx.host.storage.get(SENT_KEY);
+    if (raw) list = JSON.parse(raw);
+    if (!Array.isArray(list)) list = [];
+    const text = sql.length > SENT_MAX ? `${sql.slice(0, SENT_MAX)}\n-- …` : sql;
+    list = [{ run: runId || "-", sql: text }, ...list.filter((x) => x && x.run !== runId)].slice(0, SENT_RUNS);
+    await ctx.host.storage.set(SENT_KEY, JSON.stringify(list));
+  } catch (e) {
+    /* only a convenience: the run goes on */
+  }
+}
+
+export async function sentOf(ctx, runId) {
+  try {
+    const list = JSON.parse((await ctx.host.storage.get(SENT_KEY)) || "[]");
+    const hit = Array.isArray(list) ? list.find((x) => x && x.run === runId) : null;
+    return hit ? hit.sql : null;
+  } catch (e) {
+    return null;
+  }
+}
+
+/* ---------------------------------------------------------------- host (inside runs) */
 
 export async function readMapping(ctx) {
   const res = await ctx.host.actions.call(CATALOG_MAPPING, {});
@@ -281,33 +353,38 @@ async function query(ctx, sql, source) {
   return res;
 }
 
-// Mapping plus the database's tables (null when no data source is set or it cannot be reached).
-async function freshSnapshot(ctx) {
+// In a run: the mapping plus which of its tables the database has (`existing` null when no data source is set
+// or it cannot be reached), stored for the tree and the page.
+export async function refreshSnapshot(ctx) {
   const mapping = await readMapping(ctx);
   let existing = null;
+  let error = "";
   const source = await sourceId(ctx);
   if (source) {
     try {
-      existing = [...existingSet((await query(ctx, EXISTING_SQL, source)).output.rows)];
+      const all = existingSet((await query(ctx, EXISTING_SQL, source)).output.rows);
+      // only what the tree needs: the mapping's tables the database has
+      existing = Object.keys(mapping.entities)
+        .map((n) => mapping.entities[n].table)
+        .filter((t) => !isMissing({ table: t }, all));
     } catch (e) {
-      existing = null;
+      error = String((e && e.message) || e);
     }
   }
-  const snap = { mapping, existing };
-  await ctx.host.storage.set(SNAPSHOT_KEY, JSON.stringify(snap));
+  const snap = { at: Date.now(), mapping, existing, error };
+  await putChunked(ctx, SNAPSHOT_KEY, JSON.stringify(snap));
   return snap;
 }
 
-async function snapshot(ctx) {
-  const raw = await ctx.host.storage.get(SNAPSHOT_KEY);
-  if (raw) {
-    try {
-      return JSON.parse(raw);
-    } catch (e) {
-      /* rebuilt below */
-    }
+// The stored snapshot, or null when there is none yet (outside runs nothing is fetched).
+export async function snapshot(ctx) {
+  const text = await getChunked(ctx, SNAPSHOT_KEY);
+  if (!text) return null;
+  try {
+    return JSON.parse(text);
+  } catch (e) {
+    return null;
   }
-  return freshSnapshot(ctx);
 }
 
 export async function depthOf(ctx) {
@@ -320,6 +397,20 @@ function entityOfNode(ctx, snap) {
   const e = snap.mapping.entities[name];
   if (!e) throw new Error(tr(ctx, "error.noTable", { name }));
   return { name, entity: e };
+}
+
+const OVERVIEW = `page:${PLUGIN}/overview`;
+
+function notLoadedNode(ctx) {
+  return { key: "none", label: tr(ctx, "tree.notLoaded"), icon: "refresh-cw", expandable: false, target: OVERVIEW };
+}
+
+function refreshedText(ctx, snap) {
+  const names = Object.keys(snap.mapping.entities);
+  if (!snap.existing) return tr(ctx, "message.refreshedNoSource", { count: names.length });
+  const have = new Set(snap.existing);
+  const missing = names.filter((n) => isMissing(snap.mapping.entities[n], have)).length;
+  return tr(ctx, "message.refreshed", { count: names.length, missing });
 }
 
 function chosenOf(ctx, entity) {
@@ -364,13 +455,13 @@ export default {
   activate(host) {
     host.trees.handle(TREE, {
       async children(ctx, parentKey) {
-        const key = parentKey || "";
-        // Opening the tree's root reads the mapping and the database again; deeper levels use that reading.
-        const snap = key === "" ? await freshSnapshot(ctx) : await snapshot(ctx);
-        return { nodes: treeChildren(snap, key, await depthOf(ctx), tr(ctx, "badge.missing")) };
+        const snap = await snapshot(ctx);
+        if (!snap) return { nodes: (parentKey || "") === "" ? [notLoadedNode(ctx)] : [] };
+        return { nodes: treeChildren(snap, parentKey || "", await depthOf(ctx), tr(ctx, "badge.missing")) };
       },
       async path(ctx, key) {
-        return treePath(await snapshot(ctx), key, await depthOf(ctx));
+        const snap = await snapshot(ctx);
+        return snap ? treePath(snap, key, await depthOf(ctx)) : [key];
       },
     });
 
@@ -381,15 +472,32 @@ export default {
       return [{ type: "toast", message: tr(ctx, next === 2 ? "message.depth2" : "message.depth1"), tone: "info" }];
     });
 
-    host.commands.handle("refresh", async (ctx) => {
-      const snap = await freshSnapshot(ctx);
-      const n = Object.keys(snap.mapping.entities).length;
-      return [{ type: "toast", message: tr(ctx, snap.existing ? "message.refreshed" : "message.refreshedNoSource", { count: n }), tone: "info" }];
+    // A command cannot run anything (D421): it opens the page whose action refreshes.
+    host.commands.handle("refresh", async () => [{ type: "open", target: OVERVIEW }]);
+
+    host.actions.handle("refresh", async (ctx) => {
+      ctx.progress(undefined, tr(ctx, "step.refreshing"));
+      const snap = await refreshSnapshot(ctx);
+      return { output: { type: "text", text: refreshedText(ctx, snap) }, summary: { message: refreshedText(ctx, snap) } };
+    });
+
+    host.pages.handle("overview", {
+      async render(ctx) {
+        const snap = await snapshot(ctx);
+        const view = [{ type: "text", id: "about", text: tr(ctx, "overview.about"), tone: "muted" }];
+        if (!snap) view.push({ type: "text", id: "none", text: tr(ctx, "overview.none") });
+        else {
+          view.push({ type: "text", id: "summary", text: refreshedText(ctx, snap) });
+          if (snap.error) view.push({ type: "text", id: "error", text: tr(ctx, "warn.sourceFailed", { error: snap.error }), tone: "danger" });
+        }
+        return { view, title: tr(ctx, "overview.title"), icon: "table" };
+      },
     });
 
     host.pages.handle("table", {
       async render(ctx) {
         const snap = await snapshot(ctx);
+        if (!snap) return { view: [{ type: "text", id: "none", text: tr(ctx, "overview.none") }], title: tr(ctx, "overview.title"), icon: "table" };
         const { name, entity } = entityOfNode(ctx, snap);
         const view = [];
         if (snap.mapping.problem) view.push({ type: "text", id: "mapping", text: tr(ctx, "warn.mapping"), tone: "danger" });
@@ -429,7 +537,7 @@ export default {
 
       async renderResultTab(ctx, tabId) {
         if (tabId !== "sent") throw new Error(`unknown result tab ${tabId}`);
-        const raw = ctx.run ? await ctx.host.storage.get(`sent:${ctx.run.id}`) : null;
+        const raw = ctx.run ? await sentOf(ctx, ctx.run.id) : null;
         if (!raw) return [{ type: "text", id: "none", text: tr(ctx, "sent.none"), tone: "muted" }];
         return [{ type: "text", id: "sent", text: raw, mono: true, language: "sql" }];
       },
@@ -437,10 +545,11 @@ export default {
 
     for (const action of Object.keys(QUERIES)) {
       host.actions.handle(action, async (ctx) => {
-        const snap = await snapshot(ctx);
+        // in a run: without a stored snapshot, take one now
+        const snap = (await snapshot(ctx)) || (await refreshSnapshot(ctx));
         const { entity } = entityOfNode(ctx, snap);
         const sql = sqlFor(ctx, action, entity, chosenOf(ctx, entity), ctx.params || {});
-        await ctx.host.storage.set(`sent:${ctx.runId || "-"}`, sql);
+        await rememberSent(ctx, ctx.runId, sql);
         const source = await sourceId(ctx);
         if (!source) throw new Error(tr(ctx, "error.noSource"));
         ctx.progress(undefined, tr(ctx, "step.running"));
