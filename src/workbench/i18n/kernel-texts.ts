@@ -269,6 +269,7 @@ export const AUDIT_OPERATIONS: Table = {
   "run.unkeep": "kernel.audit.run.unkeep",
   "run.delete": "kernel.audit.run.delete",
   "workspace.startup": "kernel.audit.workspace.startup",
+  "workspace.opened": "kernel.audit.workspace.opened",
   "workspace.initSettings": "kernel.audit.workspace.initSettings",
   "resource.move": "kernel.audit.resource.move",
   "files.write": "kernel.audit.files.write",

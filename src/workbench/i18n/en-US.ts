@@ -804,6 +804,7 @@ export const enUS = {
   "kernel.audit.run.keep": "Keep run",
   "kernel.audit.run.unkeep": "Stop keeping run",
   "kernel.audit.run.delete": "Delete saved run",
+  "kernel.audit.workspace.opened": "Workspace opened (plugin start-up handlers)",
   "kernel.audit.workspace.startup": "Workspace startup",
   "kernel.audit.workspace.initSettings": "Settings copied from another workspace",
   "kernel.error.reason.mainProcessOnly": "Only the app itself can do that.",
