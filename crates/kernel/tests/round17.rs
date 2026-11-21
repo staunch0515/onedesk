@@ -30,6 +30,15 @@ export default { activate(host) {
     const choices = mode === "bad" ? [] : [{ id: "overwrite", danger: true }, { id: "skip" }, { id: "keepBoth", label: "Keep both" }];
     return [{ type: "confirm", message: "Exists", command, choices, choiceArg: "conflict", irreversible: true }];
   });
+  host.trees.handle("t", { async children(ctx, parent) {
+    if (parent) return { nodes: [] };
+    return { nodes: [
+      { key: "/a", label: "a", icon: "folder", expandable: true, draggable: true, accepts: ["file", "folder"],
+        menu: ["ask", "t.r17:probe", "node.open", "ask", "other.plugin:x", "nope", "node.explode"] },
+      { key: "/b", label: "b", icon: "file", target: "node:t.r17:t//b" },
+      { key: "/c", label: "c", icon: "file", menu: [] },
+    ] };
+  } });
   host.pages.handle("p", { async render() {
     return { view: [{ type: "text", id: "t", text: "ok\nbad\nplain", mono: true,
                       lineTones: ["success", "stderr"], appearance: "terminal" }] };
@@ -80,6 +89,7 @@ fn manifest() -> Value {
                         { "id": "text", "label": "a", "output": "text" },
                         { "id": "badpartial", "label": "a", "output": "table" }],
             "commands": [{ "id": "probe", "label": "p" }, { "id": "ask", "label": "a" }],
+            "trees": [{ "id": "t", "label": "T", "icon": "folder", "source": "provided" }],
             "pages": [{ "id": "p", "actions": [{ "id": "go", "role": "run", "label": "Go", "command": "ask" },
                                                { "id": "run", "role": "run", "label": "Run", "action": "text" }] }],
             "events": ["resource.changed"]
@@ -236,6 +246,27 @@ async fn d428_confirm_choices_pass_through_and_d429_page_items_name_commands() {
     w.c.ok("run.setKept", json!({ "id": id, "kept": true })).await;
     let eff = w.c.ok("command.execute", json!({ "id": "run.delete", "context": { "args": { "run": id } } })).await;
     assert_eq!(eff[0]["irreversible"], true);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn d430_provided_nodes_carry_their_checked_menu_draggable_and_accepts() {
+    let w = world().await;
+    let page = w.c.ok("tree.children", json!({ "tree": "t.r17:t" })).await;
+    let nodes = page["nodes"].as_array().unwrap();
+    let a = &nodes[0];
+    let ids: Vec<&str> = a["menu"].as_array().unwrap().iter().map(|m| m["id"].as_str().unwrap()).collect();
+    // Its own commands (short or full), the kernel's node.*; repeats, others' and unknown dropped.
+    assert_eq!(ids, vec!["t.r17:ask", "t.r17:probe", "node.open"]);
+    assert_eq!(a["menu"][0]["label"], "a", "the command's own label");
+    assert_eq!(a["draggable"], true);
+    assert_eq!(a["accepts"], json!(["file", "folder"]));
+    // Without a menu: "open" for a node with a target, as before; nothing else, not draggable.
+    let b = &nodes[1];
+    assert_eq!(b["menu"].as_array().unwrap().iter().map(|m| m["id"].as_str().unwrap()).collect::<Vec<_>>(), vec!["node.open"]);
+    assert_eq!(b["draggable"], false);
+    assert_eq!(b["accepts"], json!([]));
+    // An explicit empty menu is empty.
+    assert_eq!(nodes[2]["menu"], json!([]));
 }
 
 /* ------------------------------------------------------------------ X17 */

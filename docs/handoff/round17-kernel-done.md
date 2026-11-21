@@ -70,3 +70,9 @@
 - 外壳文件只动了两行（协调会话同意）：`en-US.ts` 与 `kernel-texts.ts` 的 `reason.unsafeLocation`。
 - 验证：`cargo test --workspace`、`pnpm clippy`、`pnpm lint`、`pnpm typecheck`、`gen-types --check` 通过。`pnpm test`：920 过、4 个失败，全在 `plugins/_testing/lang-check.test.ts`（中日语言包缺 11 个键：10 个是外壳本轮新加的 `confirm.choice.*`、`kernel.error.*` 等，1 个是我的 `unsafeLocation`）。合并前集成分支上就缺那 10 个，译文归测试会话。e2e 没跑。
 - 范围外：`plugins/_testing/view-check.ts` 还不认识 X10 的新字段和 D429 的 `command`（测试会话的文件）；外壳要为清单原因 `actionAndCommand` 和 `invalid/badSecretFormat` 配文字。
+
+## 7. 第三批：D430（提供树节点的菜单、拖动、可放入）
+
+- 先合并了 `claude/onedesk-r17` 的最新提交。`PNode` 加 `menu`、`draggable`、`accepts`（之前 `deny_unknown_fields`，带这些键的整批会失败）；提供树按 3.8 节校验后透传，非法命令丢掉并写一次工作进程标准错误里的警告。资源类型的子节点接受但忽略。
+- 测试：`round17.rs` `d430_provided_nodes_carry_…`。检查同第二批（`cargo test`、clippy、lint、typecheck、gen-types 通过；vitest 只有中日语言包那 4 个旧失败）。
+- 范围外：“插件警告”目前只写到标准错误，界面上看不到；若要在插件页显示，需要协议加字段（主会话决定）。

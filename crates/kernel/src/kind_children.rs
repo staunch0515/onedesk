@@ -179,7 +179,23 @@ pub(crate) struct PNode {
     pub target: Option<String>,
     #[serde(default)]
     pub badge: Option<String>,
+    /// Round 17 (D430), provided trees only: command ids for the node's menu — the plugin's own
+    /// (short or `<plugin>:<name>`) or the kernel's `node.*`.
+    #[serde(default)]
+    pub menu: Option<Vec<String>>,
+    /// Round 17 (D430), provided trees only.
+    #[serde(default)]
+    pub draggable: Option<bool>,
+    /// Round 17 (D430), provided trees only: what may be dropped on the node (passed on as is).
+    #[serde(default)]
+    pub accepts: Option<Vec<String>>,
 }
+
+/// Round 17 (D430): the kernel's node commands a provided node's menu may name.
+pub const NODE_COMMANDS: &[&str] = &["node.open", "node.rename", "node.delete", "node.favorite", "node.unfavorite", "node.newGroup"];
+/// Round 17 (D430): most menu entries and `accepts` entries of one node.
+pub const MAX_NODE_MENU: usize = 32;
+pub const MAX_NODE_ACCEPTS: usize = 32;
 
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
