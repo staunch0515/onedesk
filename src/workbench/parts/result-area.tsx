@@ -192,6 +192,17 @@ function OutputTab({ tab, run, widthKey }: { tab: TabState; run: Run | null | un
       </Pane>
     );
   }
+  if (run.output?.type === "link") {
+    // A link to another page; `params` (D423) are that page's starting state, held in memory only (D419), like `Open.params`.
+    const link = run.output as { label: string; target: string; params?: Record<string, string> };
+    return (
+      <Pane grow pad="md" gap="sm" align="start">
+        <Button icon="external-link" onClick={() => actions.open(link.target, { params: link.params })}>
+          {link.label}
+        </Button>
+      </Pane>
+    );
+  }
   return <EmptyState layout="inline" icon="circle-check" message={run.summary?.message ?? t("result.noOutput")} />;
 }
 
