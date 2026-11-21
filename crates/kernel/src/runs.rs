@@ -150,9 +150,18 @@ fn check_output(declared: OutputType, out: Value) -> Result<RunOutput, String> {
         }
         _ => serde_json::from_value::<RunOutput>(out).map_err(|e| e.to_string())?,
     };
-    if let RunOutput::Link { target, .. } = &o {
+    if let RunOutput::Link { target, params, .. } = &o {
         if !crate::pages::is_target(target) {
             return Err(format!("bad link target {target}"));
+        }
+        // D423: the same limits as a page event's params (64 keys, 4 KB each).
+        if let Some(p) = params {
+            if p.len() > MAX_EVENT_PARAMS {
+                return Err(format!("link params: {} keys", p.len()));
+            }
+            if let Some((k, _)) = p.iter().find(|(_, v)| v.len() > MAX_EVENT_PARAM_BYTES) {
+                return Err(format!("link params: {k} longer than 4 KB"));
+            }
         }
     }
     let size = serde_json::to_string(&o).map(|s| s.len()).unwrap_or(usize::MAX);
@@ -400,8 +409,15 @@ impl Inner {
             Some(r) => Some(serde_json::to_value(self.resource(r)?).map_err(internal)?),
             None => None,
         };
-        let ctx = json!({ "target": p.target, "resource": resource, "envId": p.env_id, "params": p.params, "runId": id,
+        let mut ctx = json!({ "target": p.target, "resource": resource, "envId": p.env_id, "params": p.params, "runId": id,
                           "locale": p.locale });
+        // Round 16 e2e #20: an action run on a provided tree's node page gets the node, as the
+        // page's `render` does — only when the tree is the running plugin's own.
+        if let crate::pages::Target::Node { tree, key } = crate::pages::parse_target(&p.target) {
+            if self.registry.tree(&tree).is_some_and(|(owner, _)| owner.id == plugin.id) {
+                ctx["node"] = json!({ "tree": tree, "key": key });
+            }
+        }
         // D306: secret field values never reach the plugin, nor the run's input snapshot.
         let mut input = p.input.clone();
         if let Some(k) = kind.as_deref() {

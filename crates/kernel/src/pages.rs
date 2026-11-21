@@ -442,6 +442,17 @@ impl Inner {
         let ctx = json!({ "target": target, "resource": resource, "draft": draft, "locale": cx.locale, "envId": cx.env_id, "params": ctx_params(cx) });
         let out = self.render(drawer, &page, ctx, client).await?;
         d.values = binds(&out.view).into_iter().filter_map(|b| store::value_at(r, &b).map(|v| (b, v))).collect();
+        // Round 16 e2e #19: what the plugin's `render` gives as values is shown (a page drawing
+        // content that is not a stored field, e.g. a file's text), never for a secret field.
+        for (k, v) in out.values.clone().unwrap_or_default() {
+            if !secret_fields.contains(&k) {
+                d.values.insert(k, v);
+            }
+        }
+        // And `readOnly: true` makes the page read-only (a plugin cannot make it writable).
+        if out.read_only == Some(true) {
+            d.read_only = true;
+        }
         // D306: for a secret field the page learns only whether a value is saved.
         for f in &secret_fields {
             if let Some(v) = d.values.get_mut(f) {
