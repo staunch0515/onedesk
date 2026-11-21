@@ -464,7 +464,7 @@ impl Writer {
         let rules = self.rules.read().unwrap().clone();
         let tx = self.conn.transaction().map_err(db_err)?;
         let mut out = {
-            let mut cx = Tx { tx: &tx, actor, rules: &rules, at: now_ms(), touched: Default::default() };
+            let mut cx = Tx { tx: &tx, actor, rules: &rules, at: now_ms(), touched: Default::default(), indexed: Default::default() };
             // D327: `protection.readonly` of the workspace configuration refuses every content write.
             if blocked_by_readonly(&cmd) {
                 crate::policy::check(&tx, crate::policy::READONLY, None)?;
@@ -610,8 +610,15 @@ impl Writer {
                 Command::UiSet { .. } => unreachable!("handled above"),
             };
             let touched = std::mem::take(&mut *cx.touched.borrow_mut());
-            (out, touched)
+            let bulk = cx.indexed.get() >= BULK_INDEX;
+            (out, touched, bulk)
         };
+        if out.2 {
+            // See `Tx::index`: one merge drops the entries deleted without scrubbing, then
+            // scrubbing is back on for the next transaction.
+            tx.execute("INSERT INTO search (search) VALUES ('optimize')", []).map_err(db_err)?;
+            tx.execute("INSERT INTO search (search, rank) VALUES ('secure-delete', 1)", []).map_err(db_err)?;
+        }
         let ids: BTreeSet<&String> = out.0.rows.iter().map(|r| &r.id).collect();
         out.0.touched = out.1.into_iter().filter(|t| !ids.contains(t)).collect();
         let out = out.0;
@@ -694,7 +701,13 @@ pub(crate) struct Tx<'a> {
     pub at: i64,
     /// Resources whose references changed besides the rows of the outcome.
     pub touched: std::cell::RefCell<BTreeSet<String>>,
+    /// Search rows rewritten in this transaction (see `index`).
+    pub indexed: std::cell::Cell<usize>,
 }
+
+/// Search rows rewritten in one transaction after which old entries are no longer scrubbed one by
+/// one (see `Tx::index`).
+const BULK_INDEX: usize = 256;
 
 impl Tx<'_> {
     /// Recomputes the references of `row` in the fields that changed (`None` = all), §10.
@@ -806,6 +819,16 @@ impl Tx<'_> {
 
     /// Keeps the search text of `r` in step with the row, in the same transaction (D277).
     fn index(&self, r: &Row) -> KResult<()> {
+        // A scrubbing delete (D283, migration 0004) walks the whole entry list of every trigram of
+        // the old text, and rows of one kind share most of theirs: rewriting n of them one by one
+        // took n² (round 16, a batch of 1500 renames). From the BULK_INDEX-th row on, old entries are
+        // only marked deleted; `transact` merges the index once before commit (as purge does), which
+        // drops them, and turns scrubbing back on.
+        let n = self.indexed.get() + 1;
+        self.indexed.set(n);
+        if n == BULK_INDEX {
+            self.tx.execute("INSERT INTO search (search, rank) VALUES ('secure-delete', 0)", []).map_err(db_err)?;
+        }
         // The search row shares the resource's rowid (migration 0003): no table scans.
         let rowid: i64 = self.tx.prepare_cached("SELECT rowid FROM resources WHERE id = ?1").map_err(db_err)?.query_row([&r.id], |x| x.get(0)).map_err(db_err)?;
         self.tx.prepare_cached("DELETE FROM search WHERE rowid = ?1").map_err(db_err)?.execute([rowid]).map_err(db_err)?;
