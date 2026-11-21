@@ -309,7 +309,7 @@ describe("sql: exported create", () => {
     const res = await actions.create(ctxOf(host), { name: "Orders", description: "by id", sql: "SELECT 1", source: "Local", params: { a: "1" } });
     expect(host.resources.create).toHaveBeenCalledWith({ kind: "query", name: "Orders", body: { sql: "SELECT 1", source: "s1" }, description: "by id" });
     expect(checkActionResult(res)).toEqual([]);
-    expect(res.output).toEqual({ type: "link", label: "Orders", target: "resource:new9" });
+    expect(res.output).toEqual({ type: "link", label: "Orders", target: "resource:new9", params: { a: "1" } });
   });
   it("accepts no source, and refuses empty SQL or an unknown source", async () => {
     const { actions } = registry(plugin);

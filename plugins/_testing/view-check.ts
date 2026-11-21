@@ -86,7 +86,7 @@ export const TREE_NODE_KEYS = ["key", "label", "icon", "expandable", "target", "
 /** Mirrors the action result validation in crates/kernel (round 3): output is a RunOutput without `truncated`. */
 export const ACTION_RESULT_KEYS = ["output", "summary"];
 export const SUMMARY_KEYS = ["rows", "message"];
-export const OUTPUT_KEYS: Record<string, string[]> = { table: ["type", "columns", "rows", "total", "file", "header"], text: ["type", "text", "file"], link: ["type", "label", "target"], none: ["type"] };
+export const OUTPUT_KEYS: Record<string, string[]> = { table: ["type", "columns", "rows", "total", "file", "header"], text: ["type", "text", "file"], link: ["type", "label", "target", "params"], none: ["type"] };
 export const EVENT_RESULT_KEYS = ["changes", "params", "message"];
 
 export function checkActionResult(res: Record<string, any>): string[] {

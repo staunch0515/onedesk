@@ -334,8 +334,7 @@ export default {
     });
 
     // Exported (called by other plugins, e.g. the query catalog): a new saved statement with the given body,
-    // data source and description. `params` (values typed elsewhere) are accepted; the link opens the statement
-    // as saved — initial page values need a protocol change (see round16-tests-done.md).
+    // data source and description. `params` (values typed elsewhere) come back on the link (D423).
     host.actions.handle("create", async (ctx, input) => {
       const i = input || {};
       const sql = String(i.sql || "");
@@ -351,7 +350,13 @@ export default {
       const made = { kind: "query", name, body: { sql, source } };
       if (typeof i.description === "string" && i.description) made.description = i.description;
       const created = await ctx.host.resources.create(made);
-      return { output: { type: "link", label: created.name || name, target: `resource:${created.id}` }, summary: { message: tr(ctx, "summary.created") } };
+      // D423: the values typed elsewhere open with the statement as its initial page state (text only).
+      const out = { type: "link", label: created.name || name, target: `resource:${created.id}` };
+      const given = i.params && typeof i.params === "object" ? i.params : {};
+      const vals = {};
+      for (const k of Object.keys(given)) if (typeof given[k] === "string" && given[k] !== "") vals[k] = given[k];
+      if (Object.keys(vals).length > 0) out.params = vals;
+      return { output: out, summary: { message: tr(ctx, "summary.created") } };
     });
 
     host.actions.handle("run", async (ctx, input) => {
