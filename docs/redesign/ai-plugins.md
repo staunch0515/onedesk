@@ -1,6 +1,6 @@
 # AI 插件设计（Anthropic 与 Ollama）——待你确认
 
-状态：草案（2026-11-21，第六个协调会话）。确认后排进第十八轮。依据：`sqlpool-parity.md` K 组（K1–K10）、`kernel-design.md` 9.5（结果区动作）与 §10（搜索）、`ai-interface.md`（MCP，已确认 D415，另排一轮）。
+状态：用户已确认（2026-11-21，D426）。排进第十八轮。依据：`sqlpool-parity.md` K 组（K1–K10）、`kernel-design.md` 9.5（结果区动作）与 §10（搜索）、`ai-interface.md`（MCP，已确认 D415，另排一轮）。
 
 ## 1. 现状检查
 
@@ -64,11 +64,11 @@ org.onedesk.ai.ollama        Ollama 连接（地址、模型、上下文长度�
 | 连接资源的字段 | 名称；API 密钥（密钥字段，只进钥匙串）；模型（从 `GET /v1/models` 取列表，也可手填）；档位 `effort`（默认 `medium`）；最大输出 `maxTokens`（默认 16000）；失败时改用备用模型（默认开，见下） |
 | 网络 | 只放行 `api.anthropic.com:443`（资源声明，安装时列给你看） |
 | 请求 | `POST https://api.anthropic.com/v1/messages`；请求头 `x-api-key: <钥匙串里的密钥，宿主代入>`、`anthropic-version: 2026-10-21`、`content-type: application/json` |
-| 默认模型 | `claude-opus-5-5`；列表里还有 `claude-sonnet-5-5`（便宜一半）、`claude-haiku-5-5`（最便宜，适合生成 SQL 这类短活），用户自选 |
+| 默认模型 | `claude-haiku-5-5`（用户选定，D426）；列表里还有 `claude-sonnet-5-5`、`claude-opus-5-5`，用户在连接设置里自选 |
 | 思考 | 不发 `thinking` 字段（当前模型默认自适应思考，发 `disabled` 会被拒）；深浅用 `output_config.effort` 控制。不发 `temperature` 等采样参数（这个 API 版本会拒绝） |
-| 拒答 | 回答 `stop_reason` 为 `refusal` 时返回 `stop: "refusal"`，界面说明“模型拒绝回答”。默认带上服务端备用模型（请求头 `anthropic-beta: server-side-fallback-2026-07-01`，正文 `fallbacks: "default"`），被拒时服务端自动换模型重答；设置里可以关掉 |
+| 拒答 | 回答 `stop_reason` 为 `refusal` 时返回 `stop: "refusal"`，界面说明“模型拒绝回答”。选 Opus 5.5 或 Sonnet 5.5 时默认带上服务端备用模型（请求头 `anthropic-beta: server-side-fallback-2026-07-01`，正文 `fallbacks: "default"`），被拒时服务端自动换模型重答，设置里可以关掉；Haiku 5.5 没有服务端备用，不发这两项 |
 | 出错 | 401→`auth`；429→`rateLimit`（带 `retry-after`）；529→`overloaded`；400 且是上下文太长→`tooLong` |
-| 流式 | 第一版**不用流式**：一次请求等完整回答（`maxTokens` 16000 以内足够），配合 X16 的长时限和“取消”按钮。第二步再做流式（SSE），边生成边显示 |
+| 流式 | 第一版**就用流式**（D426）：请求带 `"stream": true`，按 SSE 事件读 `content_block_delta` 里的文字，边生成边显示在结果区；`message_delta` 里取 `stop_reason` 和用量；`error` 事件按“出错”处理。流式时 `maxTokens` 默认可提到 32000 |
 | 测试连接 | `GET /v1/models`，成功显示可用模型数 |
 
 ### 4.2 `org.onedesk.ai.ollama`
@@ -77,7 +77,7 @@ org.onedesk.ai.ollama        Ollama 连接（地址、模型、上下文长度�
 |---|---|
 | 连接资源的字段 | 名称；地址（默认 `http://127.0.0.1:11434`）；模型（从 `GET /api/tags` 取已下载的模型）；上下文长度 `num_ctx`（可选）；模型常驻时间 `keep_alive`（默认 5 分钟）；可选的认证请求头（密钥字段，给放在反向代理后面的远程 Ollama 用） |
 | 网络 | 只放行地址里写的那个主机和端口。本机地址按 D308 必须明确写出才放行 |
-| 请求 | `POST <地址>/api/chat`，正文 `{ model, messages, stream: false, options: { num_ctx }, keep_alive }`；回答取 `message.content`，用量取 `prompt_eval_count`、`eval_count` |
+| 请求 | `POST <地址>/api/chat`，正文 `{ model, messages, stream: true, options: { num_ctx }, keep_alive }`；回答是一行一个 JSON（NDJSON），逐行取 `message.content` 拼接、边生成边显示，最后一行 `done: true` 里取 `prompt_eval_count`、`eval_count` |
 | 档位 | Ollama 没有，忽略 `effort` |
 | 第一次调用 | 模型要先载入内存，可能要几十秒到几分钟，所以同样依赖 X16 的长时限；进度里显示“正在载入模型” |
 | 测试连接 | `GET <地址>/api/version` 和 `/api/tags`，显示版本号和已下载的模型；一个模型都没有时提示 `ollama pull <模型>` |
@@ -104,7 +104,7 @@ org.onedesk.ai.ollama        Ollama 连接（地址、模型、上下文长度�
 | X5 | 结果区动作 `resultActions` | 已有设计（9.5），照做 |
 | X6 | 搜索加“任一词命中、按相关度排序、限定类型” | 已有设计（§10），照做；全文索引已经是三字符分词 |
 | X15 | **插件接口**：清单 `implements: { "onedesk.ai.chat/1": { "actions": ["chat", "models", "test"] } }`，使用方声明 `uses: ["onedesk.ai.chat/1"]`；宿主给使用方 `interfaces.call(接口, 动作, 输入, { resource })`，按资源的类型找实现插件。接口名由插件约定，内核只认字符串，不知道 AI | 新的清单字段和宿主接口，按规则 10 由协调会话定、记 decisions |
-| X16 | 长请求：运行中的 `network.request` 时限上限从 60 秒提到 10 分钟；用户取消运行时立即中断请求 | 第二步（流式）：`network.request` 加 `stream: true`，按块交回文字，插件用运行进度显示已生成的部分 |
+| X16 | 长请求与流式（第一版就做，D426）：运行中的 `network.request` 时限上限从 60 秒提到 10 分钟，另有“两块数据之间最长 2 分钟无数据即超时”；加 `stream: true`，宿主按块把响应文字交回插件（插件自己解析 SSE 或 NDJSON），插件把已生成的文字作为运行的部分输出推给外壳实时显示；用户取消运行时立即中断请求 | 部分输出的协议字段由协调会话定死后写进任务书 |
 
 ## 7. 安全的底线
 
@@ -114,10 +114,10 @@ org.onedesk.ai.ollama        Ollama 连接（地址、模型、上下文长度�
 - 生成的 SQL 只是提议，走原来的只读执行，不因为来自 AI 就放宽。
 - MCP（外部 AI 客户端用 OneDesk）照 `ai-interface.md` 另做，规则不变。
 
-## 8. 需要你决定的
+## 8. 用户的决定（2026-11-21，D426）
 
-1. **服务商怎么接**：A（推荐）做 X15“插件接口”，以后加别的服务商（如 OpenAI 兼容）不用改 AI 工作台；B 不改内核，AI 工作台写死依赖这两个插件，加新服务商就要改它。
-2. **Anthropic 默认模型**：A（推荐）`claude-opus-5-5`，效果最好（每百万 token 输入 4 美元、输出 20 美元）；B `claude-sonnet-5-5`，便宜一半；生成 SQL 这类短活都可以在设置里单独选 `claude-haiku-5-5`。
-3. **流式**：A（推荐）第一版不做，等完整回答，显示计时和“取消”；B 第一版就做流式，多一个内核改动。
-4. **`ai.policy` 默认值**：A（推荐）`preview`（每次先预览）；B `allow`。
-5. **拒答时自动换备用模型**：A（推荐）默认开；B 默认关。
+1. 服务商经 **X15 插件接口**接入（不写死依赖）。
+2. Anthropic 默认模型 **`claude-haiku-5-5`**，设置里可改 Sonnet 5.5 / Opus 5.5。
+3. **第一版就做流式**（X16 含流式）。
+4. 其余按推荐：`ai.policy` 默认 `preview`；选 Opus/Sonnet 时拒答自动换备用模型默认开。
+5. 完成版**包含 MCP**（第十九轮）；`.app` **本机自签名**。

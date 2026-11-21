@@ -569,3 +569,4 @@
 - **D423** 运行输出 `RunOutput::Link` 只增一个可选字段 `params`（`BTreeMap<String,String>`），含义与 `CommandEffect::Open.params` 相同：打开该目标时作为标签页的初始页面状态（§9.1、D292）。用于“另存为保存的 SQL”带上当前参数值（A10）。打开后的标签页参数只放在当前窗口内存，不写入布局（同 D419）；`Link.params` 本身随运行输出存进运行记录，与运行参数一样抹密钥，上限 64 键、4 KB（超出为 `badOutput`）。
 - **D424** 运行记录树分组后（D420），“最近运行”组默认展开；“已保留结果”组有内容时也默认展开（第十六轮完整 e2e 发现 round3 的运行记录用例看不到运行）。
 - **D425** 用户 2026-11-21 指示：阶段 7（git 版本化与同步）、8（Vioros）、9（远程）暂不开发；先做出完成版（v1.0）。完成版的定义与剩余轮次见 `docs/redesign/v1-plan.md`（待用户确认）；AI 接 Anthropic 与 Ollama 并做成插件，设计见 `docs/redesign/ai-plugins.md`（待用户确认，确认前不开发）。界面与协议里为阶段 7–9 预留的位置保持不动。
+- **D426** 用户 2026-11-21 确认完成版规划（`v1-plan.md`）与 AI 插件设计（`ai-plugins.md`）：服务商经插件接口（X15）接入；Anthropic 默认模型 `claude-haiku-5-5`；第一版就做流式（X16 含 `network.request` 流式读取与运行的部分输出）；`ai.policy` 默认 `preview`；选 Opus/Sonnet 时拒答自动换备用模型默认开；完成版包含 MCP（第十九轮）；`.app` 只做本机自签名。
