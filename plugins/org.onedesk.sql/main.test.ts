@@ -54,6 +54,13 @@ FROM t /* :no5 */ WHERE a = 'it''s :no6' AND b > :from AND c = :Other_1`;
     expect(renderSql(sql, { a: "it's", b: "", c: null })).toBe("SELECT 'it''s', NULL, CAST(NULL AS int), 'keep :a', NULL -- :a");
     expect(sqlLiteral("a'b")).toBe("'a''b'");
     expect(() => sqlLiteral("a\0b")).toThrow();
+    expect(sqlLiteral("a\\b")).toBe("'a\\b'");
+    expect(sqlLiteral("a\\'b", true)).toBe("'a\\\\''b'");
+  });
+  it("after an E the literal is an E string: backslashes are doubled so \\' cannot end it; a name ending in e is not an E string", () => {
+    expect(renderSql("SELECT E:p", { p: "x\\' OR 1=1 --" }, {})).toBe("SELECT E'x\\\\'' OR 1=1 --'");
+    expect(renderSql("SELECT name:p", { p: "a\\b" }, {})).toBe("SELECT name'a\\b'");
+    expect(renderSql("SELECT e:p", { p: "a\\b" }, {})).toBe("SELECT e'a\\\\b'");
   });
 
   it("reads PostgreSQL's lexical rules: E'' escapes, a $ inside a name, nested block comments", () => {
