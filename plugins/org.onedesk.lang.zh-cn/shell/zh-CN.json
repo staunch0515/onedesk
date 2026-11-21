@@ -888,5 +888,6 @@
   "kernel.error.notFound.grant": "该文件夹没有授权给这个插件。",
   "kernel.error.invalid.badOutput": "部分输出与动作的输出类型不符。",
   "terminal.label": "终端输出",
-  "kernel.error.reason.unsafeOpen": "打开这个文件会运行程序，所以不会打开。"
+  "kernel.error.reason.unsafeOpen": "打开这个文件会运行程序，所以不会打开。",
+  "kernel.error.denied.trashDenied": "OneDesk 无权把这个项目移到废纸篓。"
 }

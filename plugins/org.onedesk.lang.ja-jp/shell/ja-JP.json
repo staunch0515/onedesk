@@ -888,5 +888,6 @@
   "kernel.error.notFound.grant": "そのフォルダはプラグインに許可されていません。",
   "kernel.error.invalid.badOutput": "部分的な出力が、アクションの出力タイプと一致しません。",
   "terminal.label": "ターミナル出力",
-  "kernel.error.reason.unsafeOpen": "このファイルは開くとプログラムが実行されるため、開きません。"
+  "kernel.error.reason.unsafeOpen": "このファイルは開くとプログラムが実行されるため、開きません。",
+  "kernel.error.denied.trashDenied": "OneDesk にはこの項目をゴミ箱へ移動する権限がありません。"
 }

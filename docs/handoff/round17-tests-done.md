@@ -44,3 +44,50 @@ fake.reset()        // 清规则和记录
 无。
 
 最后提交号：见本文件所在提交（`git log -1 -- docs/handoff/round17-tests-done.md`）。
+
+---
+
+# 第二阶段：`e2e/round17.spec.ts`
+
+连真内核（devhost）、假 ssh/scp/docker、临时 PostgreSQL、临时废纸篓（`ONEDESK_TRASH_DIR`）、打开日志（`ONEDESK_OPEN_LOG`，要同时设 `ONEDESK_TEST_HOOKS=1`）、本机 HTTP 服务。**整份 `round17.spec.ts` 和 `round16.spec.ts` 各跑两次，全部通过**（round17：41 通过、2 个 `test.fixme`；round16：25 通过）。`round16.spec.ts` 里“已保留结果”与“最近运行”的顺序已按 D431 改成新顺序。
+
+跑法：worktree 没有 `target/`，用 `ONEDESK_DEVHOST_BIN=/Users/chloe/onedesk/repo/target/debug/onedesk-devhost pnpm exec playwright test e2e/round17.spec.ts`。夹具额外增加：`FakeTools.remoteDockerShim()`（ssh 的 exec 模式下 `docker exec <容器> …` 变成本机命令）、docker-exec 里把 `/tmp/onedesk-*` 映射进假容器目录。
+
+## 逐行结果
+
+| 行 | 结果 | 怎么验证（测试名里的编号） |
+|---|---|---|
+| I1 | 通过 | 保存命令、`:name` 参数，经假 ssh 运行（I1/I3/I4） |
+| I2 | 通过 | 6 种恶意值（引号、`$()`、反引号、分号、换行）原样作为一个词到达，注入文件从未出现 |
+| I3 | 通过 | 主机名以 `-o…` 开头在 ssh 启动前被拒（假 ssh 零调用）；`--` 在主机之前 |
+| I4 | 通过 | 参数含 `BatchMode=yes`；255 → 运行失败并带 ssh 的话；命令自己退出码 3 不算失败 |
+| I5 | 通过 | 流/行表、导出 csv、保留后在“已保留结果”、历史；超时和行数上限保留已有行；取消 8 秒内结束 |
+| I6 | 通过（页面）/ **不通过（运行中）** | 最终输出：深色底、stderr 另一种颜色（页面检查 + 截图 `round17-terminal.png`）。运行中逐行显示 → 缺陷 A |
+| I7 | 通过 | `PASSWORD=`、`TOKEN:`、`Authorization: Bearer` 打码，普通变量不打码 |
+| I8 | 通过 | 本机 bash 脚本：参数当数据、stderr 独立、超时、行数上限 |
+| I9 | 通过 | 导出 `.sh`；没有授权的文件夹什么都不写 |
+| J1 | 通过 | 假 ssh 在本机 shell 里跑 `pg_dump` 连临时 PostgreSQL；调用顺序 docker(查库) → ssh(dump) → docker cp → createdb → pg_restore → rm；新库有 4 行；新直连数据源资源已建；每一步失败即停并说明 |
+| J2 | 通过 | 清单：`docker` 是系统程序，`searchPaths` 含 Docker.app、OrbStack（不读 PATH）。真的“找不到 docker”没有测（会碰真路径） |
+| J3 | 通过 | 8 种坏名字/容器/端口/用户在任何程序启动前被拒；库已存在 → 第 1 步停，ssh 零调用，不出现 drop/clean/create，已有库的数据不变 |
+| J4 | 通过 | 转储在 `plugin-data/org.onedesk.datasource/backups/`，以 `PGDMP` 开头 |
+| L1、L3、L4 | 通过（截图） | 真内核下的页面截图 `round17-*.png`；其余沿用外壳 vitest 与 `workbench.spec.ts` 的基准 |
+| L2、L5、L6、L9、L10 | 外壳 vitest 通过；**本轮没有新增真内核 e2e** | 外壳会话的 `round17-layout.test.tsx`；`workbench.spec.ts`（假数据）里有分割线记忆、展开全部。如要求真内核逐条，需后续补 |
+| L7 | 通过 | `search.query`：3 字符以上命中、2 字符按顺序模糊（`qb` 找到 Quarterly budget）、多词必须全中、无匹配为空 |
+| L8 | 通过 | 收藏在收藏树里、搜索结果排在前面（资源树本身不重排——按需求理解为搜索与收藏树）；标签可改并能被搜到 |
+| I.10b | 通过 | 授权文件夹增/查/改（replaceFolder）/移除，各写审计，移除后资源和文件都在；导入登记 path/size/modified/ext，重复导入不增加，文件没了标失效、回来恢复；分组 |
+| I.10b-2 | 通过 | 新建文件夹/文件、重命名（非法名被拒）、移动、复制；授权外被拒；同名三选一（协议与页面各走一遍：覆盖、跳过、保留两份、取消）；永久删除先问且“不可撤销”，取消不删；移到废纸篓进临时目录；打开/在 Finder 中显示写进日志；按文件名搜索；节点页按钮；`.command` 被拒且不进日志；只改大小写的改名成功不弹框；授权根不能改名/移动 |
+| I.10h | 通过 | Bearer、Basic（base64(用户名:密钥)）、自定义头、查询参数，本机服务看到的头/查询；路径不能换主机；密钥不在资源、审计、运行、数据目录；每次调用进审计；HTTP 请求插件选连接；分组与搜索 |
+
+## 缺陷（别人的文件，用 `test.fixme` 标出，没有改）
+
+- **A（外壳 `result-area.tsx`）**：内核确实发 `Run.partial`（协议用例通过），但运行中命令的页面只显示“Running on web-1…”，没有已出现的行。疑似页面持有的 run 来自任务列表（不带 `partial`），`run:<id>` 事件没有触发 `run.get`。用例：`I5/I6 (page): while the command runs…`。
+- **B（`org.onedesk.command` 的 `runLines`）**：部分输出节流（`PARTIAL_EVERY_MS`）后没有“补发”：一阵连发的几行里，节流期内的行要等到下一行输出才会出现。`echo a; echo b; echo c; sleep 5` 时 b、c 5 秒内看不到。用例：`lines that arrive in a burst…`。
+- **C（`org.onedesk.command`）**：超时和行数上限只读运行的 `input`（页面发的字段值），不读资源本身的 `body`；而主机、命令却两处都读。页面里点运行没问题，只用资源 id 运行（如被别的插件调用）时设置被忽略。
+- **D（说明）**：同一时刻的 stdout 与 stderr 行在两根管道上，到达顺序不保证等于程序写出的顺序（截图里 `an-error` 排在 `first-line` 前）。按“流、行”表这是可接受的，但“终端样式”的使用者可能想要稳定顺序。
+- **E（说明）**：文件树右键菜单没有“移到废纸篓”（只有永久删除）；废纸篓只在文件页按钮/资源动作里。需求写“删除默认进废纸篓”——若要求树菜单里的默认删除也是废纸篓，需要外壳/插件改。
+
+## 其它
+- `plugins/_testing/view-check.ts` 认识 X10 新字段（`lineTones`、`appearance`、`toneColumn`、`lineColumn`）和树节点的 `menu`、`draggable`、`accepts`。
+- 中日译文：补全了外壳新键（含 `terminal.label`、`kernel.error.reason.unsafeOpen`、`kernel.error.denied.trashDenied`），`lang-check` 通过。
+- 新截图：`docs/screenshots/round17-terminal.png`、`round17-folder-picker.png`、`round17-delete-permanently.png`。基准截图已还原（`git checkout -- docs/screenshots` 后只留这三张）。
+- 假程序只在清单声明了 `ssh`/`scp`/`docker` 的插件里生效；e2e 从不碰真的 `~/.Trash`、真服务器、真容器。

@@ -594,6 +594,23 @@ test("files D430: file nodes carry the move/copy/rename/delete menu and can be d
   expect((dirs.find((n) => n.label === "keep") as Node & { accepts?: string[] }).accepts).toEqual(["*"]);
 });
 
+test("files (node page): the buttons Open / Show in Finder / Trash on a file's own page work on the node (no import needed)", async ({ page }) => {
+  await openKernel(page, host);
+  const f = put("nodepage/direct.txt", "x");
+  const lines = () => (existsSync(openLog) ? readFileSync(openLog, "utf8").split("\n").filter(Boolean).length : 0);
+  const n0 = lines();
+  const o = await doAct(page, "open", f);
+  expect(o.status, JSON.stringify(o.error)).toBe("success");
+  const r = await doAct(page, "reveal", f);
+  expect(r.status, JSON.stringify(r.error)).toBe("success");
+  expect(lines()).toBe(n0 + 2);
+  expect(readFileSync(openLog, "utf8")).toContain(f);
+  const t = await doAct(page, "trash", f);
+  expect(t.status, JSON.stringify(t.error)).toBe("success");
+  expect(existsSync(f)).toBe(false);
+  expect(readdirSync(trashDir)).toContain("direct.txt");
+});
+
 test("files (review fixes): opening a program or script (.command) is refused and never reaches the opener; a plain text file opens", async ({ page }) => {
   await openKernel(page, host);
   const cmd = put("unsafe/run.command", "#!/bin/sh\necho hi\n");
@@ -772,23 +789,41 @@ const openRes = async (page: Page, name: string) => {
   await page.getByRole("treeitem", { name, exact: true }).first().dblclick();
 };
 
-test("I5/X17: while a command runs, the lines received so far are the run's partial output", async ({ page }) => {
-  await openKernel(page, host);
-  fake.reset();
-  fake.rule("ssh", { mode: "exec" });
-  const id = await create(page, CMD, { name: "Partial demo", "body.host": "web-1", "body.command": "echo early-line\necho early-err >&2\nsleep 5\necho late-line" });
-  const runId = await startRaw(page, "run", `resource:${id}`, {}, { resourceId: id });
+const waitPartial = async (page: Page, runId: string, needle: string) => {
   let partial: unknown = null;
-  for (let i = 0; i < 20 && !partial; i++) {
+  for (let i = 0; i < 25 && !JSON.stringify(partial).includes(needle); i++) {
     await new Promise((r) => setTimeout(r, 300));
     partial = (await call<RunInfo>(page, "run.get", { id: runId })).partial ?? null;
   }
-  expect(JSON.stringify(partial), "Run.partial carries the early lines").toContain("early-line");
-  expect(JSON.stringify(partial)).not.toContain("late-line");
-  expect(JSON.stringify(partial)).toContain("terminal");
+  return JSON.stringify(partial);
+};
+
+test("I5/X17: while a command runs, the lines received so far are the run's partial output (terminal look, no later line yet)", async ({ page }) => {
+  await openKernel(page, host);
+  fake.reset();
+  fake.rule("ssh", { mode: "exec" });
+  const id = await create(page, CMD, { name: "Partial demo", "body.host": "web-1", "body.command": "echo early-line\nsleep 1\necho mid-line\nsleep 5\necho late-line" });
+  const runId = await startRaw(page, "run", `resource:${id}`, {}, { resourceId: id });
+  const p = await waitPartial(page, runId, "mid-line");
+  expect(p, "Run.partial carries the lines so far").toContain("early-line");
+  expect(p).toContain("mid-line");
+  expect(p).not.toContain("late-line");
+  expect(p).toContain("terminal");
   const done = await waitRun(page, runId);
   expect(done.status).toBe("success");
   expect(done.partial ?? null).toBeNull();
+});
+
+// DEFECT (org.onedesk.command `runLines`): a line that arrives less than PARTIAL_EVERY_MS after the last push is not pushed and nothing pushes it
+// later (no trailing flush), so with `echo a; echo b; sleep 5` the later lines stay invisible until the next output (5 s).
+test.fixme("I5/X17: lines that arrive in a burst are all shown in the partial output without waiting for the next line", async ({ page }) => {
+  await openKernel(page, host);
+  fake.reset();
+  fake.rule("ssh", { mode: "exec" });
+  const id = await create(page, CMD, { name: "Burst demo", "body.host": "web-1", "body.command": "echo burst-1\necho burst-2\necho burst-3\nsleep 5\necho after" });
+  const runId = await startRaw(page, "run", `resource:${id}`, {}, { resourceId: id });
+  const p = await waitPartial(page, runId, "burst-3");
+  expect(p).toContain("burst-3");
 });
 
 test("I6 (page): the server command's output is a dark terminal and stderr has its own colour", async ({ page }) => {
@@ -800,14 +835,16 @@ test("I6 (page): the server command's output is a dark terminal and stderr has i
   await page.getByRole("button", { name: "Run", exact: true }).first().click();
   const out = page.getByText("first-line", { exact: true });
   await expect(out).toBeVisible({ timeout: 15_000 });
+  // colours of the text and of the darkest opaque background behind it (the terminal block)
   const style = (text: string) =>
     page.getByText(text, { exact: true }).evaluate((el) => {
-      let bg = "";
-      for (let e: Element | null = el; e && !bg; e = e.parentElement) {
+      const bgs: string[] = [];
+      for (let e: Element | null = el; e; e = e.parentElement) {
         const c = getComputedStyle(e).backgroundColor;
-        if (c && c !== "rgba(0, 0, 0, 0)" && c !== "transparent") bg = c;
+        const m = c.match(/[\d.]+/g);
+        if (m && (m.length === 3 || Number(m[3]) >= 0.9)) bgs.push(c);
       }
-      return { color: getComputedStyle(el).color, bg };
+      return { color: getComputedStyle(el).color, bgs };
     });
   const a = await style("first-line");
   const b = await style("an-error");
@@ -816,7 +853,7 @@ test("I6 (page): the server command's output is a dark terminal and stderr has i
     const [r, g, bl] = (css.match(/\d+(\.\d+)?/g) ?? ["255", "255", "255"]).slice(0, 3).map(Number) as [number, number, number];
     return (0.2126 * r + 0.7152 * g + 0.0722 * bl) / 255;
   };
-  expect(lum(a.bg), "dark background").toBeLessThan(0.25);
+  expect(Math.min(...a.bgs.map(lum)), "dark background").toBeLessThan(0.25);
   await shot(page, "terminal");
 });
 
