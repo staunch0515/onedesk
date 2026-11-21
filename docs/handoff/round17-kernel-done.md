@@ -103,3 +103,15 @@
 - 验证：`cargo test --workspace`、`pnpm clippy`、`pnpm lint`、`pnpm typecheck`、`gen-types --check` 通过；`pnpm test` 只有中日语言包那 4 个旧失败。e2e 没跑。
 - 留下的：删除**文件夹**时内部仍按路径删（标准库 `remove_dir_all`，它自己不跟随链接，但顶层父目录在检查与删除之间被换掉的窗口没有完全关上）；复制文件夹时顶层是钉住的，里面的层按路径复制到本次新建的文件夹里。
 - 给测试会话：e2e 启动工作进程要加 `ONEDESK_TEST_HOOKS=1`，否则 `ONEDESK_TRASH_DIR`、`ONEDESK_OPEN_LOG` 不生效。
+
+## 10. “移到废纸篓”在真机上不能用：原因与修法
+
+- **原因（已确认，没碰真的废纸篓）**：本会话里对 `~/.Trash` 只做了 `open(O_RDONLY|O_DIRECTORY)`（加不加 `O_NOFOLLOW` 都一样）和 `listdir`，都得到 **`EPERM`（Operation not permitted）**；`lstat` 正常（`drwx------`，属于当前用户，`st_dev` 16777231，与授权文件夹同一卷）。属主是自己、权限 0700 却得到 `EPERM` 而不是 `EACCES`，是 macOS 隐私保护（TCC）在拦：没有“完全磁盘访问”的进程不能读 `~/.Trash`。原实现 `trash()` 先 `Pinned::new(<废纸篓>/<名字>)`，也就是打开 `~/.Trash`，失败后被 `map_err(|_| trashUnavailable)` 报成了“另一个磁盘”。正式使用时对所有没给完全磁盘访问的用户都不能用。
+- **修法**：正式路径改为 `NSFileManager trashItemAtURL:resultingItemURL:error:`（不需要打开 `~/.Trash`，与 Finder 相同，可放回原处）；原来的改名实现只在 `KernelConfig.trash_dir = Some(..)` 时用，也就是工作进程在 `ONEDESK_TEST_HOOKS=1` 下读到 `ONEDESK_TRASH_DIR` 时。错误按 3.3 节映射：权限问题为 `denied/trashDenied`，不再报成“另一个磁盘”。
+- **新依赖（规则 9）**：
+  - 用途：调用 `NSFileManager trashItemAtURL:`。
+  - 加的是 `objc2 = "0.6"`（锁定 0.6.5，MIT）与 `objc2-foundation = "0.3"`（锁定 0.3.2，MIT），后者关掉默认特性，只开 `std`、`NSFileManager`、`NSURL`、`NSError`、`NSString`。这样引入的子依赖只有 `objc2-encode` 4.1.0（MIT）、`bitflags` 2.13.2（MIT OR Apache-2.0）、`libc`（MIT OR Apache-2.0，原来就有）；`objc2-exception-helper`、`block2`、`objc2-core-foundation`、`objc2-proc-macros` 都是可选的，没开。**这些包原来都已在 `Cargo.lock` 里（Tauri 用它们）**，`Cargo.lock` 只多了内核包对这两个名字的引用，没有新包。
+  - 替代方案：`trash` crate（同样调这个系统接口，但会多带 `log`、`once_cell` 等，也做跨平台我们用不到）；自己用 `objc_msgSend` 写 FFI（不安全代码更多）；调 `/usr/bin/osascript` 让 Finder 删（会弹出自动化授权，而且慢）；继续自己改名（就是现在的问题）。
+- **测试**：`files` 单元测试 `round17_trash_errors_say_what_happened`（不许打开的废纸篓文件夹 → `trashDenied`；不存在 → `trashUnavailable`；系统错误码的映射）；`round17.rs` 里原有的废纸篓测试仍走测试用的文件夹；工作进程单元测试改为默认 `None`。真接口只有一条 `#[ignore]` 的手动测试 `system_trash_moves_a_temporary_file_into_the_trash`（把临时目录里的一个测试文件移进真的废纸篓），**没有运行**，要手动跑：`cargo test -p onedesk-kernel --lib -- --ignored system_trash`。
+- 外壳文字：只加了 `denied.trashDenied` 的英文（`en-US.ts`、`kernel-texts.ts` 各一行）。
+- 验证：`cargo test --workspace`、`pnpm clippy`、`pnpm lint`、`pnpm typecheck`、`gen-types --check` 通过；`pnpm test` 只有中日语言包那 4 个旧失败。

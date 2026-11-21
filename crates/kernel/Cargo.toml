@@ -26,6 +26,11 @@ bytes = "1"
 keyring = { version = "3", default-features = false, features = ["apple-native"] }
 # D404: lists the accounts of the keychain service so a deleted workspace's entries can go by prefix (the same package keyring uses; MIT/Apache-2.0).
 security-framework = "3"
+# Round 17: `files.trash` through `NSFileManager trashItemAtURL:` (a process without Full Disk
+# Access may not open ~/.Trash itself). Already in Cargo.lock through Tauri; MIT. Only what that
+# call needs: objc2, objc2-encode, bitflags, libc (no new package).
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSFileManager", "NSURL", "NSError", "NSString"] }
 
 [dev-dependencies]
 tempfile.workspace = true
