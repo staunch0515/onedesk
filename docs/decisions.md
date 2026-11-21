@@ -577,3 +577,4 @@
 - **D431** 运行记录树的两个分组里，“已保留结果”排在“最近运行”前面（第十六轮收尾，2026-11-21）：保留结果少而重要，“最近运行”展开后最多 200 行，放前面会把保留结果挤到很远。两组仍按 D424 默认展开。
 - **D432** 第十七轮审查 #1、#14（2026-11-21）：`files.open`/`files.reveal` 只能用于授权文件夹，不能用于插件自己的目录；`open` 拒绝可执行文件与 `.app`、`.command`、`.terminal`、`.workflow`、`.tool` 等会被系统执行的东西（原因 `denied/unsafeOpen`），打开的是 canonical 路径并再核对一次授权。提供树节点菜单里的内置命令只允许 `node.open`（修订 D430），其余 `node.*` 丢弃。
 - **D433** 密钥代入增加 `|url` 修饰：按百分号编码代入（用于地址的查询参数）；编码后的值同样进抹除表（第十七轮审查 #11）。插件把调用方传来的文字拼进请求前，必须拒绝其中的 `{{secret:`。测试用的环境变量（`ONEDESK_OPEN_LOG`、`ONEDESK_TRASH_DIR`）只在 `ONEDESK_TEST_HOOKS=1` 时生效（审查 #13）。
+- **D434** “移到废纸篓”走系统接口 `NSFileManager trashItemAtURL:`（第十七轮，2026-11-21）：直接写 `~/.Trash` 会被 macOS 隐私保护（TCC）以 EPERM 拦下，没有“完全磁盘访问”的用户都用不了。新依赖 `objc2` 0.6.5 与 `objc2-foundation` 0.3.2（均 MIT；子依赖 objc2-encode MIT、bitflags MIT/Apache-2.0、libc），已因 Tauri 在 Cargo.lock 中；替代方案 `trash` crate、自写 FFI、osascript 见 `round17-kernel-done.md` §10。原改名实现只用于 `ONEDESK_TEST_HOOKS=1` 下的测试目录。权限问题报 `denied/trashDenied`。
