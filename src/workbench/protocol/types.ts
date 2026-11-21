@@ -78,6 +78,7 @@ export type {
   FormLayout,
   HelloResult,
   Label,
+  ConfirmChoice,
   LineTone,
   TextAppearance,
   MenuCommand,
