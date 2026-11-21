@@ -115,3 +115,9 @@
 - **测试**：`files` 单元测试 `round17_trash_errors_say_what_happened`（不许打开的废纸篓文件夹 → `trashDenied`；不存在 → `trashUnavailable`；系统错误码的映射）；`round17.rs` 里原有的废纸篓测试仍走测试用的文件夹；工作进程单元测试改为默认 `None`。真接口只有一条 `#[ignore]` 的手动测试 `system_trash_moves_a_temporary_file_into_the_trash`（把临时目录里的一个测试文件移进真的废纸篓），要手动跑：`cargo test -p onedesk-kernel --lib -- --ignored system_trash`。**用户 2026-11-21 在主仓库里手动运行，通过**（1 passed）。
 - 外壳文字：只加了 `denied.trashDenied` 的英文（`en-US.ts`、`kernel-texts.ts` 各一行）。
 - 验证：`cargo test --workspace`、`pnpm clippy`、`pnpm lint`、`pnpm typecheck`、`gen-types --check` 通过；`pnpm test` 只有中日语言包那 4 个旧失败。
+
+## 11. D435：动作返回 `failed`，失败但保留输出
+
+- 先合并了集成分支 `f90d120`。`ActionOut` 加 `failed: { message }`（同样 `deny_unknown_fields`），`output` 在有 `failed` 时可省（用最后一次 `runs.partial`）。状态 `error`、`error.code = "pluginError"`，`message` 抹密钥、截到 2000 字符；`output`、`summary` 照常检查并保存。
+- 测试：`round17.rs` `d435_a_failed_run_keeps_its_output_summary_and_history`（状态、码、抹除与截断、`summary`、`output`、`run.rows`、`run.render`、`run.listFor`、只有 `failed` 时用部分输出、没有 `failed` 时缺 `output` 仍报 `badOutput`）。旧代码里 `failed` 是未知键，这类运行会以 `badOutput` 结束。
+- 验证：`cargo test --workspace`、`pnpm clippy`、`pnpm lint`、`pnpm typecheck`、`gen-types --check` 通过；`pnpm test` 只有中日语言包那 4 个旧失败。e2e 没跑。

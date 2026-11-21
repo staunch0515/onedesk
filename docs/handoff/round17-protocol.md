@@ -1,6 +1,6 @@
 # 第十七轮：协议与宿主接口新增的确切名字（内核会话）
 
-其它会话照这里写。**第二版**（协调会话要求后的补充）：文件接口名字**不变**（只有一套，见 3.1）；新增 `writeText` 的 `executable`/`conflict`（3.1b）、确认效果的 `choices`/`choiceArg`/`irreversible`（D428，3.6）、页面动作的 `command`（D429，3.7）、密钥的 Basic/base64 代入（3.4）、`searchPaths` 的 `~/` 与位置检查、程序最长 2 小时（3.5）、提供树节点的 `menu`/`draggable`/`accepts`（D430，3.8）。协议（`crates/protocol`）只增不改；生成的 TS 已更新（`LineTone.ts`、`TextAppearance.ts`、`PluginReplaceFolderParams.ts`，以及 `ViewNode`、`RunOutput`、`Run`、`CommandEffect` 的新可选字段）。决定编号留给主会话（提议见 `round17-kernel-done.md`）。
+其它会话照这里写。**第二版**（协调会话要求后的补充）：文件接口名字**不变**（只有一套，见 3.1）；新增 `writeText` 的 `executable`/`conflict`（3.1b）、确认效果的 `choices`/`choiceArg`/`irreversible`（D428，3.6）、页面动作的 `command`（D429，3.7）、密钥的 Basic/base64 代入（3.4）、`searchPaths` 的 `~/` 与位置检查、程序最长 2 小时（3.5）、提供树节点的 `menu`/`draggable`/`accepts`（D430，3.8）、动作返回 `failed`（D435，3.9）。协议（`crates/protocol`）只增不改；生成的 TS 已更新（`LineTone.ts`、`TextAppearance.ts`、`PluginReplaceFolderParams.ts`，以及 `ViewNode`、`RunOutput`、`Run`、`CommandEffect` 的新可选字段）。决定编号留给主会话（提议见 `round17-kernel-done.md`）。
 
 ## 1. X10 文字按行标色与“终端样式”
 
@@ -187,6 +187,21 @@ type ConfirmChoice = { id: string, label?: Label, danger?: boolean };
 - 不给 `menu`：与之前相同（有 `target` 就只有 `node.open`）。给了 `menu`（包括空数组）就完全照它，不再自动加 `node.open`。
 - 拖放、“移动到/复制到”、就地改名由外壳按命令 id 结尾的 `:move`、`:copy`、`:rename` 接通（D430，约定见 `plugins/README.md`）；内核不解释，执行时照常走 `command.execute`。
 - 资源类型提供的子节点（`kinds.children`，D375）也接受这三个键，但**忽略**（那里的节点不由插件拖放）。
+
+## 3.9 动作“失败但保留输出”（D435）
+
+动作处理函数的返回值多一个可选字段 `failed`（宿主接口的 JSON，不是协议类型，没有 TS 生成）：
+
+```js
+return { output: { type: "table", … }, summary: { message: "exit 2" }, failed: { message: "exit code 2" } };
+return { failed: { message: "timed out" } };   // 不给 output：用最后一次 runs.partial（没有就没有输出）
+```
+
+- 有 `failed` 时：`output` 照常按声明的类型检查（不合格照旧 `badOutput`），`output`、`summary` 照常保存（数据文件输出同样）；运行状态是 **`error`**，`error = { code: "pluginError", message }`，与插件抛错时同一个码。
+- `message` 按这次运行读过的密钥值抹除（`***`），超过 **2000 个字符**截断。
+- 运行记录、历史（`run.listFor`）、`run.get` 的 `output`、`run.rows`、`run.render`（结果视图页签）、保留结果，都与成功的运行一样能用。
+- 没有 `failed` 时 `output` 仍是必填（缺了 → `badOutput`）。
+- `actions.call` 调用别的插件的动作时，`failed` 只是返回数据的一部分，原样交给调用方（D435：所以不用 `error` 这个名字）。
 
 ## 3.5 程序的查找与时长（第二版）
 
