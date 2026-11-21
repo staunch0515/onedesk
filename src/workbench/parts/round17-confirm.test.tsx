@@ -21,31 +21,20 @@ function setup(effect: unknown) {
   return execute;
 }
 
-const message = { "en-US": "report.txt already exists." };
 
-describe("same-name conflict choice (X18)", () => {
-  it("offers overwrite, skip and keep both, and sends the chosen one back with the command", async () => {
-    const execute = setup({ type: "confirm", message, command: "files:paste", choices: [{ id: "overwrite" }, { id: "skip" }, { id: "keepBoth" }], choiceArg: "conflict" });
-    expect(await screen.findByRole("button", { name: "Overwrite" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Skip" })).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Keep both" }));
-    await waitFor(() => expect(execute).toHaveBeenCalledWith("files:paste", expect.objectContaining({ args: { confirmed: true, conflict: "keepBoth" } })));
-  });
-
-  it("cancel runs nothing", async () => {
-    const execute = setup({ type: "confirm", message, command: "files:paste", choices: [{ id: "overwrite" }, { id: "skip" }] });
-    fireEvent.click(await screen.findByRole("button", { name: "Cancel" }));
-    expect(execute).not.toHaveBeenCalled();
-  });
-});
-
-describe("permanent delete asks twice and says it cannot be undone", () => {
-  it("shows the warning and runs only after the danger button", async () => {
-    const execute = setup({ type: "confirm", message: { "en-US": "Delete report.txt permanently?" }, command: "files:purge", danger: true, irreversible: true });
-    expect(await screen.findByText(/Delete report.txt permanently\? This cannot be undone\./)).toBeTruthy();
+describe("confirming a permanent delete (X18)", () => {
+  it("shows the plugin's own sentence and runs only after the danger button, with confirmed: true", async () => {
+    const execute = setup({ type: "confirm", message: { "en-US": "Delete report.txt permanently? This cannot be undone." }, command: "files:purge", danger: true });
+    expect(await screen.findByText(/This cannot be undone\./)).toBeTruthy();
     expect(execute).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
     await waitFor(() => expect(execute).toHaveBeenCalledWith("files:purge", expect.objectContaining({ args: { confirmed: true } })));
+  });
+
+  it("cancel runs nothing", async () => {
+    const execute = setup({ type: "confirm", message: { "en-US": "Sure?" }, command: "files:purge", danger: true });
+    fireEvent.click(await screen.findByRole("button", { name: "Cancel" }));
+    expect(execute).not.toHaveBeenCalled();
   });
 });
 

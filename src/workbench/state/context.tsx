@@ -216,16 +216,16 @@ export function WorkbenchProvider({ store, children }: { store: Store; children:
           case "pick-folder": {
             const pick = client.platform?.pickFolder;
             if (!pick) {
-              store.set({ folderPrompt: { plugin: effect.plugin, replace: (effect as { replace?: string }).replace } });
+              store.set({ folderPrompt: { plugin: effect.plugin, replace: effect.replace } });
               break;
             }
             const path = await pick();
-            if (path) await grantFolder(effect.plugin, path, (effect as { replace?: string }).replace);
+            if (path) await grantFolder(effect.plugin, path, effect.replace);
             break;
           }
           case "confirm":
             {
-              // Round 17: optional `choices` / `choiceArg` / `irreversible` (names follow round17-protocol.md).
+              // D428: the kernel adds `choices`, `choiceArg` and `irreversible` (read through a local type until they are generated).
               const extra = effect as { choices?: ConfirmState["choices"]; choiceArg?: string; irreversible?: boolean };
               store.set({
                 confirmCommand: {

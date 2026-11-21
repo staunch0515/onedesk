@@ -48,12 +48,11 @@ export function ViewNodes({ nodes, onRowAction }: { nodes: ViewNode[]; onRowActi
         switch (node.type) {
           case "text": {
             // Round 17 (X10): `lineTones` colors single lines, `appearance: "terminal"` draws the dark terminal look.
-            const toned = node as typeof node & { lineTones?: Array<string | null>; appearance?: string };
-            if (toned.appearance === "terminal") return <TerminalText key={node.id} label={node.id} lines={textLines(node.text, toned.lineTones)} />;
-            if (toned.lineTones?.some((x) => x && x !== "default")) {
+            if (node.appearance === "terminal") return <TerminalText key={node.id} label={node.id} lines={textLines(node.text, node.lineTones)} />;
+            if (node.lineTones?.some((x) => x && x !== "default")) {
               return (
                 <Pane key={node.id} pad="md">
-                  {textLines(node.text, toned.lineTones).map((l, i) => (
+                  {textLines(node.text, node.lineTones).map((l, i) => (
                     <TextBlock key={i} tone={l.tone === "stderr" ? "danger" : l.tone === "muted" || l.tone === "success" || l.tone === "warning" || l.tone === "danger" ? l.tone : "default"}>{l.text || " "}</TextBlock>
                   ))}
                 </Pane>

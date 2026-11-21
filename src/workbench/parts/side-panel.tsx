@@ -4,6 +4,8 @@ import { Badge, Banner, ContextMenu, EmptyState, IconButton, Input, LoadingState
 import { useI18n } from "../i18n";
 import { isSourceMissing, loadBatch, loadLevel, loadMore, type Level, type MenuCommand, type TreeInfo, type TreeNode } from "../protocol";
 import { useUi, useWorkbench } from "../state/context";
+import { fileOpOf, opCommand, type FileOp } from "./file-ops";
+import { FolderPicker } from "./folder-picker";
 
 const ROOT = "";
 /** Key prefix of the "more is being read" row at the end of a level that has more batches (never a real key). */
@@ -56,6 +58,7 @@ export function TreePanel({ tree }: { tree: TreeInfo }) {
   const [levels, setLevels] = useState<Map<string, Level>>(() => cache.get(tree.id) ?? new Map());
   const [loading, setLoading] = useState<Set<string>>(new Set());
   const [filter, setFilter] = useState("");
+  const [pickFolder, setPickFolder] = useState<{ node: TreeNode; op: "move" | "copy"; command: string } | null>(null);
   const [menu, setMenu] = useState<{ point: { x: number; y: number }; node: TreeNode | null } | null>(null);
   const nodesRef = useRef(levels);
   nodesRef.current = levels;
@@ -247,7 +250,7 @@ export function TreePanel({ tree }: { tree: TreeInfo }) {
           stateLabel: n.stateReason ? (n.state === "load-failed" && typeof n.stateReason === "string" ? error({ code: n.stateReason, params: {} }) : tx(n.stateReason)) : undefined,
           badge: n.badge,
           marked: tree.id === "environments" && n.key === activeEnv,
-          draggable: n.draggable && !needle,
+          draggable: (n.draggable || (tree.source !== "stored" && !!opCommand(n, "move"))) && !needle,
         });
         if (isOpen) walk(n.key, depth + 1, inner);
       }
@@ -285,7 +288,14 @@ export function TreePanel({ tree }: { tree: TreeInfo }) {
   };
 
   const canDrop = (dragKey: string, targetKey: string | null, position: TreeDropPosition) => {
-    if (tree.source !== "stored") return false;
+    if (tree.source !== "stored") {
+      // A plugin's own tree (files): a node with a move command can be dropped onto a folder of the same tree (D428).
+      const from = index.get(dragKey);
+      const onto = targetKey ? index.get(targetKey) : null;
+      if (!from || !onto || position !== "inside" || !onto.expandable || !opCommand(from, "move")) return false;
+      for (let p: TreeNode | undefined = onto; p; p = p.parentKey ? index.get(p.parentKey) : undefined) if (p.key === dragKey) return false;
+      return true;
+    }
     if (isSyntheticKey(dragKey) || (targetKey !== null && isSyntheticKey(targetKey))) return false;
     const drag = index.get(dragKey);
     const target = targetKey ? index.get(targetKey) : null;
@@ -298,7 +308,20 @@ export function TreePanel({ tree }: { tree: TreeInfo }) {
     return container.accepts.includes("*") || container.accepts.includes(drag.kind);
   };
 
-  const drop = (dragKey: string, targetKey: string | null, position: TreeDropPosition) => {
+  /** Runs a plugin's file command on a node with the arguments it reads (`destination`, `newName`). */
+  const fileCommand = (command: string, node: TreeNode, args: Record<string, unknown>) =>
+    void actions.command(command, { tree: tree.id, nodeKey: node.key, target: node.target, args });
+
+  const drop = (dragKey: string, targetKey: string | null, position: TreeDropPosition, modifiers?: { alt: boolean }) => {
+    if (tree.source !== "stored") {
+      const node = index.get(dragKey);
+      const command = node && (modifiers?.alt ? (opCommand(node, "copy") ?? opCommand(node, "move")) : opCommand(node, "move"));
+      if (node && command && targetKey) {
+        fileCommand(command, node, { destination: targetKey });
+        if (!expanded.includes(targetKey)) actions.setExpanded(tree.id, [...expanded, targetKey]);
+      }
+      return;
+    }
     client.tree.move(tree.id, dragKey, targetKey, position, locale).then((out) => {
       // The plugin took the drop itself (a reference was added, nothing moved): show what it said.
       if (out && out.message !== undefined) toast({ tone: "success", title: tx(out.message) });
@@ -375,9 +398,15 @@ export function TreePanel({ tree }: { tree: TreeInfo }) {
           editingKey={renaming}
           renameLabel={t("tree.rename")}
           onRenameCommit={(key, name) => {
-            if (store.get().renaming?.key !== key) return;
+            const prior = store.get().renaming;
+            if (prior?.key !== key) return;
             store.set({ renaming: null });
             const node = index.get(key);
+            const renameCommand = prior?.command;
+            if (renameCommand && node) {
+              if (name && name !== node.label) fileCommand(renameCommand, node, { newName: name });
+              return;
+            }
             if (tree.id === RUNS_TREE) {
               const next = stripRunNumber(name);
               if (next && node && node.parentKey === SAVED_RUNS && next !== stripRunNumber(node.label)) client.run.setKept(key, true, next).catch(actions.fail);
@@ -394,11 +423,30 @@ export function TreePanel({ tree }: { tree: TreeInfo }) {
         point={menu?.point ?? null}
         onClose={() => setMenu(null)}
         items={[
-          ...menuEntries(commands, tx, (id) => void actions.command(id, { tree: tree.id, nodeKey: menu?.node?.key ?? null, target: menu?.node?.target })),
+          ...menuEntries(commands, tx, (id) => {
+            const node = menu?.node;
+            const op: FileOp | null = node && tree.source !== "stored" ? fileOpOf(id) : null;
+            // Move / copy ask for the destination folder, rename edits the name in place; the answer goes to the command as an argument.
+            if (node && (op === "move" || op === "copy")) setPickFolder({ node, op, command: id });
+            else if (node && op === "rename") store.set({ renaming: { tree: tree.id, key: node.key, command: id } });
+            else void actions.command(id, { tree: tree.id, nodeKey: node?.key ?? null, target: node?.target });
+          }),
           // A saved result has a readable name that can be changed; the kernel keeps it with the kept run (no tree-wide rename for runs).
           ...(tree.id === RUNS_TREE && menu?.node?.parentKey === SAVED_RUNS ? [{ key: "run.rename", label: t("run.rename"), icon: "pencil", onSelect: () => store.set({ renaming: { tree: tree.id, key: menu.node!.key } }) } as MenuEntry] : []),
         ]}
       />
+      {pickFolder && (
+        <FolderPicker
+          tree={tree.id}
+          title={t(pickFolder.op === "move" ? "folderPicker.move" : "folderPicker.copy")}
+          exclude={pickFolder.node.key}
+          onCancel={() => setPickFolder(null)}
+          onPick={(destination) => {
+            fileCommand(pickFolder.command, pickFolder.node, { destination });
+            setPickFolder(null);
+          }}
+        />
+      )}
     </SidePanel>
   );
 }

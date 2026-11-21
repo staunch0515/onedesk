@@ -139,7 +139,7 @@ function OutputTab({ tab, run, widthKey }: { tab: TabState; run: Run | null | un
   const { t, runError, duration } = useI18n();
   const live = useLiveLog(run);
   // Round 17 (X17): while the run goes, `Run.partial` is the whole output so far (it replaces the last one).
-  const partialLines = terminalLinesOf((run as (Run & { partial?: unknown }) | null | undefined)?.partial);
+  const partialLines = terminalLinesOf(run?.partial);
   const elapsed = useElapsed(run?.startedAt, run?.status === "running");
   if (run === undefined) return <LoadingState layout="inline" label={t("common.loading")} />;
   if (run === null) return <EmptyState layout="inline" icon="play" message={tab.target.startsWith("run:") ? t("result.gone") : t("result.empty")} />;

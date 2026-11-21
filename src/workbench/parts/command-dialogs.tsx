@@ -66,12 +66,12 @@ export function CommandDialogs() {
             <Button onClick={() => store.set({ confirmCommand: null })}>{t("common.cancel")}</Button>
             {confirm?.choices ? (
               confirm.choices.map((choice) => (
-                <Button key={choice.id} variant={choice.danger ? "danger" : "secondary"} onClick={() => answer(confirm, { [confirm.choiceArg ?? "conflict"]: choice.id })}>
+                <Button key={choice.id} variant={confirm.irreversible && choice.id === "overwrite" ? "danger" : "secondary"} onClick={() => answer(confirm, { [confirm.choiceArg ?? "conflict"]: choice.id })}>
                   {choice.label ? tx(choice.label) : choiceText(choice.id)}
                 </Button>
               ))
             ) : (
-              <Button variant={confirm?.danger ? "danger" : "primary"} onClick={() => confirm && answer(confirm, {})}>
+              <Button variant={confirm?.danger || confirm?.irreversible ? "danger" : "primary"} onClick={() => confirm && answer(confirm, {})}>
                 {confirm ? (confirmTexts(confirm.message)?.ok ?? t("confirm.ok")) : t("confirm.ok")}
               </Button>
             )}
