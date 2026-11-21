@@ -348,10 +348,7 @@
         "icon": "trash-2",
         "output": "text",
         "saveFirst": false,
-        "confirm": null,
-        "kinds": [
-          "disk-file"
-        ]
+        "confirm": null
       },
       {
         "id": "delete",
@@ -359,10 +356,7 @@
         "icon": "trash",
         "output": "text",
         "saveFirst": false,
-        "confirm": "confirm.delete",
-        "kinds": [
-          "disk-file"
-        ]
+        "confirm": "confirm.delete"
       },
       {
         "id": "open",
@@ -370,10 +364,7 @@
         "icon": "external-link",
         "output": "text",
         "saveFirst": false,
-        "confirm": null,
-        "kinds": [
-          "disk-file"
-        ]
+        "confirm": null
       },
       {
         "id": "reveal",
@@ -381,10 +372,7 @@
         "icon": "folder-search",
         "output": "text",
         "saveFirst": false,
-        "confirm": null,
-        "kinds": [
-          "disk-file"
-        ]
+        "confirm": null
       },
       {
         "id": "search",
