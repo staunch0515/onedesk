@@ -36,14 +36,9 @@
   "field.newName.placeholder": "新名称",
   "field.destination": "目标文件夹",
   "field.destination.placeholder": "/路径/到/文件夹",
-  "field.conflict": "同名时",
   "field.query": "搜索词",
   "field.query.placeholder": "文件名里的词",
   "field.recursive": "包含子文件夹",
-  "conflict.ask": "先问（停下）",
-  "conflict.overwrite": "覆盖",
-  "conflict.skip": "跳过",
-  "conflict.keepBoth": "保留两份",
   "folder.note": "这是一个文件夹。用上面的操作新建、重命名、移动、复制、删除、搜索或导入。",
   "info.name": "项目",
   "info.value": "值",
@@ -82,9 +77,10 @@
   "col.path": "路径",
   "col.size": "大小",
   "col.modified": "修改时间",
-  "conflict.exists": "那里已有“{name}”。请在“同名时”选择覆盖、跳过或保留两份，再运行一次。",
+  "conflict.exists": "那里已有“{name}”。请选择怎么处理。",
   "action.grantReplace": "更换文件夹",
   "grant.choose": "请在弹出的对话框里选择文件夹。",
   "error.trashUnavailable": "这个位置不能用废纸篓（在另一个磁盘上）。请改用永久删除。",
-  "error.notGranted": "这个文件夹不在授权列表里。"
+  "error.notGranted": "这个文件夹不在授权列表里。",
+  "confirm.delete.named": "永久删除“{name}”？"
 }

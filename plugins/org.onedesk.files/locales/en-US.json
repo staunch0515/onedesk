@@ -36,14 +36,9 @@
   "field.newName.placeholder": "New name",
   "field.destination": "Destination folder",
   "field.destination.placeholder": "/path/to/folder",
-  "field.conflict": "If the name exists",
   "field.query": "Search words",
   "field.query.placeholder": "Words in the file name",
   "field.recursive": "Include subfolders",
-  "conflict.ask": "Ask (stop)",
-  "conflict.overwrite": "Overwrite",
-  "conflict.skip": "Skip",
-  "conflict.keepBoth": "Keep both",
   "folder.note": "A folder. Use the actions above to create, rename, move, copy, delete, search or import.",
   "info.name": "Item",
   "info.value": "Value",
@@ -82,9 +77,10 @@
   "col.path": "Path",
   "col.size": "Size",
   "col.modified": "Modified",
-  "conflict.exists": "“{name}” already exists there. Choose Overwrite, Skip or Keep both under “If the name exists” and run again.",
+  "conflict.exists": "“{name}” already exists there. Choose what to do.",
   "action.grantReplace": "Change folder",
   "grant.choose": "Pick a folder in the dialog.",
   "error.trashUnavailable": "This place cannot use the Trash (another disk). Delete permanently instead.",
-  "error.notGranted": "This folder is not in the authorized list."
+  "error.notGranted": "This folder is not in the authorized list.",
+  "confirm.delete.named": "Delete “{name}” permanently?"
 }

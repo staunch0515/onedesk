@@ -36,14 +36,9 @@
   "field.newName.placeholder": "新しい名前",
   "field.destination": "移動先フォルダー",
   "field.destination.placeholder": "/パス/フォルダー",
-  "field.conflict": "同じ名前があるとき",
   "field.query": "検索語",
   "field.query.placeholder": "ファイル名に含まれる語",
   "field.recursive": "サブフォルダーを含める",
-  "conflict.ask": "確認する（中止）",
-  "conflict.overwrite": "上書き",
-  "conflict.skip": "スキップ",
-  "conflict.keepBoth": "両方残す",
   "folder.note": "フォルダーです。上の操作で作成・名前変更・移動・コピー・削除・検索・取り込みができます。",
   "info.name": "項目",
   "info.value": "値",
@@ -82,9 +77,10 @@
   "col.path": "パス",
   "col.size": "サイズ",
   "col.modified": "更新日時",
-  "conflict.exists": "そこには既に「{name}」があります。「同じ名前があるとき」で上書き・スキップ・両方残すのどれかを選んで、もう一度実行してください。",
+  "conflict.exists": "そこには既に「{name}」があります。どうするか選んでください。",
   "action.grantReplace": "フォルダーを変更",
   "grant.choose": "ダイアログでフォルダーを選んでください。",
   "error.trashUnavailable": "この場所ではゴミ箱を使えません（別のディスク）。完全に削除してください。",
-  "error.notGranted": "このフォルダーは許可リストにありません。"
+  "error.notGranted": "このフォルダーは許可リストにありません。",
+  "confirm.delete.named": "「{name}」を完全に削除しますか？"
 }

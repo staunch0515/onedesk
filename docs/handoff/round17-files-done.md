@@ -42,7 +42,8 @@
 已改为 `round17-protocol.md` 的名字：`files.addRoot/replaceRoot/removeRoot`、`files.mkdir`、`copy/move(from, to, { conflict })`（`fail|overwrite|skip|keepBoth`，同名由宿主处理，返回 `{path, skipped}`）、`trash`、`remove`、`open`、`reveal`、`find`（搜索用它）。
 - 授权文件夹的“改”现在是 **更换文件夹**（动作 `grantReplace` → `replaceRoot(path)`，弹外壳的选择框），不再是改显示名；“增”是 `grantAdd` → `addRoot()`。
 - 原因码：`conflict/exists`（同名）、`invalid/intoItself`、`invalid/isRoot`、`invalid/trashUnavailable`、`notFound/grant` 都转成用户的话（`explain`）。
-- 冲突对话框：新增插件命令 `move`、`copy`、`rename`（`palette: false`），读 `context.nodeKey` 与 `context.args.{destination,newName,conflict}`；同名时返回 `confirm` 效果（`choices` 为 overwrite/skip/keepBoth，`choiceArg: "conflict"`），外壳带着选择重跑同一命令。页面上的动作按钮仍用“同名时”下拉（默认“先问”则停下提示）。**缺口**：页面动作（按钮）无法返回 `confirm` 效果，所以只有当外壳/菜单以 `args` 调这三个命令时才弹对话框；谁来给 `destination`/`newName` 需要外壳约定。另 `confirm` 效果的 `choices`/`choiceArg`/`irreversible` 还不在协议生成类型里（外壳用类型断言读取）。
+- 冲突与永久删除按 D428：插件命令 `move`、`copy`、`rename`、`delete`（读 `context.nodeKey` 与 `context.args`）。同名：先用 `conflict:"fail"` 调宿主，遇 `conflict/exists` 返回 `confirm` 效果（`choices` overwrite/skip/keepBoth、`choiceArg:"conflict"`），外壳带选择重跑，插件再用该值调一次。永久删除：第一次返回 `irreversible:true` 的 `confirm`，带 `confirmed` 重跑才删。页面上的“同名时”下拉已去掉。
+- **缺口（需内核/外壳）**：页面里的按钮是“动作”，动作不能返回 `confirm` 效果，所以页面按钮遇到同名只会报“已存在”（宿主用 `fail`，什么都没动），弹对话框只发生在以命令方式调用时（`disk-file` 资源的右键菜单已挂 copy/move/rename/delete，但菜单调用不带 `destination`/`newName`，所以实际能用的是 delete 和带参数的调用）。要让页面表单的值进到命令，需要一个“页面按钮运行命令并带上表单值”的角色，或让动作结果可带效果。建议主会话决定。
 
 ## 限制与范围外
 
