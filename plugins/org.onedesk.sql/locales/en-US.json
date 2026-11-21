@@ -8,6 +8,7 @@
   "action.save": "Save",
   "action.saveRun": "Save & run",
   "action.copy": "Copy SQL",
+  "action.create": "New saved SQL",
   "action.newHere": "New SQL on this data source",
   "tab.result": "Result",
   "tab.sent": "Sent SQL",
