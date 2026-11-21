@@ -3,7 +3,7 @@
  * Most rows are checked through the protocol (what the shell sends); the rows that are about what is on screen use the page.
  * Defects found in other sessions' files are `test.fixme` with the reason, and listed in docs/handoff/round16-tests-done.md.
  */
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { existsSync } from "node:fs";
@@ -105,7 +105,7 @@ const runSql = (page: Page, min: string) =>
   startRun(page, "run", `resource:${ids.savedSql}`, { min }, { resourceId: ids.savedSql, input: { "body.sql": ids.savedSqlText, "body.source": "" } });
 
 const CAT = "org.onedesk.catalog:catalog";
-const ids = {} as Record<"shop" | "recent" | "items" | "top" | "savedSql" | "savedSqlText" | "run", string>;
+const ids = {} as Record<"shop" | "recent" | "items" | "top" | "savedSql" | "savedSqlText" | "run" | "ghost", string>;
 const treeCmd = (page: Page, id: string, tree: string) => call(page, "command.execute", { id, context: { tree } });
 
 /* ---------------------------------------------------------------- setup: data source and the granted folder */
@@ -228,14 +228,17 @@ test("A10: Save as SQL makes a saved statement (mapping applied, parameters decl
   expect(again.status, JSON.stringify(again.error)).toBe("success");
 });
 
-test("A4: a deleted file leaves the tree and the search, the entry is marked missing, its history stays; it comes back with the file", async ({ page }) => {
+test("A4: a deleted file leaves the search, the entry stays in the tree marked missing, its history stays; it comes back with the file", async ({ page }) => {
   await openKernel(page, host);
   const file = path.join(catalog, "sales/top.sql");
   const keep = (await import("node:fs")).readFileSync(file, "utf8");
   unlinkSync(file);
   const effects = await treeCmd(page, "org.onedesk.catalog:reindex", CAT);
   expect(JSON.stringify(effects)).toMatch(/1 missing/);
-  expect((await nodes(page, CAT, "g:sales")).map((n) => n.label)).not.toContain("Top");
+  // D422: the entry stays in the tree, marked as missing (its history and favourites stay reachable); search drops it
+  const gone = (await nodes(page, CAT, "g:sales")).find((n) => n.label === "Top");
+  expect(gone, "still listed").toBeTruthy();
+  expect(gone!.state === "broken" || /miss|失效/i.test(gone!.badge ?? ""), JSON.stringify(gone)).toBe(true);
   const found = await call<{ results?: { id: string }[]; items?: { id: string }[] }>(page, "search.query", { text: "Top" });
   expect(JSON.stringify(found)).not.toContain(ids.top);
   const r = await getRes(page, ids.top);
@@ -397,27 +400,63 @@ test("G1/G2/G7: environments nest with inheritance and override, move under anot
 const TABLES = "org.onedesk.table:tables";
 const nodeTarget = (key: string) => `node:org.onedesk.table:tables/${encodeURIComponent(key)}`;
 
-test.fixme("H1/H3: the mapping's tables are listed by prefix; a table the database does not have is marked missing", async ({ page }) => {
+const OVERVIEW = "page:org.onedesk.table/overview";
+/** D421: the tree shows what the last "Refresh" read; the reading happens in a run, started from the overview page. */
+const refreshTables = async (page: Page) => {
+  const r = await startRun(page, "org.onedesk.table:refresh", OVERVIEW, {});
+  expect(r.status, JSON.stringify(r.error)).toBe("success");
+};
+
+test("H1/H3: before the first refresh the tree says so; after it the mapping's tables are listed by prefix", async ({ page }) => {
   await openKernel(page, host);
-  const root = await nodes(page, TABLES);
-  const all = JSON.stringify(root);
-  expect(all).toContain("orders");
-  expect(all).toContain("item_ver");
-  expect(all).toMatch(/missing/i);
+  const empty = await nodes(page, TABLES);
+  expect(empty.map((n) => n.label)).toEqual(["Not loaded — open to refresh"]);
+  expect(empty[0]!.target).toBe(OVERVIEW);
+  await refreshTables(page);
+  const top = await nodes(page, TABLES);
+  expect(top.map((n) => n.label)).toEqual(expect.arrayContaining(["item_*", "no_*", "orders"])); // H1: prefix groups and a plain table
+  const find = async (re: RegExp, parent?: string): Promise<Node | undefined> => {
+    for (const n of await nodes(page, TABLES, parent)) {
+      if (re.test(n.label)) return n;
+      if (n.key.startsWith("g:")) {
+        const hit = await find(re, n.key);
+        if (hit) return hit;
+      }
+    }
+    return undefined;
+  };
+  const isMissing = (n: Node) => n.state === "broken" || /miss/i.test(n.badge ?? "");
+  const items = await find(/^item_ver$/);
+  expect(items, "item_ver is under the item_* group").toBeTruthy();
+  expect(isMissing(items!)).toBe(false);
+  const ghost = await find(/^no_such_table$/);
+  expect(ghost, "the table the database does not have is listed").toBeTruthy();
+  ids.ghost = JSON.stringify(ghost);
 });
 
-test.fixme("H2: the tree toolbar has the one/two levels switch and it changes the grouping", async ({ page }) => {
+// DEFECT (plugins/org.onedesk.table, found after D421): after "Refresh" with a working data source the table the mapping lists but
+// the database does not have (`no_such_table`) comes back with `state: "ok"` and no badge, so H3's marker never shows.
+test.fixme("H3: a table the database does not have is marked missing", async ({ page }) => {
+  await openKernel(page, host);
+  const ghost = JSON.parse(ids.ghost) as Node;
+  expect(ghost.state === "broken" || /miss/i.test(ghost.badge ?? ""), ids.ghost).toBe(true);
+});
+
+test("H2: the toolbar has the one/two levels switch and Refresh; two levels group by two name parts, and Refresh opens the overview", async ({ page }) => {
   await openKernel(page, host);
   const t = (await call<{ id: string; toolbar?: { id: string }[] }[]>(page, "tree.list")).find((x) => x.id === TABLES)!;
-  expect(t.toolbar!.map((c) => c.id)).toContain("org.onedesk.table:toggleDepth");
+  expect(t.toolbar!.map((c) => c.id)).toEqual(expect.arrayContaining(["org.onedesk.table:toggleDepth", "org.onedesk.table:refresh"]));
+  const refreshEffects = JSON.stringify(await treeCmd(page, "org.onedesk.table:refresh", TABLES));
+  expect(refreshEffects).toContain(OVERVIEW);
   const before = JSON.stringify(await nodes(page, TABLES));
   await treeCmd(page, "org.onedesk.table:toggleDepth", TABLES);
-  expect(JSON.stringify(await nodes(page, TABLES))).not.toBe("");
+  const after = JSON.stringify(await nodes(page, TABLES));
+  expect(after).not.toBe("");
   await treeCmd(page, "org.onedesk.table:toggleDepth", TABLES);
   expect(JSON.stringify(await nodes(page, TABLES))).toBe(before);
 });
 
-test.fixme("H4: the table page shows the description, the source and the columns to tick", async ({ page }) => {
+test("H4: the table page shows the description, the source and the columns to tick", async ({ page }) => {
   await openKernel(page, host);
   const d = JSON.stringify(await call(page, "page.resolve", { target: nodeTarget("t:order") }));
   expect(d).toContain("Orders of the shop");
@@ -425,9 +464,9 @@ test.fixme("H4: the table page shows the description, the source and the columns
   expect(d).toContain("customer");
 });
 
-// DEFECT (kernel `runs.rs` ~403): an action run for a `node:` target gets `ctx.target` but no `ctx.node`, and the table plugin's
-// `entityOfNode` reads `ctx.node.key` (plugins/org.onedesk.table/main.js:318), so every table action fails with
-// " is not in the mapping". Verified to pass with a local patch (key taken from ctx.target); see round16-tests-done.md.
+// DEFECT (kernel `runs.rs` ~403, still open after D421): an action run for a `node:` target gets `ctx.target` but no `ctx.node`, and the
+// table plugin's `entityOfNode` reads `ctx.node.key`, so every table action fails with " is not in the mapping". Passes with a local
+// patch taking the key from ctx.target (docs/handoff/round16-probe-patches.diff).
 test.fixme("H4: Fetch rows reads the ticked columns only (all when none is ticked)", async ({ page }) => {
   await openKernel(page, host);
   const all = await startRun(page, "rows", nodeTarget("t:order"), {});
@@ -438,6 +477,9 @@ test.fixme("H4: Fetch rows reads the ticked columns only (all when none is ticke
   expect((await rowsOf(page, some))[0]).toEqual(["ann"]);
 });
 
+// DEFECT (kernel `runs.rs` ~403, still open after D421): an action run for a `node:` target gets `ctx.target` but no `ctx.node`, and the
+// table plugin's `entityOfNode` reads `ctx.node.key`, so every table action fails with " is not in the mapping". Passes with a local
+// patch taking the key from ctx.target (docs/handoff/round16-probe-patches.diff).
 test.fixme("H5: the five version queries give the current rows, one record's history, a point in time, a period and the deleted ones", async ({ page }) => {
   await openKernel(page, host);
   const t = nodeTarget("t:item");
@@ -459,6 +501,60 @@ test.fixme("H5: the five version queries give the current rows, one record's his
   expect(need.status).toBe("error"); // the key is required
   const plain = await startRun(page, "history", nodeTarget("t:order"), { key: "1" });
   expect(plain.status).toBe("error"); // not a versioned table
+});
+
+/* ---------------------------------------------------------------- catalog limits (review #6, #18) */
+
+const limitsHost = async (page: Page, files: number, extra: (dir: string) => void = () => {}) => {
+  const h = await startHost(path.join(base, `data-lim-${files}`));
+  const dir = path.join(base, `big-${files}`);
+  mkdirSync(dir, { recursive: true });
+  for (let i = 0; i < files; i++) writeFileSync(path.join(dir, `q${i}.sql`), `/* ---\nid: lim.item${i}\n--- */\nSELECT ${i}\n`);
+  symlinkSync(".", path.join(dir, "loop"));
+  extra(dir);
+  await openKernel(page, h);
+  const c = <T = unknown>(method: string, params: unknown = null) => rpc<T>(page, h, method, params);
+  await c("plugin.grantFolder", { plugin: "org.onedesk.catalog", path: dir });
+  return { h, dir, c };
+};
+
+test("A1 (limits): a symlink loop in the folder is walked once and does not eat the file limit", async ({ page }) => {
+  const { h, c } = await limitsHost(page, 12);
+  try {
+    const first = JSON.stringify(await c("command.execute", { id: "org.onedesk.catalog:reindex", context: { tree: CAT } }));
+    expect(first).toMatch(/12 queries indexed/);
+    expect(first).not.toMatch(/Stopped at/);
+    expect((await c<{ nodes: Node[] }>("tree.children", { tree: CAT, parent: "g:lim" })).nodes.length).toBe(12);
+  } finally {
+    await stopHost(h);
+  }
+});
+
+// DEFECT (plugins/org.onedesk.catalog, review #6/#18): with 5,100 files the index cannot be built at all: the toolbar command ends in
+// `pluginTimeout`, and run as an action ("Re-index" on the index page) it dies with a sandbox exception ("Exception generated by
+// quickjs: Null"), so the "stopped at 5000 files, nothing marked missing" report is never reached.
+test.fixme("A1 (limits): more than 5000 files is reported as cut short and nothing already indexed is marked missing", async ({ page }) => {
+  const { h, c } = await limitsHost(page, 12);
+  try {
+    await c("command.execute", { id: "org.onedesk.catalog:reindex", context: { tree: CAT } });
+    const dir = path.join(base, "big-12");
+    mkdirSync(path.join(dir, "many"));
+    for (let i = 0; i < 5100; i++) writeFileSync(path.join(dir, "many", `f${String(i).padStart(4, "0")}.sql`), `/* ---\nid: many.f${i}\n--- */\nSELECT ${i}\n`);
+    const runId = await c<string>("run.start", { action: "org.onedesk.catalog:reindex", target: "page:org.onedesk.catalog/index", tabId: "e2e-tab", input: {}, params: {}, locale: "en-US" });
+    let info: { status: string } = { status: "running" };
+    for (let i = 0; i < 300 && info.status === "running"; i++) {
+      await new Promise((r) => setTimeout(r, 200));
+      info = await c("run.get", { id: runId });
+    }
+    const text = JSON.stringify(info);
+    expect(text, text).toMatch(/Stopped at 5000 files/);
+    expect(text).toMatch(/0 missing/);
+    const items = (await c<{ nodes: Node[] }>("tree.children", { tree: CAT, parent: "g:lim" })).nodes;
+    expect(items.length).toBe(12);
+    expect(items.every((n) => n.state !== "broken" && !/miss/i.test(n.badge ?? ""))).toBe(true);
+  } finally {
+    await stopHost(h);
+  }
 });
 
 /* ---------------------------------------------------------------- on screen */
