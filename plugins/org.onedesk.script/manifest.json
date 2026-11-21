@@ -1,0 +1,137 @@
+{
+  "id": "org.onedesk.script",
+  "version": "0.1.0",
+  "apiVersion": "2",
+  "name": "plugin.name",
+  "description": "plugin.description",
+  "icon": "square-terminal",
+  "main": "main.js",
+  "author": "OneDesk",
+  "license": "MIT",
+  "homepage": "https://onedesk.example.com/plugins/script",
+  "requires": {
+    "files": true,
+    "programs": [
+      {
+        "name": "bash",
+        "source": "system"
+      }
+    ]
+  },
+  "contributes": {
+    "kinds": [
+      {
+        "id": "script",
+        "label": "kind.script",
+        "icon": "square-terminal",
+        "tree": "resources",
+        "page": "editor",
+        "newName": "kind.script.new",
+        "defaults": {
+          "script": "",
+          "timeoutSec": "",
+          "maxLines": ""
+        },
+        "draggable": true,
+        "accepts": []
+      }
+    ],
+    "actions": [
+      {
+        "id": "run",
+        "label": "action.run",
+        "icon": "play",
+        "kinds": [
+          "script"
+        ],
+        "output": "table",
+        "shortcut": [
+          "Mod",
+          "Enter"
+        ],
+        "saveFirst": false,
+        "confirm": null
+      },
+      {
+        "id": "exportAll",
+        "label": "action.exportAll",
+        "icon": "folder-output",
+        "kinds": [
+          "script"
+        ],
+        "output": "table",
+        "saveFirst": true,
+        "confirm": null
+      }
+    ],
+    "pages": [
+      {
+        "id": "editor",
+        "recompute": true,
+        "usesEnv": true,
+        "actions": [
+          {
+            "id": "run",
+            "role": "run",
+            "action": "run",
+            "label": "action.run",
+            "icon": "play",
+            "primary": true,
+            "shortcut": [
+              "Mod",
+              "Enter"
+            ]
+          },
+          {
+            "id": "save",
+            "role": "save",
+            "label": "action.save",
+            "icon": "save",
+            "shortcut": [
+              "Mod",
+              "S"
+            ]
+          },
+          {
+            "id": "save-run",
+            "role": "save-run",
+            "action": "run",
+            "label": "action.saveRun",
+            "icon": "save-all"
+          },
+          {
+            "id": "export-all",
+            "role": "run",
+            "action": "exportAll",
+            "label": "action.exportAll",
+            "icon": "folder-output"
+          }
+        ],
+        "resultTabs": [
+          {
+            "id": "result",
+            "type": "output",
+            "label": "tab.output",
+            "icon": "terminal"
+          },
+          {
+            "id": "history",
+            "type": "history",
+            "label": "tab.history",
+            "icon": "history"
+          }
+        ]
+      }
+    ],
+    "menus": {
+      "new": [
+        "script"
+      ]
+    },
+    "locales": {
+      "en-US": "locales/en-US.json",
+      "zh-CN": "locales/zh-CN.json",
+      "ja-JP": "locales/ja-JP.json"
+    }
+  }
+}

@@ -380,6 +380,187 @@ export function tableOutput(result) {
   return { type: "table", columns: result.columns.map((name, i) => ({ key: `c${i}`, label: name })), rows: result.rows, total: result.total };
 }
 
+/* ---------------------------------------------------------------- backup to this Mac (J1–J4) */
+
+// The dump is saved in the plugin's own folder (the app's data folder), under `backups/`.
+export const BACKUP_DIR = "backups";
+export const BACKUP_STEPS = ["check", "dump", "copy", "create", "restore", "source"];
+const DOCKER_TIMEOUT_MS = 60000;
+const LONG_TIMEOUT_MS = 600000; // the kernel's limit for one program
+const DUMP_TIMEOUT_MS = 3600000; // the kernel's limit for a transfer
+
+// The new database's name: lower-case letters, digits and `_`, starting with a letter or `_`, at most 63
+// (PostgreSQL's limit) — a name that never needs quoting, in SQL or in a shell.
+export function safeDbName(n) {
+  return typeof n === "string" && /^[a-z_][a-z0-9_]{0,62}$/.test(n);
+}
+
+// A local container's name, as docker allows it.
+export function safeContainer(n) {
+  return typeof n === "string" && /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(n);
+}
+
+// What the page's backup fields hold, with defaults.
+export function backupPlanOf(params) {
+  const p = params || {};
+  const str = (k, d) => (typeof p[k] === "string" && p[k].trim() !== "" ? p[k].trim() : d);
+  return { name: str("backupName", ""), container: str("backupContainer", ""), port: str("backupPort", "5432"), user: str("backupUser", "postgres") };
+}
+
+// The name of the first field that cannot be used, or "".
+export function checkBackup(plan) {
+  if (!safeDbName(plan.name)) return "backupName";
+  if (!safeContainer(plan.container)) return "backupContainer";
+  if (parseIntIn(plan.port, 1, 65535) === null) return "backupPort";
+  if (!safePart(plan.user)) return "backupUser";
+  return "";
+}
+
+// A suggestion for the new database's name: the source's, made safe, with `_copy`.
+export function suggestDbName(database) {
+  const base = String(database || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9_]+/g, "_")
+    .replace(/^[^a-z_]+/, "")
+    .slice(0, 57);
+  return `${base || "db"}_copy`;
+}
+
+// `20261121-194900` (UTC): part of the dump's file name and of the copy's name in the container.
+export function stampOf(date) {
+  const d = date instanceof Date ? date : new Date(date);
+  const two = (n) => String(n).padStart(2, "0");
+  return `${d.getUTCFullYear()}${two(d.getUTCMonth() + 1)}${two(d.getUTCDate())}-${two(d.getUTCHours())}${two(d.getUTCMinutes())}${two(d.getUTCSeconds())}`;
+}
+
+// The program call that dumps the server's database to standard output (custom format), over ssh.
+export function dumpSpec(c, file) {
+  const remote = `docker exec ${c.container} pg_dump -Fc --no-password -U ${c.user} -d ${c.database}`;
+  return { program: "ssh", args: ["-T", "-o", "BatchMode=yes", "-o", `ConnectTimeout=${CONNECT_TIMEOUT_S}`, c.sshHost, remote], to: file, overwrite: false, timeoutMs: DUMP_TIMEOUT_MS };
+}
+
+// The local `docker` calls of the restore; every value in them passed the checks above.
+export function dockerArgs(step, plan, extra) {
+  const x = extra || {};
+  switch (step) {
+    case "check":
+      return ["exec", plan.container, "psql", "-X", "-q", "-tA", "-U", plan.user, "-d", "postgres", "-c", `SELECT 1 FROM pg_database WHERE datname = '${plan.name}'`];
+    case "copy":
+      return ["cp", x.file, `${plan.container}:${x.inContainer}`];
+    case "create":
+      return ["exec", plan.container, "createdb", "-U", plan.user, plan.name];
+    case "restore":
+      return ["exec", plan.container, "pg_restore", "--no-owner", "--no-acl", "-U", plan.user, "-d", plan.name, x.inContainer];
+    case "cleanup":
+      return ["exec", plan.container, "rm", "-f", x.inContainer];
+    default:
+      throw new Error(`unknown step ${step}`);
+  }
+}
+
+function formatBytes(n) {
+  if (!(n >= 0)) return "";
+  if (n < 1024) return `${n} B`;
+  const units = ["KB", "MB", "GB", "TB"];
+  let v = n / 1024;
+  let i = 0;
+  while (v >= 1024 && i < units.length - 1) (v /= 1024), i++;
+  return `${v.toFixed(v < 10 ? 1 : 0)} ${units[i]}`;
+}
+
+// Copies the database of an ssh data source into a new database in a local container, step by step, and makes
+// a direct data source for it. Nothing that exists is ever changed: an existing database stops the run before
+// the server is touched, and `createdb` refuses one that appeared meanwhile. Returns { created, file, bytes, warning }.
+export async function backupToLocal(ctx, source, plan) {
+  const c = connectionOf(source && source.body);
+  if (c.mode !== "ssh") throw fail(ctx, "error.backup.notSsh", {});
+  const badSource = checkConnection(c);
+  if (badSource) throw fail(ctx, "error.badField", { field: badSource });
+  const bad = checkBackup(plan);
+  if (bad) throw fail(ctx, `error.backup.${bad}`, {});
+  const total = BACKUP_STEPS.length;
+  const step = (i, key, vars) => ctx.progress(i / total, tr(ctx, "backup.step", { n: i + 1, total, what: tr(ctx, `backup.step.${key || BACKUP_STEPS[i]}`, { ...plan, host: c.sshHost, ...(vars || {}) }) }));
+  const stepFailed = (i, detail) => fail(ctx, "error.backup.failed", { step: tr(ctx, `backup.step.${BACKUP_STEPS[i]}`, { ...plan, host: c.sshHost }), detail });
+  const docker = async (args, timeoutMs) => {
+    try {
+      return await ctx.host.process.run({ program: "docker", args, timeoutMs });
+    } catch (err) {
+      throw runError(ctx, err);
+    }
+  };
+
+  // 1. docker is here, the container answers, and the database does not exist yet.
+  step(0);
+  const ready = await ctx.host.process.ready("docker");
+  if (!ready || ready.ready !== true) throw fail(ctx, "error.backup.noDocker", { reason: (ready && ready.reason) || "notFound" });
+  const found = await docker(dockerArgs("check", plan), DOCKER_TIMEOUT_MS);
+  if (found.code !== 0) throw stepFailed(0, errorText(found));
+  if (String(found.stdout || "").trim() !== "") throw fail(ctx, "error.backup.exists", { name: plan.name, container: plan.container });
+
+  // 2. pg_dump on the server, its output carried by the host straight into the backup folder.
+  step(1);
+  try {
+    await ctx.host.files.mkdir(BACKUP_DIR);
+  } catch (err) {
+    if (!(err && (err.code === "conflict" || (err.params && err.params.reason === "exists")))) throw runError(ctx, err);
+  }
+  const stamp = stampOf(new Date());
+  const file = `${BACKUP_DIR}/${c.database.replace(/[^A-Za-z0-9._-]/g, "_")}-${stamp}.dump`;
+  let dumped;
+  try {
+    dumped = await ctx.host.transfer.capture({
+      ...dumpSpec(c, file),
+      onProgress: (p) => {
+        const done = p && typeof p.bytes === "number" ? p.bytes : null;
+        if (done !== null) step(1, "dumpBytes", { bytes: formatBytes(done) });
+      },
+    });
+  } catch (err) {
+    throw runError(ctx, err);
+  }
+  if (dumped.code !== 0) throw stepFailed(1, `${errorText(dumped)} (${tr(ctx, "backup.partialFile", { file: dumped.path || file })})`);
+  if (!(dumped.bytes > 0)) throw stepFailed(1, tr(ctx, "error.backup.emptyDump"));
+  const localFile = dumped.path;
+
+  // 3. into the local container (a name of our own there, removed again afterwards).
+  step(2);
+  const inContainer = `/tmp/onedesk-restore-${stamp}.dump`;
+  const copied = await docker(dockerArgs("copy", plan, { file: localFile, inContainer }), LONG_TIMEOUT_MS);
+  if (copied.code !== 0) throw stepFailed(2, errorText(copied));
+
+  let warning = "";
+  try {
+    // 4. a new database; createdb itself refuses a name that exists.
+    step(3);
+    const made = await docker(dockerArgs("create", plan), DOCKER_TIMEOUT_MS);
+    if (made.code !== 0) throw stepFailed(3, errorText(made));
+
+    // 5. pg_restore into it. Errors pg_restore only reports ("errors ignored on restore") leave a usable copy.
+    step(4);
+    const restored = await docker(dockerArgs("restore", plan, { inContainer }), LONG_TIMEOUT_MS);
+    if (restored.code !== 0) {
+      if (/errors ignored on restore: \d+/.test(String(restored.stderr || ""))) warning = errorText(restored).split("\n").slice(-1)[0];
+      else throw stepFailed(4, errorText(restored));
+    }
+  } finally {
+    try {
+      await ctx.host.process.run({ program: "docker", args: dockerArgs("cleanup", plan, { inContainer }), timeoutMs: DOCKER_TIMEOUT_MS });
+    } catch (e) {
+      // the copy in the container's /tmp is only a leftover
+    }
+  }
+
+  // 6. a direct data source for the copy.
+  step(5);
+  const created = await ctx.host.resources.create({
+    kind: KIND,
+    name: tr(ctx, "backup.sourceName", { source: (source && source.name) || c.database, name: plan.name }),
+    body: { mode: "direct", host: "localhost", port: plan.port, database: plan.name, user: plan.user, sshHost: "", container: "" },
+  });
+  ctx.progress(1, tr(ctx, "backup.done"));
+  return { created, file: localFile, bytes: dumped.bytes, warning };
+}
+
 /* ---------------------------------------------------------------- plugin */
 
 export default {
@@ -412,6 +593,28 @@ export default {
           view.push({ type: "text", id: "sshNote", text: tr(ctx, "note.ssh"), tone: "muted" });
         }
         view.push({ type: "text", id: "readonly", text: tr(ctx, "note.readonly"), tone: "muted" });
+        // J1: backing an ssh data source up into a local container (its own run, with progress).
+        if (mode === "ssh" && (!ctx.run || ctx.run.action === "backup")) {
+          const given = (ctx.run && ctx.run.params) || {};
+          const bf = (name, extra) => {
+            const field = { name, label: ctx.t(`field.${name}`), kind: "text", param: true, ...(extra || {}) };
+            if (ctx.run) Object.assign(field, { readOnly: true, envValue: typeof given[name] === "string" ? given[name] : "" });
+            return field;
+          };
+          const database = typeof draft["body.database"] === "string" ? draft["body.database"] : b.database;
+          view.push({
+            type: "form",
+            id: "backup",
+            layout: "strip",
+            fields: [
+              bf("backupName", { placeholder: suggestDbName(database), maxLength: 63, hint: tr(ctx, "field.backupName.hint"), ...(ctx.run ? {} : { required: true }) }),
+              bf("backupContainer", { placeholder: ctx.t("field.backupContainer.placeholder"), ...(ctx.run ? {} : { required: true }) }),
+              bf("backupPort", { placeholder: "5432", maxLength: 5 }),
+              bf("backupUser", { placeholder: "postgres" }),
+            ],
+          });
+          if (!ctx.run) view.push({ type: "text", id: "backupNote", text: tr(ctx, "note.backup"), tone: "muted" });
+        }
         if (!ctx.run) {
           view.push({
             type: "form",
@@ -441,6 +644,16 @@ export default {
       const version = (r.rows[0] && r.rows[0][0]) || "";
       const text = tr(ctx, "test.ok", { version, ms: r.ms });
       return { output: { type: "text", text }, summary: { message: tr(ctx, "summary.test", { ms: r.ms }) } };
+    });
+
+    // J1–J4: the ssh data source's database copied into a new database in a local container, and a direct data
+    // source made for it. The fields are the page's parameters.
+    host.actions.handle("backup", async (ctx) => {
+      if (!ctx.resource) throw fail(ctx, "error.noSource", {});
+      const r = await backupToLocal(ctx, ctx.resource, backupPlanOf(ctx.params));
+      const vars = { name: r.created.name || "", file: r.file, size: formatBytes(r.bytes) };
+      const message = tr(ctx, "summary.backup", vars) + (r.warning ? ` ${tr(ctx, "summary.backupWarning", { warning: r.warning })}` : "");
+      return { output: { type: "link", label: r.created.name || tr(ctx, "kind.source.new"), target: `resource:${r.created.id}` }, summary: { message } };
     });
 
     // Called by other plugins (exports.actions) on one data source (`ctx.resource`, chosen by the caller):
