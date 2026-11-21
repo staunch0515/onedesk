@@ -273,8 +273,10 @@ export function ViewPage({ tab, descriptor: initial }: { tab: TabState; descript
     try {
       setBusy(action.id);
       // D429: a page button that declares a `command` runs that command on this page, with the values of the inputs as `args`.
-      const command = (action as ActionDecl & { command?: string }).command;
+      const command = action.command;
       if (command) {
+        // `save-run` with a command saves first, like a run would.
+        if (action.role === "save-run" && !(await actions.save(tab.id))) return;
         await actions.command(command, { target: tab.target, tabId: tab.id, ...(tab.node ? { tree: tab.node.tree, nodeKey: tab.node.key } : {}), args: context.draft });
         return;
       }

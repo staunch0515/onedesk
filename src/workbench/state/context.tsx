@@ -6,7 +6,7 @@ import { isOpenableUrl } from "../../design";
 import { useClient, type CommandContext, type CommandEffect, type ProtocolClient } from "../protocol";
 import { staleFields } from "./merge";
 import { saveTab } from "./save";
-import { useStore, type ConfirmState, type Store, type TabState, type UiState } from "./store";
+import { useStore, type Store, type TabState, type UiState } from "./store";
 
 export interface OpenOptions {
   params?: Record<string, string>;
@@ -224,20 +224,16 @@ export function WorkbenchProvider({ store, children }: { store: Store; children:
             break;
           }
           case "confirm":
-            {
-              // D428: the kernel adds `choices`, `choiceArg` and `irreversible` (read through a local type until they are generated).
-              const extra = effect as { choices?: ConfirmState["choices"]; choiceArg?: string; irreversible?: boolean };
-              store.set({
-                confirmCommand: {
-                  message: effect.message,
-                  command: effect.command,
-                  danger: effect.danger ?? false,
-                  context,
-                  ...(extra.choices?.length ? { choices: extra.choices, choiceArg: extra.choiceArg } : {}),
-                  ...(extra.irreversible ? { irreversible: true } : {}),
-                },
-              });
-            }
+            store.set({
+              confirmCommand: {
+                message: effect.message,
+                command: effect.command,
+                danger: effect.danger ?? false,
+                context,
+                ...(effect.choices?.length ? { choices: effect.choices, choiceArg: effect.choiceArg } : {}),
+                ...(effect.irreversible ? { irreversible: true } : {}),
+              },
+            });
             break;
           case "copy":
             try {

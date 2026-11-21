@@ -6,13 +6,13 @@
 - X10：文字节点/文字输出的 `lineTones`、`appearance`（plain/terminal）；表输出的 `appearance`、`toneColumn`、`lineColumn`（`parts/terminal-lines.ts`）。`LineTone` 六个值；未知值（如 `stdout`）= default。
 - X17：运行中读 `Run.partial`（整份输出，替换上一份），完成后读 `output`；没有 partial 时仍用旧的进度消息日志。
 - X18：`pick-folder.replace` → `plugin.replaceFolder`（四个客户端都有）；新原因码文字：`conflict.exists`、`invalid.intoItself/isRoot/trashUnavailable/badOutput`、`notFound.grant`。
-- **冲突对话框与不可撤销提示：已恢复（D428）**。`confirm` 效果的 `choices`（每项 `id`、`label?`）、`choiceArg`（默认 `conflict`）、`irreversible`：对话框列出各选项，点选项即以 `args = {…原 args, confirmed: true, [choiceArg]: id}` 重新调同一命令；取消不执行；`irreversible` 加一行 “This cannot be undone.”，无选项时确认钮用危险色。id 是 overwrite/skip/keepBoth 且没给 label 时用外壳自带英文。字段暂用局部类型读取（`state/context.tsx` 一处），内核生成类型出来后去掉那处断言。
+- **冲突对话框与不可撤销提示：已恢复（D428）**。`confirm` 效果的 `choices`（每项 `id`、`label?`）、`choiceArg`（默认 `conflict`）、`irreversible`：对话框列出各选项，点选项即以 `args = {…原 args, confirmed: true, [choiceArg]: id}` 重新调同一命令；取消不执行；`irreversible` 加一行 “This cannot be undone.”，无选项时确认钮用危险色。id 是 overwrite/skip/keepBoth 且没给 label 时用外壳自带英文。已改用生成的类型（`ConfirmChoice`：`id`、`label?`、`danger?`；`choiceArg` 缺省按 `"conflict"`）；选项的 `danger` 让该钮用危险色。
 
 ## 第二批（D428 入口、D429）
 1. **树里拖放**（`side-panel.tsx`）：插件自供树（`source !== "stored"`）里，菜单里有以 `:move` 结尾命令的节点可拖；只能放到同树的文件夹节点“里面”（不能放到自己或自己的下级）；放下调该节点的 `…:move`，按住 ⌥ 调 `…:copy`，`args.destination` = 目标节点 key，并展开目标。`Tree`（设计组件）的 `onDrop` 多了第四个参数 `{ alt }`。
 2. **右键“移动到…/复制到…”**：菜单命令以 `:move`/`:copy` 结尾时，不直接执行，弹文件夹选择框（`parts/folder-picker.tsx`，只列该树里的文件夹，自己不列出；插件的树本身只显示授权文件夹内的内容，所以选不到授权之外），选好后调命令并带 `args.destination`。
 3. **重命名**：菜单命令以 `:rename` 结尾时进入就地改名（`renaming.command`），提交后调该命令并带 `args.newName`；不再走 `tree.rename`。
-4. **D429 页面按钮运行命令**：页面动作声明里带 `command` 时（与 role 无关），点击调 `command.execute(command, { target, tabId, tree/nodeKey（页面所在节点）, args: 页面输入框当前值（含未保存的）})`，不启动运行；返回效果照常处理（含 choices 重新调用）。字段暂用局部类型读取（`pages/view-page.tsx` 一处），生成类型出来后去掉。
+4. **D429 页面按钮运行命令**：页面动作声明里带 `command` 时（与 role 无关），点击调 `command.execute(command, { target, tabId, tree/nodeKey（页面所在节点）, args: 页面输入框当前值（含未保存的）})`，不启动运行；返回效果照常处理（含 choices 重新调用）。用生成的 `ActionDecl.command`（全名，有它时没有 `action`）；`save-run` 带 `command` 时先保存再执行命令。
 5. 判断“是 move/copy/rename 命令”的规则在 `parts/file-ops.ts`：命令 id 匹配 `:(move|copy|rename)$`。
 
 **对真内核走的结果（重要缺口，不在外壳）**：内核给插件自供树的节点只发 `node.open` 一个菜单项，且 `draggable: false`（`crates/kernel/src/kernel.rs` 的 `provided_page`）。所以 Files 树里右键只有 Open，拖放、移动到、复制到、重命名都**到不了**，同名复制的流程在真内核上没能走。要让这些入口出现，需要内核让插件自供树的节点带上插件声明的 `menu`（命令 id 列表，如 `org.onedesk.files:move`）——文件夹节点还要 `accepts`/可放——并由 `org.onedesk.files` 的 `children` 返回它们。外壳这边已经按这个约定做好并有 vitest（`parts/round17-files-ui.test.tsx`，用替身 Tree 直接调 `canDrop`/`onDrop`/菜单/改名）。
@@ -36,6 +36,8 @@
 
 ## 新增文字键（只有英语）
 `confirm.irreversible`、`confirm.choice.overwrite/skip/keepBoth`、`folderPicker.move/copy/choose/empty/label`，以及内核新错误码的 `kernel.error.*` 六条（见 en-US.ts）。
+
+- 新原因码文字：`reason.badSecretFormat`/`invalid.badSecretFormat`、清单原因 `actionAndCommand`（`denied/unsafeLocation` 本就由 `reason.unsafeLocation` 覆盖）。D430（提供树节点的 menu/draggable/accepts）到后再对真内核走同名复制。
 
 ## 对真内核走了一遍
 devhost（`ONEDESK_SECRET_STORE=memory`，临时数据目录，`target` 用共用的 `/Users/chloe/onedesk/repo/target`）+ vite + 浏览器面板：连上真内核；“Grant a folder…”（路径框）授权临时文件夹 → Files 树出现 files、sub、a.txt；打开 a.txt 得到编辑页，页内有“If the name exists”下拉；⌘K 后焦点在搜索框；吐司浮在角上。**没走到**：同名复制/移动、永久删除（文件插件页没有对应按钮可点，菜单里只有 Open）、`partial` 运行输出、终端样式文字（没有插件在本机返回这些）。

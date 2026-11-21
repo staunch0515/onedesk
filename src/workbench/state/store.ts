@@ -6,7 +6,7 @@
 import { useSyncExternalStore } from "react";
 import type { MergeState, Values } from "./merge";
 import type { Notice } from "./notices";
-import type { CommandContext, ImportPreview, InstallPreview, Label } from "../protocol/types";
+import type { CommandContext, ConfirmChoice, ImportPreview, InstallPreview, Label } from "../protocol/types";
 
 export interface TabState {
   id: string;
@@ -72,7 +72,7 @@ export interface ConfirmState {
   command: string;
   danger: boolean;
   context: CommandContext;
-  choices?: Array<{ id: string; label?: Label }>;
+  choices?: ConfirmChoice[];
   choiceArg?: string;
   irreversible?: boolean;
 }
