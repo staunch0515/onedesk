@@ -54,7 +54,7 @@ SELECT * FROM {{customer}} LIMIT :n
 
 ## 2. 映射文件
 
-位置：插件设置 `mappingFile`（完整路径，须在授权文件夹内）；留空则取授权文件夹顶层的 `mapping.yaml`、`mapping.yml` 或 `mapping.json`（取找到的第一个）。YAML 与 JSON 结构相同：
+位置：插件设置 `mappingFile`（必须是以 `/` 开头的完整路径，须在授权文件夹内；相对路径会被拒绝，因为宿主把相对路径当作插件自己的目录）；留空则取授权文件夹顶层的 `mapping.yaml`、`mapping.yml` 或 `mapping.json`（取找到的第一个）。YAML 与 JSON 结构相同：
 
 ```yaml
 entities:
@@ -97,5 +97,6 @@ entities:
 
 - 清单 `activation: ["workspace.opened"]`，代码 `host.events.on("workspace.opened", h)`：工作区打开后同步一次（X13）。
 - `ctx.host.resources.upsertByKey("entry", [{ key: 路径, name?, description, body }], { othersMissing: true })`：一条批量命令。已索引的文件不传 `name`（保留用户改的名字），只写说明和正文；不在这批里的标为失效。
-- 失效的资源带 `missing: true`（树和页面显示为 `broken` / `sourceMissing`）；目录树不列它，页面照常打开并显示警告。
+- 失效的资源带 `missing: true`（页面显示为 `broken` / `sourceMissing`）；按 D422 目录树照常列出它，用警告图标和“失效”徽标标出（提供树节点还不能带状态），页面照常打开并显示警告。
+- 遍历按 `files.stat` 返回的真实路径去重；超过 5000 个文件或 12 层时停下，这次不标失效，并在报告里写明。
 - SQL 插件导出的 `org.onedesk.sql:create`（尚未提供，见交接文件）：输入 `{ name, description, sql, source, params }`，输出 `link`，打开时带上 `params`。
