@@ -886,5 +886,7 @@
   "kernel.error.invalid.isRoot": "已授权的文件夹本身不能移动或删除。",
   "kernel.error.invalid.trashUnavailable": "这个位置无法使用废纸篓。",
   "kernel.error.notFound.grant": "该文件夹没有授权给这个插件。",
-  "kernel.error.invalid.badOutput": "部分输出与动作的输出类型不符。"
+  "kernel.error.invalid.badOutput": "部分输出与动作的输出类型不符。",
+  "terminal.label": "终端输出",
+  "kernel.error.reason.unsafeOpen": "打开这个文件会运行程序，所以不会打开。"
 }

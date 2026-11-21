@@ -81,7 +81,6 @@ const startRaw = (page: Page, action: string, target: string, params: Record<str
 const runRes = async (page: Page, id: string, action: string, params: Record<string, string> = {}, extra: Record<string, unknown> = {}) =>
   waitRun(page, await startRaw(page, action, `resource:${id}`, params, { resourceId: id, ...extra }));
 const rowsOf = async (page: Page, run: RunInfo) => (await call<{ rows: string[][] }>(page, "run.rows", { id: run.id, offset: 0, limit: 1000 })).rows;
-const sentText = async (page: Page, run: RunInfo) => JSON.stringify(await call(page, "run.render", { id: run.id, tabId: "sent", locale: "en-US" }).catch(() => null));
 /** Every node of the resource tree, groups opened (disk files sit in `disk-folder` groups). */
 const walkRes = async (page: Page, parent?: string, depth = 0): Promise<Node[]> => {
   const out: Node[] = [];
@@ -91,7 +90,7 @@ const walkRes = async (page: Page, parent?: string, depth = 0): Promise<Node[]> 
   }
   return out;
 };
-const ids: Record<string, string> = {};
+const ids = {} as Record<"cmd" | "script" | "sshSource" | "backupSource" | "diskA" | "connBearer", string>;
 
 const CMD = "org.onedesk.command:command";
 const SCR = "org.onedesk.script:script";
@@ -330,7 +329,7 @@ test("J3: a database that already exists is never touched: the run stops at step
 test("J3: names are checked: only safe characters for the database, container, port and user", async ({ page }) => {
   await openKernel(page, host);
   backupRules();
-  for (const bad of [{ backupName: "Shop-Copy" }, { backupName: "x; drop database shop" }, { backupName: "" }, { backupName: "1abc" }, { backupContainer: "a b" }, { backupContainer: "-rm" }, { backupPort: "99999" }, { backupUser: "pg user" }]) {
+  for (const bad of <Record<string, string>[]>[{ backupName: "Shop-Copy" }, { backupName: "x; drop database shop" }, { backupName: "" }, { backupName: "1abc" }, { backupContainer: "a b" }, { backupContainer: "-rm" }, { backupPort: "99999" }, { backupUser: "pg user" }]) {
     const run = await backup(page, { backupName: "fresh_copy", ...bad });
     expect(run.status, JSON.stringify(bad)).toBe("error");
   }
@@ -595,6 +594,35 @@ test("files D430: file nodes carry the move/copy/rename/delete menu and can be d
   expect((dirs.find((n) => n.label === "keep") as Node & { accepts?: string[] }).accepts).toEqual(["*"]);
 });
 
+test("files (review fixes): opening a program or script (.command) is refused and never reaches the opener; a plain text file opens", async ({ page }) => {
+  await openKernel(page, host);
+  const cmd = put("unsafe/run.command", "#!/bin/sh\necho hi\n");
+  const id = await diskRes(page, cmd);
+  const before = existsSync(openLog) ? readFileSync(openLog, "utf8") : "";
+  const r = await resAct(page, id, "open");
+  expect(r.status).toBe("error");
+  expect(JSON.stringify(r.error) + (r.error?.message ?? "")).toMatch(/unsafeOpen|safe|program|open/i);
+  const after = existsSync(openLog) ? readFileSync(openLog, "utf8") : "";
+  expect(after, "nothing was written to the open log").toBe(before);
+  expect(after).not.toContain("run.command");
+  const txt = put("unsafe/plain.txt", "ok");
+  expect((await resAct(page, await diskRes(page, txt), "open")).status).toBe("success");
+});
+
+test("files (review fixes): renaming only the case (a.txt -> A.txt) just works, with no conflict question; a granted folder itself cannot be renamed or moved", async ({ page }) => {
+  await openKernel(page, host);
+  const f = put("case/a.txt", "x");
+  const eff = await call<{ type: string; tone?: string }[]>(page, "command.execute", { id: `${FILES}:rename`, context: { tree: "files", nodeKey: f, args: { newName: "A.txt" } } });
+  expect(eff.map((e) => e.type)).not.toContain("confirm");
+  expect(eff[0]).toMatchObject({ type: "toast", tone: "success" });
+  expect(readdirSync(path.join(granted, "case"))).toEqual(["A.txt"]);
+  for (const [cmdId, args] of [[`${FILES}:rename`, { newName: "renamed-root" }], [`${FILES}:move`, { destination: path.join(granted, "case"), conflict: "overwrite", confirmed: true }]] as const) {
+    const r = await call<{ type: string; tone?: string }[]>(page, "command.execute", { id: cmdId, context: { tree: "files", nodeKey: granted, args } });
+    expect(r[0]).toMatchObject({ type: "toast", tone: "danger" });
+  }
+  expect(existsSync(granted)).toBe(true);
+});
+
 /* ------------------------------------------------------------------ I.10h API connections */
 
 const SECRET = "conn-secret-9f3a7c";
@@ -823,8 +851,10 @@ test("I.10b-2 (page): copy onto an existing name asks overwrite / skip / keep bo
     await ui.menuItem(page, "Copy").click();
     const picker = page.getByRole("dialog");
     await expect(picker).toBeVisible();
-    await picker.getByRole("treeitem", { name: "ui-dst" }).first().click().catch(async () => picker.getByText("ui-dst").first().click());
-    await picker.getByRole("button", { name: /Copy|Choose|OK/ }).last().click();
+    await picker.getByRole("treeitem", { name: "granted", exact: true }).click();
+    await page.keyboard.press("ArrowRight");
+    await picker.getByRole("treeitem", { name: "ui-dst", exact: true }).click();
+    await picker.getByRole("button", { name: "Choose", exact: true }).click();
     const ask = page.getByRole("dialog");
     await expect(ask).toContainText(/already|exists/i);
     await expect(ask.getByRole("button", { name: /Overwrite/i })).toBeVisible();
@@ -838,6 +868,7 @@ test("I.10b-2 (page): copy onto an existing name asks overwrite / skip / keep bo
     await expect(page.getByRole("dialog")).toHaveCount(0);
   };
   await call(page, "plugin.grantFolder", { plugin: FILES, path: granted });
+  stage();
   await openKernel(page, host);
   await view(page, "Files");
   const rootItem = page.getByRole("treeitem", { name: "granted", exact: true });
@@ -861,7 +892,7 @@ test("I.10b-2 (page): copy onto an existing name asks overwrite / skip / keep bo
   await page.getByRole("treeitem", { name: "same.txt" }).first().click({ button: "right" });
   await ui.menuItem(page, "Copy").click();
   await shot(page, "folder-picker");
-  await page.keyboard.press("Escape");
+  await page.getByRole("dialog").getByRole("button", { name: "Cancel" }).click();
 });
 
 test("I.10b-2 (page): permanent delete says it cannot be undone and deletes only after the confirmation", async ({ page }) => {
@@ -878,11 +909,12 @@ test("I.10b-2 (page): permanent delete says it cannot be undone and deletes only
   await ui.menuItem(page, "Delete permanently").click();
   const dlg = page.getByRole("dialog");
   await expect(dlg).toContainText(/cannot be undone/i);
+  await page.waitForTimeout(400); // the dialog fades in
   await shot(page, "delete-permanently");
   await dlg.getByRole("button", { name: /Cancel/i }).click();
   expect(existsSync(f), "cancel deletes nothing").toBe(true);
   await page.getByRole("treeitem", { name: "victim.txt" }).click({ button: "right" });
   await ui.menuItem(page, "Delete permanently").click();
-  await page.getByRole("dialog").getByRole("button", { name: /Delete/i }).last().click();
+  await page.getByRole("dialog").getByRole("button", { name: "Confirm", exact: true }).click();
   await expect.poll(() => existsSync(f)).toBe(false);
 });
