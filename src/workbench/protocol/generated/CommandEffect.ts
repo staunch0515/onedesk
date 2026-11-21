@@ -9,4 +9,9 @@ export type CommandEffect = { "type": "open", target: string,
 /**
  * Initial page state for the opened tab (§9.1, D292), e.g. a run's parameters.
  */
-params?: { [key in string]: string }, envId?: string, } | { "type": "toast", message: Label, tone?: ToastTone, } | { "type": "rename", tree: string, key: string, } | { "type": "reveal", tree: string, key: string, } | { "type": "close-target", target: string, } | { "type": "pick-folder", plugin: string, } | { "type": "confirm", message: Label, command: string, danger?: boolean, } | { "type": "copy", text: string, } | { "type": "reload" } | { "type": "openExternal", url: string, };
+params?: { [key in string]: string }, envId?: string, } | { "type": "toast", message: Label, tone?: ToastTone, } | { "type": "rename", tree: string, key: string, } | { "type": "reveal", tree: string, key: string, } | { "type": "close-target", target: string, } | { "type": "pick-folder", plugin: string, 
+/**
+ * Round 17 (X18): replace this granted folder with the chosen one
+ * (`plugin.replaceFolder`) instead of adding it.
+ */
+replace?: string, } | { "type": "confirm", message: Label, command: string, danger?: boolean, } | { "type": "copy", text: string, } | { "type": "reload" } | { "type": "openExternal", url: string, };

@@ -31,7 +31,12 @@ input: { [key in string]: JsonValue }, progress?: RunProgress, summary?: RunSumm
 /**
  * Carried by `run.get` only; lists leave it out.
  */
-output?: RunOutput, kept: boolean, 
+output?: RunOutput, 
+/**
+ * Round 17 (X17): while `running`, the output so far as the plugin last handed it
+ * (`ctx.host.runs.partial`); `run.get` only, gone once the run ended (then `output`).
+ */
+partial?: RunOutput, kept: boolean, 
 /**
  * Name given when kept.
  */

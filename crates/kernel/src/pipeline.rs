@@ -209,7 +209,8 @@ pub enum Command {
     /// writes only the failure audit row (§4.3) and returns `error`.
     Refused { op: String, object: String, error: onedesk_protocol::ProtocolError },
     /// Adds or removes one granted folder of a plugin, read-modify-write in one transaction (D261).
-    Grant { plugin: String, folder: String, add: bool },
+    /// `replace`: the granted folder `folder` takes the place of (round 17).
+    Grant { plugin: String, folder: String, add: bool, replace: Option<String> },
     /// Writes fields back from history as a `restore` revision (D278); `parent` restores the location.
     Restore { id: String, changes: Changes, parent: Option<Option<String>>, entry: String, version: Option<String> },
     /// Brings a whole deletion batch back (§3.4).
@@ -489,7 +490,7 @@ impl Writer {
                     Outcome { changed: true, ..Default::default() }
                 }
                 Command::Refused { error, .. } => return Err(error),
-                Command::Grant { plugin, folder, add } => cx.grant(&plugin, &folder, add)?,
+                Command::Grant { plugin, folder, add, replace } => cx.grant(&plugin, &folder, add, replace.as_deref())?,
                 Command::Restore { id, changes, parent, entry, version } => cx.restore(&id, &changes, parent, &entry, version.as_deref())?,
                 Command::Undelete { id } => cx.undelete(&id)?,
                 Command::Purge { id } => cx.purge(&id)?,
@@ -1218,7 +1219,22 @@ impl Tx<'_> {
         Ok(Outcome { id: Some(row.id.clone()), changed: true, rows: vec![row], ..Default::default() })
     }
 
-    fn grant(&mut self, plugin: &str, folder: &str, add: bool) -> KResult<Outcome> {
+    /// Round 17 (X18): every change of the granted folders gets its own audit row
+    /// (`plugin.grantFolder`, `plugin.revokeFolder`, `plugin.replaceFolder`).
+    fn grant(&mut self, plugin: &str, folder: &str, add: bool, replace: Option<&str>) -> KResult<Outcome> {
+        let out = self.grant_list(plugin, folder, add, replace)?;
+        if out.changed {
+            let (op, summary) = match (add, replace) {
+                (_, Some(from)) => ("plugin.replaceFolder", json!({ "folder": folder, "from": from })),
+                (true, None) => ("plugin.grantFolder", json!({ "folder": folder })),
+                (false, None) => ("plugin.revokeFolder", json!({ "folder": folder })),
+            };
+            self.audit(op, plugin, &summary)?;
+        }
+        Ok(out)
+    }
+
+    fn grant_list(&mut self, plugin: &str, folder: &str, add: bool, replace: Option<&str>) -> KResult<Outcome> {
         let key = GRANTS_KEY;
         let row = store::plugin_state(self.tx, plugin).map_err(db_err)?;
         let mut folders: Vec<String> = row
@@ -1227,7 +1243,14 @@ impl Tx<'_> {
             .and_then(|v| serde_json::from_value(v).ok())
             .unwrap_or_default();
         let before = folders.clone();
-        if add {
+        if let Some(from) = replace {
+            let Some(i) = folders.iter().position(|f| f == from) else { return Err(not_found("grant")) };
+            if folders.iter().any(|f| f == folder) {
+                folders.remove(i);
+            } else {
+                folders[i] = folder.to_string();
+            }
+        } else if add {
             if !folders.iter().any(|f| f == folder) {
                 folders.push(folder.to_string());
             }

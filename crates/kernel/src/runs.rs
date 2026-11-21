@@ -49,6 +49,13 @@ pub struct ActiveRun {
     /// Review #12 (round 15): data files `actions.call` moved into the plugin's folder for this
     /// run; whatever is still there when the run ends is removed.
     pub handed: Vec<std::path::PathBuf>,
+    /// Round 17 (X17): the output so far (`runs.partial`), checked and scrubbed; memory only.
+    pub partial: Option<RunOutput>,
+    /// The action's declared output type (`runs.partial` is checked against it).
+    pub declared: OutputType,
+    /// When `run:<id>` was last sent for a partial output; whether a trailing send is queued.
+    pub partial_sent: Option<Instant>,
+    pub partial_queued: bool,
 }
 
 pub type ActiveRuns = std::sync::Mutex<HashMap<String, ActiveRun>>;
@@ -111,7 +118,7 @@ struct SummaryIn {
 }
 
 #[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
 struct TableIn {
     #[serde(rename = "type")]
     _t: String,
@@ -124,6 +131,12 @@ struct TableIn {
     /// D414: set by the kernel for a table read from a data file (`datafile`).
     #[serde(default)]
     paged: Option<bool>,
+    #[serde(default)]
+    appearance: Option<TextAppearance>,
+    #[serde(default)]
+    tone_column: Option<String>,
+    #[serde(default)]
+    line_column: Option<String>,
 }
 
 /// Checks the plugin's output against the declared type, truncates tables, limits the size.
@@ -146,7 +159,16 @@ fn check_output(declared: OutputType, out: Value) -> Result<RunOutput, String> {
             let mut rows = t.rows;
             rows.truncate(MAX_ROWS);
             let truncated = t.truncated.unwrap_or(false) || total > rows.len() as u64;
-            RunOutput::Table { columns: t.columns, rows, total, truncated, paged: t.paged.filter(|p| *p) }
+            RunOutput::Table {
+                columns: t.columns,
+                rows,
+                total,
+                truncated,
+                paged: t.paged.filter(|p| *p),
+                appearance: t.appearance,
+                tone_column: t.tone_column,
+                line_column: t.line_column,
+            }
         }
         _ => serde_json::from_value::<RunOutput>(out).map_err(|e| e.to_string())?,
     };
@@ -398,7 +420,8 @@ impl Inner {
         let token = CancelToken::default();
         self.runs_active.lock().unwrap().insert(
             id.clone(),
-            ActiveRun { plugin: plugin.id.clone(), token: token.clone(), last_progress: None, stopped: None, secrets: vec![], handed: vec![] },
+            ActiveRun { plugin: plugin.id.clone(), token: token.clone(), last_progress: None, stopped: None, secrets: vec![], handed: vec![], partial: None,
+                        declared: action.output, partial_sent: None, partial_queued: false },
         );
         let resource = match res {
             // A dependent sees the resource without its secret fields (round 7).
@@ -585,6 +608,67 @@ impl Inner {
         }
     }
 
+    /// Round 17 (X17): `ctx.host.runs.partial(output)` — the output so far, checked against the
+    /// declared type and scrubbed, kept in memory; `run:<id>` at most every 100 ms, the last one
+    /// always sent (a trailing send is queued when throttled).
+    pub fn run_partial(&self, id: &str, output: Value) -> KResult<()> {
+        let declared = {
+            let active = self.runs_active.lock().unwrap();
+            let a = active.get(id).ok_or_else(|| denied("notInRun"))?;
+            a.declared
+        };
+        if output.get("file").is_some() {
+            return Err(invalid("badOutput"));
+        }
+        let out = check_output(declared, output).map_err(|e| {
+            let mut pe = invalid("badOutput");
+            pe.detail = Some(e);
+            pe
+        })?;
+        let wait = {
+            let mut active = self.runs_active.lock().unwrap();
+            let Some(a) = active.get_mut(id) else { return Err(denied("notInRun")) };
+            if a.token.is_cancelled() {
+                return Ok(());
+            }
+            let mut v = serde_json::to_value(&out).map_err(internal)?;
+            crate::secrets::scrub(&mut v, &a.secrets);
+            a.partial = serde_json::from_value(v).ok();
+            match a.partial_sent {
+                Some(t) if t.elapsed() < PROGRESS_EVERY => {
+                    if a.partial_queued {
+                        return Ok(());
+                    }
+                    a.partial_queued = true;
+                    Some(PROGRESS_EVERY - t.elapsed())
+                }
+                _ => {
+                    a.partial_sent = Some(Instant::now());
+                    None
+                }
+            }
+        };
+        match wait {
+            None => self.emit(format!("{}{id}", topic3::RUN), None, None),
+            Some(d) => {
+                let me = self.me.clone();
+                let id = id.to_string();
+                tokio::spawn(async move {
+                    tokio::time::sleep(d).await;
+                    let Some(me) = me.upgrade() else { return };
+                    {
+                        let mut active = me.runs_active.lock().unwrap();
+                        let Some(a) = active.get_mut(&id) else { return };
+                        a.partial_queued = false;
+                        a.partial_sent = Some(Instant::now());
+                    }
+                    me.emit(format!("{}{id}", topic3::RUN), None, None);
+                });
+            }
+        }
+        Ok(())
+    }
+
     pub async fn run_cancel(&self, id: &str) -> KResult<()> {
         let row = self.read(|c| store::run_get(c, id))?.ok_or_else(|| not_found("run"))?;
         let active = {
@@ -634,7 +718,10 @@ impl Inner {
     }
 
     pub fn run_to_protocol(&self, r: RunRow, with_output: bool) -> Run {
-        let cancellable = r.status == "running" && self.runs_active.lock().unwrap().contains_key(&r.id);
+        let (cancellable, partial) = match self.runs_active.lock().unwrap().get(&r.id) {
+            Some(a) if r.status == "running" => (true, if with_output { a.partial.clone() } else { None }),
+            _ => (false, None),
+        };
         Run {
             status: match r.status.as_str() {
                 "running" => RunStatus::Running,
@@ -672,6 +759,7 @@ impl Inner {
             } else {
                 None
             },
+            partial,
             kept: r.kept,
             kept_name: r.kept_name,
             in_task_panel: r.in_task_panel,

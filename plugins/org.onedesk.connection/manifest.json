@@ -1,0 +1,63 @@
+{
+  "id": "org.onedesk.connection",
+  "version": "0.1.0",
+  "apiVersion": "2",
+  "name": "plugin.name",
+  "description": "plugin.description",
+  "icon": "plug",
+  "main": "main.js",
+  "author": "OneDesk",
+  "license": "MIT",
+  "homepage": "https://onedesk.example.com/plugins/connection",
+  "requires": {
+    "files": false,
+    "network": { "fromResources": true },
+    "secrets": { "names": [], "plaintext": false }
+  },
+  "exports": {
+    "kinds": [{ "id": "connection", "actions": true, "read": true }],
+    "actions": ["request"]
+  },
+  "contributes": {
+    "kinds": [
+      {
+        "id": "connection",
+        "label": "kind.connection",
+        "icon": "plug",
+        "tree": "resources",
+        "page": "editor",
+        "newName": "kind.connection.new",
+        "defaults": { "url": "", "auth": "none", "authName": "", "headers": "", "testPath": "" },
+        "fields": {
+          "url": { "type": "text", "grants": "network" },
+          "secret": { "type": "secret" },
+          "headers": { "type": "longtext" }
+        },
+        "draggable": true,
+        "accepts": []
+      }
+    ],
+    "actions": [
+      { "id": "test", "label": "action.test", "icon": "plug-zap", "kinds": ["connection"], "output": "text", "saveFirst": true, "confirm": null },
+      { "id": "request", "label": "action.request", "icon": "send", "output": "text", "saveFirst": false, "confirm": null }
+    ],
+    "pages": [
+      {
+        "id": "editor",
+        "recompute": true,
+        "usesEnv": true,
+        "actions": [
+          { "id": "test", "role": "run", "action": "test", "label": "action.test", "icon": "plug-zap", "primary": true, "shortcut": ["Mod", "Enter"] },
+          { "id": "save", "role": "save", "label": "action.save", "icon": "save", "shortcut": ["Mod", "S"] },
+          { "id": "save-test", "role": "save-run", "action": "test", "label": "action.saveTest", "icon": "save-all" }
+        ],
+        "resultTabs": [
+          { "id": "response", "type": "output", "label": "tab.result", "icon": "file-text" },
+          { "id": "history", "type": "history", "label": "tab.history", "icon": "history" }
+        ]
+      }
+    ],
+    "menus": { "new": ["connection"] },
+    "locales": { "en-US": "locales/en-US.json", "zh-CN": "locales/zh-CN.json", "ja-JP": "locales/ja-JP.json" }
+  }
+}

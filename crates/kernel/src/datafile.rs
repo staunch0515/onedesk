@@ -21,7 +21,7 @@
 use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
 
-use onedesk_protocol::{OutputColumn, RunOutput};
+use onedesk_protocol::{OutputColumn, RunOutput, TextAppearance};
 use serde_json::{Map, Value};
 
 /// Cells kept in a run's table (serialized, roughly); the rest only counts toward `total`.
@@ -167,13 +167,21 @@ pub struct FromFile {
     pub offsets: Vec<u64>,
 }
 
+/// Round 17 (X10): the `appearance` of an output from a file.
+fn appearance_of(o: &Map<String, Value>) -> Result<Option<TextAppearance>, String> {
+    match o.get("appearance") {
+        None | Some(Value::Null) => Ok(None),
+        Some(v) => serde_json::from_value(v.clone()).map(Some).map_err(|_| bad("appearance must be \"plain\" or \"terminal\"")),
+    }
+}
+
 /// Reads an output data file. `o` is the plugin's output object (without `file`).
 pub fn read(path: &Path, o: &Map<String, Value>) -> Result<FromFile, String> {
     let ty = o.get("type").and_then(Value::as_str).unwrap_or_default();
     for k in o.keys() {
         let ok = match ty {
-            "table" => ["type", "header", "columns"].contains(&k.as_str()),
-            "text" => k == "type",
+            "table" => ["type", "header", "columns", "appearance", "toneColumn", "lineColumn"].contains(&k.as_str()),
+            "text" => k == "type" || k == "appearance",
             _ => false,
         };
         if !ok {
@@ -196,7 +204,8 @@ pub fn read(path: &Path, o: &Map<String, Value>) -> Result<FromFile, String> {
                 }
                 text.truncate(i);
             }
-            Ok(FromFile { output: RunOutput::Text { text }, cut: false, offsets: vec![] })
+            let appearance = appearance_of(o)?;
+            Ok(FromFile { output: RunOutput::Text { text, line_tones: None, appearance }, cut: false, offsets: vec![] })
         }
         "table" => {
             let header = match o.get("header") {
@@ -263,7 +272,24 @@ pub fn read(path: &Path, o: &Map<String, Value>) -> Result<FromFile, String> {
             // Review #10: a field or record that was too long makes the table `truncated` (and
             // the file is kept, though the kept copy reads the same way).
             let truncated = cut || rd.clipped;
-            Ok(FromFile { output: RunOutput::Table { columns, rows, total, truncated, paged: Some(true) }, cut, offsets })
+            let text_key = |k: &str| -> Result<Option<String>, String> {
+                match o.get(k) {
+                    None | Some(Value::Null) => Ok(None),
+                    Some(Value::String(s)) => Ok(Some(s.clone())),
+                    Some(_) => Err(bad(format!("{k} must be a column key"))),
+                }
+            };
+            let output = RunOutput::Table {
+                columns,
+                rows,
+                total,
+                truncated,
+                paged: Some(true),
+                appearance: appearance_of(o)?,
+                tone_column: text_key("toneColumn")?,
+                line_column: text_key("lineColumn")?,
+            };
+            Ok(FromFile { output, cut, offsets })
         }
         other => Err(bad(format!("output type {other:?} cannot come from a file"))),
     }
@@ -436,12 +462,28 @@ mod tests {
     }
 
     #[test]
+    fn round17_a_file_output_keeps_its_appearance_and_tone_column() {
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("r.csv");
+        std::fs::write(&p, "stream,line\nstderr,x\n").unwrap();
+        let r = read(&p, &o(json!({ "type": "table", "appearance": "terminal", "toneColumn": "c0", "lineColumn": "c1" }))).unwrap();
+        let RunOutput::Table { appearance, tone_column, line_column, .. } = r.output else { panic!() };
+        assert_eq!(appearance, Some(TextAppearance::Terminal));
+        assert_eq!((tone_column.as_deref(), line_column.as_deref()), (Some("c0"), Some("c1")));
+        assert!(read(&p, &o(json!({ "type": "table", "appearance": "neon" }))).is_err());
+        assert!(read(&p, &o(json!({ "type": "table", "toneColumn": 3 }))).is_err());
+        let r = read(&p, &o(json!({ "type": "text", "appearance": "terminal" }))).unwrap();
+        let RunOutput::Text { appearance, line_tones, .. } = r.output else { panic!() };
+        assert_eq!((appearance, line_tones), (Some(TextAppearance::Terminal), None));
+    }
+
+    #[test]
     fn text_is_cut_at_a_character_boundary() {
         let d = tempfile::tempdir().unwrap();
         let p = d.path().join("t.txt");
         std::fs::write(&p, "中".repeat(MAX_TEXT_BYTES / 3 + 2)).unwrap();
         let r = read(&p, &o(json!({ "type": "text" }))).unwrap();
-        let RunOutput::Text { text } = r.output else { panic!() };
+        let RunOutput::Text { text, .. } = r.output else { panic!() };
         assert!(text.len() <= MAX_TEXT_BYTES && text.ends_with('中'));
     }
 }

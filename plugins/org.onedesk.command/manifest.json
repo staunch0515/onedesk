@@ -1,0 +1,132 @@
+{
+  "id": "org.onedesk.command",
+  "version": "0.1.0",
+  "apiVersion": "2",
+  "name": "plugin.name",
+  "description": "plugin.description",
+  "icon": "terminal",
+  "main": "main.js",
+  "author": "OneDesk",
+  "license": "MIT",
+  "homepage": "https://onedesk.example.com/plugins/command",
+  "requires": {
+    "files": false,
+    "programs": [
+      {
+        "name": "ssh",
+        "source": "system"
+      }
+    ]
+  },
+  "contributes": {
+    "kinds": [
+      {
+        "id": "command",
+        "label": "kind.command",
+        "icon": "terminal",
+        "tree": "resources",
+        "page": "editor",
+        "newName": "kind.command.new",
+        "defaults": {
+          "host": "",
+          "command": "",
+          "timeoutSec": "",
+          "maxLines": ""
+        },
+        "draggable": true,
+        "accepts": []
+      }
+    ],
+    "actions": [
+      {
+        "id": "run",
+        "label": "action.run",
+        "icon": "play",
+        "kinds": [
+          "command"
+        ],
+        "output": "table",
+        "shortcut": [
+          "Mod",
+          "Enter"
+        ],
+        "saveFirst": false,
+        "confirm": null
+      }
+    ],
+    "pages": [
+      {
+        "id": "editor",
+        "recompute": true,
+        "usesEnv": true,
+        "actions": [
+          {
+            "id": "run",
+            "role": "run",
+            "action": "run",
+            "label": "action.run",
+            "icon": "play",
+            "primary": true,
+            "shortcut": [
+              "Mod",
+              "Enter"
+            ]
+          },
+          {
+            "id": "save",
+            "role": "save",
+            "label": "action.save",
+            "icon": "save",
+            "shortcut": [
+              "Mod",
+              "S"
+            ]
+          },
+          {
+            "id": "save-run",
+            "role": "save-run",
+            "action": "run",
+            "label": "action.saveRun",
+            "icon": "save-all"
+          },
+          {
+            "id": "copy",
+            "role": "event",
+            "label": "action.copy",
+            "icon": "copy"
+          }
+        ],
+        "resultTabs": [
+          {
+            "id": "result",
+            "type": "output",
+            "label": "tab.output",
+            "icon": "terminal"
+          },
+          {
+            "id": "sent",
+            "type": "view",
+            "label": "tab.sent",
+            "icon": "file-code"
+          },
+          {
+            "id": "history",
+            "type": "history",
+            "label": "tab.history",
+            "icon": "history"
+          }
+        ]
+      }
+    ],
+    "menus": {
+      "new": [
+        "command"
+      ]
+    },
+    "locales": {
+      "en-US": "locales/en-US.json",
+      "zh-CN": "locales/zh-CN.json",
+      "ja-JP": "locales/ja-JP.json"
+    }
+  }
+}

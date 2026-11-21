@@ -29,6 +29,16 @@
       {
         "name": "ssh",
         "source": "system"
+      },
+      {
+        "name": "docker",
+        "source": "system",
+        "searchPaths": [
+          "/Applications/Docker.app/Contents/Resources/bin",
+          "/Applications/OrbStack.app/Contents/MacOS/xbin",
+          "/opt/homebrew/bin",
+          "/usr/local/bin"
+        ]
       }
     ]
   },
@@ -84,6 +94,17 @@
         "confirm": null
       },
       {
+        "id": "backup",
+        "label": "action.backup",
+        "icon": "archive-restore",
+        "kinds": [
+          "source"
+        ],
+        "output": "link",
+        "saveFirst": true,
+        "confirm": null
+      },
+      {
         "id": "query",
         "label": "action.query",
         "icon": "table",
@@ -126,6 +147,13 @@
             "action": "test",
             "label": "action.saveTest",
             "icon": "save-all"
+          },
+          {
+            "id": "backup",
+            "role": "run",
+            "action": "backup",
+            "label": "action.backup",
+            "icon": "archive-restore"
           },
           {
             "id": "import",

@@ -33,5 +33,11 @@
   "info.value": "值",
   "info.status": "状态码",
   "info.time": "耗时",
-  "info.size": "大小"
+  "info.size": "大小",
+  "field.connection": "连接",
+  "field.connection.hint": "地址写成连接地址之后的路径；认证由连接添加。",
+  "connection.none": "不使用（写完整地址）",
+  "field.url.placeholderPath": "/items/:item_id",
+  "error.connectionMissing": "找不到连接“{connection}”。",
+  "error.connectionAnswer": "连接返回的内容无法读取。"
 }

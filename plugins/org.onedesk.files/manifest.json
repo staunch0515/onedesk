@@ -1,18 +1,202 @@
 {
   "id": "org.onedesk.files",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "apiVersion": "2",
   "name": "plugin.name",
   "description": "plugin.description",
   "icon": "folder-open",
   "main": "main.js",
-  "requires": { "files": true },
+  "requires": {
+    "files": true
+  },
   "contributes": {
     "pages": [
       {
         "id": "text",
         "actions": [
-          { "id": "save", "role": "save", "label": "action.save", "icon": "save", "primary": true, "shortcut": ["Mod", "S"] }
+          {
+            "id": "save",
+            "role": "save",
+            "label": "action.save",
+            "icon": "save",
+            "primary": true,
+            "shortcut": [
+              "Mod",
+              "S"
+            ]
+          },
+          {
+            "id": "mkdir",
+            "role": "run",
+            "action": "mkdir",
+            "label": "action.mkdir",
+            "icon": "folder-plus"
+          },
+          {
+            "id": "touch",
+            "role": "run",
+            "action": "touch",
+            "label": "action.touch",
+            "icon": "file-plus"
+          },
+          {
+            "id": "rename",
+            "role": "run",
+            "action": "rename",
+            "label": "action.rename",
+            "icon": "pencil"
+          },
+          {
+            "id": "move",
+            "role": "run",
+            "action": "move",
+            "label": "action.move",
+            "icon": "folder-input"
+          },
+          {
+            "id": "copy",
+            "role": "run",
+            "action": "copy",
+            "label": "action.copy",
+            "icon": "copy"
+          },
+          {
+            "id": "trash",
+            "role": "run",
+            "action": "trash",
+            "label": "action.trash",
+            "icon": "trash-2"
+          },
+          {
+            "id": "delete",
+            "role": "run",
+            "action": "delete",
+            "label": "action.delete",
+            "icon": "trash",
+            "danger": true
+          },
+          {
+            "id": "open",
+            "role": "run",
+            "action": "open",
+            "label": "action.open",
+            "icon": "external-link"
+          },
+          {
+            "id": "reveal",
+            "role": "run",
+            "action": "reveal",
+            "label": "action.reveal",
+            "icon": "folder-search"
+          },
+          {
+            "id": "search",
+            "role": "run",
+            "action": "search",
+            "label": "action.search",
+            "icon": "search"
+          },
+          {
+            "id": "import",
+            "role": "run",
+            "action": "import",
+            "label": "action.import",
+            "icon": "download"
+          }
+        ],
+        "resultTabs": [
+          {
+            "id": "response",
+            "type": "output",
+            "label": "tab.result",
+            "icon": "file-text"
+          }
+        ]
+      },
+      {
+        "id": "folders",
+        "actions": [
+          {
+            "id": "grantAdd",
+            "role": "run",
+            "action": "grantAdd",
+            "label": "action.grantAdd",
+            "icon": "folder-plus",
+            "primary": true
+          },
+          {
+            "id": "grantRename",
+            "role": "run",
+            "action": "grantRename",
+            "label": "action.grantRename",
+            "icon": "pencil"
+          },
+          {
+            "id": "grantRemove",
+            "role": "run",
+            "action": "grantRemove",
+            "label": "action.grantRemove",
+            "icon": "folder-minus",
+            "danger": true
+          },
+          {
+            "id": "import",
+            "role": "run",
+            "action": "import",
+            "label": "action.import",
+            "icon": "download"
+          }
+        ],
+        "resultTabs": [
+          {
+            "id": "response",
+            "type": "output",
+            "label": "tab.result",
+            "icon": "file-text"
+          }
+        ]
+      },
+      {
+        "id": "disk-file",
+        "actions": [
+          {
+            "id": "open",
+            "role": "run",
+            "action": "open",
+            "label": "action.open",
+            "icon": "external-link",
+            "primary": true
+          },
+          {
+            "id": "reveal",
+            "role": "run",
+            "action": "reveal",
+            "label": "action.reveal",
+            "icon": "folder-search"
+          },
+          {
+            "id": "trash",
+            "role": "run",
+            "action": "trash",
+            "label": "action.trash",
+            "icon": "trash-2"
+          },
+          {
+            "id": "delete",
+            "role": "run",
+            "action": "delete",
+            "label": "action.delete",
+            "icon": "trash",
+            "danger": true
+          }
+        ],
+        "resultTabs": [
+          {
+            "id": "response",
+            "type": "output",
+            "label": "tab.result",
+            "icon": "file-text"
+          }
         ]
       }
     ],
@@ -23,9 +207,189 @@
         "icon": "folder-open",
         "source": "provided",
         "page": "text",
-        "toolbar": ["plugin.grantFolder"]
+        "toolbar": [
+          "plugin.grantFolder"
+        ]
+      },
+      {
+        "id": "folders",
+        "label": "tree.folders",
+        "icon": "folder-cog",
+        "source": "provided",
+        "page": "folders"
       }
     ],
-    "locales": { "en-US": "locales/en-US.json", "zh-CN": "locales/zh-CN.json", "ja-JP": "locales/ja-JP.json" }
-  }
+    "locales": {
+      "en-US": "locales/en-US.json",
+      "zh-CN": "locales/zh-CN.json",
+      "ja-JP": "locales/ja-JP.json"
+    },
+    "kinds": [
+      {
+        "id": "disk-file",
+        "label": "kind.diskFile",
+        "icon": "file",
+        "tree": "resources",
+        "page": "disk-file",
+        "newName": "kind.diskFile.new",
+        "defaults": {
+          "path": "",
+          "size": "",
+          "modifiedAt": "",
+          "ext": "",
+          "folder": ""
+        },
+        "draggable": false,
+        "accepts": []
+      },
+      {
+        "id": "disk-folder",
+        "label": "kind.diskFolder",
+        "icon": "folder",
+        "tree": "resources",
+        "page": "disk-file",
+        "newName": "kind.diskFolder.new",
+        "defaults": {
+          "path": "",
+          "size": "",
+          "modifiedAt": "",
+          "ext": "",
+          "folder": ""
+        },
+        "draggable": false,
+        "accepts": [
+          "disk-folder",
+          "disk-file"
+        ]
+      }
+    ],
+    "actions": [
+      {
+        "id": "grantAdd",
+        "label": "action.grantAdd",
+        "icon": "folder-plus",
+        "output": "text",
+        "saveFirst": false,
+        "confirm": null
+      },
+      {
+        "id": "grantRename",
+        "label": "action.grantRename",
+        "icon": "pencil",
+        "output": "text",
+        "saveFirst": false,
+        "confirm": null
+      },
+      {
+        "id": "grantRemove",
+        "label": "action.grantRemove",
+        "icon": "folder-minus",
+        "output": "text",
+        "saveFirst": false,
+        "confirm": null
+      },
+      {
+        "id": "import",
+        "label": "action.import",
+        "icon": "download",
+        "output": "text",
+        "saveFirst": false,
+        "confirm": null
+      },
+      {
+        "id": "mkdir",
+        "label": "action.mkdir",
+        "icon": "folder-plus",
+        "output": "text",
+        "saveFirst": false,
+        "confirm": null
+      },
+      {
+        "id": "touch",
+        "label": "action.touch",
+        "icon": "file-plus",
+        "output": "text",
+        "saveFirst": false,
+        "confirm": null
+      },
+      {
+        "id": "rename",
+        "label": "action.rename",
+        "icon": "pencil",
+        "output": "text",
+        "saveFirst": false,
+        "confirm": null
+      },
+      {
+        "id": "move",
+        "label": "action.move",
+        "icon": "folder-input",
+        "output": "text",
+        "saveFirst": false,
+        "confirm": null
+      },
+      {
+        "id": "copy",
+        "label": "action.copy",
+        "icon": "copy",
+        "output": "text",
+        "saveFirst": false,
+        "confirm": null
+      },
+      {
+        "id": "trash",
+        "label": "action.trash",
+        "icon": "trash-2",
+        "output": "text",
+        "saveFirst": false,
+        "confirm": null,
+        "kinds": [
+          "disk-file"
+        ]
+      },
+      {
+        "id": "delete",
+        "label": "action.delete",
+        "icon": "trash",
+        "output": "text",
+        "saveFirst": false,
+        "confirm": "confirm.delete",
+        "kinds": [
+          "disk-file"
+        ]
+      },
+      {
+        "id": "open",
+        "label": "action.open",
+        "icon": "external-link",
+        "output": "text",
+        "saveFirst": false,
+        "confirm": null,
+        "kinds": [
+          "disk-file"
+        ]
+      },
+      {
+        "id": "reveal",
+        "label": "action.reveal",
+        "icon": "folder-search",
+        "output": "text",
+        "saveFirst": false,
+        "confirm": null,
+        "kinds": [
+          "disk-file"
+        ]
+      },
+      {
+        "id": "search",
+        "label": "action.search",
+        "icon": "search",
+        "output": "table",
+        "saveFirst": false,
+        "confirm": null
+      }
+    ]
+  },
+  "author": "OneDesk",
+  "license": "MIT"
 }

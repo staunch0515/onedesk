@@ -41,6 +41,8 @@ pub mod method {
     pub const PLUGIN_GRANTS: &str = "plugin.grants";
     pub const PLUGIN_GRANT_FOLDER: &str = "plugin.grantFolder";
     pub const PLUGIN_REVOKE_FOLDER: &str = "plugin.revokeFolder";
+    /// Round 17 (X18): `PluginReplaceFolderParams` → `PluginGrants`.
+    pub const PLUGIN_REPLACE_FOLDER: &str = "plugin.replaceFolder";
     pub const UI_GET: &str = "ui.get";
     pub const UI_SET: &str = "ui.set";
 }
@@ -525,6 +527,31 @@ pub enum Tone {
     Danger,
 }
 
+/// Round 17 (X10): the tone of one line of a text (`lineTones`) or of one table row
+/// (`toneColumn`). The shell colours it with design tokens only.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum LineTone {
+    Default,
+    Muted,
+    Success,
+    Warning,
+    Danger,
+    /// A program's standard error.
+    Stderr,
+}
+
+/// Round 17 (X10): how a text or table is drawn. `terminal`: monospace on the terminal
+/// background token, one line per line (or per row), tones as for a terminal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum TextAppearance {
+    Plain,
+    Terminal,
+}
+
 #[skip_serializing_none]
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -556,6 +583,11 @@ pub enum ViewNode {
         tone: Option<Tone>,
         /// Round 11 (D381): how the shell shows `text`; absent = `plain`.
         format: Option<TextFormat>,
+        /// Round 17 (X10): one tone per line of `text` (split at `\n`); `null` or a missing entry
+        /// = `default`; entries beyond the last line are ignored.
+        line_tones: Option<Vec<Option<LineTone>>>,
+        /// Round 17 (X10): absent = `plain`.
+        appearance: Option<TextAppearance>,
     },
     Table {
         id: String,
@@ -815,7 +847,12 @@ pub enum CommandEffect {
     CloseTarget { target: String },
     /// Ask the user for a folder with the system dialog, then call `plugin.grantFolder`.
     /// The choice in the dialog is the user's consent (D184).
-    PickFolder { plugin: String },
+    PickFolder {
+        plugin: String,
+        /// Round 17 (X18): replace this granted folder with the chosen one
+        /// (`plugin.replaceFolder`) instead of adding it.
+        replace: Option<String>,
+    },
     /// Ask for confirmation, then execute `command` again with `args.confirmed = true`.
     Confirm { message: Label, command: String, danger: Option<bool> },
     /// Copy text to the clipboard.
@@ -858,6 +895,17 @@ pub struct PluginFolderParams {
     pub plugin: String,
     /// Absolute path of an existing folder. Stored canonicalized.
     pub path: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct PluginReplaceFolderParams {
+    pub plugin: String,
+    /// The granted folder to replace (as `PluginGrants.folders` lists it).
+    pub path: String,
+    /// Absolute path of an existing folder; takes the old one's place in the list.
+    pub new_path: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -1274,9 +1322,21 @@ pub enum RunOutput {
         /// Round 15 (D414): the result came as a data file. `rows` carries only the first
         /// `PAGED_FIRST_ROWS`; the rest is read with `run.rows`.
         paged: Option<bool>,
+        /// Round 17 (X10): absent = `plain`. With `terminal` the shell may draw the rows as lines:
+        /// the `lineColumn` value of each row, coloured by its `toneColumn` value.
+        appearance: Option<TextAppearance>,
+        /// Round 17 (X10): key of the column whose value names each row's `LineTone`
+        /// (`"stderr"`, `"danger"`…); other values (e.g. `"stdout"`) = `default`.
+        tone_column: Option<String>,
+        /// Round 17 (X10): key of the column holding the line text for `terminal`; absent = the last column.
+        line_column: Option<String>,
     },
     Text {
         text: String,
+        /// Round 17 (X10): as `ViewNode::Text.lineTones`.
+        line_tones: Option<Vec<Option<LineTone>>>,
+        /// Round 17 (X10): absent = `plain`.
+        appearance: Option<TextAppearance>,
     },
     Link {
         label: String,
@@ -1362,6 +1422,9 @@ pub struct Run {
     pub error: Option<RunError>,
     /// Carried by `run.get` only; lists leave it out.
     pub output: Option<RunOutput>,
+    /// Round 17 (X17): while `running`, the output so far as the plugin last handed it
+    /// (`ctx.host.runs.partial`); `run.get` only, gone once the run ended (then `output`).
+    pub partial: Option<RunOutput>,
     pub kept: bool,
     /// Name given when kept.
     pub kept_name: Option<String>,
@@ -2344,7 +2407,7 @@ mod tests {
             json!({ "type": "form", "id": "f", "layout": "stack",
                     "fields": [{ "name": "text", "label": "Text", "kind": "longtext", "bind": "body.text", "fill": true }] })
         );
-        let effect = CommandEffect::PickFolder { plugin: "p".into() };
+        let effect = CommandEffect::PickFolder { plugin: "p".into(), replace: None };
         assert_eq!(serde_json::to_value(&effect).unwrap(), json!({ "type": "pick-folder", "plugin": "p" }));
         assert_eq!(serde_json::to_value(NodeState::MissingPlugin).unwrap(), json!("missing-plugin"));
         assert_eq!(serde_json::to_value(ErrorCode::WorkerGone).unwrap(), json!("workerGone"));

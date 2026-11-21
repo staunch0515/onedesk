@@ -316,8 +316,8 @@ test("run history survives a restart of the kernel", async ({ page }) => {
   await openKernel(page, host);
   await showTree(page, "Run records");
   await expect(treeItem(page, /#\d+/).first()).toBeVisible();
-  const trees = await call<{ nodes: { label: string }[] }>(page, "tree.children", { tree: "runs" });
-  expect(trees.nodes.length).toBeGreaterThanOrEqual(5);
+  const under = async (parent: string) => (await call<{ nodes: { label: string }[] }>(page, "tree.children", { tree: "runs", parent })).nodes.length;
+  expect((await under("@runs:recent")) + (await under("@runs:saved"))).toBeGreaterThanOrEqual(5);
   expect(before).toBeDefined();
   await openQuery(page, "Replay");
   await page.getByRole("tab", { name: "History" }).click();

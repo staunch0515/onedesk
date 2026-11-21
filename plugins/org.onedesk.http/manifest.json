@@ -35,7 +35,8 @@
           "url": "",
           "query": "",
           "headers": "",
-          "body": ""
+          "body": "",
+          "connection": ""
         },
         "fields": {
           "url": {
@@ -153,5 +154,11 @@
       "zh-CN": "locales/zh-CN.json",
       "ja-JP": "locales/ja-JP.json"
     }
-  }
+  },
+  "depends": [
+    {
+      "id": "org.onedesk.connection",
+      "version": ">=0.1.0, <1.0.0"
+    }
+  ]
 }

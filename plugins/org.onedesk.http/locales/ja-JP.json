@@ -33,5 +33,11 @@
   "info.value": "値",
   "info.status": "ステータス",
   "info.time": "所要時間",
-  "info.size": "サイズ"
+  "info.size": "サイズ",
+  "field.connection": "接続",
+  "field.connection.hint": "アドレスは接続のアドレス以下のパスになり、認証は接続が付けます。",
+  "connection.none": "使わない（完全なアドレス）",
+  "field.url.placeholderPath": "/items/:item_id",
+  "error.connectionMissing": "接続「{connection}」が見つかりません。",
+  "error.connectionAnswer": "接続の応答を読み取れませんでした。"
 }
