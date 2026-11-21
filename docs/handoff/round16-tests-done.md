@@ -33,4 +33,4 @@ G1/G2/G4/G5/G7 本阶段没有新改动，只复核了既有测试仍通过；�
 - `r16-kernel` 的“被调插件错误文字带回”合并后，数据源插件可以改回直接 throw（现在用 `{error}` 数据绕过）；那时 README 的第三条要改。
 - 完整 `pnpm check` 里的 e2e 需要 `ONEDESK_DEVHOST_BIN` 或 `target/debug/onedesk-devhost`；各工作树没有自己的 target，协调会话跑时请设置。
 
-最后提交：见 git log（本文件随同一提交）。
+最后提交：`75c049e`。
