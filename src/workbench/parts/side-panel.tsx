@@ -137,7 +137,8 @@ export function TreePanel({ tree }: { tree: TreeInfo }) {
     };
     // Shown again after another view: events were missed meanwhile, so read the cached levels again.
     if (nodesRef.current.size > 0) refresh();
-    const offs = [client.events.subscribe(`tree:${tree.id}`, refresh), client.events.subscribe("connection", refresh)];
+    // The kernel announces run changes on `runs` (it has no `tree:runs`): keeping, renaming or deleting a result moves nodes between the two groups.
+    const offs = [client.events.subscribe(`tree:${tree.id}`, refresh), client.events.subscribe("connection", refresh), ...(tree.id === RUNS_TREE ? [client.events.subscribe("runs", refresh)] : [])];
     return () => offs.forEach((off) => off());
     // `locale` is a dependency on purpose: after a language switch the loaded levels are read again in the new language.
   }, [client, tree.id, commit, actions, locale]);

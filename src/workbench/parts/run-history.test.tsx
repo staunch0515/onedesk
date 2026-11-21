@@ -142,3 +142,25 @@ describe("opening a run record (E3)", () => {
     await waitFor(() => expect(store.get().tabs.some((t) => t.target === "run:r2")).toBe(true));
   });
 });
+
+describe("the run tree follows the kernel's run events", () => {
+  it("reads the groups again when a run is kept (the kernel says `runs`, not `tree:runs`)", async () => {
+    const handlers = new Set<(topic: string) => void>();
+    let saved: TreeNode[] = [];
+    const base = kernelLikeClient(createMockClient({ fresh: true, quiet: true }), {});
+    const client = {
+      ...base,
+      events: { subscribe: (topic: string, h: (t: string) => void) => (topic === "runs" ? (handlers.add(h), () => handlers.delete(h)) : () => undefined) },
+      tree: {
+        ...base.tree,
+        path: async () => [],
+        children: async (_t: string, parent: string | null) => ({ nodes: parent === null ? [node("@runs:saved", "Saved results", null, true)] : saved }),
+      },
+    };
+    renderInShell(client as never, <TreePanel tree={{ ...info, id: "runs" }} />);
+    fireEvent.click(await screen.findByText("Saved results"));
+    saved = [node("r1", "#1 Kept now", "@runs:saved")];
+    handlers.forEach((h) => h("runs"));
+    expect(await screen.findByText("#1 Kept now")).toBeTruthy();
+  });
+});

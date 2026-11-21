@@ -26,7 +26,7 @@ export function RunKeepBar({ run }: { run: Run }) {
   if (run.status === "running") return null;
   return (
     <>
-      <Pane direction="row" gap="sm" align="center">
+      <Pane direction="row" gap="sm" align="center" wrap pad="sm">
         {run.keptName && <span>{run.keptName}</span>}
         {!run.kept && (
           <Button size="sm" icon="bookmark" onClick={() => void actions.command("run.keep", { target, nodeKey: run.id })}>
