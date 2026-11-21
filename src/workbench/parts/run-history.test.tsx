@@ -18,19 +18,20 @@ const info = { id: "runs", title: "Run records", icon: "history", source: "provi
 function setup() {
   const setKept = vi.fn(async () => undefined);
   const base = kernelLikeClient(createMockClient({ fresh: true, quiet: true }), {});
+  const children = vi.fn(async (_t: string, parent: string | null) => ({
+    nodes: parent === null ? [node("@runs:recent", "Recent runs", null, true), node("@runs:saved", "Saved results", null, true)] : parent === "@runs:saved" ? [node("r1", "#7 Nightly totals", parent)] : [node("r2", "#8 Scratch", parent)],
+  }));
   const client = {
     ...base,
     tree: {
       ...base.tree,
       path: async () => [],
-      children: async (_t: string, parent: string | null) => ({
-        nodes: parent === null ? [node("@runs:recent", "Recent runs", null, true), node("@runs:saved", "Saved results", null, true)] : parent === "@runs:saved" ? [node("r1", "#7 Nightly totals", parent)] : [node("r2", "#8 Scratch", parent)],
-      }),
+      children,
     },
     run: { ...base.run, setKept },
   };
   renderInShell(client, <TreePanel tree={info} />);
-  return { setKept };
+  return { setKept, children };
 }
 
 describe("run records in two groups (D420)", () => {
@@ -47,6 +48,15 @@ describe("run records in two groups (D420)", () => {
     fireEvent.click(screen.getByText("Recent runs"));
     await waitFor(() => expect(screen.queryByText("#8 Scratch")).toBeNull());
     expect(screen.getByText("#7 Nightly totals")).toBeTruthy();
+  });
+
+  it("the auto-expanded groups settle: each level is read once and the rows are not mounted again", async () => {
+    const { children } = setup();
+    const row = await screen.findByText("#8 Scratch");
+    await screen.findByText("#7 Nightly totals");
+    await new Promise((r) => setTimeout(r, 300));
+    expect(children.mock.calls.map((c) => c[1] ?? "root").sort()).toEqual(["@runs:recent", "@runs:saved", "root"]);
+    expect(screen.getByText("#8 Scratch")).toBe(row); // the same element: nothing was torn down and drawn again
   });
 
   it("offers rename on a saved result only, and renaming keeps the result under the new name without its number", async () => {

@@ -170,3 +170,10 @@
 - （第十五轮插件与测试）一个带 `code` 为宿主错误码（`invalid`、`notFound` 等）的插件错误，到界面只剩码、没有插件写的文字；插件文档（`plugins/README.md` 或设计）应写明“要让文字到界面，错误不要带宿主码”。
 - （第十五轮插件与测试）真 ssh 的成功路径没有 e2e：OpenSSH 读的是 passwd 里的家目录而不是 `$HOME`，而内核给外部程序的环境又固定，所以无法给它一个临时的主机别名。e2e 只测了“用系统 ssh、失败原因显示在结果区”（`.invalid` 主机）。
 - （第五个协调会话）`e2e/round13.spec.ts` “workspace menu creates, renames, switches and deletes” 在完整 `pnpm check` 的负载下偶发等删除超时（单独跑通过）；可能是删除时工作进程还在退出（`conflict`）而界面没重试。
+
+## 第十六轮验收留下的（2026-11-21）
+
+- 运行记录里插件动作的运行（如表插件 refresh、history）显示原始动作名，应显示动作的可读标题。
+- 中文界面里运行记录的状态文字（success/error）和部分命令吐司（“2 queries indexed…”）仍是英文。
+- `e2e/round11.spec.ts:343`（笔记阅读视图）在完整运行中偶发失败过一次。
+- devhost 只认 `--plugins`，不认 `ONEDESK_BUILTIN_PLUGINS`；交接文件里的启动命令要改。
