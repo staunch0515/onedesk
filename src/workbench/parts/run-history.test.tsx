@@ -103,3 +103,42 @@ describe("counted phrases", () => {
     expect(zhOne.plural("result.rows", 1, { count: "1" })).toBe("1 件");
   });
 });
+
+describe("opening a run record (E3)", () => {
+  function opened(reuse: () => Promise<unknown>) {
+    const execute = vi.fn(async (id: string) => (id === "run.reuse" ? ((await reuse()) as never) : []));
+    const base = kernelLikeClient(createMockClient({ fresh: true, quiet: true }), {});
+    const client = {
+      ...base,
+      command: { ...base.command, execute },
+      tree: {
+        ...base.tree,
+        path: async () => [],
+        children: async (_t: string, parent: string | null) => ({
+          nodes: parent === null ? [{ ...node("@runs:recent", "Recent runs", null, true) }] : [{ ...node("r2", "#8 Scratch", parent), target: "run:r2" }, ],
+        }),
+      },
+    };
+    const view = renderInShell(client, <TreePanel tree={info} />);
+    return { execute, store: view.store };
+  }
+
+  it("a recent run goes back to its query with the values it had", async () => {
+    const { execute, store } = opened(async () => [{ type: "open", target: "resource:q1", params: { year: "2024" }, envId: "e1" }]);
+    fireEvent.click(await screen.findByText("Recent runs"));
+    fireEvent.click(await screen.findByText("#8 Scratch"));
+    await waitFor(() => expect(execute).toHaveBeenCalledWith("run.reuse", expect.objectContaining({ nodeKey: "r2", tree: "runs" })));
+    await waitFor(() => {
+      const tab = store.get().tabs.find((t) => t.target === "resource:q1");
+      expect(tab?.params).toEqual({ year: "2024" });
+      expect(tab?.envId).toBe("e1");
+    });
+  });
+
+  it("falls back to the run's own page when the query cannot be reopened", async () => {
+    const { store } = opened(async () => Promise.reject(new Error("notFound")));
+    fireEvent.click(await screen.findByText("Recent runs"));
+    fireEvent.click(await screen.findByText("#8 Scratch"));
+    await waitFor(() => expect(store.get().tabs.some((t) => t.target === "run:r2")).toBe(true));
+  });
+});

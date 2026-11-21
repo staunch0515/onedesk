@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { startInstall } from "./install-dialogs";
 import { Badge, Banner, ContextMenu, EmptyState, IconButton, Input, LoadingState, SidePanel, Tree, useToast, type MenuEntry, type TreeDropPosition, type TreeRow } from "../../design";
 import { useI18n } from "../i18n";
-import { loadBatch, loadLevel, loadMore, type Level, type MenuCommand, type TreeInfo, type TreeNode } from "../protocol";
+import { isSourceMissing, loadBatch, loadLevel, loadMore, type Level, type MenuCommand, type TreeInfo, type TreeNode } from "../protocol";
 import { useUi, useWorkbench } from "../state/context";
 
 const ROOT = "";
@@ -35,6 +35,7 @@ export function menuEntries(commands: MenuCommand[], tx: (l: MenuCommand["label"
 /** The kernel's run-record tree and the group that holds the kept results (D420). */
 export const RUNS_TREE = "runs";
 export const SAVED_RUNS = "@runs:saved";
+export const RECENT_RUNS = "@runs:recent";
 /** A saved result's row reads `#<seq> <name>`; renaming edits the whole row, the number is not part of the name. */
 export const stripRunNumber = (text: string): string => text.replace(/^#\d+\s*/, "").trim();
 
@@ -225,7 +226,7 @@ export function TreePanel({ tree }: { tree: TreeInfo }) {
           expandable: n.expandable,
           expanded: isOpen,
           loading: loading.has(n.key),
-          state: n.state,
+          state: isSourceMissing(n.state, n.stateReason) ? "stale" : n.state,
           stateLabel: n.stateReason ? (n.state === "load-failed" && typeof n.stateReason === "string" ? error({ code: n.stateReason, params: {} }) : tx(n.stateReason)) : undefined,
           badge: n.badge,
           marked: tree.id === "environments" && n.key === activeEnv,
@@ -253,6 +254,15 @@ export function TreePanel({ tree }: { tree: TreeInfo }) {
     const node = index.get(key);
     if (!node) return;
     store.set((s) => ({ selected: { ...s.selected, [tree.id]: key } }));
+    // A recent run goes back to its query with the values it was run with (E3); when the kernel cannot (the query is gone), the run's own page opens.
+    if (tree.id === RUNS_TREE && node.parentKey === RECENT_RUNS) {
+      const ctx = { tree: tree.id, nodeKey: key, target: node.target };
+      client.command.execute("run.reuse", ctx).then(
+        (effects) => actions.runEffects(effects),
+        () => node.target && actions.open(node.target),
+      );
+      return;
+    }
     if (node.target) actions.open(node.target);
     else if (node.expandable) toggle(key);
   };

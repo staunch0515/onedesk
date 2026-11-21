@@ -92,6 +92,8 @@ function build(locale: Locale, texts?: Record<string, string>): I18n {
     },
     runError: (e) => {
       // A host refusal the plugin did not catch keeps its own code (denied, invalid…) and carries the reason (D318).
+      // A called action's failure comes back with its own sentence (D413, secrets already masked): that is what the user needs to read.
+      if (e.code === "pluginError" && e.reason === "calleeFailed" && e.message.trim()) return e.message;
       const own = RUN_ERRORS[e.code];
       if (own) return t(own);
       const params = e.params ?? {};

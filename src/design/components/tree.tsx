@@ -7,7 +7,7 @@ import { Spinner } from "./spinner";
 import { useVirtualWindow } from "./virtual";
 import "./tree.css";
 
-export type TreeNodeState = "ok" | "disabled" | "missing-plugin" | "broken" | "conflict" | "load-failed";
+export type TreeNodeState = "ok" | "disabled" | "missing-plugin" | "broken" | "conflict" | "load-failed" | "stale";
 export type TreeDropPosition = "before" | "inside" | "after";
 
 export interface TreeRow {
@@ -65,6 +65,7 @@ const STATE_ICON: Partial<Record<TreeNodeState, string>> = {
   conflict: "git-merge",
   "load-failed": "circle-alert",
   disabled: "circle-slash",
+  stale: "file-x",
 };
 
 const EXPAND_ON_HOVER_MS = 700;
