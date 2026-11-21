@@ -336,6 +336,22 @@ describe("table: page and actions (H4, H5)", () => {
     await expect(registry(plugin).actions.rows(nodeCtx(host, "t:line", { runId: "r6" }), {})).resolves.toBeTruthy();
   });
 
+  it("on a data source's page it reads that database's tables, whatever the environment says (review #21)", async () => {
+    const { host } = fakeHost();
+    host.params.get = vi.fn(async () => ({ found: false, value: "" }));
+    const res = await registry(plugin).actions.tablesHere(ctxOf(host, { runId: "t1", resource: { id: "s9", name: "Other" } }), {});
+    expect(checkActionResult(res)).toEqual([]);
+    expect(res.output.text).toBe("6 tables read, 1 missing in the database");
+    expect(host.actions.call.mock.calls[1][2]).toEqual({ resource: "s9" });
+    expect(await snapshot(ctxOf(host))).toMatchObject({ existing: expect.any(Array) });
+  });
+  it("may read data sources: an action on the data source kind and a dependency on its plugin (kernel foreign_kinds, review #21)", () => {
+    // mirrors crates/kernel/src/manifest.rs foreign_kinds + deps.rs export_allows
+    const foreign = manifest.contributes.actions.flatMap((a: any) => a.kinds ?? []).filter((k: string) => k.includes(":") && !k.startsWith(`${manifest.id}:`));
+    expect(foreign).toContain("org.onedesk.datasource:source");
+    expect(manifest.depends.map((d: any) => d.id)).toContain("org.onedesk.datasource");
+  });
+
   it("registers what the manifest declares", () => {
     const reg = registry(plugin);
     expect(Object.keys(reg.actions).sort()).toEqual(manifest.contributes.actions.map((a: any) => a.id).sort());

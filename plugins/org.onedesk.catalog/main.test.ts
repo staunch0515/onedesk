@@ -668,7 +668,29 @@ describe("catalog: run and save as SQL (A6, A7, A10)", () => {
   });
 });
 
+describe("catalog: on a data source's page", () => {
+  it("lists the catalog queries whose header names this data source, by id or name", async () => {
+    const files = { ...FILES, "/work/byid.sql": "-- ---\n-- id: x.byid\n-- datasource: s1\n-- ---\nSELECT 1" };
+    const { host } = fakeHost(files);
+    await sync(ctxOf(host));
+    const res = await registry().actions.queriesHere(ctxOf(host, { runId: "q1", resource: { id: "s1", name: "Prod" } }), {});
+    expect(checkActionResult(res)).toEqual([]);
+    expect(res.output.rows).toEqual([
+      ["sales.orders.recent", "Recent orders", "/work/sales/orders.sql"],
+      ["x.byid", "x.byid", "/work/byid.sql"],
+    ]);
+    expect(res.summary.message).toBe("2 catalog queries use Prod");
+    await expect(registry().actions.queriesHere(ctxOf(host, { runId: "q2" }), {})).rejects.toThrow("No data source");
+  });
+});
+
 describe("catalog: manifest", () => {
+  it("may read data sources: an action on the data source kind and a dependency on its plugin (kernel foreign_kinds, review #21)", () => {
+    // mirrors crates/kernel/src/manifest.rs foreign_kinds + deps.rs export_allows
+    const foreign = manifest.contributes.actions.flatMap((a: any) => a.kinds ?? []).filter((k: string) => k.includes(":") && !k.startsWith(`${manifest.id}:`));
+    expect(foreign).toContain("org.onedesk.datasource:source");
+    expect(manifest.depends.map((d: any) => d.id)).toContain("org.onedesk.datasource");
+  });
   it("registers what the manifest declares", () => {
     const reg = registry();
     expect(Object.keys(reg.pages).sort()).toEqual(manifest.contributes.pages.map((p: any) => p.id).sort());

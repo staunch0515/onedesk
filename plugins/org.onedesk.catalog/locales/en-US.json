@@ -76,5 +76,9 @@
   "badge.missing": "missing",
   "reason.mappingNotAbsolute": "The mapping file setting must be a full path",
   "message.truncated": "Stopped at {max} files or {depth} folder levels: nothing was marked missing.",
-  "index.more": "…and {count} more (re-index to see them all in the result)."
+  "index.more": "…and {count} more (re-index to see them all in the result).",
+  "action.queriesHere": "Catalog queries for this data source",
+  "col.id": "id",
+  "col.name": "Name",
+  "message.queriesHere": "{count} catalog queries use {source}"
 }

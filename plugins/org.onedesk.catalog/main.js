@@ -1108,6 +1108,30 @@ export default {
     });
 
     // The mapping as other plugins read it (exports.actions): text output holding the normalized JSON.
+    // On a data source's page (review #21): the catalog queries whose header names this data source. Declaring
+    // an action on the data source kind is also what lets this plugin list data sources (`foreign_kinds`).
+    host.actions.handle("queriesHere", async (ctx) => {
+      const src = ctx.resource;
+      if (!src || !src.id) throw new Error(tr(ctx, "error.noSource"));
+      const all = (await ctx.host.resources.list({ kind: KIND })) || [];
+      const mine = (Array.isArray(all) ? all : all.items || [])
+        .filter((r) => !r.deleted && r.body && (r.body.datasource === src.id || (src.name && r.body.datasource === src.name)))
+        .sort((a, b) => (catalogId(a) < catalogId(b) ? -1 : 1));
+      return {
+        output: {
+          type: "table",
+          columns: [
+            { key: "id", label: tr(ctx, "col.id") },
+            { key: "name", label: tr(ctx, "col.name") },
+            { key: "path", label: tr(ctx, "col.path") },
+          ],
+          rows: mine.map((r) => [catalogId(r), r.name || "", (r.body && r.body.path) || ""]),
+          total: mine.length,
+        },
+        summary: { rows: mine.length, message: tr(ctx, "message.queriesHere", { count: mine.length, source: src.name || src.id }) },
+      };
+    });
+
     host.actions.handle("mapping", async (ctx) => {
       const { mapping, problem, problems } = await loadMapping(ctx);
       const text = JSON.stringify({ ...mapping, problem, problems: problems || [] });
