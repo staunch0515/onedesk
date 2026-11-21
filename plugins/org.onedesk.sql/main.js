@@ -218,18 +218,25 @@ async function sourceList(ctx) {
 // `datasource.default`. A value is a resource id (a name is accepted too). Returns the id.
 export async function pickSource(ctx, given) {
   let wanted = String(given || "").trim();
+  let via = "";
   if (!wanted) {
     const env = await ctx.host.params.get("datasource");
-    if (env && env.found && String(env.value).trim()) wanted = String(env.value).trim();
+    if (env && env.found && String(env.value).trim()) {
+      wanted = String(env.value).trim();
+      via = "Env";
+    }
   }
   if (!wanted) {
     const def = await ctx.host.params.config("datasource.default");
-    if (def && def.found && String(def.value).trim()) wanted = String(def.value).trim();
+    if (def && def.found && String(def.value).trim()) {
+      wanted = String(def.value).trim();
+      via = "Default";
+    }
   }
   if (!wanted) throw new Error(tr(ctx, "error.noSource"));
   const list = await sourceList(ctx);
   const hit = list.find((r) => r.id === wanted) || list.find((r) => r.name === wanted);
-  if (!hit) throw new Error(tr(ctx, "error.sourceMissing", { source: wanted }));
+  if (!hit) throw new Error(tr(ctx, "error.sourceMissing" + via, { source: wanted }));
   return hit.id;
 }
 

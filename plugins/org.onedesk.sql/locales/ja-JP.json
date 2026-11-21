@@ -38,5 +38,7 @@
   "error.param.max": "パラメーター :{name} が {max} 文字を超えています。",
   "error.param.time": "パラメーター :{name} は時刻（HH:MM）にしてください。",
   "error.sourceMissing": "データソース「{source}」が見つかりません。",
+  "error.sourceMissingEnv": "環境で指定されたデータソース「{source}」が見つかりません。環境で選び直してください。",
+  "error.sourceMissingDefault": "ワークスペースの既定のデータソース「{source}」が見つかりません。ワークスペース設定で選び直してください。",
   "error.param.nul": "パラメーター :{name} に NUL 文字が含まれています。"
 }
