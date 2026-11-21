@@ -16,8 +16,14 @@
 5. D430（已合并）：提供树节点的 `menu`（全名命令 id）、`draggable`、`accepts` 由外壳直接读生成类型；目标文件夹声明了 `accepts` 就按它判断能否放下（含 `*`），没声明则任何可展开节点都可放。
 6. 判断“是 move/copy/rename 命令”的规则在 `parts/file-ops.ts`：命令 id 匹配 `:(move|copy|rename)$`。
 
-**对真内核走的结果（重要缺口，不在外壳）**：内核给插件自供树的节点只发 `node.open` 一个菜单项，且 `draggable: false`（`crates/kernel/src/kernel.rs` 的 `provided_page`）。所以 Files 树里右键只有 Open，拖放、移动到、复制到、重命名都**到不了**，同名复制的流程在真内核上没能走。要让这些入口出现，需要内核让插件自供树的节点带上插件声明的 `menu`（命令 id 列表，如 `org.onedesk.files:move`）——文件夹节点还要 `accepts`/可放——并由 `org.onedesk.files` 的 `children` 返回它们。外壳这边已经按这个约定做好并有 vitest（`parts/round17-files-ui.test.tsx`，用替身 Tree 直接调 `canDrop`/`onDrop`/菜单/改名）。
-另：授权文件夹后，Files 树不自动刷新（要切到别的树再回来才出现新根）——内核似乎没在授权后给 `tree:files` 事件，或外壳没订阅到，待查（范围外）。
+**对真内核走的结果（合并 `d199126`：D430 + 文件插件树菜单；devhost + vite，临时文件夹，`ONEDESK_TRASH_DIR`）**：
+- 授权文件夹后 Files 树**立即**出现新根（不用切树）：外壳订阅了 `tree:<树>` 并重读所有已读层；先前以为“不刷新”是截图赶在授权完成前。补了 vitest（空根收到事件后出现新根）。
+- 右键文件：Move、Copy、Rename、Delete permanently、Open 都在。
+- “Copy to…”→ 文件夹选择框 → 选已有同名文件的 `sub` → 弹出 “a.txt already exists there. Choose what to do.” 的 Overwrite / Skip / Keep both → Keep both 后磁盘上出现 `sub/a 2.txt`，原件不动。
+- Rename：就地改名 b.txt → c.txt，磁盘上改名成功。**小问题**：菜单点 Rename 后第一次输入没进编辑框（焦点不在框里），点一下框再输入才行（与第十六轮记的“Enter 没提交”可能同源：菜单关闭后焦点被抢走）。待查。
+- Delete permanently：弹 “Delete "c.txt" permanently? This cannot be undone.” 红色 Confirm，确认后文件真的没了（Delete 不进废纸篓）。
+- 拖放：把 a.txt 拖到 `sub` 上 → 目标展开并弹出同样的三选一（因 sub 里已有 a.txt）→ Skip，原件不动。
+没走到：⌥ 拖放复制（浏览器自动化没法按住 ⌥ 拖）——有 vitest；`Run.partial` 与终端样式文字（没有插件在本机返回这些）。
 
 ## 做了什么
 1. **X10 终端样式**：新 token `--term-bg/-fg/-muted/-border/-info/-success/-warning/-danger/-stderr`（浅色、深色主题各一套，终端底在两个主题里都是深色；`tokens.test.ts` 加了对比度检查，全部 ≥4.5）。新设计组件 `TerminalText`（`src/design/components/terminal-text.*`）。带 `lines` 的普通文字节点按行用 TextBlock 的语气色；`style:"terminal"` 用 TerminalText。无这些字段的文字节点外观不变。

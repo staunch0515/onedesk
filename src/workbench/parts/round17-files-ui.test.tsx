@@ -129,3 +129,22 @@ describe("the confirm dialog with choices (D428)", () => {
     await waitFor(() => expect(execute).toHaveBeenCalledWith(`${P}:copy`, expect.objectContaining({ args: { confirmed: true, conflict: "keepBoth" } })));
   });
 });
+
+describe("a plugin's tree after the kernel says it changed (a folder was granted)", () => {
+  it("reads the root again on tree:<id>, so a new granted folder shows without switching trees", async () => {
+    clearTreeCache();
+    const handlers = new Set<(topic: string) => void>();
+    let roots: TreeNode[] = [];
+    const mock = createMockClient({ fresh: true, quiet: true });
+    const client = kernelLikeClient(mock, {
+      tree: { ...mock.tree, path: async () => [], children: async () => ({ nodes: roots }) } as never,
+      events: { subscribe: (topic: string, h: (t: string) => void) => (topic === "tree:files" ? (handlers.add(h), () => handlers.delete(h)) : () => undefined) } as never,
+    });
+    renderInShell(client, <TreePanel tree={info} />);
+    await waitFor(() => expect(captured.props?.rows).toEqual([]));
+    roots = [node("/granted", undefined, true, [])];
+    act(() => handlers.forEach((h) => h("tree:files")));
+    await waitFor(() => expect(captured.props?.rows.map((r) => r.key)).toEqual(["/granted"]));
+    clearTreeCache();
+  });
+});
