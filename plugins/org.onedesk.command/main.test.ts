@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 // @ts-ignore plain JS module, no types
-import plugin, { checkValue, cleanLine, declarations, intIn, lineRow, maskLine, paramNames, renderShell, safeHost, shellQuote, sshSpec, tokenizeShell } from "./main.js";
+import plugin, { REMOTE_RUNNER, checkValue, cleanLine, declarations, intIn, lineRow, maskLine, paramNames, paramValues, renderShell, safeHost, scanShell, shellQuote, sshSpec, templateProblem } from "./main.js";
 import { hostError, onlyKeys, registry } from "../_testing/view-check";
 
 const load = (f: string) => JSON.parse(readFileSync(new URL(`./locales/${f}.json`, import.meta.url), "utf8")) as Record<string, string>;
@@ -53,29 +53,62 @@ describe("command: parameters and quoting", () => {
     expect(shellQuote("it's")).toBe("'it'\\''s'");
   });
 
-  it("finds :name only where the shell reads unquoted text", () => {
+  it("finds :name where bash expands text, with its context; never in '…', $'…', comments or quoted here-documents", () => {
+    const ctxs = (t: string) => scanShell(t).pieces.filter((p: any) => p.param).map((p: any) => `${p.param}:${p.ctx}`);
     expect(paramNames("tail -n :lines :file")).toEqual(["lines", "file"]);
-    expect(paramNames("tail /var/log/:file.log")).toEqual([]); // inside a path: part of the word
     expect(paramNames("echo :a :a :b")).toEqual(["a", "b"]);
-    // quoted, escaped, commented: not parameters
-    expect(paramNames("echo ':a' \":b\" \\:c # :d\necho :e")).toEqual(["e"]);
-    // part of a word: paths, URLs, user:group, ${x:-y}, ${x:1}, ::, ports
+    expect(paramNames("tail /var/log/:file.log")).toEqual([]); // inside a path: part of the word
+    // part of a word: paths, URLs, user:group, ${x:-y}, ${x:1}, ::
     expect(paramNames("chown app:app /srv && curl http://h:8080/x && echo ${X:-y} ${X:1} a::b ~:x")).toEqual([]);
-    // a here-document body is raw (the shell would expand $(…) there); after it parameters count again
-    expect(paramNames("cat <<EOF\n:inside\nEOF\necho :after")).toEqual(["after"]);
-    expect(paramNames("cat <<-'END' | wc\n\t:inside\n\tEND\necho :x")).toEqual(["x"]);
-    expect(paramNames("cat <<< :here")).toEqual(["here"]);
+    expect(paramNames("echo ':a' $':b' \\:c # :d\necho :e")).toEqual(["e"]);
+    expect(ctxs('echo ":a" ${X:-x :b} $(echo :c) $((1 + :d)) "$(echo ":e")"')).toEqual(["a:dq", "b:brace", "c:word", "d:arith", "e:dq"]);
+    // review #4: the quotes inside "${…}" are nested quotes, so :x is inside "…" (a parameter in "…")
+    expect(ctxs('echo "${a:-":x"}"')).toEqual(["x:dq"]);
   });
 
-  it("renders values quoted so no value can add a command, even next to operators", () => {
-    const sent = renderShell("grep :pattern /var/log/app.log | tail -n :n", { pattern: "x'; rm -rf / #", n: "$(reboot)" });
-    expect(sent).toBe("grep 'x'\\''; rm -rf / #' /var/log/app.log | tail -n '$(reboot)'");
-    // the pieces outside the quotes are exactly the text that was written
-    const pieces = tokenizeShell("grep :pattern /var/log/app.log | tail -n :n");
-    expect(pieces).toEqual([{ raw: "grep " }, { param: "pattern" }, { raw: " /var/log/app.log | tail -n " }, { param: "n" }]);
-    expect(renderShell("echo :missing", {})).toBe("echo ''");
-    // text in quotes and comments is never touched
-    expect(renderShell("echo ':x' # :x\necho :x", { x: "v" })).toBe("echo ':x' # :x\necho 'v'");
+  it("here-documents: `<<` ends only at the exact line, `<<-` also after tabs; a quoted delimiter keeps the body raw", () => {
+    const ctxs = (t: string) => scanShell(t).pieces.filter((p: any) => p.param).map((p: any) => `${p.param}:${p.ctx}`);
+    expect(ctxs("cat <<EOF\n:in\nEOF\necho :after")).toEqual(["in:dq", "after:word"]);
+    // review #4: with `<<` a line "\tEOF" does not end the body
+    expect(ctxs("cat <<EOF\n\tEOF\n:still\nEOF\necho :after")).toEqual(["still:dq", "after:word"]);
+    expect(ctxs("cat <<-EOF\n\t:in\n\tEOF\necho :after")).toEqual(["in:dq", "after:word"]);
+    expect(ctxs("cat <<'EOF'\n:raw $(x)\nEOF\necho :after")).toEqual(["after:word"]);
+    expect(ctxs('cat <<E"O"F\n:raw\nEOF\necho :after')).toEqual(["after:word"]);
+    expect(ctxs("cat <<A <<'B'\n:a\nA\n:b\nB\necho :c")).toEqual(["a:dq", "c:word"]);
+    expect(ctxs("cat <<< :here")).toEqual(["here:word"]);
+    // review #4: `<<` inside arithmetic is a shift, not a here-document
+    expect(ctxs("echo $((1<<2)) :x\necho :y")).toEqual(["x:word", "y:word"]);
+    expect(ctxs("(( n = 1 << :k ))\necho :y")).toEqual(["k:arith", "y:word"]);
+    expect(templateProblem("cat <<EOF\n:x\n")).toBe("openHeredoc");
+  });
+
+  it("refuses a template with parameters wherever it cannot be sure how bash reads it; without parameters it runs as written", () => {
+    expect(templateProblem("echo `echo :x`")).toBe("backtick");
+    expect(templateProblem("echo $(case $a in x) echo :p;; esac)")).toBe("caseInSubst");
+    expect(templateProblem("echo $[1 + :n]")).toBe("oldArith");
+    expect(templateProblem("echo \"${a:-':x'}\"")).toBe("quoteInBrace");
+    expect(templateProblem("echo 'open :x")).toBe("openQuote");
+    expect(templateProblem("echo $(echo :x")).toBe("openSubst");
+    expect(paramNames("echo `echo :x`")).toEqual([]);
+    for (const ok of ["echo `date`", "echo $(case $a in x) echo hi;; esac)", "echo 'open"]) expect(templateProblem(ok), ok).toBeNull();
+    expect(templateProblem("echo :a $(echo :b) \"${c:-\"d\"}\"")).toBeNull();
+  });
+
+  it("renders values as quoted assignments at the top and expansions in the text, so a value is data wherever it stands", () => {
+    const sent = renderShell("grep :pattern /var/log/app.log | tail -n :n\necho \":pattern\" $((:n + 1))", { pattern: "x'; rm -rf / #", n: "3" });
+    expect(sent).toBe("OD_P_pattern='x'\\''; rm -rf / #'\nOD_P_n='3'\ngrep \"${OD_P_pattern}\" /var/log/app.log | tail -n \"${OD_P_n}\"\necho \"${OD_P_pattern}\" $((${OD_P_n} + 1))");
+    expect(unquote(sent.split("\n")[0]!.slice("OD_P_pattern=".length))).toBe("x'; rm -rf / #");
+    expect(renderShell("echo :missing", {})).toBe("OD_P_missing=''\necho \"${OD_P_missing}\"");
+    expect(renderShell("uptime", {})).toBe("uptime");
+    expect(renderShell("echo ':x' # :x\necho :x", { x: "v" })).toBe("OD_P_x='v'\necho ':x' # :x\necho \"${OD_P_x}\"");
+  });
+
+  it("refuses values bash could still run: non-numbers in arithmetic, array indexes with a command in them", async () => {
+    const ctx = ctxOf(fakeHost());
+    await expect(paramValues({ ...ctx, params: { n: "a[$(id)]" } }, "echo :n")).rejects.toThrow("array index with a command");
+    await expect(paramValues({ ...ctx, params: { n: "x" } }, "echo $((:n + 1))")).rejects.toThrow("must be a whole number");
+    expect(await paramValues({ ...ctx, params: { n: "-4" } }, "echo $((:n + 1))")).toEqual({ n: "-4" });
+    await expect(paramValues({ ...ctx, params: { x: "1" } }, "echo `echo :x`")).rejects.toThrow("inside backticks");
   });
 
   it("reads `# @param` declarations and checks values against them", () => {
@@ -98,13 +131,15 @@ describe("command: parameters and quoting", () => {
     for (const bad of ["0", "11", "1.5", "-1", "1e2", "x"]) expect(intIn(bad, 1, 10, 5), bad).toBeNull();
   });
 
-  it("runs ssh without a terminal, never asking, with the command on stdin, not as an argument", () => {
+  it("runs ssh without a terminal, never asking; the server only sees `exec bash -s`, the command comes after the runner on stdin", () => {
     expect(sshSpec("staging", "echo 'x'", 30)).toEqual({
       program: "ssh",
-      args: ["-T", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "--", "staging", "bash -s"],
-      stdin: "echo 'x'\n",
+      args: ["-T", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "--", "staging", "exec bash -s"],
+      stdin: `${REMOTE_RUNNER}echo 'x'\n`,
       timeoutMs: 30000,
     });
+    // the runner is one { … } group, so bash has read all of it before `cat` takes the rest
+    expect(REMOTE_RUNNER.startsWith("{\n") && REMOTE_RUNNER.endsWith("\n}\n")).toBe(true);
   });
 });
 
@@ -156,7 +191,7 @@ describe("command: running", () => {
     expect(spec.program).toBe("ssh");
     expect(spec.args).toContain("BatchMode=yes");
     expect(spec.args).not.toContain(CMD.body.command);
-    expect(spec.stdin).toBe("docker logs --tail '50' 'web; reboot'\n");
+    expect(spec.stdin).toBe(`${REMOTE_RUNNER}OD_P_lines='50'\nOD_P_app='web; reboot'\ndocker logs --tail "\${OD_P_lines}" "\${OD_P_app}"\n`);
     expect(spec.timeoutMs).toBe(60000);
     // X17: the kernel splits the lines and ends the program at the limit or the timeout
     expect(spec).toMatchObject({ lines: true, maxLines: 5000 });
@@ -176,7 +211,7 @@ describe("command: running", () => {
     const { actions } = registry(plugin);
     const host = fakeHost({ params: { get: vi.fn(async (n: string) => (n === "app" ? { found: true, value: "api", sourceName: "Prod" } : { found: false, value: "", sourceName: "" })) } });
     await actions.run(ctxOf(host, { params: { lines: "5" } }), input({ "body.command": CMD.body.command }));
-    expect(host.process.run.mock.calls[0]![0].stdin).toBe("docker logs --tail '5' 'api'\n");
+    expect(host.process.run.mock.calls[0]![0].stdin).toBe(`${REMOTE_RUNNER}OD_P_lines='5'\nOD_P_app='api'\ndocker logs --tail "\${OD_P_lines}" "\${OD_P_app}"\n`);
 
     const strict = fakeHost();
     const cmd = "# @param n type=number required\ntail -n :n x";
@@ -184,7 +219,7 @@ describe("command: running", () => {
     await expect(actions.run(ctxOf(strict, { params: { n: "1; reboot" } }), input({ "body.command": cmd }))).rejects.toThrow("must be a number");
     await expect(actions.run(ctxOf(strict), input({ "body.host": "-oProxyCommand=x" }))).rejects.toThrow("ssh alias");
     await expect(actions.run(ctxOf(strict), input({ "body.command": "  " }))).rejects.toThrow("no command");
-    await expect(actions.run(ctxOf(strict), input({ "body.timeoutSec": "601" }))).rejects.toThrow("1 to 600");
+    await expect(actions.run(ctxOf(strict), input({ "body.timeoutSec": "7201" }))).rejects.toThrow("1 to 7200");
     await expect(actions.run(ctxOf(strict), input({ "body.maxLines": "0" }))).rejects.toThrow("1 to 10000");
     expect(strict.process.run).not.toHaveBeenCalled();
   });
@@ -215,6 +250,23 @@ describe("command: running", () => {
     // without the capability the run still works
     const old = fakeHost({ runs: undefined });
     expect((await actions.run(ctxOf(old), input())).output.rows).toEqual([["stdout", "hello"]]);
+  });
+
+  it("partial output carries only the last 500 lines (review #12), with the count so far as its total", async () => {
+    const { actions } = registry(plugin);
+    let clock = 0;
+    const now = vi.spyOn(Date, "now").mockImplementation(() => (clock += 1000));
+    const many = Array.from({ length: 1200 }, (_, n) => out(`l${n}`));
+    const host = fakeHost({ process: { run: program(many) } });
+    const res = await actions.run(ctxOf(host), input());
+    now.mockRestore();
+    const calls = host.runs.partial.mock.calls.map((c: any[]) => c[0]);
+    expect(Math.max(...calls.map((o: any) => o.rows.length))).toBe(500);
+    const lastCall = calls[calls.length - 1];
+    expect(lastCall.rows[0]).toEqual(["stdout", "l700"]);
+    expect(lastCall.rows[499]).toEqual(["stdout", "l1199"]);
+    expect(lastCall.total).toBe(1200);
+    expect(res.output.rows.length).toBe(1200); // the result itself is complete
   });
 
   it("stops the program at the line limit and says so", async () => {
@@ -292,7 +344,7 @@ describe("command: page", () => {
     const run = { id: "r1", input: { "body.command": "PGPASSWORD=pw psql -c :q", "body.host": "db" }, params: { q: "select 1" } };
     const view = await pages.editor.renderResultTab(ctxOf(fakeHost(), { run }), "sent");
     expect(view[0].text).toBe("On db:");
-    expect(view[1].text).toBe("PGPASSWORD=*** psql -c 'select 1'");
+    expect(view[1].text).toBe("OD_P_q='select 1'\nPGPASSWORD=*** psql -c \"${OD_P_q}\"");
     await expect(pages.editor.renderResultTab(ctxOf(fakeHost(), { run }), "x")).rejects.toThrow();
   });
 

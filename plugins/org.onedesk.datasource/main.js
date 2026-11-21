@@ -386,8 +386,9 @@ export function tableOutput(result) {
 export const BACKUP_DIR = "backups";
 export const BACKUP_STEPS = ["check", "dump", "copy", "create", "restore", "source"];
 const DOCKER_TIMEOUT_MS = 60000;
-const LONG_TIMEOUT_MS = 600000; // the kernel's limit for one program
-const DUMP_TIMEOUT_MS = 3600000; // the kernel's limit for a transfer
+// The long steps (dump and download, copy, restore) may take as long as the kernel allows: 2 hours.
+export const LONG_TIMEOUT_MS = 7200000;
+const DUMP_TIMEOUT_MS = LONG_TIMEOUT_MS;
 
 // The new database's name: lower-case letters, digits and `_`, starting with a letter or `_`, at most 63
 // (PostgreSQL's limit) — a name that never needs quoting, in SQL or in a shell.
