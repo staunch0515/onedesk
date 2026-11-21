@@ -245,6 +245,7 @@
           "copy",
           "move",
           "rename",
+          "trash",
           "delete"
         ]
       },
@@ -400,6 +401,12 @@
         "id": "rename",
         "label": "action.rename",
         "icon": "pencil",
+        "palette": false
+      },
+      {
+        "id": "trash",
+        "label": "action.trash",
+        "icon": "trash-2",
         "palette": false
       },
       {

@@ -293,7 +293,7 @@ const PLUGIN = "org.onedesk.files";
 const nodeTarget = (tree, key) => `node:${PLUGIN}:${tree}/${encodeURIComponent(key)}`;
 const ADD_KEY = "~add";
 // D430: the shell wires drag and drop, "move to / copy to" and renaming by the command ids ending in :move, :copy, :rename.
-const NODE_MENU = [`${PLUGIN}:move`, `${PLUGIN}:copy`, `${PLUGIN}:rename`, `${PLUGIN}:delete`, "node.open"];
+const NODE_MENU = [`${PLUGIN}:move`, `${PLUGIN}:copy`, `${PLUGIN}:rename`, `${PLUGIN}:trash`, `${PLUGIN}:delete`, "node.open"];
 const fileNode = (e) =>
   e.dir
     ? { key: e.path, label: e.name, icon: "folder", expandable: true, target: nodeTarget("files", e.path), menu: NODE_MENU, draggable: true, accepts: ["*"] }
@@ -643,6 +643,19 @@ export default {
         },
         summary: { rows: rows.length, message },
       };
+    });
+
+    // The default delete as a command: to the Trash, no question asked (it can be undone from the Trash).
+    host.commands.handle("trash", async (ctx, context) => {
+      const path = await commandPath(ctx, context);
+      try {
+        const { path: p } = await scoped({ ...ctx, node: { key: path } }, path);
+        await ctx.host.files.trash(p);
+        return [{ type: "toast", message: tr2(ctx, "done.trashed", { path: p }), tone: "success" }];
+      } catch (err) {
+        const e = explain(ctx, err, "");
+        return [{ type: "toast", message: String((e && e.message) || e), tone: "danger" }];
+      }
     });
 
     // Permanent delete as a command: the first call only asks (an irreversible confirm), the rerun with
