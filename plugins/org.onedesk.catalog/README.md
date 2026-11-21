@@ -93,9 +93,9 @@ entities:
 
 其中 `T = COALESCE(CAST(:as_of AS timestamptz), now())`。没有 `to` 就没有那半句，没有 `deleted` 就没有外层。后面没有写别名时自动加 `AS order`。页面在用到时间版本实体时多一个“截至时间”输入（参数名 `as_of`，UTC，留空 = 现在）；头部自己声明了 `as_of` 时用头部的声明。
 
-## 4. 宿主能力（本轮假设的名字，见 `docs/handoff/round16-plugins-done.md`）
+## 4. 用到的宿主能力（名字见 `docs/handoff/round16-protocol.md`）
 
-- 清单 `activation: ["workspace.opened"]` + `contributes.events: ["workspace.opened"]`，代码 `host.events.on("workspace.opened", h)`：工作区打开后同步一次（X13）。
-- `ctx.host.resources.sync({ kind, items: [{ externalKey, name, description, body }], fields: ["description", "body"], missing: "mark" })`：一条批量命令；已有的只写 `fields`；不在列表里的标为 `missing`；返回 `{ created, updated, missing }`。
-- 资源 `state: "missing"`（失效）。
-- SQL 插件导出的 `org.onedesk.sql:create`：输入 `{ name, description, sql, source, params }`，输出 `link`，打开时带上 `params`。
+- 清单 `activation: ["workspace.opened"]`，代码 `host.events.on("workspace.opened", h)`：工作区打开后同步一次（X13）。
+- `ctx.host.resources.upsertByKey("entry", [{ key: 路径, name?, description, body }], { othersMissing: true })`：一条批量命令。已索引的文件不传 `name`（保留用户改的名字），只写说明和正文；不在这批里的标为失效。
+- 失效的资源带 `missing: true`（树和页面显示为 `broken` / `sourceMissing`）；目录树不列它，页面照常打开并显示警告。
+- SQL 插件导出的 `org.onedesk.sql:create`（尚未提供，见交接文件）：输入 `{ name, description, sql, source, params }`，输出 `link`，打开时带上 `params`。

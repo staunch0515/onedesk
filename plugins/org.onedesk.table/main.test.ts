@@ -117,7 +117,7 @@ describe("table: tree (H1–H3)", () => {
   it("groups tables by name prefix, one level", () => {
     const root = treeChildren(snap, "", 1);
     expect(root.map((n: any) => n.key)).toEqual(["g:order", "g:price", "t:customer", "t:ghost"]);
-    for (const n of root) expect(onlyKeys(n, [...TREE_NODE_KEYS, "state", "stateReason"])).toEqual([]);
+    for (const n of root) expect(onlyKeys(n, TREE_NODE_KEYS)).toEqual([]);
     expect(treeChildren(snap, "g:order", 1).map((n: any) => n.label)).toEqual(["order_head", "order_line", "order_line_tax"]);
   });
 
@@ -141,10 +141,11 @@ describe("table: tree (H1–H3)", () => {
   });
 
   it("marks tables the database does not have as missing; without a database nothing is marked", () => {
-    const ghost = treeChildren(snap, "", 1, "why").find((n: any) => n.key === "t:ghost");
-    expect(ghost).toMatchObject({ state: "missing", stateReason: "why" });
-    expect(treeChildren(snap, "", 1).filter((n: any) => n.state).map((n: any) => n.key)).toEqual(["t:ghost"]);
-    expect(treeChildren({ mapping: MAPPING, existing: null }, "", 1).some((n: any) => n.state)).toBe(false);
+    const ghost = treeChildren(snap, "", 1, "gone").find((n: any) => n.key === "t:ghost");
+    expect(ghost).toEqual({ key: "t:ghost", label: "ghost", icon: "triangle-alert", expandable: false, target: "node:org.onedesk.table:tables/t%3Aghost", badge: "gone" });
+    const marked = (s: any) => treeChildren(s, "", 1).filter((n: any) => n.icon === "triangle-alert").map((n: any) => n.key);
+    expect(marked(snap)).toEqual(["t:ghost"]);
+    expect(marked({ mapping: MAPPING, existing: null })).toEqual([]);
     expect(isMissing({ table: "price_list" }, existingSet(DB_TABLES))).toBe(false);
     expect(isMissing({ table: "public.customer" }, existingSet(DB_TABLES))).toBe(false);
     expect(isMissing({ table: "SHOP.Order_Head" }, existingSet(DB_TABLES))).toBe(false);
@@ -162,7 +163,7 @@ describe("table: tree (H1–H3)", () => {
     const one = await reg.trees.tables.children(ctxOf(host), "");
     expect(host.actions.call.mock.calls[0]).toEqual(["org.onedesk.catalog:mapping", {}]);
     expect(host.actions.call.mock.calls[1][2]).toEqual({ resource: "s1" });
-    expect(one.nodes.find((n: any) => n.key === "t:ghost").stateReason).toEqual(t("state.missing"));
+    expect(one.nodes.find((n: any) => n.key === "t:ghost").badge).toBe("missing");
     expect((await reg.trees.tables.children(ctxOf(host), "g:order")).nodes.map((n: any) => n.key)).toEqual(["t:order", "t:line", "t:lineTax"]);
     expect(await reg.commands.toggleDepth(ctxOf(host), {})).toEqual([{ type: "toast", message: EN["message.depth2"], tone: "info" }]);
     expect((await reg.trees.tables.children(ctxOf(host), "g:order")).nodes.map((n: any) => n.key)).toEqual(["g:order_line", "t:order", "t:line"]);
@@ -177,7 +178,7 @@ describe("table: tree (H1–H3)", () => {
     host.params.get = vi.fn(async () => ({ found: false, value: "" }));
     const reg = registry(plugin);
     const out = await reg.trees.tables.children(ctxOf(host), "");
-    expect(out.nodes.some((n: any) => n.state)).toBe(false);
+    expect(out.nodes.some((n: any) => n.icon === "triangle-alert")).toBe(false);
     expect(await reg.commands.refresh(ctxOf(host), {})).toEqual([{ type: "toast", message: "6 tables read; no data source to compare with", tone: "info" }]);
   });
 });

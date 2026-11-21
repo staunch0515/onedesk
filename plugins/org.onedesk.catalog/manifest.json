@@ -83,7 +83,6 @@
     "settings": [
       { "name": "mappingFile", "label": "setting.mappingFile", "type": "text", "default": "", "hint": "setting.mappingFile.hint" }
     ],
-    "events": ["workspace.opened"],
     "locales": {
       "en-US": "locales/en-US.json",
       "zh-CN": "locales/zh-CN.json",

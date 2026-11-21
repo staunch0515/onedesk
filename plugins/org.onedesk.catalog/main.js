@@ -607,7 +607,7 @@ const GROUP = "g:";
 
 // Tree nodes under `parentKey` ("" = root) from the catalog's resources.
 export function treeChildren(resources, parentKey) {
-  const live = resources.filter((r) => r.state !== "missing" && !r.deleted);
+  const live = resources.filter((r) => !isMissing(r) && !r.deleted);
   const parent = parentKey ? parentKey.slice(GROUP.length) : "";
   const groups = new Set();
   const entries = [];
@@ -625,6 +625,11 @@ export function treeChildren(resources, parentKey) {
     .sort((a, b) => (catalogId(a) < catalogId(b) ? -1 : catalogId(a) > catalogId(b) ? 1 : 0))
     .map((r) => ({ key: r.id, label: r.name || catalogId(r), icon: "file-search", expandable: false, target: `resource:${r.id}` }));
   return [...g, ...e];
+}
+
+// A resource whose file is gone (round16-protocol.md §2.3: `missing: true`, shown as broken/sourceMissing).
+export function isMissing(r) {
+  return !!r && r.missing === true;
 }
 
 function catalogId(r) {
@@ -729,15 +734,22 @@ export async function sync(ctx) {
       body: { id: e.id, path, sql: e.sql, params: e.params, permissions: e.permissions, datasource: e.datasource, tags: e.tags },
     });
   }
-  // Assumed host call (round16-plugins-done.md): one batch command keyed by external key; `fields` are the only
-  // fields written to an existing resource; resources of the kind whose key is not listed are marked missing.
-  const result = (await ctx.host.resources.sync({ kind: KIND, items, fields: ["description", "body"], missing: "mark" })) || {};
+  // One batch keyed by external key (round16-protocol.md §2.2). A file already indexed gets only its
+  // description and body written, so a name the user gave it stays; indexed files not in this batch are
+  // marked missing (`othersMissing`).
+  const existing = new Set(
+    ((await ctx.host.resources.list({ kind: KIND })) || []).map((r) => r.externalKey).filter((k) => typeof k === "string"),
+  );
+  const batch = items.map((it) => (existing.has(it.externalKey) ? { key: it.externalKey, description: it.description, body: it.body } : { key: it.externalKey, name: it.name, description: it.description, body: it.body }));
+  const result = (await ctx.host.resources.upsertByKey(KIND, batch, { othersMissing: true })) || {};
   const report = {
     at: Date.now(),
     files: paths.length,
     indexed: items.length,
     created: Number(result.created || 0),
     updated: Number(result.updated || 0),
+    unchanged: Number(result.unchanged || 0),
+    restored: Number(result.restored || 0),
     missing: Number(result.missing || 0),
     skipped,
   };
@@ -896,7 +908,7 @@ export default {
         const { mapping, problem } = await loadMapping(ctx);
         const { versioned } = expand(entry.sql, mapping);
         const view = [];
-        if (ctx.resource && ctx.resource.state === "missing") view.push({ type: "text", id: "missing", text: tr(ctx, "warn.missing", { path: entry.path }), tone: "danger" });
+        if (isMissing(ctx.resource)) view.push({ type: "text", id: "missing", text: tr(ctx, "warn.missing", { path: entry.path }), tone: "danger" });
         checks(entry, mapping, problem ? tr(ctx, `reason.${problem}`) : "").forEach((w, i) => {
           view.push({ type: "text", id: `warn-${i}`, text: tr(ctx, w.key, w.vars), tone: "danger" });
         });

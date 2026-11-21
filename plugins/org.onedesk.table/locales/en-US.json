@@ -13,7 +13,6 @@
   "tab.result": "Result",
   "tab.sent": "SQL sent",
   "tab.history": "History",
-  "state.missing": "In the mapping, but not in the database",
   "message.depth1": "Grouped by one prefix level",
   "message.depth2": "Grouped by two prefix levels",
   "message.refreshed": "{count} tables read; compared with the database",
@@ -45,5 +44,6 @@
   "error.key": "Enter the record key ({key})",
   "error.at": "Enter a valid time",
   "error.period": "Enter a valid start and end",
-  "error.noDeleted": "The mapping gives this table no deleted flag and no end time"
+  "error.noDeleted": "The mapping gives this table no deleted flag and no end time",
+  "badge.missing": "missing"
 }

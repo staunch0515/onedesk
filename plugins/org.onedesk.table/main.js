@@ -184,7 +184,7 @@ const C = "c:";
 export const nodeTarget = (key) => `node:${PLUGIN}:${TREE}/${encodeURIComponent(key)}`;
 
 // Nodes under `parentKey` ("" = root). `snapshot` = { mapping, existing: string[] | null }.
-export function treeChildren(snapshot, parentKey, depth, missingReason) {
+export function treeChildren(snapshot, parentKey, depth, missingBadge) {
   const entities = (snapshot.mapping && snapshot.mapping.entities) || {};
   const existing = snapshot.existing ? new Set(snapshot.existing) : null;
   if (parentKey.startsWith(T)) {
@@ -218,9 +218,10 @@ export function treeChildren(snapshot, parentKey, depth, missingReason) {
       const n = { key: T + name, label: baseName(e.table), icon: e.versioned ? "history" : "table", expandable: Object.keys(e.columns).length > 0, target: nodeTarget(T + name) };
       if (name !== baseName(e.table)) n.badge = name;
       if (isMissing(e, existing)) {
-        // Assumed node state (round16-plugins-done.md): provided nodes may carry `state` and `stateReason`.
-        n.state = "missing";
-        n.stateReason = missingReason || "state.missing";
+        // Provided nodes cannot carry a state yet (the kernel sets `ok`; round16-plugins-done.md): the warning
+        // icon and a badge say "missing" until they can.
+        n.icon = "triangle-alert";
+        n.badge = missingBadge || "missing";
       }
       return n;
     });
@@ -366,7 +367,7 @@ export default {
         const key = parentKey || "";
         // Opening the tree's root reads the mapping and the database again; deeper levels use that reading.
         const snap = key === "" ? await freshSnapshot(ctx) : await snapshot(ctx);
-        return { nodes: treeChildren(snap, key, await depthOf(ctx), ctx.t("state.missing")) };
+        return { nodes: treeChildren(snap, key, await depthOf(ctx), tr(ctx, "badge.missing")) };
       },
       async path(ctx, key) {
         return treePath(await snapshot(ctx), key, await depthOf(ctx));

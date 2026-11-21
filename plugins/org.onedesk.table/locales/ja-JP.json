@@ -13,7 +13,6 @@
   "tab.result": "結果",
   "tab.sent": "送信した SQL",
   "tab.history": "履歴",
-  "state.missing": "マッピングにはあるがデータベースにない",
   "message.depth1": "接頭辞 1 階層でグループ化",
   "message.depth2": "接頭辞 2 階層でグループ化",
   "message.refreshed": "{count} 個のテーブルを読み、データベースと照合しました",
@@ -45,5 +44,6 @@
   "error.key": "レコードのキー（{key}）を入力してください",
   "error.at": "正しい時点を入力してください",
   "error.period": "正しい開始と終了を入力してください",
-  "error.noDeleted": "マッピングにこのテーブルの削除フラグも終了時刻もありません"
+  "error.noDeleted": "マッピングにこのテーブルの削除フラグも終了時刻もありません",
+  "badge.missing": "なし"
 }

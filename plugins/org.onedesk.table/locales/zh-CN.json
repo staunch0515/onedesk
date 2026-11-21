@@ -13,7 +13,6 @@
   "tab.result": "结果",
   "tab.sent": "实际 SQL",
   "tab.history": "历史",
-  "state.missing": "映射里有，库里没有",
   "message.depth1": "按一层前缀分组",
   "message.depth2": "按两层前缀分组",
   "message.refreshed": "已读取 {count} 张表，并与数据库核对",
@@ -45,5 +44,6 @@
   "error.key": "请填写记录的键（{key}）",
   "error.at": "请填写有效的时刻",
   "error.period": "请填写有效的开始和结束时间",
-  "error.noDeleted": "映射没有给这张表删除标记或结束时间"
+  "error.noDeleted": "映射没有给这张表删除标记或结束时间",
+  "badge.missing": "缺失"
 }

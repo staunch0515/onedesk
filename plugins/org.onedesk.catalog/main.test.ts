@@ -96,25 +96,28 @@ function fakeHost(files: Record<string, string>, over: Host = {}) {
     params: { get: vi.fn(async () => ({ found: false, value: "", sourceName: "" })), config: vi.fn(async () => ({ found: false, value: "", sourceName: "" })) },
     resources: {
       list: vi.fn(async (o: any) => (o.kind === "org.onedesk.datasource:source" ? [{ id: "s1", name: "Prod" }] : resources)),
-      // Models the assumed batch: create by external key, else write only `fields`; unlisted keys → missing.
-      sync: vi.fn(async (spec: any) => {
-        const keys = new Set(spec.items.map((i: any) => i.externalKey));
-        let created = 0;
-        let updated = 0;
-        let missing = 0;
-        for (const it of spec.items) {
-          const r = resources.find((x) => x.externalKey === it.externalKey);
+      // Models resources.upsertByKey (round16-protocol.md §2.2): new key → create (name defaults to the last path
+      // segment); known key → write only the fields given (body keys merged); othersMissing marks the rest.
+      upsertByKey: vi.fn(async (kind: string, items: any[], opts: any) => {
+        const keys = new Set(items.map((i: any) => i.key));
+        const c = { created: 0, updated: 0, unchanged: 0, restored: 0, missing: 0 };
+        for (const it of items) {
+          const r = resources.find((x) => x.externalKey === it.key);
           if (!r) {
-            resources.push({ id: `r${next++}`, kind: "org.onedesk.catalog:entry", externalKey: it.externalKey, name: it.name, description: it.description, body: it.body, tags: [], favorite: false, state: "ok" });
-            created++;
-          } else {
-            for (const f of spec.fields) r[f] = it[f];
-            r.state = "ok";
-            updated++;
+            resources.push({ id: `r${next++}`, kind: `org.onedesk.catalog:${kind}`, externalKey: it.key, name: it.name ?? it.key.split("/").pop(), description: it.description ?? "", body: it.body, tags: [], favorite: false, missing: false });
+            c.created++;
+            continue;
           }
+          const before = JSON.stringify(r);
+          if (it.name !== undefined) r.name = it.name;
+          if (it.description !== undefined) r.description = it.description;
+          if (it.body) r.body = { ...r.body, ...it.body };
+          if (r.missing) (r.missing = false), c.restored++;
+          else if (JSON.stringify(r) !== before) c.updated++;
+          else c.unchanged++;
         }
-        for (const r of resources) if (!keys.has(r.externalKey) && r.state !== "missing") (r.state = "missing"), missing++;
-        return { created, updated, missing };
+        if (opts && opts.othersMissing) for (const r of resources) if (!keys.has(r.externalKey) && !r.missing) (r.missing = true), c.missing++;
+        return c;
       }),
     },
     actions: { call: vi.fn(async () => ({ output: { type: "table", columns: [{ key: "c0", label: "n" }], rows: [["1"]], total: 1 }, summary: { message: "ok" } })) },
@@ -303,7 +306,7 @@ describe("catalog: grouping (A9)", () => {
   });
 
   const res = (id: string, name: string, extra: Record<string, unknown> = {}) => ({ id: `r-${id}`, name, body: { id }, ...extra });
-  const all = [res("sales.orders.recent", "Recent"), res("sales.orders.big", "Big"), res("sales.top", "Top"), res("misc", "Misc"), res("sales.orders.gone", "Gone", { state: "missing" })];
+  const all = [res("sales.orders.recent", "Recent"), res("sales.orders.big", "Big"), res("sales.top", "Top"), res("misc", "Misc"), res("sales.orders.gone", "Gone", { missing: true, state: "broken" })];
 
   it("builds the tree level by level; missing entries are left out", () => {
     const root = treeChildren(all, "");
@@ -335,11 +338,11 @@ describe("catalog: sync (A1, A3, A4, A5)", () => {
     const files = { ...FILES, "/work/broken.sql": "SELECT 1", "/work/notes.txt": "x", "/work/.hidden/x.sql": TOP_SQL, "/work/dup.sql": TOP_SQL };
     const { host, resources, store } = fakeHost(files);
     const report = await sync(ctxOf(host));
-    expect(host.resources.sync).toHaveBeenCalledTimes(1);
-    const spec = host.resources.sync.mock.calls[0][0];
-    expect(spec).toMatchObject({ kind: "entry", fields: ["description", "body"], missing: "mark" });
-    expect(spec.items.map((i: any) => i.externalKey)).toEqual(["/work/dup.sql", "/work/sales/orders.sql"]);
-    expect(spec.items[1]).toMatchObject({ name: "Recent orders", description: "Orders since a time", body: { id: "sales.orders.recent", path: "/work/sales/orders.sql" } });
+    expect(host.resources.upsertByKey).toHaveBeenCalledTimes(1);
+    const [kind, items, opts] = host.resources.upsertByKey.mock.calls[0];
+    expect([kind, opts]).toEqual(["entry", { othersMissing: true }]);
+    expect(items.map((i: any) => i.key)).toEqual(["/work/dup.sql", "/work/sales/orders.sql"]);
+    expect(items[1]).toMatchObject({ name: "Recent orders", description: "Orders since a time", body: { id: "sales.orders.recent", path: "/work/sales/orders.sql" } });
     expect(resources.length).toBe(2);
     expect(report).toMatchObject({ files: 4, indexed: 2, created: 2, missing: 0 });
     expect(report.skipped).toEqual([
@@ -359,7 +362,9 @@ describe("catalog: sync (A1, A3, A4, A5)", () => {
     r.name = "Renamed by me";
     files["/work/top.sql"] = TOP_SQL.replace("-- params: [n]", "-- description: changed\n-- params: [n]");
     const report = await sync(ctxOf(host));
-    expect(report).toMatchObject({ created: 0, updated: 2 });
+    expect(report).toMatchObject({ created: 0, updated: 1, unchanged: 1 });
+    // an entry already indexed is sent without a name
+    expect(host.resources.upsertByKey.mock.calls[1][1].every((i: any) => !("name" in i))).toBe(true);
     expect(r).toMatchObject({ tags: ["mine"], favorite: true, name: "Renamed by me", description: "changed", id: r.id });
   });
 
@@ -370,21 +375,21 @@ describe("catalog: sync (A1, A3, A4, A5)", () => {
     const id = resources.find((x) => x.externalKey === "/work/top.sql").id;
     delete files["/work/top.sql"];
     expect((await sync(ctxOf(host))).missing).toBe(1);
-    expect(resources.find((x) => x.id === id).state).toBe("missing");
+    expect(resources.find((x) => x.id === id).missing).toBe(true);
     expect(treeChildren(resources, "g:sales").map((n: any) => n.key)).toEqual(["g:sales.orders"]);
     files["/work/top.sql"] = TOP_SQL;
-    await sync(ctxOf(host));
-    expect(resources.find((x) => x.id === id).state).toBe("ok");
+    expect((await sync(ctxOf(host))).restored).toBe(1);
+    expect(resources.find((x) => x.id === id).missing).toBe(false);
     expect(resources.length).toBe(2);
   });
 
   it("re-indexes when the workspace opens (activation), from the toolbar command and as an action", async () => {
     expect(manifest.activation).toEqual(["workspace.opened"]);
-    expect(manifest.contributes.events).toEqual(["workspace.opened"]);
+    expect(manifest.contributes.events).toBeUndefined(); // activation alone registers it (round16-protocol.md §1)
     const reg = registry();
     const { host } = fakeHost(FILES);
     await reg.events["workspace.opened"](ctxOf(host));
-    expect(host.resources.sync).toHaveBeenCalledTimes(1);
+    expect(host.resources.upsertByKey).toHaveBeenCalledTimes(1);
     const effects = await reg.commands.reindex(ctxOf(host), {});
     expect(effects).toEqual([{ type: "toast", message: "2 queries indexed, 0 skipped, 0 missing", tone: "success" }]);
     const res = await reg.actions.reindex(ctxOf(host));
@@ -439,6 +444,13 @@ describe("catalog: entry page (A2, A7, A8)", () => {
       "Parameter status is declared but not used",
       "{{order.nope}} has no mapping",
     ]);
+  });
+
+  it("an entry whose file is gone still opens, with a warning", async () => {
+    const { host } = fakeHost(FILES);
+    const ctx: Record<string, any> = await entryCtx(host);
+    const out = await registry().pages.entry.render({ ...ctx, resource: { ...ctx.resource, missing: true, state: "broken" } });
+    expect(out.view[0]).toEqual({ type: "text", id: "missing", text: "The file /work/sales/orders.sql no longer exists; this entry is kept for its history", tone: "danger" });
   });
 
   it("warns once when the mapping is missing", async () => {
