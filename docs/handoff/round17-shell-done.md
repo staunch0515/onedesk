@@ -60,3 +60,12 @@ devhost（`ONEDESK_SECRET_STORE=memory`，临时数据目录，`target` 用共�
 - 外壳新键的中日译文由测试会话补。
 
 最后提交：`ab15b7c`（之后只有写入此行的文档提交）
+
+## 审查 #12、#17（abe9fb4）
+- #12：`TerminalText` 改成虚拟列表（固定行高 token `--term-line-height`、最大高度 `--term-max-height`，只画看得见的行；长行横向滚动不折行）。vitest：一万行只画窗口内的行并保留其余高度。
+- #17：`badSecretFormat` 英文改为 “The secret reference uses a modifier that is not recognised.”；用 replace 改授权后吐司显示新换上的文件夹（有 vitest）；终端节点的无障碍名改为 “Terminal output”（`terminal.label`），不再用节点 id；`TerminalText` 去掉写死的 out/err，来源小栏只在调用方传入 `streamLabels`（它们自己的 i18n 文字）时才画。
+- 授权后树不刷新：不是缺陷（外壳本就在 `tree:<树>` 上重读；真内核走过，授权后新根立即出现），补了 vitest。
+- 新键：`terminal.label`。`unsafeOpen` 的文字由内核加，外壳未动。
+
+## 改名焦点（树里就地改名）
+改名框（`design/components/tree.tsx` 的 `RenameInput`）不再靠 `autoFocus`：菜单关闭后会把焦点还给行，所以挂载后立即聚焦并在下一个时间片再聚焦一次；选中文件名但不含扩展名（`report.final.txt` 选 `report.final`；`.env`、无扩展名则全选）；框还没拿到过焦点时的失焦不算提交。vitest 在 `tree.test.tsx`。**没在浏览器里复验**（只在 jsdom 里测）。

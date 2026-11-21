@@ -99,3 +99,30 @@ describe("Tree windowing (D373)", () => {
     expect(tree.scrollTop).toBeGreaterThan(26 * 400);
   });
 });
+
+describe("renaming in place", () => {
+  const rows: TreeRow[] = [{ key: "f", label: "report.final.txt", icon: "file", depth: 0, expandable: false }];
+  it("takes focus even when something else takes it first, and selects the name without the extension", async () => {
+    render(<Tree rows={rows} label="t" onActivate={() => undefined} onToggle={() => undefined} editingKey="f" renameLabel="Rename" />);
+    const box = screen.getByLabelText("Rename") as HTMLInputElement;
+    document.body.focus(); // a closing menu returning focus elsewhere
+    await new Promise((r) => setTimeout(r, 5));
+    expect(document.activeElement).toBe(box);
+    expect([box.selectionStart, box.selectionEnd]).toEqual([0, "report.final".length]);
+  });
+
+  it("selects a name with no extension, or only a leading dot, whole", () => {
+    render(<Tree rows={[{ ...rows[0]!, label: ".env" }]} label="t" onActivate={() => undefined} onToggle={() => undefined} editingKey="f" renameLabel="Rename" />);
+    const box = screen.getByLabelText("Rename") as HTMLInputElement;
+    expect(box.selectionEnd).toBe(".env".length);
+  });
+
+  it("Enter commits the typed name", () => {
+    const onRenameCommit = vi.fn();
+    render(<Tree rows={rows} label="t" onActivate={() => undefined} onToggle={() => undefined} editingKey="f" renameLabel="Rename" onRenameCommit={onRenameCommit} />);
+    const box = screen.getByLabelText("Rename") as HTMLInputElement;
+    fireEvent.change(box, { target: { value: "x.txt" } });
+    fireEvent.keyDown(box, { key: "Enter" });
+    expect(onRenameCommit).toHaveBeenCalledWith("f", "x.txt");
+  });
+});

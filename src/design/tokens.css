@@ -151,6 +151,8 @@
   --tab-max-width: 220px;
   --splitter-hit: 7px;
   --tree-indent: 16px;
+  --term-line-height: 20px;
+  --term-max-height: 480px;
   --breadcrumb-height: 28px;
   --panel-bar-height: 34px;
   --strip-field-width: 144px;

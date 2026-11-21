@@ -41,7 +41,7 @@ describe("confirming a permanent delete (X18)", () => {
 describe("replacing a granted folder (X18)", () => {
   it("a pick-folder effect with `replace` calls plugin.replaceFolder instead of grantFolder", async () => {
     const mock = createMockClient({ fresh: true, quiet: true });
-    const replaceFolder = vi.fn(async (plugin: string, _path: string, n: string) => ({ plugin, folders: [n] }));
+    const replaceFolder = vi.fn(async (plugin: string, _path: string, n: string) => ({ plugin, folders: [n, "/other"] }));
     const grantFolder = vi.fn(async (plugin: string, p: string) => ({ plugin, folders: [p] }));
     const client = kernelLikeClient(mock, {
       plugin: { ...mock.plugin, replaceFolder, grantFolder } as never,
@@ -51,5 +51,7 @@ describe("replacing a granted folder (X18)", () => {
     fireEvent.click(screen.getByText("ask"));
     await waitFor(() => expect(replaceFolder).toHaveBeenCalledWith("p", "/old", "/new"));
     expect(grantFolder).not.toHaveBeenCalled();
+    // The toast names the folder that now stands in the old one's place, not the last one in the list.
+    expect(await screen.findByText(/\/new/)).toBeTruthy();
   });
 });

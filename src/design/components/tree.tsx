@@ -7,6 +7,51 @@ import { Spinner } from "./spinner";
 import { useVirtualWindow } from "./virtual";
 import "./tree.css";
 
+/** Where the name ends and the extension begins (a leading dot is part of the name); the part to select when renaming. */
+export function nameStemEnd(name: string): number {
+  const dot = name.lastIndexOf(".");
+  return dot > 0 ? dot : name.length;
+}
+
+/**
+ * The in-place name box. A context menu that has just closed hands focus back to the row, so focus is taken after that (not by
+ * `autoFocus`), and a blur before the box ever had focus is not a commit. The file name is selected without its extension (Finder).
+ */
+function RenameInput({ label, value, onCommit, onCancel }: { label?: string; value: string; onCommit: (name: string) => void; onCancel: () => void }) {
+  const ref = useRef<HTMLInputElement>(null);
+  const focused = useRef(false);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const take = () => {
+      el.focus();
+      el.setSelectionRange(0, nameStemEnd(el.value));
+      focused.current = true;
+    };
+    take();
+    const id = window.setTimeout(take, 0); // after the menu has given focus back
+    return () => window.clearTimeout(id);
+  }, []);
+  return (
+    <input
+      ref={ref}
+      className="od-tree__rename"
+      defaultValue={value}
+      aria-label={label}
+      onClick={(e) => e.stopPropagation()}
+      onPointerDown={(e) => e.stopPropagation()}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") onCommit(e.currentTarget.value.trim());
+        else if (e.key === "Escape") onCancel();
+        e.stopPropagation();
+      }}
+      onBlur={(e) => {
+        if (focused.current) onCommit(e.currentTarget.value.trim());
+      }}
+    />
+  );
+}
+
 export type TreeNodeState = "ok" | "disabled" | "missing-plugin" | "broken" | "conflict" | "load-failed" | "stale";
 export type TreeDropPosition = "before" | "inside" | "after";
 
@@ -336,20 +381,11 @@ export function Tree({
             </span>
             <Icon name={row.icon} size="md" className="od-tree__icon" />
             {editingKey === row.key ? (
-              <input
-                className="od-tree__rename"
-                defaultValue={row.label}
-                aria-label={renameLabel}
-                autoFocus
-                onFocus={(e) => e.currentTarget.select()}
-                onClick={(e) => e.stopPropagation()}
-                onPointerDown={(e) => e.stopPropagation()}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") onRenameCommit?.(row.key, e.currentTarget.value.trim());
-                  else if (e.key === "Escape") onRenameCancel?.();
-                  e.stopPropagation();
-                }}
-                onBlur={(e) => onRenameCommit?.(row.key, e.currentTarget.value.trim())}
+              <RenameInput
+                label={renameLabel}
+                value={row.label}
+                onCommit={(name) => onRenameCommit?.(row.key, name)}
+                onCancel={() => onRenameCancel?.()}
               />
             ) : (
               <span className="od-tree__label">

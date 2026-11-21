@@ -2,6 +2,7 @@
 import "../testing/jsdom-setup";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
+import { fakeLayout } from "../testing/layout";
 import { KeyValueList } from "./key-value-list";
 import { Markdown } from "./markdown";
 import { Select } from "./select";
@@ -99,10 +100,32 @@ describe("Sidebar header", () => {
 
 describe("TerminalText", () => {
   it("colors each line by tone and marks stderr", () => {
-    render(<TerminalText label="output" showStreams lines={[{ text: "ok", stream: "stdout" }, { text: "bad", stream: "stderr" }, { text: "done", tone: "success" }]} />);
+    render(<TerminalText label="output" streamLabels={{ stdout: "out", stderr: "err" }} lines={[{ text: "ok", stream: "stdout" }, { text: "bad", stream: "stderr" }, { text: "done", tone: "success" }]} />);
     const lines = screen.getByLabelText("output").querySelectorAll(".od-terminal__line");
     expect([...lines].map((l) => l.getAttribute("data-tone"))).toEqual(["default", "stderr", "success"]);
     expect(screen.getByText("err")).toBeInTheDocument();
     expect(screen.getByText("out")).toBeInTheDocument();
+  });
+
+  it("has no stream gutter unless the caller gives its texts", () => {
+    render(<TerminalText label="output" lines={[{ text: "x", stream: "stderr" }]} />);
+    expect(document.querySelector(".od-terminal__stream")).toBeNull();
+  });
+
+  it("draws only the lines in view out of ten thousand, and keeps the height of the rest", () => {
+    const lines = Array.from({ length: 10000 }, (_, i) => ({ text: `line ${i}` }));
+    const restore = fakeLayout({ viewport: 200, tokens: { "--term-line-height": "20px" } });
+    try {
+      const { container } = render(<TerminalText label="output" lines={lines} />);
+      const drawn = container.querySelectorAll(".od-terminal__line").length;
+      expect(drawn).toBeLessThanOrEqual(10 + 8 + 1);
+      expect(drawn).toBeGreaterThanOrEqual(10);
+      const gap = container.querySelector<HTMLElement>(".od-terminal__gap")!;
+      expect(parseInt(gap.style.height)).toBe((10000 - drawn) * 20);
+      expect(screen.getByText("line 0")).toBeInTheDocument();
+      expect(screen.queryByText("line 9999")).toBeNull();
+    } finally {
+      restore();
+    }
   });
 });
