@@ -25,12 +25,13 @@ describe("text nodes with line tones and the terminal appearance (X10)", () => {
   });
 
   it("maps tone names, unknown ones (stdout) to default", () => {
-    expect(textLines("a\nb", ["stdout", "muted"]).map((l) => l.tone)).toEqual(["default", "muted"]);
+    expect(textLines("a\nb", ["stdout" as never, "muted"]).map((l) => l.tone)).toEqual(["default", "muted"]);
   });
 });
 
 describe("table output in the terminal look and partial output (X10/X17)", () => {
-  const table = { type: "table", columns: [{ key: "stream" }, { key: "line" }], rows: [["stdout", "hello"], ["stderr", "oops"]], appearance: "terminal", toneColumn: "stream", lineColumn: "line" };
+  const table = { columns: [{ key: "stream", label: "Stream" }, { key: "line", label: "Line" }], rows: [["stdout", "hello"], ["stderr", "oops"]], total: 2, truncated: false, appearance: "terminal" as const, toneColumn: "stream", lineColumn: "line" };
+  const tbl = { type: "table" as const, ...table };
   it("uses lineColumn for the text and toneColumn for the tone", () => {
     expect(tableLines(table)).toEqual([{ text: "hello", tone: "default" }, { text: "oops", tone: "stderr" }]);
   });
@@ -39,7 +40,7 @@ describe("table output in the terminal look and partial output (X10/X17)", () =>
     expect(tableLines({ ...table, toneColumn: undefined }).map((l) => l.tone)).toEqual(["default", "default"]);
   });
   it("only asks for terminal lines when appearance is terminal", () => {
-    expect(terminalLinesOf({ ...table, appearance: "plain" })).toBeNull();
+    expect(terminalLinesOf({ ...tbl, appearance: "plain" })).toBeNull();
     expect(terminalLinesOf({ type: "text", text: "a", appearance: "terminal", lineTones: ["danger"] })).toEqual([{ text: "a", tone: "danger" }]);
     expect(terminalLinesOf(undefined)).toBeNull();
   });

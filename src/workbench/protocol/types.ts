@@ -78,6 +78,8 @@ export type {
   FormLayout,
   HelloResult,
   Label,
+  LineTone,
+  TextAppearance,
   MenuCommand,
   NewItem,
   NodeState,

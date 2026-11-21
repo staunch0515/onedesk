@@ -6,7 +6,7 @@ import { isOpenableUrl } from "../../design";
 import { useClient, type CommandContext, type CommandEffect, type ProtocolClient } from "../protocol";
 import { staleFields } from "./merge";
 import { saveTab } from "./save";
-import { useStore, type ConfirmState, type Store, type TabState, type UiState } from "./store";
+import { useStore, type Store, type TabState, type UiState } from "./store";
 
 export interface OpenOptions {
   params?: Record<string, string>;
@@ -216,28 +216,15 @@ export function WorkbenchProvider({ store, children }: { store: Store; children:
           case "pick-folder": {
             const pick = client.platform?.pickFolder;
             if (!pick) {
-              store.set({ folderPrompt: { plugin: effect.plugin, replace: (effect as { replace?: string }).replace } });
+              store.set({ folderPrompt: { plugin: effect.plugin, replace: effect.replace } });
               break;
             }
             const path = await pick();
-            if (path) await grantFolder(effect.plugin, path, (effect as { replace?: string }).replace);
+            if (path) await grantFolder(effect.plugin, path, effect.replace);
             break;
           }
           case "confirm":
-            {
-              // Round 17: optional `choices` / `choiceArg` / `irreversible` (names follow round17-protocol.md).
-              const extra = effect as { choices?: ConfirmState["choices"]; choiceArg?: string; irreversible?: boolean };
-              store.set({
-                confirmCommand: {
-                  message: effect.message,
-                  command: effect.command,
-                  danger: effect.danger ?? false,
-                  context,
-                  ...(extra.choices?.length ? { choices: extra.choices, choiceArg: extra.choiceArg } : {}),
-                  ...(extra.irreversible ? { irreversible: true } : {}),
-                },
-              });
-            }
+            store.set({ confirmCommand: { message: effect.message, command: effect.command, danger: effect.danger ?? false, context } });
             break;
           case "copy":
             try {
