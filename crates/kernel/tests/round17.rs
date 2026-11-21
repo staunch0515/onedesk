@@ -34,7 +34,7 @@ export default { activate(host) {
     if (parent) return { nodes: [] };
     return { nodes: [
       { key: "/a", label: "a", icon: "folder", expandable: true, draggable: true, accepts: ["file", "folder"],
-        menu: ["ask", "t.r17:probe", "node.open", "ask", "other.plugin:x", "nope", "node.explode"] },
+        menu: ["ask", "t.r17:probe", "node.open", "ask", "other.plugin:x", "nope", "node.explode", "node.favorite", "node.delete"] },
       { key: "/b", label: "b", icon: "file", target: "node:t.r17:t//b" },
       { key: "/c", label: "c", icon: "file", menu: [] },
     ] };
@@ -63,6 +63,7 @@ export default { activate(host) {
     return { output: { type: "table", columns: COLS,
     rows: [["stdout", "a"], ["stderr", "b"]], appearance: "terminal", toneColumn: "stream", lineColumn: "line" } };
   });
+  host.actions.handle("badtone", async () => ({ output: { type: "table", columns: COLS, rows: [], toneColumn: "nope" } }));
   host.actions.handle("text", async () => ({ output: { type: "text", text: "a\nb", lineTones: [null, "danger"], appearance: "plain" } }));
   host.actions.handle("badpartial", async (ctx) => {
     const r = [];
@@ -81,11 +82,13 @@ export default { activate(host) {
 
 fn manifest() -> Value {
     json!({
-        "requires": { "files": true, "resources": true, "programs": [{ "name": "sh", "source": "system" }] },
+        "requires": { "files": true, "resources": true, "programs": [{ "name": "sh", "source": "system" }],
+                      "secrets": { "names": ["ml"] } },
         "contributes": {
             "kinds": [{ "id": "k", "label": "K", "icon": "box", "tree": "resources", "page": "p", "newName": "k" }],
             "actions": [{ "id": "lines", "label": "a", "output": "text" },
                         { "id": "table", "label": "a", "output": "table" },
+                        { "id": "badtone", "label": "a", "output": "table" },
                         { "id": "text", "label": "a", "output": "text" },
                         { "id": "badpartial", "label": "a", "output": "table" }],
             "commands": [{ "id": "probe", "label": "p" }, { "id": "ask", "label": "a" }],
@@ -255,7 +258,8 @@ async fn d430_provided_nodes_carry_their_checked_menu_draggable_and_accepts() {
     let nodes = page["nodes"].as_array().unwrap();
     let a = &nodes[0];
     let ids: Vec<&str> = a["menu"].as_array().unwrap().iter().map(|m| m["id"].as_str().unwrap()).collect();
-    // Its own commands (short or full), the kernel's node.*; repeats, others' and unknown dropped.
+    // Its own commands (short or full) and node.open only (D432: node.favorite, node.delete… dropped);
+    // repeats, others' and unknown dropped.
     assert_eq!(ids, vec!["t.r17:ask", "t.r17:probe", "node.open"]);
     assert_eq!(a["menu"][0]["label"], "a", "the command's own label");
     assert_eq!(a["draggable"], true);
@@ -569,6 +573,104 @@ async fn x18_write_text_can_make_executables_and_handle_name_conflicts() {
     assert_eq!(std::fs::read_to_string(w.grant.join("run.sh")).unwrap(), "#!/bin/sh\necho two\n");
     w.ok("files.writeText", json!([w.p("plain.txt"), "x"])).await;
     assert_eq!(mode("plain.txt"), 0o644);
+}
+
+/* ------------------------------------------------------------------ round 17 review */
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn review1_open_never_runs_anything_and_only_in_granted_folders() {
+    let w = world().await;
+    // The attack: an executable `.command` in its own folder, then `open`.
+    w.ok("files.writeText", json!(["evil.command", "#!/bin/sh\ntouch /tmp/pwned\n", { "executable": true }])).await;
+    assert_eq!(w.err("files.open", json!(["evil.command"])).await, ("denied".into(), "outsideGrant".into()));
+    let own = w.ok("files.stat", json!(["evil.command"])).await["path"].as_str().unwrap().to_string();
+    assert_eq!(w.err("files.open", json!([own])).await.0, "denied");
+    assert_eq!(w.err("files.reveal", json!(["evil.command"])).await.0, "denied");
+    // In a granted folder: nothing the system would run.
+    write(&w.grant.join("run.command"), "#!/bin/sh\n");
+    write(&w.grant.join("Run.TERMINAL"), "x");
+    write(&w.grant.join("notes.txt"), "x");
+    std::fs::create_dir_all(w.grant.join("Tool.app/Contents")).unwrap();
+    w.ok("files.writeText", json!([w.p("noext"), "#!/bin/sh\n", { "executable": true }])).await;
+    for f in ["run.command", "Run.TERMINAL", "Tool.app", "noext"] {
+        assert_eq!(w.err("files.open", json!([w.p(f)])).await, ("denied".into(), "unsafeOpen".into()), "{f}");
+    }
+    // A link: the real path is opened, and only if it is inside a grant.
+    let outside = w.grant.parent().unwrap().join("outside.txt");
+    write(&outside, "x");
+    std::os::unix::fs::symlink(&outside, w.grant.join("out-link.txt")).unwrap();
+    assert_eq!(w.err("files.open", json!([w.p("out-link.txt")])).await.0, "denied");
+    std::os::unix::fs::symlink(w.grant.join("notes.txt"), w.grant.join("in-link.txt")).unwrap();
+    w.ok("files.open", json!([w.p("in-link.txt")])).await;
+    w.ok("files.reveal", json!([w.p("Tool.app")])).await;
+    let log = std::fs::read_to_string(&w.open_log).unwrap();
+    assert_eq!(log, format!("open {}\nreveal {}\n", w.p("notes.txt"), w.p("Tool.app")));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn review2_a_case_only_rename_keeps_the_file() {
+    let w = world().await;
+    write(&w.grant.join("Readme.txt"), "keep me");
+    // Only meaningful on a case-insensitive volume (the default on macOS).
+    if !w.grant.join("README.TXT").exists() {
+        return;
+    }
+    for conflict in ["overwrite", "fail", "keepBoth", "skip"] {
+        let r = w.ok("files.move", json!([w.p("Readme.txt"), w.p("README.txt"), { "conflict": conflict }])).await;
+        assert_eq!(r["path"], w.p("README.txt"), "{conflict}");
+        assert_eq!(std::fs::read_to_string(w.grant.join("README.txt")).unwrap(), "keep me");
+        let names: Vec<String> = std::fs::read_dir(&w.grant).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
+        assert_eq!(names, vec!["README.txt".to_string()], "{conflict}");
+        w.ok("files.move", json!([w.p("README.txt"), w.p("Readme.txt")])).await;
+    }
+    assert_eq!(w.err("files.copy", json!([w.p("Readme.txt"), w.p("README.txt"), { "conflict": "overwrite" }])).await, ("invalid".into(), "intoItself".into()));
+    assert_eq!(std::fs::read_to_string(w.grant.join("Readme.txt")).unwrap(), "keep me");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn review3_overwrite_remove_and_trash_never_take_a_granted_folder() {
+    let w = world().await;
+    let s = |p: &Path| p.display().to_string();
+    let inner = w.grant.join("outer/inner");
+    std::fs::create_dir_all(&inner).unwrap();
+    w.c.ok("plugin.grantFolder", json!({ "plugin": "t.r17", "path": s(&inner) })).await;
+    write(&inner.join("precious.txt"), "x");
+    write(&w.grant.join("f.txt"), "x");
+    // Overwriting a granted folder, or one holding one.
+    assert_eq!(w.err("files.copy", json!([w.p("f.txt"), s(&inner), { "conflict": "overwrite" }])).await, ("invalid".into(), "isRoot".into()));
+    assert_eq!(w.err("files.move", json!([w.p("f.txt"), w.p("outer"), { "conflict": "overwrite" }])).await, ("invalid".into(), "isRoot".into()));
+    // Removing or trashing a folder that holds a granted one.
+    assert_eq!(w.err("files.remove", json!([w.p("outer")])).await, ("invalid".into(), "isRoot".into()));
+    assert_eq!(w.err("files.trash", json!([w.p("outer")])).await, ("invalid".into(), "isRoot".into()));
+    assert_eq!(w.err("files.move", json!([w.p("outer"), w.p("moved")])).await, ("invalid".into(), "isRoot".into()));
+    assert!(inner.join("precious.txt").exists());
+    // The plugin's own folder cannot be overwritten either.
+    w.ok("files.writeText", json!(["a.txt", "x"])).await;
+    let own = std::path::PathBuf::from(w.ok("files.stat", json!(["a.txt"])).await["path"].as_str().unwrap()).parent().unwrap().to_path_buf();
+    assert_eq!(w.err("files.copy", json!([w.p("f.txt"), s(&own), { "conflict": "overwrite" }])).await, ("invalid".into(), "isRoot".into()));
+    assert!(own.join("a.txt").exists());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn review5_output_without_newlines_is_cut_into_bounded_lines() {
+    let w = world().await;
+    // 300 000 bytes and no newline.
+    let r = lines(&w, json!({ "args": ["-c", "head -c 300000 /dev/zero | tr '\\0' 'x'"], "lines": true }), false).await;
+    let l = r["ok"]["lines"].as_array().unwrap_or_else(|| panic!("{r}"));
+    assert_eq!(l.len(), 300_000_usize.div_ceil(64 * 1024), "{}", l.len());
+    assert!(l.iter().all(|x| x["text"].as_str().unwrap().len() <= 64 * 1024));
+    assert_eq!(l.iter().map(|x| x["text"].as_str().unwrap().len()).sum::<usize>(), 300_000);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn review16_multi_line_secrets_are_scrubbed_by_line_and_tone_columns_are_checked() {
+    let w = world().await;
+    w.c.ok("secrets.set", json!({ "name": "ml", "value": "first-line-abcdef\nsecond-line-ghijk" })).await;
+    let r = lines(&w, json!({ "args": ["-c", "printf '%s\\n' \"$X\""], "env": { "X": "{{secret:ml}}" }, "lines": true }), false).await;
+    assert_eq!(r["ok"]["lines"], json!([{ "stream": "stdout", "text": "***" }, { "stream": "stdout", "text": "***" }]), "{r}");
+    let r = wait_run(&w.c, &start(&w.c, "badtone", json!({})).await).await;
+    assert_eq!(r["status"], "error");
+    assert_eq!(r["error"]["code"], "badOutput", "{r}");
 }
 
 /* ------------------------------------------------------------------ X6 */

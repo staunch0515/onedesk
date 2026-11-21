@@ -91,13 +91,7 @@ fn main() -> ExitCode {
     };
     rt.block_on(async move {
         let mut cfg = KernelConfig { builtin: args.builtin.clone(), plugin_idle: plugin_idle(), ..KernelConfig::default() };
-        // Round 17 (X18): tests and acceptance never touch the real Trash or open Finder.
-        if let Some(d) = std::env::var_os("ONEDESK_TRASH_DIR").filter(|v| !v.is_empty()) {
-            cfg.trash_dir = std::path::PathBuf::from(d);
-        }
-        if let Some(log) = std::env::var_os("ONEDESK_OPEN_LOG").filter(|v| !v.is_empty()) {
-            cfg.opener = onedesk_kernel::Opener::log_to(std::path::PathBuf::from(log));
-        }
+        test_hooks(&mut cfg, |k| std::env::var(k).ok());
         // Round 9: listen before opening the workspace. With thousands of plugin packages opening
         // takes seconds; the main process may connect meanwhile (the connection waits in the
         // backlog) and its `hello` is answered once the kernel is ready.
@@ -136,6 +130,22 @@ fn main() -> ExitCode {
     })
 }
 
+/// Round 17 (X18): tests and acceptance never touch the real Trash or open Finder.
+/// D433 (review #13): `ONEDESK_TRASH_DIR` and `ONEDESK_OPEN_LOG` count only with `ONEDESK_TEST_HOOKS=1`.
+/// Returns whether the hooks were on.
+fn test_hooks(cfg: &mut KernelConfig, var: impl Fn(&str) -> Option<String>) -> bool {
+    if var("ONEDESK_TEST_HOOKS").as_deref() != Some("1") {
+        return false;
+    }
+    if let Some(d) = var("ONEDESK_TRASH_DIR").filter(|v| !v.is_empty()) {
+        cfg.trash_dir = std::path::PathBuf::from(d);
+    }
+    if let Some(log) = var("ONEDESK_OPEN_LOG").filter(|v| !v.is_empty()) {
+        cfg.opener = onedesk_kernel::Opener::log_to(std::path::PathBuf::from(log));
+    }
+    true
+}
+
 /// D365: `ONEDESK_PLUGIN_IDLE_MS` (tests and acceptance only; at least 1000) or the default.
 fn plugin_idle() -> std::time::Duration {
     std::env::var("ONEDESK_PLUGIN_IDLE_MS")
@@ -143,4 +153,27 @@ fn plugin_idle() -> std::time::Duration {
         .and_then(|v| v.trim().parse::<u64>().ok())
         .map(|ms| std::time::Duration::from_millis(ms.max(1000)))
         .unwrap_or(onedesk_kernel::DEFAULT_PLUGIN_IDLE)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn review13_test_hooks_need_onedesk_test_hooks() {
+        let env = |hooks: Option<&'static str>| {
+            move |k: &str| match k {
+                "ONEDESK_TEST_HOOKS" => hooks.map(String::from),
+                "ONEDESK_TRASH_DIR" => Some("/tmp/t".to_string()),
+                "ONEDESK_OPEN_LOG" => Some("/tmp/o.log".to_string()),
+                _ => None,
+            }
+        };
+        let mut cfg = KernelConfig::default();
+        assert!(!test_hooks(&mut cfg, env(None)));
+        assert!(!test_hooks(&mut cfg, env(Some("yes"))));
+        assert_eq!(cfg.trash_dir, onedesk_kernel::default_trash_dir());
+        assert!(test_hooks(&mut cfg, env(Some("1"))));
+        assert_eq!(cfg.trash_dir, std::path::PathBuf::from("/tmp/t"));
+    }
 }

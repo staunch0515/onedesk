@@ -6,10 +6,11 @@
 
 export const KIND = "script";
 export const DEFAULT_TIMEOUT_S = 60;
-export const MAX_TIMEOUT_S = 600; // the kernel's limit for one program
+export const MAX_TIMEOUT_S = 7200; // the kernel's limit for one program (2 h)
 export const DEFAULT_MAX_LINES = 5000;
 export const MAX_MAX_LINES = 10000; // what the kernel keeps of a table in a run
 const PARTIAL_EVERY_MS = 300;
+const PARTIAL_LINES = 500;
 
 /* ---- shell helpers: the same text in org.onedesk.command and org.onedesk.script (a test compares them) ---- */
 
@@ -22,99 +23,278 @@ export function tr(ctx, key, vars) {
 
 // A character before `:` that makes it part of a word (a path, a URL, `user:group`, `${x:1}`), not a parameter.
 const WORD_BEFORE = /[A-Za-z0-9_:/.@$\-}\]~%+]/;
+const PARAM_START = /[A-Za-z_]/;
+const PARAM_CHAR = /[A-Za-z0-9_]/;
+// Anything that could be a parameter, wherever it is: used to refuse a template the scanner is unsure about.
+const MAYBE_PARAM = /(?:^|[^A-Za-z0-9_:/.@$\-}\]~%+]):[A-Za-z_]/;
 
-// Splits shell text into raw pieces and `:name` parameters. Only text the shell reads unquoted can hold a
-// parameter: '…' and "…" strings, `\` escapes, `#` comments and here-document bodies stay as written (inside
-// "…" or a here-document the shell would still expand `$(…)` in a value, so a value never goes there).
-export function tokenizeShell(text) {
+// Reads shell text the way bash does and finds the `:name` parameters and the context each one is in:
+//   word     an unquoted word (also inside $(…) and ${…} at the top),
+//   dq       inside "…" (also a here-document body whose delimiter is not quoted),
+//   brace    inside ${…},
+//   arith    inside $((…)) or ((…)) — only whole numbers may go there.
+// '…', $'…', `\x`, # comments and the bodies of here-documents with a quoted delimiter are raw text. What it
+// cannot read with certainty (backticks holding a parameter, `case` inside $(…), $[…], ' inside "${…}",
+// anything left open) makes `uncertain` a reason, and a template with a parameter is then refused.
+// Returns { pieces: [{ raw } | { param, ctx }], uncertain }.
+export function scanShell(text) {
   const s = String(text || "");
-  const out = [];
+  const pieces = [];
   let raw = "";
+  let uncertain = null;
   let i = 0;
-  let wordStart = true;
   const heredocs = [];
+  const unsure = (why) => {
+    if (!uncertain) uncertain = why;
+  };
   const flush = () => {
-    if (raw) out.push({ raw });
+    if (raw) pieces.push({ raw });
     raw = "";
   };
-  while (i < s.length) {
-    const c = s[i];
-    if (c === "\\") {
-      raw += s.slice(i, i + 2);
-      i += 2;
-      wordStart = false;
-    } else if (c === "'") {
-      const j = s.indexOf("'", i + 1);
-      const end = j < 0 ? s.length : j + 1;
-      raw += s.slice(i, end);
-      i = end;
-      wordStart = false;
-    } else if (c === '"') {
-      let j = i + 1;
-      while (j < s.length && s[j] !== '"') j += s[j] === "\\" ? 2 : 1;
-      const end = Math.min(s.length, j + 1);
-      raw += s.slice(i, end);
-      i = end;
-      wordStart = false;
-    } else if (c === "#" && wordStart) {
-      let j = i;
-      while (j < s.length && s[j] !== "\n") j++;
-      raw += s.slice(i, j);
-      i = j;
-    } else if (c === "<" && s[i + 1] === "<" && s[i + 2] === "<") {
-      // a here-string is one word, read like any other
-      raw += "<<<";
-      i += 3;
-      wordStart = true;
-    } else if (c === "<" && s[i + 1] === "<") {
-      // a here-document: remember its delimiter; its body starts after the end of this line
-      const m = /^<<-?[ \t]*(?:'([^'\n]*)'|"([^"\n]*)"|\\?([^\s;&|<>()]+))/.exec(s.slice(i));
-      if (m) {
-        heredocs.push(m[1] !== undefined ? m[1] : m[2] !== undefined ? m[2] : m[3]);
-        raw += m[0];
-        i += m[0].length;
-      } else {
-        raw += "<<";
-        i += 2;
-      }
-      wordStart = true;
-    } else if (c === "\n") {
-      raw += c;
-      i++;
-      wordStart = true;
-      while (heredocs.length > 0) {
-        const delim = heredocs.shift();
-        for (;;) {
-          if (i >= s.length) break;
-          const nl = s.indexOf("\n", i);
-          const end = nl < 0 ? s.length : nl + 1;
-          const line = s.slice(i, nl < 0 ? s.length : nl);
-          raw += s.slice(i, end);
-          i = end;
-          if (line.replace(/^\t+/, "") === delim) break;
-        }
-      }
-    } else if (c === ":" && /[A-Za-z_]/.test(s[i + 1] || "") && !(i > 0 && WORD_BEFORE.test(s[i - 1]))) {
-      let j = i + 1;
-      while (j < s.length && /[A-Za-z0-9_]/.test(s[j])) j++;
-      flush();
-      out.push({ param: s.slice(i + 1, j) });
-      i = j;
-      wordStart = false;
-    } else {
-      raw += c;
-      wordStart = /[\s;&|()]/.test(c);
-      i++;
+  const take = (n) => {
+    raw += s.slice(i, i + n);
+    i += n;
+  };
+  const param = (ctx) => {
+    let j = i + 1;
+    while (j < s.length && PARAM_CHAR.test(s[j])) j++;
+    flush();
+    pieces.push({ param: s.slice(i + 1, j), ctx });
+    i = j;
+  };
+  const isParam = () => s[i] === ":" && PARAM_START.test(s[i + 1] || "") && !(i > 0 && WORD_BEFORE.test(s[i - 1]));
+
+  const single = () => {
+    const j = s.indexOf("'", i + 1);
+    if (j < 0) {
+      unsure("openQuote");
+      take(s.length - i);
+    } else take(j + 1 - i);
+  };
+  const ansiC = () => {
+    let j = i + 2;
+    while (j < s.length && s[j] !== "'") j += s[j] === "\\" ? 2 : 1;
+    if (j >= s.length) unsure("openQuote");
+    take(Math.min(s.length, j + 1) - i);
+  };
+  const backtick = () => {
+    let j = i + 1;
+    while (j < s.length && s[j] !== "`") j += s[j] === "\\" ? 2 : 1;
+    if (j >= s.length) unsure("openBacktick");
+    const inner = s.slice(i + 1, Math.min(j, s.length));
+    if (MAYBE_PARAM.test(inner)) unsure("backtick");
+    take(Math.min(s.length, j + 1) - i);
+  };
+  // `$(`, `${`, `$((`, `$[`, backticks: the expansions that can appear in any context but '…'.
+  const expansion = (inDq) => {
+    if (s.startsWith("$((", i)) {
+      take(3);
+      arith(2);
+    } else if (s.startsWith("$(", i)) {
+      take(2);
+      command(")");
+    } else if (s.startsWith("${", i)) {
+      take(2);
+      brace(inDq);
+    } else if (s.startsWith("$[", i)) {
+      unsure("oldArith");
+      take(2);
+    } else if (s[i] === "`") {
+      backtick();
+    } else return false;
+    return true;
+  };
+  const double = () => {
+    take(1);
+    while (i < s.length && s[i] !== '"') {
+      if (s[i] === "\\") take(2);
+      else if (expansion(true)) continue;
+      else if (isParam()) param("dq");
+      else take(1);
     }
-  }
+    if (i >= s.length) unsure("openQuote");
+    else take(1);
+  };
+  const brace = (inDq) => {
+    while (i < s.length && s[i] !== "}") {
+      if (s[i] === "\\") take(2);
+      else if (s[i] === "'") {
+        if (inDq) unsure("quoteInBrace");
+        single();
+      } else if (s[i] === '"') double();
+      else if (expansion(inDq)) continue;
+      else if (isParam()) param("brace");
+      else take(1);
+    }
+    if (i >= s.length) unsure("openBrace");
+    else take(1);
+  };
+  // After `$((` or `((`: until the `))` that closes it (parentheses inside counted).
+  const arith = () => {
+    let depth = 0;
+    while (i < s.length) {
+      if (s[i] === ")" && depth === 0) {
+        if (s[i + 1] === ")") {
+          take(2);
+          return;
+        }
+        unsure("arith");
+        take(1);
+        return;
+      }
+      if (s[i] === "(") depth++;
+      else if (s[i] === ")") depth--;
+      if (s[i] === "\\") take(2);
+      else if (s[i] === "'") single();
+      else if (s[i] === '"') double();
+      else if (expansion(false)) continue;
+      else if (isParam()) param("arith");
+      else take(1);
+    }
+    unsure("openArith");
+  };
+  // `<<` or `<<-` and its delimiter word; the body is read at the end of the line.
+  const heredocStart = () => {
+    const strip = s[i + 2] === "-";
+    take(strip ? 3 : 2);
+    while (s[i] === " " || s[i] === "\t") take(1);
+    let word = "";
+    let quoted = false;
+    while (i < s.length && !/[\s;&|<>()]/.test(s[i])) {
+      if (s[i] === "'" || s[i] === '"') {
+        const q = s[i];
+        const j = s.indexOf(q, i + 1);
+        if (j < 0) {
+          unsure("openQuote");
+          take(s.length - i);
+          break;
+        }
+        word += s.slice(i + 1, j);
+        quoted = true;
+        take(j + 1 - i);
+      } else if (s[i] === "\\") {
+        word += s[i + 1] || "";
+        quoted = true;
+        take(2);
+      } else {
+        word += s[i];
+        take(1);
+      }
+    }
+    if (!word) unsure("heredocWord");
+    else heredocs.push({ word, strip, quoted });
+  };
+  const heredocBodies = () => {
+    while (heredocs.length > 0) {
+      const h = heredocs.shift();
+      const start = i;
+      let end = -1;
+      let after = -1;
+      while (i < s.length) {
+        const nl = s.indexOf("\n", i);
+        const lineEnd = nl < 0 ? s.length : nl;
+        const line = s.slice(i, lineEnd);
+        const next = nl < 0 ? s.length : nl + 1;
+        if ((h.strip ? line.replace(/^\t+/, "") : line) === h.word) {
+          end = i;
+          after = next;
+          break;
+        }
+        i = next;
+      }
+      i = start;
+      if (end < 0) {
+        unsure("openHeredoc");
+        take(s.length - i);
+        return;
+      }
+      if (h.quoted) {
+        take(end - i);
+      } else {
+        // like "…" without the closing quote: expansions and parameters, `\` escapes
+        while (i < end) {
+          if (s[i] === "\\") take(2);
+          else if (expansion(true)) continue;
+          else if (isParam()) param("dq");
+          else take(1);
+        }
+        if (i > end) unsure("heredoc");
+      }
+      take(after - i);
+    }
+  };
+  // Commands, until `close` (")" for $(…)) or the end. `(`…`)` inside are counted.
+  const command = (close) => {
+    let wordStart = true;
+    let depth = 0;
+    let word = "";
+    while (i < s.length) {
+      const c = s[i];
+      if (close && c === ")" && depth === 0) {
+        take(1);
+        return;
+      }
+      const startsWord = wordStart;
+      wordStart = false;
+      if (c === "\\") take(2);
+      else if (c === "'") single();
+      else if (s.startsWith("$'", i)) ansiC();
+      else if (c === '"') double();
+      else if (expansion(false)) continue;
+      else if ((c === "<" || c === ">") && s[i + 1] === "(") {
+        take(2);
+        command(")");
+      } else if (startsWord && s.startsWith("((", i)) {
+        take(2);
+        arith();
+      } else if (startsWord && c === "#") {
+        while (i < s.length && s[i] !== "\n") take(1);
+      } else if (s.startsWith("<<<", i)) {
+        take(3);
+        wordStart = true;
+      } else if (s.startsWith("<<", i)) {
+        heredocStart();
+        wordStart = true;
+      } else if (isParam()) param("word");
+      else if (c === "\n") {
+        take(1);
+        heredocBodies();
+        wordStart = true;
+      } else {
+        if (c === "(") depth++;
+        else if (c === ")") depth--;
+        take(1);
+        wordStart = /[\s;&|()]/.test(c);
+      }
+      // `case … in a) …` inside $(…): its `)` would end $(…) too early for a simple reader
+      if (/[A-Za-z]/.test(c)) word += c;
+      else {
+        if (close && word === "case") unsure("caseInSubst");
+        word = "";
+      }
+    }
+    if (close) unsure("openSubst");
+    if (heredocs.length > 0) heredocBodies();
+  };
+
+  command(null);
   flush();
-  return out;
+  return { pieces, uncertain };
 }
 
+// The `:name` parameters the shell would see, in order, without repeats ([] when the template is unsure).
 export function paramNames(text) {
+  const r = scanShell(text);
+  if (r.uncertain) return [];
   const names = [];
-  for (const t of tokenizeShell(text)) if (t.param !== undefined && !names.includes(t.param)) names.push(t.param);
+  for (const t of r.pieces) if (t.param !== undefined && !names.includes(t.param)) names.push(t.param);
   return names;
+}
+
+// Why a template cannot take parameters safely, or null.
+export function templateProblem(text) {
+  const r = scanShell(text);
+  return r.uncertain && MAYBE_PARAM.test(String(text || "")) ? r.uncertain : null;
 }
 
 // `# @param NAME [type=text|number|enum] [required] [max=N] [values=a|b] [-- description]` lines.
@@ -160,16 +340,46 @@ export function shellQuote(value) {
   return `'${String(value).split("'").join("'\\''")}'`;
 }
 
-// The text with every parameter replaced by its quoted value (a missing value is '').
+// The variable a parameter's value is kept in while the script runs.
+export function paramVar(name) {
+  return `OD_P_${name}`;
+}
+
+// The script to run: one assignment per parameter at the top (its value quoted: data, never code), then the
+// template with each `:name` replaced by an expansion of that variable. bash never reads the result of an
+// expansion as code, so a value cannot add a command wherever the parameter stands. In a word or in ${…} the
+// expansion is quoted (one word); in "…" and here-documents it already is; in arithmetic only numbers are allowed.
 export function renderShell(text, values) {
-  let out = "";
-  for (const t of tokenizeShell(text)) out += t.param !== undefined ? shellQuote(values[t.param] === null || values[t.param] === undefined ? "" : values[t.param]) : t.raw;
+  const r = scanShell(text);
+  const names = [];
+  let body = "";
+  for (const t of r.pieces) {
+    if (t.param === undefined) {
+      body += t.raw;
+      continue;
+    }
+    if (!names.includes(t.param)) names.push(t.param);
+    const v = `\${${paramVar(t.param)}}`;
+    body += t.ctx === "word" || t.ctx === "brace" ? `"${v}"` : v;
+  }
+  const prelude = names.map((n) => `${paramVar(n)}=${shellQuote(values[n] === null || values[n] === undefined ? "" : values[n])}`);
+  return prelude.length > 0 ? `${prelude.join("\n")}\n${body}` : body;
+}
+
+// The contexts each parameter appears in.
+export function paramContexts(text) {
+  const out = {};
+  for (const t of scanShell(text).pieces) if (t.param !== undefined) (out[t.param] = out[t.param] || []).push(t.ctx);
   return out;
 }
 
-// Each parameter's value: typed on the page, else from the environment. Throws with the first bad one.
+// Each parameter's value: typed on the page, else from the environment. Throws with the first bad one, and for a
+// template the scanner cannot read with certainty.
 export async function paramValues(ctx, text) {
+  const problem = templateProblem(text);
+  if (problem) throw new Error(tr(ctx, "error.template", { why: tr(ctx, `template.${problem}`) }));
   const decls = declarations(text);
+  const contexts = paramContexts(text);
   const values = {};
   for (const name of paramNames(text)) {
     const typed = ctx.params && ctx.params[name];
@@ -178,8 +388,11 @@ export async function paramValues(ctx, text) {
       const found = await ctx.host.params.get(name);
       if (found && found.found && found.value !== "") value = String(found.value);
     }
-    const problem = checkValue(declOf(decls, name), value);
-    if (problem) throw new Error(tr(ctx, `error.param.${problem}`, { name, max: declOf(decls, name).max }));
+    let bad = checkValue(declOf(decls, name), value);
+    // bash evaluates `a[$(…)]` in arithmetic (also in [[ … -eq … ]]): such a value never goes in
+    if (!bad && value !== null && /\[[^\]]*(\$\(|`)/.test(value)) bad = "unsafe";
+    if (!bad && value !== null && (contexts[name] || []).includes("arith") && !/^[+-]?\d+$/.test(value)) bad = "arith";
+    if (bad) throw new Error(tr(ctx, `error.param.${bad}`, { name, max: declOf(decls, name).max }));
     values[name] = value;
   }
   return values;
@@ -213,7 +426,7 @@ export function lineRow(line) {
 }
 
 // The output of a run: one row per line, drawn as a terminal (X10): the `stream` column names the tone.
-export function linesOutput(ctx, rows, truncated) {
+export function linesOutput(ctx, rows, truncated, total) {
   return {
     type: "table",
     columns: [
@@ -221,7 +434,7 @@ export function linesOutput(ctx, rows, truncated) {
       { key: "line", label: tr(ctx, "column.line") },
     ],
     rows,
-    total: rows.length + (truncated ? 1 : 0),
+    total: total !== undefined ? total : rows.length + (truncated ? 1 : 0),
     appearance: "terminal",
     toneColumn: "stream",
     lineColumn: "line",
@@ -242,27 +455,32 @@ export function intIn(text, lo, hi, fallback) {
 export async function runLines(ctx, spec, maxLines) {
   const runs = ctx.host.runs;
   const partial = runs && typeof runs.partial === "function" ? runs.partial : null;
-  const live = [];
+  let tail = [];
+  let seen = 0;
   let last = 0;
   let shown = 0;
-  const show = (force) => {
-    if (!partial || live.length === shown) return;
+  const show = () => {
+    if (!partial || seen === shown) return;
     const now = Date.now();
-    if (!force && now - last < PARTIAL_EVERY_MS) return;
+    if (now - last < PARTIAL_EVERY_MS) return;
     last = now;
-    shown = live.length;
-    Promise.resolve(partial(linesOutput(ctx, live.slice(0, maxLines), false))).catch(() => {});
+    shown = seen;
+    // only the last lines: the shell redraws the whole partial output each time
+    const rows = tail.slice(-PARTIAL_LINES);
+    Promise.resolve(partial(linesOutput(ctx, rows, seen > rows.length, seen))).catch(() => {});
   };
   const res = await ctx.host.process.run({
     ...spec,
     lines: true,
     maxLines,
     onOutput: (line) => {
-      live.push(lineRow(line));
-      show(false);
+      seen++;
+      tail.push(lineRow(line));
+      if (tail.length > 2 * PARTIAL_LINES) tail = tail.slice(-PARTIAL_LINES);
+      show();
     },
   });
-  const rows = (Array.isArray(res.lines) ? res.lines.map(lineRow) : live).slice(0, maxLines);
+  const rows = (Array.isArray(res.lines) ? res.lines.map(lineRow) : tail).slice(0, maxLines);
   return {
     rows,
     truncated: res.stopped === "maxLines" || res.truncated === true,
@@ -301,9 +519,29 @@ export function bodyOf(ctx) {
   return { script: pick("script", ""), timeoutSec: pick("timeoutSec", ""), maxLines: pick("maxLines", "") };
 }
 
-// What `ctx.host.process.run` gets: bash without the user's startup files, the script on stdin.
-export function bashSpec(script, timeoutS) {
-  return { program: "bash", args: ["--noprofile", "--norc", "-s"], stdin: script.endsWith("\n") ? script : `${script}\n`, timeoutMs: timeoutS * 1000 };
+// What `ctx.host.process.run` gets: bash without the user's startup files, running the script from a file (its
+// standard input is empty, so a command that reads stdin cannot eat the script). Cancelling ends the program's
+// whole process group (the kernel).
+export function bashSpec(file, timeoutS) {
+  return { program: "bash", args: ["--noprofile", "--norc", file], timeoutMs: timeoutS * 1000 };
+}
+
+let tmpSeq = 0;
+
+// Writes the script into the plugin's own `tmp/` folder, runs it, removes the file whatever happened.
+export async function runScriptFile(ctx, script, timeoutS, maxLines) {
+  const name = `tmp/run-${Date.now()}-${++tmpSeq}.sh`;
+  const written = await ctx.host.files.writeText(name, script.endsWith("\n") ? script : `${script}\n`);
+  const file = (written && written.path) || name;
+  try {
+    return await runLines(ctx, bashSpec(file, timeoutS), maxLines);
+  } finally {
+    try {
+      await ctx.host.files.remove(file);
+    } catch (e) {
+      // a leftover in the plugin's own tmp/ only
+    }
+  }
 }
 
 // A file name for a script: its name with anything but letters, digits, `.`, `_`, `-` turned into `-`; never
@@ -327,6 +565,19 @@ export function fileText(script) {
   const s = String(script || "");
   const body = s.endsWith("\n") || s === "" ? s : `${s}\n`;
   return s.startsWith("#!") ? body : `#!/usr/bin/env bash\n${body}`;
+}
+
+// What to do with a `.sh` that is already in the folder (files.writeText's `conflict`).
+export const CONFLICTS = ["overwrite", "skip", "keepBoth"];
+
+async function exists(ctx, path) {
+  try {
+    await ctx.host.files.stat(path);
+    return true;
+  } catch (e) {
+    if (e && e.code === "notFound") return false;
+    throw e;
+  }
 }
 
 const cmp = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
@@ -388,6 +639,8 @@ export default {
           }
           view.push({ type: "form", id: "params", layout: "strip", fields });
         }
+        const problem = ctx.run ? null : templateProblem(b.script);
+        if (problem) view.push({ type: "text", id: "templateProblem", text: tr(ctx, "error.template", { why: tr(ctx, `template.${problem}`) }), tone: "danger" });
         view.push({
           type: "form",
           id: "editor",
@@ -400,7 +653,16 @@ export default {
             view.push({ type: "text", id: "export", text: tr(ctx, "note.noFolder"), tone: "muted" });
           } else {
             const options = roots.map((r) => ({ value: r.path, label: r.name || r.path }));
-            view.push({ type: "form", id: "export", layout: "strip", fields: [{ name: "exportFolder", label: ctx.t("field.exportFolder"), kind: "enum", param: true, options, hint: tr(ctx, "field.exportFolder.hint") }] });
+            const conflicts = CONFLICTS.map((c) => ({ value: c, label: ctx.t(`conflict.${c}`) }));
+            view.push({
+              type: "form",
+              id: "export",
+              layout: "strip",
+              fields: [
+                { name: "exportFolder", label: ctx.t("field.exportFolder"), kind: "enum", param: true, options, hint: tr(ctx, "field.exportFolder.hint") },
+                { name: "exportConflict", label: ctx.t("field.exportConflict"), kind: "enum", param: true, options: conflicts, hint: tr(ctx, "field.exportConflict.hint") },
+              ],
+            });
           }
         }
         return { view };
@@ -419,7 +681,7 @@ export default {
       ctx.progress(undefined, tr(ctx, "step.running"));
       let r;
       try {
-        r = await runLines(ctx, bashSpec(renderShell(script, values), timeoutS), maxLines);
+        r = await runScriptFile(ctx, renderShell(script, values), timeoutS, maxLines);
       } catch (err) {
         if (err && err.code === "denied" && err.params && err.params.reason === "cancelled") throw err;
         throw programError(ctx, err);
@@ -437,20 +699,42 @@ export default {
       const list = (await ctx.host.resources.list({ kind: KIND })) || [];
       const scripts = (Array.isArray(list) ? list : list.items || []).slice().sort((a, b) => cmp(String(a.name), String(b.name)) || cmp(String(a.id), String(b.id)));
       if (scripts.length === 0) throw new Error(tr(ctx, "error.nothingToExport"));
+      const chosen = String((ctx.params && ctx.params.exportConflict) || "");
+      if (chosen && !CONFLICTS.includes(chosen)) throw new Error(tr(ctx, "error.badConflict"));
       const taken = new Set();
-      const rows = [];
       const dir = String(folder.path).replace(/\/+$/, "");
-      for (let n = 0; n < scripts.length; n++) {
-        const s = scripts[n];
-        const file = fileNameFor(s.name, taken);
-        ctx.progress(n / scripts.length, tr(ctx, "step.exporting", { file }));
+      const plan = scripts.map((s) => ({ s, file: fileNameFor(s.name, taken) }));
+      // Without a choice nothing on disk is replaced: files that exist stop the export before anything is written.
+      if (!chosen) {
+        const existing = [];
+        for (const p of plan) if (await exists(ctx, `${dir}/${p.file}`)) existing.push(p.file);
+        if (existing.length > 0) throw new Error(tr(ctx, "error.exists", { files: existing.slice(0, 5).join(", ") + (existing.length > 5 ? " …" : "") }));
+      }
+      const rows = [];
+      let written = 0;
+      for (let n = 0; n < plan.length; n++) {
+        const { s, file } = plan[n];
+        ctx.progress(n / plan.length, tr(ctx, "step.exporting", { file }));
         const body = (s.body && typeof s.body.script === "string" && s.body.script) || "";
-        await ctx.host.files.writeText(`${dir}/${file}`, fileText(body));
-        rows.push([s.name || "", file]);
+        // `fail` when nothing was chosen: a file that appeared since the check is not replaced either
+        const r = await ctx.host.files.writeText(`${dir}/${file}`, fileText(body), { executable: true, conflict: chosen || "fail" });
+        const skipped = !!(r && r.skipped);
+        const final = r && typeof r.path === "string" ? r.path.slice(r.path.lastIndexOf("/") + 1) : file;
+        if (!skipped) written++;
+        rows.push([s.name || "", skipped ? file : final, tr(ctx, skipped ? "result.skipped" : final !== file ? "result.renamed" : "result.written")]);
       }
       return {
-        output: { type: "table", columns: [{ key: "script", label: tr(ctx, "column.script") }, { key: "file", label: tr(ctx, "column.file") }], rows, total: rows.length },
-        summary: { rows: rows.length, message: tr(ctx, "summary.exported", { n: rows.length, folder: folder.name || folder.path }) },
+        output: {
+          type: "table",
+          columns: [
+            { key: "script", label: tr(ctx, "column.script") },
+            { key: "file", label: tr(ctx, "column.file") },
+            { key: "result", label: tr(ctx, "column.result") },
+          ],
+          rows,
+          total: rows.length,
+        },
+        summary: { rows: rows.length, message: tr(ctx, "summary.exported", { n: written, folder: folder.name || folder.path }) },
       };
     });
   },

@@ -45,3 +45,11 @@ describe("table output in the terminal look and partial output (X10/X17)", () =>
     expect(terminalLinesOf(undefined)).toBeNull();
   });
 });
+
+describe("the terminal block's accessible name", () => {
+  it("is the shell's words, not the node id", () => {
+    renderInShell(client(), <ViewNodes nodes={[textNode({ appearance: "terminal" })]} />);
+    expect(screen.getByRole("region", { name: "Terminal output" })).toBeTruthy();
+    expect(screen.queryByLabelText("t")).toBeNull();
+  });
+});

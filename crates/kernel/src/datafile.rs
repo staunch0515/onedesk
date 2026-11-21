@@ -279,6 +279,11 @@ pub fn read(path: &Path, o: &Map<String, Value>) -> Result<FromFile, String> {
                     Some(_) => Err(bad(format!("{k} must be a column key"))),
                 }
             };
+            for k in ["toneColumn", "lineColumn"] {
+                if let Some(c) = text_key(k)?.filter(|c| !columns.iter().any(|x| x.key == *c)) {
+                    return Err(bad(format!("{k} {c:?} is not a column")));
+                }
+            }
             let output = RunOutput::Table {
                 columns,
                 rows,

@@ -566,7 +566,8 @@ test("E3/E5 (screen): the run history has two groups, a kept result sits under S
   await page.getByRole("navigation", { name: "Views" }).getByRole("button", { name: "Run records", exact: true }).click();
   await expect(page.getByRole("treeitem", { name: "Recent runs" })).toBeVisible();
   await expect(page.getByRole("treeitem", { name: "Saved results" })).toBeVisible();
-  if ((await page.getByRole("treeitem", { name: /Screen result/ }).count()) === 0) await page.getByRole("treeitem", { name: "Saved results" }).click();
+  // Both groups open by themselves (D424): no click on a group. The kept result may sit below many recent runs, so find it by name.
+  await page.getByLabel("Filter by name").fill("Screen result");
   await expect(page.getByRole("treeitem", { name: /Screen result/ })).toBeVisible();
   await page.getByRole("treeitem", { name: /Screen result/ }).dblclick();
   await expect(page.getByRole("tab", { name: /Screen result|recent orders/i }).first()).toBeVisible();

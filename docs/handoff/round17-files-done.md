@@ -1,6 +1,6 @@
 # 第十七轮：文件与 API 连接插件（r17-files）完成说明
 
-改动范围：`plugins/org.onedesk.files/**`、`plugins/org.onedesk.connection/**`（新）、`plugins/org.onedesk.http/**`。`pnpm test`（79 个文件 841 项）、`pnpm lint`、`pnpm typecheck` 通过。`pnpm check` 里的 Rust 与 e2e 部分没有跑（只改了插件）。最后提交号见文末。
+改动范围：`plugins/org.onedesk.files/**`、`plugins/org.onedesk.connection/**`（新）、`plugins/org.onedesk.http/**`。`pnpm lint`、`pnpm typecheck` 通过；`pnpm test` 只剩 `plugins/_testing/lang-check.test.ts` 的 4 项失败（中日语言包缺外壳新键，属 r17-tests 范围），本插件的测试全过。`pnpm check` 里的 Rust 与 e2e 部分没有跑（只改了插件）。最后提交号见文末。
 
 ## 需求逐条
 
@@ -56,7 +56,7 @@
 
 ## 最后提交
 
-提交 `1502022`（plugin/files、plugin/connection、plugin/http，一个提交）。
+插件的最后一次代码提交是 `f438a28`（Basic 用 `|basic:`、文件树节点 menu/draggable/accepts）。此前：`1502022`（首版）、`ab4a480`（按 protocol 改名）、`aaf9598`（D428 冲突流程）、`7de7de4`（D429 页面按钮命令）、`0fc7f6d`（授权树标签修复）、`5779d33`（http `fetch`）。真内核验证记录 `cf2951c`。
 
 ## 第二批（真内核验证）
 
@@ -64,3 +64,13 @@
 - 文件树节点（D430）：文件与文件夹带 `menu`（`org.onedesk.files:move/copy/rename/delete`、`node.open`）和 `draggable`，文件夹加 `accepts: ["*"]`。**注意**：现在的内核还不认节点的这三个字段（真内核回 `bad tree page: unknown field accepts`），内核的 D430 透传合并之前文件树会整棵报错。
 - 树刷新：内核在授权/更换授权时已经发 `tree:<树>` 主题（`commands.rs` 的 `set_grant_as`），插件没有别的办法；刚授权后要切换才刷新应是外壳没有重取该主题。
 - HTTP 插件的 `fetch` 动作是为了让它能列出连接（内核要求清单里有一个作用在 `org.onedesk.connection:connection` 上的动作）。
+
+## 真内核验证记录（含 D430，`target/debug` 最新构建，临时目录、`ONEDESK_SECRET_STORE=memory`）
+
+- 树节点：文件夹 `draggable:true`、`accepts:["*"]`，文件 `draggable:true`；两者菜单都是 `files:move/copy/rename/delete` + `node.open`。
+- 拖放移动到有同名文件的文件夹：先返回 confirm（overwrite/skip/keepBoth，`choiceArg:"conflict"`）；三种答案各一次：覆盖（目标变成源内容、源没了）、跳过（两边都不动）、保留两份（目标不动，新的叫 `m3 2.txt`，源没了）。
+- “复制到…”：同名先 confirm；保留两份后源仍在。
+- 就地改名：`rename` 成功；改成已有的名字先 confirm。
+- 永久删除：第一次返回 `irreversible:true`、`danger:true` 的 confirm，文件还在；带 `confirmed` 重跑才删。
+- Basic 连接的“测试连接”：服务端收到 `Basic base64(aladdin:密钥)`（Bearer、请求头、查询参数也对）；HTTP 插件经连接发请求成功。
+- 页面按钮：文件页的 rename/move/copy/delete 按钮在页面描述里带 `command`；表单输入框名为 `newName`、`destination`、`query`、`recursive`，与命令读的 args 名一致（命令也认 `params.<名>`）。真界面里点按钮传的 args 名未在界面里点过。

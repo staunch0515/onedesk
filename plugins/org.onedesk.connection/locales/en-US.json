@@ -44,5 +44,6 @@
   "field.username": "User name",
   "field.username.placeholder": "The user name",
   "error.badUsername": "The Basic user name must not contain “:”.",
-  "error.noUsername": "Give the Basic user name."
+  "error.noUsername": "Give the Basic user name.",
+  "error.secretRef": "The request names a secret ({{secret:…}}). Only the connection's own authentication may use its secret."
 }
