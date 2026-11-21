@@ -8,6 +8,7 @@
   "action.save": "保存",
   "action.saveRun": "保存并运行",
   "action.copy": "复制 SQL",
+  "action.create": "新建保存的 SQL",
   "action.newHere": "在此数据源上新建 SQL",
   "tab.result": "结果",
   "tab.sent": "实际发出的 SQL",

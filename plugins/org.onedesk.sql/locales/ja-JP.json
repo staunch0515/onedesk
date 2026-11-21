@@ -8,6 +8,7 @@
   "action.save": "保存",
   "action.saveRun": "保存して実行",
   "action.copy": "SQL をコピー",
+  "action.create": "保存済み SQL を新規作成",
   "action.newHere": "このデータソースで新しい SQL",
   "tab.result": "結果",
   "tab.sent": "送信した SQL",

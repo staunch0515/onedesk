@@ -329,6 +329,27 @@ export default {
       return { output: { type: "link", label: created.name || tr(ctx, "kind.query.new"), target: `resource:${created.id}` }, summary: { message: tr(ctx, "summary.created") } };
     });
 
+    // Exported (called by other plugins, e.g. the query catalog): a new saved statement with the given body,
+    // data source and description. `params` (values typed elsewhere) are accepted; the link opens the statement
+    // as saved — initial page values need a protocol change (see round16-tests-done.md).
+    host.actions.handle("create", async (ctx, input) => {
+      const i = input || {};
+      const sql = String(i.sql || "");
+      if (!sql.trim()) throw new Error(tr(ctx, "error.empty"));
+      let source = String(i.source || "").trim();
+      if (source) {
+        const list = await sourceList(ctx);
+        const hit = list.find((r) => r.id === source) || list.find((r) => r.name === source);
+        if (!hit) throw new Error(tr(ctx, "error.sourceMissing", { source }));
+        source = hit.id;
+      }
+      const name = String(i.name || "").trim() || tr(ctx, "kind.query.new");
+      const made = { kind: "query", name, body: { sql, source } };
+      if (typeof i.description === "string" && i.description) made.description = i.description;
+      const created = await ctx.host.resources.create(made);
+      return { output: { type: "link", label: created.name || name, target: `resource:${created.id}` }, summary: { message: tr(ctx, "summary.created") } };
+    });
+
     host.actions.handle("run", async (ctx, input) => {
       const sql = String((input && input["body.sql"]) || "");
       if (!sql.trim()) throw new Error(tr(ctx, "error.empty"));

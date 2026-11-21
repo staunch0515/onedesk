@@ -18,6 +18,11 @@
       "version": ">=0.1.0, <1.0.0"
     }
   ],
+  "exports": {
+    "actions": [
+      "create"
+    ]
+  },
   "contributes": {
     "kinds": [
       {
@@ -48,6 +53,14 @@
           "Mod",
           "Enter"
         ],
+        "saveFirst": false,
+        "confirm": null
+      },
+      {
+        "id": "create",
+        "label": "action.create",
+        "icon": "file-plus",
+        "output": "link",
         "saveFirst": false,
         "confirm": null
       },

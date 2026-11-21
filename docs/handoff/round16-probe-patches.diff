@@ -1,0 +1,37 @@
+diff --git a/plugins/org.onedesk.catalog/manifest.json b/plugins/org.onedesk.catalog/manifest.json
+index b16073c..b02c400 100644
+--- a/plugins/org.onedesk.catalog/manifest.json
++++ b/plugins/org.onedesk.catalog/manifest.json
+@@ -34,6 +34,7 @@
+       }
+     ],
+     "actions": [
++      { "id": "probe", "label": "action.mapping", "icon": "map", "kinds": ["org.onedesk.datasource:source"], "output": "text", "saveFirst": false, "confirm": null },
+       { "id": "run", "label": "action.run", "icon": "play", "kinds": ["entry"], "output": "table", "shortcut": ["Mod", "Enter"], "saveFirst": false, "confirm": null },
+       { "id": "saveAsSql", "label": "action.saveAsSql", "icon": "file-plus", "kinds": ["entry"], "output": "link", "saveFirst": false, "confirm": null },
+       { "id": "reindex", "label": "action.reindex", "icon": "refresh-cw", "output": "table", "saveFirst": false, "confirm": null },
+diff --git a/plugins/org.onedesk.table/main.js b/plugins/org.onedesk.table/main.js
+index 446652b..b47bbe2 100644
+--- a/plugins/org.onedesk.table/main.js
++++ b/plugins/org.onedesk.table/main.js
+@@ -315,7 +315,7 @@ export async function depthOf(ctx) {
+ }
+ 
+ function entityOfNode(ctx, snap) {
+-  const key = decodeURIComponent((ctx.node && ctx.node.key) || "");
++  const key = decodeURIComponent((ctx.node && ctx.node.key) || String(ctx.target || "").split("/").pop());
+   const name = key.startsWith(C) ? key.slice(C.length).split(".")[0] : key.slice(T.length);
+   const e = snap.mapping.entities[name];
+   if (!e) throw new Error(tr(ctx, "error.noTable", { name }));
+diff --git a/plugins/org.onedesk.table/manifest.json b/plugins/org.onedesk.table/manifest.json
+index 0fe3b50..266fb4e 100644
+--- a/plugins/org.onedesk.table/manifest.json
++++ b/plugins/org.onedesk.table/manifest.json
+@@ -18,6 +18,7 @@
+   ],
+   "contributes": {
+     "actions": [
++      { "id": "probe", "label": "action.mapping", "icon": "map", "kinds": ["org.onedesk.datasource:source"], "output": "text", "saveFirst": false, "confirm": null },
+       { "id": "rows", "label": "action.rows", "icon": "table", "output": "table", "shortcut": ["Mod", "Enter"], "saveFirst": false, "confirm": null },
+       { "id": "current", "label": "action.current", "icon": "badge-check", "output": "table", "saveFirst": false, "confirm": null },
+       { "id": "history", "label": "action.history", "icon": "history", "output": "table", "saveFirst": false, "confirm": null },

@@ -120,7 +120,7 @@ describe("sql: page", () => {
   it("registers what the manifest declares", () => {
     const r = registry(plugin);
     expect(Object.keys(r.pages)).toEqual(["editor"]);
-    expect(Object.keys(r.actions).sort()).toEqual(["newHere", "run"]);
+    expect(Object.keys(r.actions).sort()).toEqual(["create", "newHere", "run"]);
   });
 
   it("render: data source picker (empty = environment/default), then the code editor; no strip without parameters", async () => {
@@ -295,6 +295,29 @@ describe("sql: run action", () => {
   });
 });
 
+describe("sql: exported create", () => {
+  it("makes a saved statement with body, data source and description, and links to it", async () => {
+    const { actions } = registry(plugin);
+    const host = fakeHost({ resources: { list: vi.fn(async () => [{ id: "s1", name: "Local" }]), create: vi.fn(async (r: any) => ({ id: "new9", name: r.name })) } });
+    const res = await actions.create(ctxOf(host), { name: "Orders", description: "by id", sql: "SELECT 1", source: "Local", params: { a: "1" } });
+    expect(host.resources.create).toHaveBeenCalledWith({ kind: "query", name: "Orders", body: { sql: "SELECT 1", source: "s1" }, description: "by id" });
+    expect(checkActionResult(res)).toEqual([]);
+    expect(res.output).toEqual({ type: "link", label: "Orders", target: "resource:new9" });
+  });
+  it("accepts no source, and refuses empty SQL or an unknown source", async () => {
+    const { actions } = registry(plugin);
+    const host = fakeHost();
+    await actions.create(ctxOf(host), { name: "N", sql: "SELECT 1" });
+    expect(host.resources.create).toHaveBeenCalledWith({ kind: "query", name: "N", body: { sql: "SELECT 1", source: "" } });
+    await expect(actions.create(ctxOf(host), { sql: "  " })).rejects.toThrow();
+    await expect(actions.create(ctxOf(host), { sql: "SELECT 1", source: "ghost" })).rejects.toThrow("“ghost” was not found");
+  });
+  it("is exported by the manifest", () => {
+    const m = JSON.parse(readFileSync(new URL("./manifest.json", import.meta.url), "utf8"));
+    expect(m.exports.actions).toEqual(["create"]);
+  });
+});
+
 describe("sql: manifest", () => {
   const m = JSON.parse(readFileSync(new URL("./manifest.json", import.meta.url), "utf8"));
   it("depends on the data source plugin and asks for no capability of its own", () => {
@@ -302,7 +325,7 @@ describe("sql: manifest", () => {
     expect(m.requires).toEqual({ files: false });
   });
   it("every action it handles is declared, and the run page ends with the sent SQL tab", () => {
-    expect(m.contributes.actions.map((a: any) => a.id).sort()).toEqual(["newHere", "run"]);
+    expect(m.contributes.actions.map((a: any) => a.id).sort()).toEqual(["create", "newHere", "run"]);
     expect(m.contributes.pages[0].resultTabs.map((x: any) => x.id)).toEqual(["result", "sent", "history"]);
   });
 });
