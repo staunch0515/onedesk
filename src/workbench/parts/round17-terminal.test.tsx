@@ -1,47 +1,46 @@
 // @vitest-environment jsdom
 import "../../design/testing/jsdom-setup";
-import { render, screen } from "@testing-library/react";
+import { screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { createMockClient } from "../protocol/mock";
-import type { Run, ViewNode } from "../protocol";
+import type { ViewNode } from "../protocol";
 import { renderInShell } from "../testing/harness";
-import { useLiveLines } from "./result-area";
+import { tableLines, terminalLinesOf, textLines } from "./terminal-lines";
 import { ViewNodes } from "./view-nodes";
 
 const client = () => createMockClient({ fresh: true, quiet: true });
-const textNode = (extra: object): ViewNode => ({ type: "text", id: "t", text: "a\nb", ...extra }) as ViewNode;
+const textNode = (extra: object): ViewNode => ({ type: "text", id: "t", text: "ok\noops\nplain", ...extra }) as ViewNode;
 
-describe("text nodes with line tones and the terminal style (X10)", () => {
-  it("draws each line with its own tone in the terminal style", () => {
-    renderInShell(client(), <ViewNodes nodes={[textNode({ style: "terminal", lines: [{ text: "ok", tone: "success" }, { text: "oops", tone: "stderr" }, { text: "plain" }] })]} />);
-    const rows = [...document.querySelectorAll(".od-terminal__line")];
-    expect(rows.map((r) => r.getAttribute("data-tone"))).toEqual(["success", "stderr", "default"]);
-    expect(screen.getByLabelText("t").className).toContain("od-terminal");
+describe("text nodes with line tones and the terminal appearance (X10)", () => {
+  it("draws each line with its tone in the terminal look; a missing or null tone is the default", () => {
+    renderInShell(client(), <ViewNodes nodes={[textNode({ appearance: "terminal", lineTones: ["success", "stderr"] })]} />);
+    expect([...document.querySelectorAll(".od-terminal__line")].map((r) => r.getAttribute("data-tone"))).toEqual(["success", "stderr", "default"]);
   });
 
-  it("tones lines of a plain text node too, and leaves nodes without lines as before", () => {
-    renderInShell(client(), <ViewNodes nodes={[textNode({ lines: [{ text: "bad", tone: "danger" }] }), { type: "text", id: "u", text: "old" } as ViewNode]} />);
-    expect(screen.getByText("bad").className).toContain("od-text-block--danger");
+  it("tones lines of a plain text node, and leaves nodes without tones as before", () => {
+    renderInShell(client(), <ViewNodes nodes={[textNode({ lineTones: [null, "danger"] }), { type: "text", id: "u", text: "old" } as ViewNode]} />);
+    expect(screen.getByText("oops").className).toContain("od-text-block--danger");
     expect(document.querySelectorAll(".od-terminal").length).toBe(0);
     expect(screen.getByText("old")).toBeTruthy();
   });
+
+  it("maps tone names, unknown ones (stdout) to default", () => {
+    expect(textLines("a\nb", ["stdout", "muted"]).map((l) => l.tone)).toEqual(["default", "muted"]);
+  });
 });
 
-function Live({ run }: { run: Run }) {
-  const lines = useLiveLines(run);
-  return <ul>{lines.map((l, i) => <li key={i}>{`${l.stream ?? "-"}:${l.text}`}</li>)}</ul>;
-}
-const running = (progress: object): Run => ({ id: "r1", status: "running", progress }) as unknown as Run;
-
-describe("partial output of a running program (X17)", () => {
-  it("collects lines in order and keeps which stream each came from", () => {
-    const { rerender } = render(<Live run={running({ message: "one\n", stream: "stdout" })} />);
-    rerender(<Live run={running({ message: "two", stream: "stderr" })} />);
-    expect([...document.querySelectorAll("li")].map((l) => l.textContent)).toEqual(["stdout:one", "stderr:two"]);
+describe("table output in the terminal look and partial output (X10/X17)", () => {
+  const table = { type: "table", columns: [{ key: "stream" }, { key: "line" }], rows: [["stdout", "hello"], ["stderr", "oops"]], appearance: "terminal", toneColumn: "stream", lineColumn: "line" };
+  it("uses lineColumn for the text and toneColumn for the tone", () => {
+    expect(tableLines(table)).toEqual([{ text: "hello", tone: "default" }, { text: "oops", tone: "stderr" }]);
   });
-
-  it("takes a whole `output` list when the kernel sends one", () => {
-    render(<Live run={running({ output: [{ text: "a", stream: "stdout" }, { text: "b", stream: "stderr" }] })} />);
-    expect([...document.querySelectorAll("li")].map((l) => l.textContent)).toEqual(["stdout:a", "stderr:b"]);
+  it("takes the last column when lineColumn is missing or wrong, and the default tone without toneColumn", () => {
+    expect(tableLines({ ...table, lineColumn: "nope", toneColumn: undefined }).map((l) => l.text)).toEqual(["hello", "oops"]);
+    expect(tableLines({ ...table, toneColumn: undefined }).map((l) => l.tone)).toEqual(["default", "default"]);
+  });
+  it("only asks for terminal lines when appearance is terminal", () => {
+    expect(terminalLinesOf({ ...table, appearance: "plain" })).toBeNull();
+    expect(terminalLinesOf({ type: "text", text: "a", appearance: "terminal", lineTones: ["danger"] })).toEqual([{ text: "a", tone: "danger" }]);
+    expect(terminalLinesOf(undefined)).toBeNull();
   });
 });

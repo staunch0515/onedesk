@@ -48,3 +48,19 @@ describe("permanent delete asks twice and says it cannot be undone", () => {
     await waitFor(() => expect(execute).toHaveBeenCalledWith("files:purge", expect.objectContaining({ args: { confirmed: true } })));
   });
 });
+
+describe("replacing a granted folder (X18)", () => {
+  it("a pick-folder effect with `replace` calls plugin.replaceFolder instead of grantFolder", async () => {
+    const mock = createMockClient({ fresh: true, quiet: true });
+    const replaceFolder = vi.fn(async (plugin: string, _path: string, n: string) => ({ plugin, folders: [n] }));
+    const grantFolder = vi.fn(async (plugin: string, p: string) => ({ plugin, folders: [p] }));
+    const client = kernelLikeClient(mock, {
+      plugin: { ...mock.plugin, replaceFolder, grantFolder } as never,
+      platform: { pickFolder: async () => "/new" } as never,
+    });
+    renderInShell(client, <Probe effect={{ type: "pick-folder", plugin: "p", replace: "/old" }} />);
+    fireEvent.click(screen.getByText("ask"));
+    await waitFor(() => expect(replaceFolder).toHaveBeenCalledWith("p", "/old", "/new"));
+    expect(grantFolder).not.toHaveBeenCalled();
+  });
+});

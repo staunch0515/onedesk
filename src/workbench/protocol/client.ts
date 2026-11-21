@@ -173,6 +173,8 @@ export interface ProtocolClient {
     grants(plugin: string): Promise<PluginGrants>;
     grantFolder(plugin: string, path: string): Promise<PluginGrants>;
     revokeFolder(plugin: string, path: string): Promise<PluginGrants>;
+    /** Round 17 (X18): the granted folder `path` becomes `newPath`. */
+    replaceFolder(plugin: string, path: string, newPath: string): Promise<PluginGrants>;
     get(id: string): Promise<PluginDetail | null>;
     setEnabled(id: string, enabled: boolean): Promise<void>;
     activateVersion(id: string, version: string): Promise<UpgradeResult>;

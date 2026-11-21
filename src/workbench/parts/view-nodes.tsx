@@ -1,8 +1,9 @@
 import { useCallback } from "react";
-import { Button, CodeEditor, DataGrid, EmptyState, IconButton, MarkdownText, Pane, Text, TerminalText, TextBlock, type DataGridColumn, type ReferenceState, type TerminalLine } from "../../design";
+import { Button, CodeEditor, DataGrid, EmptyState, IconButton, MarkdownText, Pane, Text, TerminalText, TextBlock, type DataGridColumn, type ReferenceState } from "../../design";
 import { useI18n } from "../i18n";
 import type { OutputCell, ViewNode } from "../protocol";
 import { useQuery, useUi, useWorkbench } from "../state/context";
+import { textLines } from "./terminal-lines";
 import { TOKENIZERS } from "./sql-tokens";
 
 /** `key` travels with the row (not looked up when a button is clicked) so a button always acts on the row it was drawn for. */
@@ -40,21 +41,20 @@ function MarkdownNode({ source }: { source: string }) {
 /** Draws the read-only view nodes (text, table, link, placeholder). Forms are drawn by the view page. */
 export function ViewNodes({ nodes, onRowAction }: { nodes: ViewNode[]; onRowAction?: (event: string, row: string) => void }) {
   const { actions } = useWorkbench();
-  const { t, tx } = useI18n();
+  const { tx } = useI18n();
   return (
     <>
       {nodes.map((node) => {
         switch (node.type) {
           case "text": {
-            // Round 17 (X10): per-line tones and the terminal look (field names follow round17-protocol.md).
-            const lined = node as typeof node & { lines?: TerminalLine[]; style?: string };
-            if (lined.lines?.length || lined.style === "terminal") {
-              const lines: TerminalLine[] = lined.lines?.length ? lined.lines : node.text.split("\n").map((text) => ({ text, tone: node.tone }));
-              if (lined.style === "terminal") return <TerminalText key={node.id} label={node.id} lines={lines} showStreams={lines.some((l) => l.stream)} streamLabels={{ stdout: t("stream.stdout"), stderr: t("stream.stderr") }} />;
+            // Round 17 (X10): `lineTones` colors single lines, `appearance: "terminal"` draws the dark terminal look.
+            const toned = node as typeof node & { lineTones?: Array<string | null>; appearance?: string };
+            if (toned.appearance === "terminal") return <TerminalText key={node.id} label={node.id} lines={textLines(node.text, toned.lineTones)} />;
+            if (toned.lineTones?.some((x) => x && x !== "default")) {
               return (
                 <Pane key={node.id} pad="md">
-                  {lines.map((l, i) => (
-                    <TextBlock key={i} tone={l.tone === "danger" || l.tone === "stderr" ? "danger" : l.tone === "muted" ? "muted" : l.tone === "success" ? "success" : l.tone === "warning" ? "warning" : "default"}>{l.text || " "}</TextBlock>
+                  {textLines(node.text, toned.lineTones).map((l, i) => (
+                    <TextBlock key={i} tone={l.tone === "stderr" ? "danger" : l.tone === "muted" || l.tone === "success" || l.tone === "warning" || l.tone === "danger" ? l.tone : "default"}>{l.text || " "}</TextBlock>
                   ))}
                 </Pane>
               );

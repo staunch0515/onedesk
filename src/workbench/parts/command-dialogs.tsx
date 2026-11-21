@@ -18,10 +18,11 @@ export function CommandDialogs() {
   const choiceText = (id: string) => (id === "overwrite" || id === "skip" || id === "keepBoth" ? t(`confirm.choice.${id}`) : id);
   const grant = () => {
     const plugin = folderPrompt?.plugin;
+    const replace = folderPrompt?.replace;
     if (!path.trim().startsWith("/")) return;
     const chosen = path.trim();
     closeFolder();
-    if (plugin) void actions.grantFolder(plugin, chosen);
+    if (plugin) void actions.grantFolder(plugin, chosen, replace);
   };
 
   const closeFolder = () => {

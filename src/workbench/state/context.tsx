@@ -38,7 +38,8 @@ export interface Actions {
   /** Opens an address (http, https, mailto) in the system browser; the desktop main process checks it again (D380). */
   openExternal: (url: string) => Promise<void>;
   /** Gives a plugin access to a folder (the user chose it in a dialog). */
-  grantFolder: (plugin: string, path: string) => Promise<void>;
+  /** `replace`: the granted folder this one takes the place of (round 17). */
+  grantFolder: (plugin: string, path: string, replace?: string) => Promise<void>;
   setExpanded: (tree: string, keys: string[]) => void;
   /** Shows a failed protocol call as a toast. */
   fail: (error: unknown) => void;
@@ -146,9 +147,9 @@ export function WorkbenchProvider({ store, children }: { store: Store; children:
       }
     };
 
-    const grantFolder: Actions["grantFolder"] = async (plugin, path) => {
+    const grantFolder: Actions["grantFolder"] = async (plugin, path, replace) => {
       try {
-        const grants = await client.plugin.grantFolder(plugin, path);
+        const grants = replace ? await client.plugin.replaceFolder(plugin, replace, path) : await client.plugin.grantFolder(plugin, path);
         live.current.toast({ tone: "success", title: live.current.i18n.t("folder.granted", { path: grants.folders[grants.folders.length - 1] ?? path }) });
       } catch (error) {
         fail(error);
@@ -215,11 +216,11 @@ export function WorkbenchProvider({ store, children }: { store: Store; children:
           case "pick-folder": {
             const pick = client.platform?.pickFolder;
             if (!pick) {
-              store.set({ folderPrompt: { plugin: effect.plugin } });
+              store.set({ folderPrompt: { plugin: effect.plugin, replace: (effect as { replace?: string }).replace } });
               break;
             }
             const path = await pick();
-            if (path) await grantFolder(effect.plugin, path);
+            if (path) await grantFolder(effect.plugin, path, (effect as { replace?: string }).replace);
             break;
           }
           case "confirm":

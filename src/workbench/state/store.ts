@@ -94,7 +94,7 @@ export interface UiState extends LayoutState {
   /** Tabs waiting for the "unsaved changes" answer. */
   confirmClose: string[] | null;
   /** Browser mode only: asks for a folder path, since there is no system dialog (pick-folder effect). */
-  folderPrompt: { plugin: string } | null;
+  folderPrompt: { plugin: string; replace?: string } | null;
   /** Installing a plugin package (round 4). */
   install: InstallState | null;
   /** Exporting / importing the workspace (round 5). */

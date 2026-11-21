@@ -2,14 +2,15 @@
 
 分支 `claude/r17-shell-e32344`。最后提交号见文末。
 
-**重要**：开工到收尾时内核会话还没写出 `round17-protocol.md`。X10/X17/X18 的字段名是我按“最自然的形状”先写的（已发消息给 r17-kernel 请其对齐），合并后需核对，不一致只改下面列出的几处：
-- X10：文字节点 `lines?: [{text, tone?, stream?}]`、`style?: "terminal"`（`parts/view-nodes.tsx` 里用类型断言读取）。tone：default/muted/info/success/warning/danger/stderr。
-- X17：运行的 `progress` 可带 `stream`（与 `message` 同一条）或 `output: [{text, stream}]`（整表，替换已收集的）（`parts/result-area.tsx` 的 `useLiveLines`）。
-- X18：`confirm` 效果可带 `choices: [{id, label?, danger?}]`（id 为 overwrite/skip/keepBoth 时用外壳自带文字）、`choiceArg`（选中的 id 以这个参数名带回命令，默认 `conflict`，同时带 `confirmed: true`）、`irreversible`（加一句“不可撤销”）。（`state/context.tsx`、`parts/command-dialogs.tsx`、`state/store.ts` 的 `ConfirmState`）
+**协议对齐（更新）**：内核的 `round17-protocol.md`（r17-kernel 分支 9efb119）后来才到，外壳已改成按它的名字：
+- X10：文字节点/运行输出的 `lineTones`（按 `\n` 分行）、`appearance: "terminal"`；表输出的 `appearance`、`toneColumn`、`lineColumn`（`parts/terminal-lines.ts`）。没有 `info` 语气，没有 stream 字段（stderr 是语气）。
+- X17：运行中读 `Run.partial`（整份输出，替换上一份；`result-area.tsx` 里用 `terminalLinesOf`），没有 partial 时仍用旧的进度消息日志。完成后的 `appearance:"terminal"` 输出也按终端样式画。
+- X18：`pick-folder` 的 `replace` → `plugin.replaceFolder`（客户端、真实、mock、混合客户端都加了）；新原因码文字：`conflict.exists`、`invalid.intoItself/isRoot/trashUnavailable/badOutput`、`notFound.grant`。
+- **仍是我自拟、需主会话决定（规则 10）**：`confirm` 效果的 `choices`/`choiceArg`/`irreversible`。内核没加。外壳已实现（`ConfirmState`），若不采纳，同名冲突需由插件用已有 `Confirm` 效果问一次、再带 `conflict` 参数调 `files.copy/move`，永久删除的“不可撤销”写进插件的确认文字；那样外壳这几行可删（`command-dialogs.tsx`、`context.tsx`、`store.ts`）。
 
 ## 做了什么
 1. **X10 终端样式**：新 token `--term-bg/-fg/-muted/-border/-info/-success/-warning/-danger/-stderr`（浅色、深色主题各一套，终端底在两个主题里都是深色；`tokens.test.ts` 加了对比度检查，全部 ≥4.5）。新设计组件 `TerminalText`（`src/design/components/terminal-text.*`）。带 `lines` 的普通文字节点按行用 TextBlock 的语气色；`style:"terminal"` 用 TerminalText。无这些字段的文字节点外观不变。
-2. **X17 逐行部分输出**：运行中的输出区改用 `TerminalText`，逐行收集，有来源时左侧小栏标 `out`/`err`（stderr 另一种颜色）。
+2. **X17 部分输出**：运行中读 `Run.partial` 用 `TerminalText` 显示，stderr 行是另一种颜色（来源标在语气里，无单独 stdout/stderr 小栏）。
 3. **X18 外壳部分**：确认对话框支持“覆盖 / 跳过 / 保留两份”三选一（取消不执行）；`irreversible` 时说明“This cannot be undone.”；永久删除沿用 `confirm` 效果 + 危险按钮（两步）。文件树与列表本身是 `org.onedesk.files` 插件通过通用树/视图画的，外壳无专用代码。
 4. **L 组核对**（测试在 `parts/round17-layout.test.tsx`）：
    - L1 活动栏/侧边树/标签/底部面板：已有，e2e 基准覆盖。通过。
@@ -24,7 +25,7 @@
    - L10 设置页的文件夹授权：插件页有“已授权文件夹”区与测试（`plugin-page.test.tsx`）。通过。
 
 ## 新增文字键（只有英语）
-`confirm.irreversible`、`confirm.choice.overwrite`、`confirm.choice.skip`、`confirm.choice.keepBoth`、`stream.stdout`、`stream.stderr`。
+`confirm.irreversible`、`confirm.choice.overwrite`、`confirm.choice.skip`、`confirm.choice.keepBoth`、以及内核新错误码的 `kernel.error.*` 六条（见 en-US.ts）。
 
 ## 测试
 新增 vitest：`design/components/text-components.test.tsx`（TerminalText）、`design/tokens.test.ts`（终端对比度）、`parts/round17-layout.test.tsx`（L2/L5–L9）、`parts/round17-confirm.test.tsx`（冲突三选一、不可撤销）、`parts/round17-terminal.test.tsx`（行标色、逐行输出）。
