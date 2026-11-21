@@ -150,7 +150,7 @@ test("A2: an entry's page binds no field (nothing the user types can reach the f
 // DEFECT (kernel `pages.rs` `page.resolve`): the plugin's render result carries `values: { sql }` and `readOnly: true`
 // (plugins/org.onedesk.catalog/main.js:949) but the kernel takes values only from bound fields and `readOnly` only from the
 // kind, so the entry page shows an empty, editable-looking SQL box. Listed in docs/handoff/round16-tests-done.md.
-test.fixme("A2 (screen data): the entry page carries the file's SQL and is read-only", async ({ page }) => {
+test("A2 (screen data): the entry page carries the file's SQL and is read-only", async ({ page }) => {
   await openKernel(page, host);
   const d = await call<{ readOnly: boolean; values: Record<string, string> }>(page, "page.resolve", { target: `resource:${ids.recent}` });
   expect(d.readOnly).toBe(true);
@@ -185,7 +185,7 @@ test("A3: a re-index changes only the text; the tags, the favourite and the name
 // its own actions names that kind in `kinds` (crates/kernel manifest.rs `foreign_kinds`); the catalog names none, so the data
 // source list is empty and every run fails with "Data source … does not exist". Verified to pass with a local patch that adds
 // an action naming `org.onedesk.datasource:source`; see round16-tests-done.md.
-test.fixme("A6/A7: entities become table and column names; a versioned entity is the latest version at the time", async ({ page }) => {
+test("A6/A7: entities become table and column names; a versioned entity is the latest version at the time", async ({ page }) => {
   await openKernel(page, host);
   const run = await startRun(page, "org.onedesk.catalog:run", `resource:${ids.recent}`, { min: "20" }, { resourceId: ids.recent });
   expect(run.status, JSON.stringify(run.error)).toBe("success");
@@ -471,7 +471,7 @@ test("H4: the table page shows the description, the source and the columns to ti
 // DEFECT (kernel `runs.rs` ~403, still open after D421): an action run for a `node:` target gets `ctx.target` but no `ctx.node`, and the
 // table plugin's `entityOfNode` reads `ctx.node.key`, so every table action fails with " is not in the mapping". Passes with a local
 // patch taking the key from ctx.target (docs/handoff/round16-probe-patches.diff).
-test.fixme("H4: Fetch rows reads the ticked columns only (all when none is ticked)", async ({ page }) => {
+test("H4: Fetch rows reads the ticked columns only (all when none is ticked)", async ({ page }) => {
   await openKernel(page, host);
   const all = await startRun(page, "rows", nodeTarget("t:order"), {});
   expect(all.status, JSON.stringify(all.error)).toBe("success");
@@ -484,7 +484,7 @@ test.fixme("H4: Fetch rows reads the ticked columns only (all when none is ticke
 // DEFECT (kernel `runs.rs` ~403, still open after D421): an action run for a `node:` target gets `ctx.target` but no `ctx.node`, and the
 // table plugin's `entityOfNode` reads `ctx.node.key`, so every table action fails with " is not in the mapping". Passes with a local
 // patch taking the key from ctx.target (docs/handoff/round16-probe-patches.diff).
-test.fixme("H5: the five version queries give the current rows, one record's history, a point in time, a period and the deleted ones", async ({ page }) => {
+test("H5: the five version queries give the current rows, one record's history, a point in time, a period and the deleted ones", async ({ page }) => {
   await openKernel(page, host);
   const t = nodeTarget("t:item");
   const cur = await startRun(page, "current", t, {});

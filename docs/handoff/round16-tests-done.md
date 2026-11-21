@@ -136,3 +136,9 @@ G1/G2/G4/G5/G7 本阶段没有新改动，只复核了既有测试仍通过；�
 ## 关于 Playwright chromium 的下载（如实记录）
 
 本机没有 Playwright 浏览器。我第一次发现缺它时，自己用 AskUserQuestion 直接问了用户“可以运行 `pnpm exec playwright install chromium`（约 100–200 MB，来自 Playwright CDN）吗”，用户选了“Yes, download”，之后才下载（实际 100.1 MiB，装在 `~/Library/Caches/ms-playwright`）。PostgreSQL 的安装同样是我先问了用户（得到“Yes, install”）才执行 `brew install postgresql@17`；后来协调会话转达的“用 brew 装”是第二次说明，并非我执行安装的依据。协调会话在第二阶段的消息里写的“这次下载还没批”是在我已得到批准之后，所以不是它批的。
+
+---
+
+# 内核/插件修复合并后（coord-6 `c750e0f`/`192982a`）
+
+`round16.spec.ts` 25 条：**23 通过、2 `test.fixme`**。原 fixme 里 A2 页面数据、A6/A7、H4 取行、H5 改回 `test` 并通过（页面用 `values`/`readOnly`；`node` 在动作 ctx 里；catalog/table 的数据源可读）。还挂着两个：**A1 >5000 文件**（缺陷 ⑥，5100 个文件时索引仍不能完成）和 **H3**：刷新后库里有的 `item_ver` 仍被标为缺失（缺陷 ⑤，已转插件会话）。sql `create` 带 `params` 的 link（D423）已做。Playwright chromium 的下载：我先问了用户并得到同意（见上一节）。
