@@ -130,6 +130,17 @@ impl Inner {
                 Err(e)
             }
         };
+        // Round 16: the callee's words reach the caller, without the secret values this run read
+        // (the caller is another plugin, and may show them).
+        let res = res.map_err(|mut e| {
+            let secrets = self.runs_active.lock().unwrap().get(&run).map(|a| a.secrets.clone()).unwrap_or_default();
+            if let Some(d) = e.detail.take() {
+                let mut v = Value::String(d);
+                crate::secrets::scrub(&mut v, &secrets);
+                e.detail = v.as_str().map(String::from);
+            }
+            e
+        });
         let summary = json!({ "caller": p.id, "ms": ms, "ok": res.is_ok() });
         let cmd = Command::Audit { op: "actions.call".into(), object: full.clone(), summary };
         let _ = self.pipeline.execute(callee.actor(), cmd).await;

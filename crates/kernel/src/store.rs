@@ -24,6 +24,25 @@ pub const TREE_RUNS: &str = "runs";
 pub const KIND_PLUGIN: &str = "core:plugin";
 pub const KIND_RUN: &str = "core:run";
 
+/// Round 16 (§3.3 `state`): the source of the resource is gone (an indexed file was deleted).
+pub const STATE_MISSING: &str = "missing";
+pub const STATE_OK: &str = "ok";
+/// `stateReason` of such a resource (a code; the shell has the text).
+pub const REASON_SOURCE_MISSING: &str = "sourceMissing";
+
+/// The state a row shows: its kind's, unless that is fine and the source is gone.
+pub fn shown_state(
+    r: &Row,
+    state: onedesk_protocol::NodeState,
+    reason: &Option<onedesk_protocol::Label>,
+) -> (onedesk_protocol::NodeState, Option<onedesk_protocol::Label>) {
+    if state == onedesk_protocol::NodeState::Ok && r.state == STATE_MISSING {
+        (onedesk_protocol::NodeState::Broken, Some(onedesk_protocol::Label::Text(REASON_SOURCE_MISSING.into())))
+    } else {
+        (state, reason.clone())
+    }
+}
+
 /// One `resources` row; serialized as the revision snapshot.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -327,7 +346,7 @@ pub fn run_get(conn: &Connection, id: &str) -> rusqlite::Result<Option<RunRow>> 
     conn.query_row(&format!("SELECT {RUN_COLUMNS} FROM runs WHERE id = ?1"), [id], run_from_row).optional()
 }
 
-/// Runs matching `where_` (a fixed SQL condition with `?1`), newest first.
+/// Runs matching `where_` (a fixed query condition with `?1`), newest first.
 pub fn runs_where(conn: &Connection, where_: &str, arg: &str, limit: u32) -> rusqlite::Result<Vec<RunRow>> {
     let mut st = conn.prepare_cached(&format!(
         "SELECT {RUN_COLUMNS} FROM runs WHERE {where_} ORDER BY seq DESC LIMIT {limit}"

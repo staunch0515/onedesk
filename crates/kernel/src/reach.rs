@@ -180,7 +180,8 @@ impl Inner {
                 wheres.push(format!("r.id IN (SELECT value FROM json_each(?{i}))"));
                 order = format!("(SELECT min(key) FROM json_each(?{i}) WHERE value = r.id)");
             }
-            None => wheres.push("r.deleted_at IS NULL".into()),
+            // Round 16 (parity A4): nor a resource whose source is gone.
+            None => wheres.push("r.deleted_at IS NULL AND r.state <> 'missing'".into()),
         }
         if let Some(k) = kinds {
             let i = push(&mut args, serde_json::to_string(k).map_err(internal)?);

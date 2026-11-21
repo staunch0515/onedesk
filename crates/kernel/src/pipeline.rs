@@ -171,6 +171,16 @@ pub struct NewResource {
     pub plugin_version: Option<String>,
 }
 
+/// Round 16: one item of `resources.upsertByKey`.
+#[derive(Debug, Clone)]
+pub struct UpsertItem {
+    pub key: String,
+    /// Field-wise changes of an existing resource (`name`, `description`, given `body` keys only).
+    pub changes: Changes,
+    /// What a new resource is created with (name, description, the kind's defaults with `body` on top).
+    pub create: NewResource,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MoveDest {
     Before(String),
@@ -246,6 +256,9 @@ pub enum Command {
     SyncRefDecls,
     /// Round 12 (D394): one drop's writes — `Update`s and `Audit` rows only — in one transaction.
     Batch(Vec<Command>),
+    /// Round 16: resources of one kind by external key, in one transaction; `others_missing`
+    /// marks the kind's keyed resources not in `items` as missing (§3.3 `state`).
+    Upsert { kind: String, items: Vec<UpsertItem>, others_missing: bool },
     /// Round 13 (D400): a new workspace's `init-settings.json`.
     InitSettings(Box<onedesk_protocol::WorkspaceSettingsSnapshot>),
 }
@@ -273,6 +286,8 @@ pub struct Outcome {
     pub rows: Vec<Row>,
     /// Other resources whose references changed (§10: both ends get `resource:<id>`).
     pub touched: Vec<String>,
+    /// What a command reports besides (round 16: `Upsert`'s counts and ids).
+    pub report: Value,
 }
 
 impl Outcome {
@@ -591,6 +606,7 @@ impl Writer {
                     }
                     all
                 }
+                Command::Upsert { kind, items, others_missing } => cx.upsert(&kind, items, others_missing)?,
                 Command::UiSet { .. } => unreachable!("handled above"),
             };
             let touched = std::mem::take(&mut *cx.touched.borrow_mut());
@@ -607,6 +623,7 @@ impl Writer {
 fn describe(cmd: &Command) -> (String, String) {
     match cmd {
         Command::Create(n) => ("resource.create".into(), n.kind.clone()),
+        Command::Upsert { kind, .. } => ("resources.upsert".into(), kind.clone()),
         Command::Update { id, .. } => ("resource.update".into(), id.clone()),
         Command::Params { id, op, .. } => (op.clone(), id.clone()),
         Command::Move { id, .. } => ("resource.move".into(), id.clone()),
@@ -660,6 +677,7 @@ fn blocked_by_readonly(cmd: &Command) -> bool {
         | Command::Purge { .. }
         | Command::RunInsert(_)
         | Command::Storage { .. }
+        | Command::Upsert { .. }
         | Command::Import(_) => true,
         Command::Upgrade { items, .. } => !items.is_empty(),
         // Review #9: an empty save writes nothing; an undo that restores nothing is checked in place.
@@ -903,6 +921,91 @@ impl Tx<'_> {
         // No names or content in audit rows: they outlive a permanent deletion (§3.4).
         self.audit("resource.create", &row.id, &json!({ "kind": row.kind }))?;
         Ok(Outcome { id: Some(row.id.clone()), changed: true, rows: vec![row], ..Default::default() })
+    }
+
+    /// Round 16 (`resources.upsertByKey`): by external key — create, restore (deleted or missing),
+    /// or commit the given fields only; tags, favourites and the location are never touched.
+    fn upsert(&mut self, kind: &str, items: Vec<UpsertItem>, others_missing: bool) -> KResult<Outcome> {
+        self.permit(kind)?;
+        let (mut created, mut updated, mut unchanged, mut restored, mut missing) = (0u32, 0u32, 0u32, 0u32, 0u32);
+        let mut ids = serde_json::Map::new();
+        let mut rows = Vec::new();
+        let mut seen = BTreeSet::new();
+        for it in items {
+            let found: Option<(String, Option<i64>, String)> = self
+                .tx
+                .prepare_cached("SELECT id, deleted_at, state FROM resources WHERE kind = ?1 AND external_key = ?2")
+                .map_err(db_err)?
+                .query_row(params![kind, it.key], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+                .optional()
+                .map_err(db_err)?;
+            let id = match found {
+                None => {
+                    let o = self.create(it.create)?;
+                    let id = o.id.clone().unwrap_or_default();
+                    self.tx.execute("UPDATE resources SET external_key = ?2 WHERE id = ?1", params![id, it.key]).map_err(db_err)?;
+                    rows.extend(o.rows);
+                    created += 1;
+                    id
+                }
+                Some((id, deleted, state)) => {
+                    let mut back = false;
+                    if deleted.is_some() {
+                        rows.extend(self.undelete(&id)?.rows);
+                        back = true;
+                    }
+                    if state == store::STATE_MISSING {
+                        self.set_state(&id, store::STATE_OK)?;
+                        back = true;
+                    }
+                    let o = self.update(&id, &it.changes, None, &[])?;
+                    let changed = o.changed;
+                    rows.extend(o.rows);
+                    if back {
+                        rows.push(self.live(&id)?);
+                        restored += 1;
+                    } else if changed {
+                        updated += 1;
+                    } else {
+                        unchanged += 1;
+                    }
+                    id
+                }
+            };
+            seen.insert(id.clone());
+            ids.insert(it.key, Value::String(id));
+        }
+        if others_missing {
+            let stale: Vec<String> = {
+                let mut st = self
+                    .tx
+                    .prepare("SELECT id FROM resources WHERE kind = ?1 AND external_key IS NOT NULL AND deleted_at IS NULL AND state <> ?2")
+                    .map_err(db_err)?;
+                let all = st.query_map(params![kind, store::STATE_MISSING], |r| r.get::<_, String>(0)).map_err(db_err)?;
+                all.collect::<Result<Vec<_>, _>>().map_err(db_err)?
+            };
+            for id in stale.into_iter().filter(|i| !seen.contains(i)) {
+                self.set_state(&id, store::STATE_MISSING)?;
+                rows.push(self.live(&id)?);
+                missing += 1;
+            }
+        }
+        // One row per resource (the last state), for topics and events.
+        let mut once = BTreeSet::new();
+        rows.reverse();
+        rows.retain(|r| once.insert(r.id.clone()));
+        rows.reverse();
+        let counts = json!({ "created": created, "updated": updated, "unchanged": unchanged, "restored": restored, "missing": missing });
+        self.audit("resources.upsert", kind, &counts)?;
+        let mut report = counts;
+        report["ids"] = Value::Object(ids);
+        Ok(Outcome { id: None, changed: !rows.is_empty(), rows, report, ..Default::default() })
+    }
+
+    /// §3.3 `state` (`ok` / `missing`): not a content change — no revision, no audit row of its own.
+    fn set_state(&mut self, id: &str, state: &str) -> KResult<()> {
+        self.tx.execute("UPDATE resources SET state = ?2 WHERE id = ?1", params![id, state]).map_err(db_err)?;
+        Ok(())
     }
 
     fn update(&mut self, id: &str, changes: &Changes, basis: Option<i64>, overwrite: &[String]) -> KResult<Outcome> {

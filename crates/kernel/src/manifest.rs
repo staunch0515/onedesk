@@ -45,6 +45,9 @@ pub struct Manifest {
     /// Round 7 (D342): `{ "kinds": [{ "id", "actions", "read" }] }` (`badExports`); see `exported`.
     #[serde(default, rename = "exports")]
     pub exports_raw: Option<serde_json::Value>,
+    /// Round 16 (X13): what else activates the plugin besides being used (`ACTIVATIONS`).
+    #[serde(default)]
+    pub activation: Vec<String>,
     /// The validated `depends`.
     #[serde(skip)]
     pub deps: Vec<Depend>,
@@ -144,7 +147,7 @@ pub struct ProgramDecl {
     pub path: Option<String>,
     /// Round 15 (X1): for a system program, more folders to look in when the fixed ones do not
     /// have it, in order: absolute, no `..`, at most one `*`, inside one component (`*` or
-    /// `postgresql@*`: the folders there whose names match; tried in descending name order, so
+    /// `tool@*`: the folders there whose names match; tried in descending name order, so
     /// `/Library/X/*/bin` finds the highest version first).
     #[serde(default)]
     pub search_paths: Option<Vec<String>>,
@@ -159,7 +162,7 @@ pub fn valid_search_path(p: &str) -> bool {
     p.starts_with('/')
         && p.len() <= 512
         && !parts.iter().any(|c| *c == ".." || *c == ".")
-        // Review #5: at most one `*` in all, inside one component (`postgresql@*`).
+        // Review #5: at most one `*` in all, inside one component (`tool@*`).
         && p.matches('*').count() <= 1
 }
 
@@ -168,6 +171,10 @@ pub const PROGRAM_PLUGIN: &str = "plugin";
 
 /// Round 6 (D335): the events a plugin can subscribe to.
 pub const EVENTS: &[&str] = &["resource.changed", "run.ended"];
+
+/// Round 16 (X13): what the manifest's `activation` may name; each is also an event its handler
+/// registers for with `host.events.on`.
+pub const ACTIVATIONS: &[&str] = &["workspace.opened"];
 
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -1031,6 +1038,12 @@ pub fn parse_package(dir: &Path, bytes: &[u8], check_folder: bool) -> Result<Plu
     for e in &c.events {
         if !EVENTS.contains(&e.as_str()) || !evs.insert(e.as_str()) {
             return Err(reject(dir, "badEvents", e.clone()));
+        }
+    }
+    let mut acts = HashSet::new();
+    for a in &m.activation {
+        if !ACTIVATIONS.contains(&a.as_str()) || !acts.insert(a.as_str()) {
+            return Err(reject(dir, "badActivation", a.clone()));
         }
     }
     let mut locales = BTreeMap::new();

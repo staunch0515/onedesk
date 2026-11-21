@@ -354,7 +354,7 @@ impl Tx<'_> {
         )?;
         let mut all = vec![group.clone()];
         all.extend(rows);
-        Ok(crate::pipeline::Outcome { id: Some(group.id), changed: true, rows: all, touched: vec![] })
+        Ok(crate::pipeline::Outcome { id: Some(group.id), changed: true, rows: all, touched: vec![], report: Value::Null })
     }
 }
 

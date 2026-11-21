@@ -257,6 +257,8 @@ impl Kernel {
                         eprintln!("onedesk: automatic switch of {id} failed: {e:?}");
                     }
                 }
+                // Round 16 (X13): after the switches, so the version that answers is the one in use.
+                me.workspace_opened();
             });
         }
         Ok(Kernel { inner })
@@ -376,10 +378,12 @@ impl Inner {
             Command::Delete { .. } => Some("deleted"),
             Command::Undelete { .. } => Some("restored"),
             Command::Purge { .. } => Some("purged"),
+            // Round 16: created (rev 1) or updated, per row.
+            Command::Upsert { .. } => Some("upserted"),
             _ => None,
         };
         let plugin_state = matches!(&cmd, Command::Update { .. } | Command::Create(_) | Command::Grant { .. });
-        let deletion = matches!(&cmd, Command::Delete { .. } | Command::Undelete { .. } | Command::Purge { .. });
+        let deletion = matches!(&cmd, Command::Delete { .. } | Command::Undelete { .. } | Command::Purge { .. } | Command::Upsert { .. });
         let audited = !matches!(&cmd, Command::Meta { .. } | Command::UiSet { .. });
         // D307: hosts a resource grants before the change, to audit newly granted ones after it.
         // Review #10: every path that can bring an address back (restore, undelete, upgrade, undo)
@@ -447,7 +451,12 @@ impl Inner {
                     continue;
                 }
                 // A created row is new (rev 1); other rows a creation touched were updated.
-                let c = if change == "created" && r.rev > 1 { "updated" } else { change };
+                let c = match change {
+                    "created" if r.rev > 1 => "updated",
+                    "upserted" if r.rev == 1 => "created",
+                    "upserted" => "updated",
+                    c => c,
+                };
                 self.deliver(pid, crate::events::RESOURCE_CHANGED, json!({ "id": r.id, "kind": r.kind, "change": c }));
             }
         }
@@ -699,6 +708,7 @@ impl Inner {
         // D321: resolved `[[old]]` marks read as the target's current name.
         let r = &self.display_row(r)?;
         let meta = self.row_meta(r);
+        let (state, state_reason) = store::shown_state(r, meta.state, &meta.reason);
         let location = self.read(|c| store::ancestors(c, r))?.into_iter().map(|a| a.name).collect();
         Ok(Resource {
             id: r.id.clone(),
@@ -711,8 +721,8 @@ impl Inner {
             description: r.description.clone(),
             tags: r.tags.clone(),
             body: r.body.clone(),
-            state: meta.state,
-            state_reason: meta.reason.clone(),
+            state,
+            state_reason,
             origin: Origin::Original,
             origin_ref: r.origin_ref.clone(),
             location,
@@ -845,6 +855,7 @@ impl Inner {
             .or_insert_with(|| (self.row_meta(r), self.children_supplier(r).is_some(), self.dependent_actions(&r.kind)))
             .clone();
         let (meta, supplies, dependent) = shared;
+        let (shown, shown_reason) = store::shown_state(r, meta.state, &meta.reason);
         let group = r.kind == KIND_GROUP;
         let has_children = supplies || self.read(|c| store::has_children(c, &r.id))?;
         let mut menu = Vec::new();
@@ -891,8 +902,8 @@ impl Inner {
             icon: meta.icon,
             kind: r.kind.clone(),
             expandable: group || has_children,
-            state: meta.state,
-            state_reason: meta.reason.clone(),
+            state: shown,
+            state_reason: shown_reason,
             badge: None,
             target: (!group).then(|| format!("resource:{}", r.id)),
             menu,
@@ -1060,6 +1071,7 @@ impl Inner {
             .take(BATCH as usize)
             .map(|r| {
                 let meta = self.row_meta(r);
+                let (shown, shown_reason) = store::shown_state(r, meta.state, &meta.reason);
                 let menu = if favorites {
                     vec![kernel_cmd("node.open", "external-link"), kernel_cmd("node.unfavorite", "star-off")]
                 } else {
@@ -1076,8 +1088,8 @@ impl Inner {
                     icon: meta.icon,
                     kind: r.kind.clone(),
                     expandable: false,
-                    state: meta.state,
-                    state_reason: meta.reason.clone(),
+                    state: shown,
+                    state_reason: shown_reason,
                     badge: None,
                     target: (favorites && r.kind != KIND_GROUP).then(|| format!("resource:{}", r.id)),
                     menu,
@@ -1187,7 +1199,7 @@ impl Inner {
                 kinds: plugin.manifest.contributes.kinds.iter().map(|k| k.id.clone()).collect(),
                 kind_children: plugin.manifest.contributes.kinds.iter().filter(|k| k.children).map(|k| k.id.clone()).collect(),
                 kind_drop: plugin.manifest.contributes.kinds.iter().filter(|k| k.drop).map(|k| k.id.clone()).collect(),
-                events: plugin.manifest.contributes.events.clone(),
+                events: plugin.manifest.contributes.events.iter().chain(&plugin.manifest.activation).cloned().collect(),
             },
             labels: plugin.all_labels(),
         };

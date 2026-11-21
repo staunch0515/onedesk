@@ -336,7 +336,9 @@ const BOOTSTRAP: &str = r#"
     const ticket = hostCall(callId, method, JSON.stringify(args === undefined ? null : args));
     const r = JSON.parse(await new Promise((res) => pending.set(ticket, res)));
     if (r.err !== undefined) {
-      const e = new Error(r.err.code);
+      // Round 16: a called plugin's failure says what it said (scrubbed by the kernel).
+      const callee = r.err.code === "pluginError" && r.err.params && r.err.params.reason === "calleeFailed";
+      const e = new Error(callee && typeof r.err.detail === "string" && r.err.detail ? r.err.detail : r.err.code);
       e.code = r.err.code;
       e.params = r.err.params || {};
       if (r.err.detail !== undefined) e.detail = r.err.detail;
@@ -422,7 +424,7 @@ const BOOTSTRAP: &str = r#"
       resources: Object.freeze({
         get: c("resources.get"), list: c("resources.list"), create: c("resources.create"),
         update: c("resources.update"), move: c("resources.move"), remove: c("resources.remove"),
-        search: c("resources.search"),
+        search: c("resources.search"), upsertByKey: c("resources.upsertByKey"),
       }),
       files: Object.freeze({
         roots: c("files.roots"), list: c("files.list"), stat: c("files.stat"),
@@ -487,7 +489,9 @@ const BOOTSTRAP: &str = r#"
     } catch (e) {
       // A host error the handler did not catch keeps its code.
       if (e && hostCodes.includes(e.code)) {
-        const d = typeof e.detail === "string" ? e.detail : undefined;
+        // Round 16: without a `detail`, the message the plugin wrote (if it is not just the code).
+        const m = typeof e.message === "string" && e.message && e.message !== e.code ? e.message : undefined;
+        const d = typeof e.detail === "string" ? e.detail : m;
         return JSON.stringify({ hostError: { code: e.code, params: e.params || {}, detail: d } });
       }
       throw e;

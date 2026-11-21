@@ -35,7 +35,9 @@ const r = await ctx.host.resources.upsertByKey("query", items, { othersMissing: 
   - 没有这个键：新建。`name` 不给时用键最后一段（`/` 之后）；`body` 不给时用类型默认值；`parent` 只在新建时用（同 `resources.create`）。
   - 已有：**只按给出的字段提交**——`name`、`description`、`body` 里给出的那些键（其余键保留）。没给的字段、**标签、收藏、位置**都不动；什么都没变的不写历史、不记审计（计入 `unchanged`）。不接受 `tags`（`invalidParams`）。
   - 已有但被删除了：恢复（§3.4 “同一外部键再次导入时恢复原记录”，整批恢复），再按上一条提交；计入 `restored`。
-  - 之前是“失效”的：恢复为正常。
+  - 之前是“失效”的：恢复为正常，计入 `restored`。
+  - 计数互斥：`created`（新建）、`restored`（从删除或失效回来，不论字段是否也变了）、`updated`（字段有变化）、`unchanged`（什么都没变）；`missing` 是本次被标为失效的条数。
+  - 返回值没有 `ids` 以外的资源对象；要看某一条用 `resources.get(id)`。
 - `opts.othersMissing: true`：这个类型里**有外部键、未删除、但不在这批里**的资源标为“失效”（计入 `missing`）。不给则不动别的资源。
 - 写入审计与历史同 `resources.create`/`update`（每条一行）；另记一行 `resources.upsert`（摘要只有计数）。
 
