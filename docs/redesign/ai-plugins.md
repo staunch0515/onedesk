@@ -1,4 +1,4 @@
-# AI 插件设计（Anthropic 与 Ollama）——待你确认
+# AI 插件设计（Anthropic 与 Ollama）
 
 状态：用户已确认（2026-11-21，D426）。排进第十八轮。依据：`sqlpool-parity.md` K 组（K1–K10）、`kernel-design.md` 9.5（结果区动作）与 §10（搜索）、`ai-interface.md`（MCP，已确认 D415，另排一轮）。
 
