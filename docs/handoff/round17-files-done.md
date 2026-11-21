@@ -62,4 +62,4 @@
 
 ## 最后提交
 
-见 `git log` 中 `plugin/files`、`plugin/connection`、`plugin/http` 的提交（本文件随其中最后一个提交）。
+提交 `1502022`（plugin/files、plugin/connection、plugin/http，一个提交）。
