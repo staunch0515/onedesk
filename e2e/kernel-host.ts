@@ -22,11 +22,11 @@ async function freePort(): Promise<number> {
   });
 }
 
-/** `env`: extra environment for the devhost (e.g. ONEDESK_PLUGIN_IDLE_MS); the secret store is always the in-memory one. */
-export async function startHost(dataDir: string, env: Record<string, string> = {}): Promise<Host> {
+/** `pluginsDir`: e.g. the copy from `FakeTools.preparePlugins` (fake ssh/docker). `env`: extra environment for the devhost (e.g. ONEDESK_PLUGIN_IDLE_MS); the secret store is always the in-memory one. */
+export async function startHost(dataDir: string, env: Record<string, string> = {}, pluginsDir: string = path.join(ROOT, "plugins")): Promise<Host> {
   const port = await freePort();
   const token = randomBytes(16).toString("hex");
-  const proc = spawn(DEVHOST, ["--data-dir", dataDir, "--port", String(port), "--token", token, "--plugins", path.join(ROOT, "plugins")], {
+  const proc = spawn(DEVHOST, ["--data-dir", dataDir, "--port", String(port), "--token", token, "--plugins", pluginsDir], {
     cwd: ROOT,
     env: { ...process.env, ...env, ONEDESK_DATA_DIR: dataDir, ONEDESK_SECRET_STORE: "memory" }, // never the real keychain
     stdio: ["ignore", "pipe", "pipe"],
