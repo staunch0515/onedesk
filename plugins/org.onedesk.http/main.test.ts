@@ -300,3 +300,58 @@ describe("http: package", () => {
 });
 
 
+
+describe("http: a connection as base address and authentication", () => {
+  const answer = { status: 201, statusText: "Created", headers: { "content-type": "application/json" }, body: '{"ok":true}', truncated: false };
+  const connHost = (over: Host = {}) =>
+    fakeHost({
+      resources: { list: vi.fn(async () => [{ id: "c1", name: "Prod API" }]) },
+      actions: { call: vi.fn(async () => ({ output: { type: "text", text: JSON.stringify(answer) } })) },
+      ...over,
+    });
+  const send = (host: Host, input: Record<string, string>) => registry(plugin).actions.send(ctxOf(host, resourceOf({})), input);
+
+  it("hands the path, query, headers and body to the connection's request action; never calls the network itself", async () => {
+    const host = connHost();
+    const res = await send(host, { "body.connection": "c1", "body.method": "POST", "body.url": "/items", "body.query": "a=1", "body.headers": "Accept: a/b", "body.body": "{}" });
+    expect(host.network.request).not.toHaveBeenCalled();
+    expect(host.actions.call).toHaveBeenCalledWith(
+      "org.onedesk.connection:request",
+      { method: "POST", path: "/items?a=1", inline: true, headers: { Accept: "a/b" }, body: "{}" },
+      { resource: "c1" },
+    );
+    expect(checkActionResult(res)).toEqual([]);
+    expect(res.output.text).toBe('{\n  "ok": true\n}');
+    expect(res.summary.message).toMatch(/^201 Created/);
+  });
+
+  it("a connection can be named instead of its id; an unknown one fails with its name", async () => {
+    const host = connHost();
+    await send(host, { "body.connection": "Prod API", "body.url": "/x" });
+    expect(host.actions.call.mock.calls[0][2]).toEqual({ resource: "c1" });
+    await expect(send(connHost(), { "body.connection": "nope", "body.url": "/x" })).rejects.toThrow("nope");
+  });
+
+  it("the callee's error text reaches the result; an unreadable answer is reported", async () => {
+    const bad = connHost({ actions: { call: vi.fn(async () => { throw new Error("The path must stay on the connection's host."); }) } });
+    await expect(send(bad, { "body.connection": "c1", "body.url": "/x" })).rejects.toThrow("must stay on the connection");
+    const junk = connHost({ actions: { call: vi.fn(async () => ({ output: { type: "text", text: "not json" } })) } });
+    await expect(send(junk, { "body.connection": "c1", "body.url": "/x" })).rejects.toThrow();
+  });
+
+  it("render: the connection picker lists connections; without any it is hidden", async () => {
+    const { pages } = registry(plugin);
+    const out = await pages.editor.render(ctxOf(connHost(), resourceOf({ method: "GET", url: "/x", connection: "c1" })));
+    expect(checkView(out.view)).toEqual([]);
+    const picker = out.view[0].fields[0];
+    expect(picker).toMatchObject({ kind: "ref", bind: "body.connection", kinds: ["org.onedesk.connection:connection"] });
+    expect(picker.options.map((o: any) => o.value)).toEqual(["", "c1"]);
+    const none = await pages.editor.render(ctxOf(fakeHost(), resourceOf({ method: "GET", url: "https://e.com" })));
+    expect(none.view[0].id).toBe("line");
+  });
+
+  it("the manifest depends on the connection plugin", () => {
+    const m = JSON.parse(readFileSync(new URL("./manifest.json", import.meta.url), "utf8"));
+    expect(m.depends.map((d: any) => d.id)).toEqual(["org.onedesk.connection"]);
+  });
+});

@@ -11,6 +11,8 @@ const STATUS_TEXT = {
   422: "Unprocessable Entity", 429: "Too Many Requests", 500: "Internal Server Error", 502: "Bad Gateway", 503: "Service Unavailable", 504: "Gateway Timeout",
 };
 const NO_BODY = ["GET", "HEAD"];
+const CONNECTION = "org.onedesk.connection";
+const CONNECTION_KIND = `${CONNECTION}:connection`;
 
 /* ---------------------------------------------------------------- helpers */
 
@@ -125,11 +127,55 @@ export function byteLength(text) {
   return n;
 }
 
+async function connectionList(ctx) {
+  try {
+    const all = (await ctx.host.resources.list({ kind: CONNECTION_KIND })) || [];
+    return Array.isArray(all) ? all : all.items || [];
+  } catch (e) {
+    return [];
+  }
+}
+
 async function valueOf(ctx, name) {
   const typed = ctx.params && ctx.params[name];
   if (typed !== undefined && typed !== "") return typed;
   const found = await ctx.host.params.get(name);
   return found.found ? found.value : "";
+}
+
+// The connection chosen on the request: a resource id (a name is accepted too). Returns the id, or "" for none.
+export async function pickConnection(ctx, given) {
+  const wanted = String(given || "").trim();
+  if (!wanted) return "";
+  let list = [];
+  try {
+    const all = (await ctx.host.resources.list({ kind: CONNECTION_KIND })) || [];
+    list = Array.isArray(all) ? all : all.items || [];
+  } catch (e) {
+    list = [];
+  }
+  const hit = list.find((r) => r.id === wanted) || list.find((r) => r.name === wanted);
+  if (!hit) throw new Error(tr(ctx, "error.connectionMissing", { connection: wanted }));
+  return hit.id;
+}
+
+// With a connection the address is a path below the connection's base address and the connection adds the
+// authentication; the answer comes back inline as { status, statusText, headers, body, truncated }.
+async function viaConnection(ctx, connectionId, request) {
+  const input = { method: request.method, path: request.url, inline: true };
+  if (request.headers) input.headers = request.headers;
+  if (request.body !== undefined) input.body = request.body;
+  let res;
+  try {
+    res = await ctx.host.actions.call(`${CONNECTION}:request`, input, { resource: connectionId });
+  } catch (err) {
+    throw new Error(`${tr(ctx, "error.network")}: ${(err && err.message) || "error"}`);
+  }
+  try {
+    return JSON.parse(res.output.text);
+  } catch (e) {
+    throw new Error(tr(ctx, "error.connectionAnswer"));
+  }
 }
 
 function bodyOf(ctx) {
@@ -139,7 +185,7 @@ function bodyOf(ctx) {
     const b = ctx.resource && ctx.resource.body;
     return b && typeof b[key] === "string" ? b[key] : dflt;
   };
-  return { method: pick("method", "GET"), url: pick("url", ""), query: pick("query", ""), headers: pick("headers", ""), body: pick("body", "") };
+  return { connection: pick("connection", ""), method: pick("method", "GET"), url: pick("url", ""), query: pick("query", ""), headers: pick("headers", ""), body: pick("body", "") };
 }
 
 /* ---------------------------------------------------------------- plugin */
@@ -151,17 +197,29 @@ export default {
         const req = bodyOf(ctx);
         const readOnly = ctx.run ? true : undefined;
         const withRO = (f) => (readOnly ? { ...f, readOnly: true } : f);
-        const view = [
+        const view = [];
+        const connections = await connectionList(ctx);
+        if (connections.length > 0 || req.connection) {
+          const options = [{ value: "", label: ctx.t("connection.none") }, ...connections.map((r) => ({ value: r.id, label: r.name }))];
+          if (req.connection && !connections.some((r) => r.id === req.connection)) options.push({ value: req.connection, label: req.connection });
+          view.push({
+            type: "form",
+            id: "connection",
+            layout: "strip",
+            fields: [withRO({ name: "connection", label: ctx.t("field.connection"), kind: "ref", kinds: [CONNECTION_KIND], bind: "body.connection", options, hint: ctx.t("field.connection.hint") })],
+          });
+        }
+        view.push(
           {
             type: "form",
             id: "line",
             layout: "strip",
             fields: [
               withRO({ name: "method", label: ctx.t("field.method"), kind: "enum", bind: "body.method", options: METHODS.map((m) => ({ value: m, label: m })) }),
-              withRO({ name: "url", label: ctx.t("field.url"), kind: "text", bind: "body.url", placeholder: ctx.t("field.url.placeholder"), fill: true }),
+              withRO({ name: "url", label: ctx.t("field.url"), kind: "text", bind: "body.url", placeholder: ctx.t(req.connection ? "field.url.placeholderPath" : "field.url.placeholder"), fill: true }),
             ],
           },
-        ];
+        );
 
         const names = paramNames(req.url, req.query, req.headers, req.body);
         if (names.length > 0) {
@@ -286,11 +344,13 @@ export default {
       if (Object.keys(headers).length > 0) request.headers = headers;
       if (!NO_BODY.includes(raw.method) && raw.body !== "") request.body = fillParams(raw.body, values);
 
+      const connectionId = await pickConnection(ctx, input && input["body.connection"] !== undefined ? input["body.connection"] : bodyOf(ctx).connection);
       const started = Date.now();
       let res;
       try {
-        res = await ctx.host.network.request(request);
+        res = connectionId ? await viaConnection(ctx, connectionId, request) : await ctx.host.network.request(request);
       } catch (err) {
+        if (connectionId) throw err;
         const reason = err && err.params && err.params.reason ? `/${err.params.reason}` : "";
         throw Object.assign(new Error(`${tr(ctx, "error.network")} (${(err && err.code) || "error"}${reason})`), { code: err && err.code, params: err && err.params });
       }

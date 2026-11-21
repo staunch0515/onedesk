@@ -16,7 +16,7 @@ describe("files plugin: tree", () => {
     const { trees } = registry(plugin);
     const files = { roots: vi.fn(async () => roots) };
     const out = await trees.files.children(ctxOf(files, ""), null, 0);
-    expect(out.nodes).toEqual([{ key: ROOT, label: "docs", icon: "folder", expandable: true }]);
+    expect(out.nodes).toEqual([{ key: ROOT, label: "docs", icon: "folder", expandable: true, target: `node:org.onedesk.files:files/${encodeURIComponent(ROOT)}` }]);
     files.roots.mockResolvedValue([]);
     expect((await trees.files.children(ctxOf(files, ""), null, 0)).nodes).toEqual([]);
   });
@@ -32,7 +32,7 @@ describe("files plugin: tree", () => {
     const out = await trees.files.children(ctxOf(files, ROOT), ROOT, 0);
     expect(out.nodes.map((n: any) => n.label)).toEqual(["alpha", "Zeta", "a.md", "b.txt"]);
     expect(out.nodes[0]).toMatchObject({ expandable: true, key: `${ROOT}/alpha` });
-    expect(out.nodes[0].target).toBeUndefined();
+    expect(out.nodes[0].target).toBe(`node:org.onedesk.files:files/${encodeURIComponent(`${ROOT}/alpha`)}`); // folders open the operations page
     expect(out.nodes[2].target).toBe(`node:org.onedesk.files:files/${encodeURIComponent(`${ROOT}/a.md`)}`);
     expect(out.next).toBe(200);
     expect(onlyKeys(out, TREE_PAGE_KEYS)).toEqual([]);
@@ -77,7 +77,7 @@ describe("files plugin: text page", () => {
     const files = { roots: async () => roots, readText: vi.fn(async () => ({ text: "# hi", basis: "b1" })) };
     const out = await pages.text.render(ctxOf(files, key));
     expect(checkView(out.view)).toEqual([]);
-    expect(out.view[0].fields[0]).toMatchObject({ kind: "code", bind: "content", fill: true, language: "markdown" });
+    expect(out.view.find((n: any) => n.id === "content").fields[0]).toMatchObject({ kind: "code", bind: "content", fill: true, language: "markdown" });
     expect(out).toMatchObject({ title: "notes.md", values: { content: "# hi" }, basis: "b1" });
     expect(out.breadcrumb.map((c: any) => c.label)).toEqual(["docs", "notes.md"]);
     expect(out.readOnly).toBeUndefined();
@@ -89,7 +89,7 @@ describe("files plugin: text page", () => {
     const { pages } = registry(plugin);
     const files = { roots: async () => roots, readText: async () => ({ text: "", basis: "b" }) };
     const out = await pages.text.render(ctxOf(files, `${ROOT}/data.xyz`));
-    expect("language" in out.view[0].fields[0]).toBe(false);
+    expect("language" in out.view.find((n: any) => n.id === "content").fields[0]).toBe(false);
   });
 
   it.each([
@@ -103,8 +103,9 @@ describe("files plugin: text page", () => {
     const files = { roots: async () => roots, readText: async () => { throw hostError(code, params as Record<string, string>); } };
     const out = await pages.text.render(ctxOf(files, key));
     expect(checkView(out.view)).toEqual([]);
-    expect(out.view[0]).toMatchObject({ type: "text", id: "reason", tone: "muted" });
-    expect(out.view[0].text).toBe(textKey); // fake t() returns the key for en-US
+    const reason = out.view.find((n: any) => n.id === "reason");
+    expect(reason).toMatchObject({ type: "text", id: "reason", tone: "muted" });
+    expect(reason.text).toBe(textKey); // fake t() returns the key for en-US
     expect(out.readOnly).toBe(true);
     expect(onlyKeys(out, RENDER_KEYS)).toEqual([]);
     for (const c of out.breadcrumb) expect(onlyKeys(c, CRUMB_KEYS)).toEqual([]);
@@ -130,5 +131,497 @@ describe("files plugin: text page", () => {
     const { pages } = registry(plugin);
     const files = { writeText: async () => { throw hostError(code); } };
     await expect(pages.text.save(ctxOf(files, key), { content: "x" }, "b1")).rejects.toMatchObject({ code });
+  });
+});
+
+/* ---------------------------------------------------------------- round 17 */
+
+import { readFileSync } from "node:fs";
+// @ts-ignore plain JS module, no types
+import { diskFileItem, freeName, importFolder, joinPath, normalize, rootOf, validName } from "./main.js";
+import { checkActionResult } from "../_testing/view-check";
+
+const loadLocale = (f: string) => JSON.parse(readFileSync(new URL(`./locales/${f}.json`, import.meta.url), "utf8")) as Record<string, string>;
+const EN = loadLocale("en-US");
+const ZH = loadLocale("zh-CN");
+const JA = loadLocale("ja-JP");
+const tt = (key: string) => ({ "en-US": EN[key], "zh-CN": ZH[key], "ja-JP": JA[key] });
+
+type Node = { dir: boolean; size: number };
+/** An in-memory disk behind the assumed X18 host interface, plus a Trash and a log of every call. */
+function fakeDisk(initial: Record<string, number | null>, roots = [{ path: ROOT, name: "docs" }]) {
+  const fs = new Map<string, Node>();
+  const trash: string[] = [];
+  const calls: string[] = [];
+  const grants = [...roots];
+  const put = (p: string, size: number | null) => fs.set(p, { dir: size === null, size: size ?? 0 });
+  for (const r of roots) put(r.path, null);
+  for (const [p, s] of Object.entries(initial)) put(p, s);
+  const parent = (p: string) => p.slice(0, p.lastIndexOf("/")) || "/";
+  const under = (p: string) => [...fs.keys()].filter((k) => k === p || k.startsWith(`${p}/`));
+  const log = (name: string, ...a: unknown[]) => void calls.push(`${name} ${a.filter((x) => typeof x === "string").join(" ")}`);
+  const files = {
+    roots: vi.fn(async () => grants.map((g) => ({ ...g }))),
+    stat: vi.fn(async (p: string) => {
+      const n = fs.get(p);
+      if (!n) throw hostError("notFound");
+      return { name: p.split("/").pop(), path: p, dir: n.dir, size: n.size, modifiedAt: 1700000000000 };
+    }),
+    list: vi.fn(async (p: string) => ({
+      entries: [...fs.entries()].filter(([k]) => k !== p && parent(k) === p).map(([k, n]) => ({ name: k.split("/").pop(), path: k, dir: n.dir, size: n.size, modifiedAt: 1700000000000, hidden: false })),
+    })),
+    createFolder: vi.fn(async (p: string) => (log("createFolder", p), put(p, null))),
+    writeText: vi.fn(async (p: string) => (log("writeText", p), put(p, 0), { basis: "b" })),
+    copy: vi.fn(async (a: string, b: string, o?: { onConflict?: string }) => {
+      log("copy", a, b, o?.onConflict);
+      for (const k of under(a)) put(b + k.slice(a.length), fs.get(k)!.dir ? null : fs.get(k)!.size);
+    }),
+    move: vi.fn(async (a: string, b: string, o?: { onConflict?: string }) => {
+      log("move", a, b, o?.onConflict);
+      for (const k of under(a)) {
+        put(b + k.slice(a.length), fs.get(k)!.dir ? null : fs.get(k)!.size);
+        fs.delete(k);
+      }
+    }),
+    trash: vi.fn(async (p: string) => {
+      log("trash", p);
+      trash.push(p);
+      for (const k of under(p)) fs.delete(k);
+    }),
+    remove: vi.fn(async (p: string) => {
+      log("remove", p);
+      for (const k of under(p)) fs.delete(k);
+    }),
+    open: vi.fn(async (p: string) => void log("open", p)),
+    reveal: vi.fn(async (p: string) => void log("reveal", p)),
+    addFolder: vi.fn(async () => {
+      const g = { path: "/Users/me/new", name: "new" };
+      grants.push(g);
+      put(g.path, null);
+      return g;
+    }),
+    renameFolder: vi.fn(async (p: string, name: string) => void (grants.find((g) => g.path === p)!.name = name)),
+    removeFolder: vi.fn(async (p: string) => void grants.splice(grants.findIndex((g) => g.path === p), 1)),
+  };
+  return { fs, trash, calls, files, grants };
+}
+
+/** Resources with the semantics of `resources.upsertByKey` (round 16 §2.2) for the kind(s) a test touches. */
+function fakeResources() {
+  const rows = new Map<string, { id: string; kind: string; name: string; externalKey: string; missing: boolean; body: Record<string, string>; parent?: string }>();
+  let n = 0;
+  return {
+    rows,
+    list: vi.fn(async ({ kind }: { kind: string }) => [...rows.values()].filter((r) => r.kind === kind)),
+    upsertByKey: vi.fn(async (kind: string, items: any[], opts?: { othersMissing?: boolean }) => {
+      const out = { created: 0, updated: 0, unchanged: 0, restored: 0, missing: 0, ids: {} as Record<string, string> };
+      const seen = new Set<string>();
+      for (const it of items) {
+        seen.add(it.key);
+        const id = `${kind}:${it.key}`;
+        const row = rows.get(id);
+        if (!row) {
+          rows.set(id, { id: `r${++n}`, kind, name: it.name ?? it.key.split("/").pop(), externalKey: it.key, missing: false, body: { ...(it.body || {}) }, parent: it.parent });
+          out.created++;
+        } else if (row.missing) {
+          row.missing = false;
+          Object.assign(row.body, it.body || {});
+          out.restored++;
+        } else if (it.body && JSON.stringify({ ...row.body, ...it.body }) !== JSON.stringify(row.body)) {
+          Object.assign(row.body, it.body);
+          out.updated++;
+        } else out.unchanged++;
+        out.ids[it.key] = rows.get(id)!.id;
+      }
+      if (opts?.othersMissing) for (const [, r] of rows) if (r.kind === kind && !seen.has(r.externalKey) && !r.missing) ((r.missing = true), out.missing++);
+      return out;
+    }),
+  };
+}
+
+function actionCtx(host: Record<string, unknown>, key: string, params: Record<string, unknown> = {}, extra: Record<string, unknown> = {}) {
+  return { target: `node:org.onedesk.files:files/${encodeURIComponent(key)}`, node: { tree: "org.onedesk.files:files", key }, locale: "en-US", host, t: tt, params, progress: vi.fn(), ...extra };
+}
+const SUB = `${ROOT}/sub`;
+const run = (name: string, host: any, key: string, params: Record<string, unknown> = {}, extra: Record<string, unknown> = {}) => registry(plugin).actions[name](actionCtx(host, key, params, extra), {});
+
+describe("files plugin: paths", () => {
+  it("normalizes, and rejects relative or escaping paths", () => {
+    expect(normalize("/a/b/../c//d/.")).toBe("/a/c/d");
+    expect(normalize("a/b")).toBeNull();
+    expect(normalize("/../etc")).toBeNull();
+    expect(normalize("/a\0b")).toBeNull();
+  });
+  it("a path belongs to a root by whole segments", () => {
+    expect(rootOf(`${ROOT}/x`, roots)).toBe(ROOT);
+    expect(rootOf("/Users/me/docs2/x", roots)).toBeNull();
+    expect(rootOf(`${ROOT}/../secret`, roots)).toBeNull();
+    expect(rootOf(ROOT, roots)).toBe(ROOT);
+  });
+  it("names", () => {
+    expect([validName("a.txt"), validName("a/b"), validName(".."), validName("."), validName(""), validName(" x"), validName("é 周")]).toEqual([true, false, false, false, false, false, true]);
+    expect(joinPath("/", "a")).toBe("/a");
+    expect(joinPath("/a/", "b")).toBe("/a/b");
+  });
+  it("freeName counts up", async () => {
+    const taken = new Set([`${ROOT}/a copy.txt`, `${ROOT}/a copy 2.txt`]);
+    expect(await freeName(ROOT, "a.txt", async (p: string) => taken.has(p))).toBe("a copy 3.txt");
+    expect(await freeName(ROOT, "dir", async () => false)).toBe("dir copy");
+  });
+});
+
+describe("files plugin: nothing outside the authorized folders", () => {
+  const cases: [string, Record<string, unknown>][] = [
+    ["mkdir", { newName: "x" }],
+    ["touch", { newName: "x" }],
+    ["rename", { newName: "x" }],
+    ["trash", {}],
+    ["delete", {}],
+    ["open", {}],
+    ["reveal", {}],
+    ["search", { query: "a" }],
+    ["import", {}],
+    ["grantRemove", {}],
+  ];
+  it.each(cases)("%s on a path outside, a sibling with the same prefix, or one that climbs out is refused before the host is called", async (name, params) => {
+    for (const key of ["/etc/passwd", "/Users/me/docs2/a.txt", `${ROOT}/../secret.txt`, "relative.txt"]) {
+      const d = fakeDisk({ "/Users/me/docs2": null, "/Users/me/docs2/a.txt": 1, "/etc": null, "/etc/passwd": 1 });
+      await expect(run(name, { files: d.files, resources: fakeResources() }, key, params), `${name} ${key}`).rejects.toThrow(EN["error.outside"]);
+      expect(d.calls).toEqual([]);
+      for (const m of ["createFolder", "writeText", "copy", "move", "trash", "remove", "open", "reveal", "removeFolder", "list"] as const) expect(d.files[m], `${name} ${key} ${m}`).not.toHaveBeenCalled();
+    }
+  });
+
+  it.each(["move", "copy"])("%s: a destination outside is refused, the source outside too", async (op) => {
+    const d = fakeDisk({ [`${ROOT}/a.txt`]: 1, "/etc": null });
+    await expect(run(op, { files: d.files }, `${ROOT}/a.txt`, { destination: "/etc" })).rejects.toThrow(EN["error.outside"]);
+    await expect(run(op, { files: d.files }, `${ROOT}/a.txt`, { destination: `${ROOT}/../etc` })).rejects.toThrow(EN["error.outside"]);
+    await expect(run(op, { files: d.files }, "/etc/passwd", { destination: ROOT })).rejects.toThrow(EN["error.outside"]);
+    expect(d.calls).toEqual([]);
+  });
+
+  it("a new name cannot carry a path", async () => {
+    const d = fakeDisk({});
+    for (const name of ["../x", "a/b", "..", ""]) {
+      await expect(run("mkdir", { files: d.files }, ROOT, { newName: name })).rejects.toThrow(EN["error.badName"]);
+      await expect(run("rename", { files: d.files }, ROOT, { newName: name })).rejects.toThrow(EN["error.badName"]);
+    }
+    expect(d.calls).toEqual([]);
+  });
+});
+
+describe("files plugin: operations", () => {
+  it("new folder and new file go into the folder (or next to a file); an existing name is refused", async () => {
+    const d = fakeDisk({ [`${ROOT}/a.txt`]: 3 });
+    const r = await run("mkdir", { files: d.files }, ROOT, { newName: "sub" });
+    expect(checkActionResult(r)).toEqual([]);
+    expect(d.fs.get(SUB)?.dir).toBe(true);
+    await run("touch", { files: d.files }, `${ROOT}/a.txt`, { newName: "b.md" }); // next to a file
+    expect(d.fs.has(`${ROOT}/b.md`)).toBe(true);
+    await expect(run("mkdir", { files: d.files }, ROOT, { newName: "sub" })).rejects.toThrow("already exists");
+    await expect(run("touch", { files: d.files }, ROOT, { newName: "b.md" })).rejects.toThrow("already exists");
+  });
+
+  it("rename and move keep the content; the result goes to the result area", async () => {
+    const d = fakeDisk({ [`${ROOT}/a.txt`]: 3, [SUB]: null });
+    const r = await run("rename", { files: d.files }, `${ROOT}/a.txt`, { newName: "z.txt" });
+    expect(checkActionResult(r)).toEqual([]);
+    expect(r.output.text).toContain(`${ROOT}/z.txt`);
+    await run("move", { files: d.files }, `${ROOT}/z.txt`, { destination: SUB });
+    expect([...d.fs.keys()].sort()).toEqual([ROOT, SUB, `${SUB}/z.txt`].sort());
+  });
+
+  it("a folder cannot go into itself, a file cannot replace itself", async () => {
+    const d = fakeDisk({ [SUB]: null, [`${ROOT}/a.txt`]: 1 });
+    await expect(run("move", { files: d.files }, ROOT, { destination: SUB })).rejects.toThrow(EN["error.intoItself"]);
+    await expect(run("copy", { files: d.files }, `${ROOT}/a.txt`, { destination: ROOT, conflict: "overwrite" })).rejects.toThrow(EN["error.sameFile"]);
+    expect(d.calls).toEqual([]);
+  });
+
+  it("the destination must be a folder", async () => {
+    const d = fakeDisk({ [`${ROOT}/a.txt`]: 1, [`${ROOT}/b.txt`]: 2 });
+    await expect(run("copy", { files: d.files }, `${ROOT}/a.txt`, { destination: `${ROOT}/b.txt` })).rejects.toThrow(EN["error.destNotFolder"]);
+  });
+});
+
+describe("files plugin: a name that is taken (copy and move)", () => {
+  const setup = () => fakeDisk({ [`${ROOT}/a.txt`]: 1, [SUB]: null, [`${SUB}/a.txt`]: 99, [`${SUB}/a copy.txt`]: 5 });
+  const go = (op: string, d: ReturnType<typeof setup>, conflict?: string) => run(op, { files: d.files }, `${ROOT}/a.txt`, { destination: SUB, ...(conflict ? { conflict } : {}) });
+
+  it("without a choice it stops and asks, touching nothing", async () => {
+    const d = setup();
+    await expect(go("copy", d)).rejects.toThrow("already exists there");
+    await expect(go("move", d, "ask")).rejects.toThrow("Overwrite, Skip or Keep both");
+    expect(d.calls).toEqual([]);
+  });
+
+  it("overwrite: the host is told to overwrite", async () => {
+    const d = setup();
+    const r = await go("copy", d, "overwrite");
+    expect(d.calls).toEqual([`copy ${ROOT}/a.txt ${SUB}/a.txt overwrite`]);
+    expect(d.fs.get(`${SUB}/a.txt`)?.size).toBe(1);
+    expect(r.output.text).toContain("Copied");
+  });
+
+  it("skip: nothing is written, the source stays", async () => {
+    const d = setup();
+    const r = await go("move", d, "skip");
+    expect(d.calls).toEqual([]);
+    expect(d.fs.has(`${ROOT}/a.txt`)).toBe(true);
+    expect(d.fs.get(`${SUB}/a.txt`)?.size).toBe(99);
+    expect(r.output.text).toContain("Skipped");
+  });
+
+  it("keep both: the new one gets the first free “copy” name and the old one is untouched", async () => {
+    const d = setup();
+    await go("copy", d, "keepBoth");
+    expect(d.fs.get(`${SUB}/a.txt`)?.size).toBe(99);
+    expect(d.fs.get(`${SUB}/a copy 2.txt`)?.size).toBe(1);
+    expect(d.fs.get(`${SUB}/a copy.txt`)?.size).toBe(5);
+    const m = setup();
+    await go("move", m, "keepBoth");
+    expect(m.fs.has(`${ROOT}/a.txt`)).toBe(false);
+    expect(m.fs.has(`${SUB}/a copy 2.txt`)).toBe(true);
+  });
+
+  it("no conflict: no option is passed", async () => {
+    const d = fakeDisk({ [`${ROOT}/a.txt`]: 1, [SUB]: null });
+    await go("copy", d, "overwrite");
+    expect(d.calls).toEqual([`copy ${ROOT}/a.txt ${SUB}/a.txt`]);
+    expect(d.files.copy).toHaveBeenCalledWith(`${ROOT}/a.txt`, `${SUB}/a.txt`, undefined);
+  });
+
+  it("rename onto a taken name follows the same choice", async () => {
+    const d = fakeDisk({ [`${ROOT}/a.txt`]: 1, [`${ROOT}/b.txt`]: 2 });
+    await expect(run("rename", { files: d.files }, `${ROOT}/a.txt`, { newName: "b.txt" })).rejects.toThrow("already exists");
+    await run("rename", { files: d.files }, `${ROOT}/a.txt`, { newName: "b.txt", conflict: "keepBoth" });
+    expect([...d.fs.keys()].sort()).toEqual([ROOT, `${ROOT}/b.txt`, `${ROOT}/b copy.txt`].sort());
+  });
+});
+
+describe("files plugin: delete", () => {
+  it("the default goes to the Trash and is not removed for good", async () => {
+    const d = fakeDisk({ [`${ROOT}/a.txt`]: 1 });
+    const r = await run("trash", { files: d.files }, `${ROOT}/a.txt`);
+    expect(d.trash).toEqual([`${ROOT}/a.txt`]);
+    expect(d.files.remove).not.toHaveBeenCalled();
+    expect(r.output.text).toContain("Trash");
+  });
+
+  it("permanent delete is its own action, and the manifest makes the shell ask first", async () => {
+    const m = JSON.parse(readFileSync(new URL("./manifest.json", import.meta.url), "utf8"));
+    const del = m.contributes.actions.find((a: any) => a.id === "delete");
+    const trash = m.contributes.actions.find((a: any) => a.id === "trash");
+    expect(del.confirm).toBe("confirm.delete");
+    expect(trash.confirm).toBeNull();
+    for (const page of m.contributes.pages.filter((p: any) => p.actions.some((a: any) => a.action === "delete"))) expect(page.actions.find((a: any) => a.action === "delete").danger).toBe(true);
+    const d = fakeDisk({ [`${ROOT}/a.txt`]: 1 });
+    await run("delete", { files: d.files }, `${ROOT}/a.txt`);
+    expect(d.files.remove).toHaveBeenCalledWith(`${ROOT}/a.txt`);
+    expect(d.files.trash).not.toHaveBeenCalled();
+    expect(d.fs.has(`${ROOT}/a.txt`)).toBe(false);
+  });
+
+  it("an authorized folder itself is not deleted (its authorization is removed instead)", async () => {
+    const d = fakeDisk({});
+    await expect(run("delete", { files: d.files }, ROOT)).rejects.toThrow(EN["error.isRoot"]);
+    expect(d.files.remove).not.toHaveBeenCalled();
+  });
+
+  it("open and Finder work on the path (also from a disk-file resource)", async () => {
+    const d = fakeDisk({ [`${ROOT}/a.txt`]: 1 });
+    await run("open", { files: d.files }, `${ROOT}/a.txt`);
+    const ctx = { target: "resource:r1", locale: "en-US", host: { files: d.files }, t: tt, params: {}, resource: { id: "r1", body: { path: `${ROOT}/a.txt` } } };
+    await registry(plugin).actions.reveal(ctx, {});
+    expect(d.calls).toEqual([`open ${ROOT}/a.txt`, `reveal ${ROOT}/a.txt`]);
+  });
+});
+
+describe("files plugin: search by name", () => {
+  const disk = () => fakeDisk({ [`${ROOT}/Report 2024.md`]: 10, [`${ROOT}/notes.txt`]: 1, [SUB]: null, [`${SUB}/report-final.pdf`]: 5, [`${SUB}/old report 2023.md`]: 7 });
+  it("every word has to be in the name, case does not matter, subfolders included", async () => {
+    const d = disk();
+    const r = await run("search", { files: d.files }, ROOT, { query: "REPORT md" });
+    expect(checkActionResult(r)).toEqual([]);
+    expect(r.output.rows.map((x: string[]) => x[0]).sort()).toEqual(["Report 2024.md", "old report 2023.md"]);
+    expect(r.summary).toEqual({ rows: 2, message: "2 found" });
+    expect(r.output.rows[0]).toHaveLength(r.output.columns.length);
+  });
+  it("an empty query is refused; from a file it searches its folder", async () => {
+    const d = disk();
+    await expect(run("search", { files: d.files }, ROOT, { query: "  " })).rejects.toThrow(EN["error.noQuery"]);
+    const r = await run("search", { files: d.files }, `${SUB}/report-final.pdf`, { query: "report" });
+    expect(r.output.rows.map((x: string[]) => x[0]).sort()).toEqual(["old report 2023.md", "report-final.pdf"]);
+  });
+});
+
+describe("files plugin: authorized folders", () => {
+  it("add, look, rename, remove; removing the authorization touches no resource and no file", async () => {
+    const d = fakeDisk({ [`${ROOT}/a.txt`]: 1 });
+    const res = fakeResources();
+    const host = { files: d.files, resources: res };
+    const { trees } = registry(plugin);
+    expect((await trees.folders.children(ctxOf(d.files, ""), null, 0)).nodes.map((n: any) => n.key)).toEqual(["~add", ROOT]);
+
+    const added = await run("grantAdd", host, "~add");
+    expect(added.output.text).toContain("/Users/me/new");
+    const nodes = (await trees.folders.children(ctxOf(d.files, ""), null, 0)).nodes;
+    expect(nodes.map((n: any) => (typeof n.label === "string" ? n.label : n.label["en-US"]))).toEqual(["folders.add", "docs", "new"]);
+    expect(onlyKeys(nodes[1], TREE_NODE_KEYS)).toEqual([]);
+
+    await run("grantRename", host, "/Users/me/new", { newName: "Fresh" });
+    expect(d.grants[1]!.name).toBe("Fresh");
+    await expect(run("grantRename", host, "/Users/me/new", { newName: " " })).rejects.toThrow(EN["error.noName"]);
+
+    await run("import", host, ROOT, {});
+    const before = [...res.rows.values()].map((r) => ({ ...r, body: { ...r.body } }));
+    const fsBefore = [...d.fs.keys()];
+    const removed = await run("grantRemove", host, "/Users/me/new");
+    expect(removed.output.text).toContain("not touched");
+    expect(d.grants.map((g) => g.path)).toEqual([ROOT]);
+    expect([...res.rows.values()]).toEqual(before);
+    expect([...d.fs.keys()]).toEqual(fsBefore);
+    expect(d.calls.filter((c) => /^(trash|remove|move)/.test(c))).toEqual([]);
+  });
+
+  it("cancelled picker is not an error", async () => {
+    const d = fakeDisk({});
+    d.files.addFolder.mockResolvedValue(null as never);
+    const r = await run("grantAdd", { files: d.files }, "~add");
+    expect(r.output.text).toBe(EN["grant.cancelled"]);
+  });
+
+  it("the grant page shows the form for a folder and a hint for the add node", async () => {
+    const d = fakeDisk({});
+    const { pages } = registry(plugin);
+    const ctx = (key: string) => ({ ...ctxOf(d.files, key), node: { tree: "org.onedesk.files:folders", key } });
+    const add = await pages.folders.render(ctx("~add"));
+    const one = await pages.folders.render(ctx(ROOT));
+    for (const out of [add, one]) {
+      expect(checkView(out.view)).toEqual([]);
+      expect(onlyKeys(out, RENDER_KEYS)).toEqual([]);
+    }
+    expect(one.title).toBe("docs");
+  });
+});
+
+describe("files plugin: import", () => {
+  const tree = () => ({
+    [`${ROOT}/a.txt`]: 1,
+    [`${ROOT}/b.md`]: 2,
+    [SUB]: null,
+    [`${SUB}/c.txt`]: 3,
+    [`${SUB}/deep`]: null,
+    [`${SUB}/deep/d.txt`]: 4,
+    "/Users/me/other": null,
+    "/Users/me/other/x.txt": 9,
+  });
+  const roots2 = [{ path: ROOT, name: "docs" }, { path: "/Users/me/other", name: "other" }];
+  const imp = (d: ReturnType<typeof fakeDisk>, res: ReturnType<typeof fakeResources>, key: string, recursive = false) =>
+    run("import", { files: d.files, resources: res }, key, { recursive });
+  const files = (res: ReturnType<typeof fakeResources>) => [...res.rows.values()].filter((r) => r.kind === "disk-file");
+
+  it("registers files with name, full path, size, modified time, extension; groups by folder name", async () => {
+    const d = fakeDisk(tree(), roots2);
+    const res = fakeResources();
+    const r = await imp(d, res, ROOT);
+    expect(checkActionResult(r)).toEqual([]);
+    const a = files(res).find((x) => x.name === "a.txt")!;
+    expect(a.body).toEqual({ path: `${ROOT}/a.txt`, size: "1", modifiedAt: "2023-11-14T22:13:20.000Z", ext: "txt", folder: ROOT });
+    expect(a.externalKey).toBe(`${ROOT}/a.txt`);
+    const group = [...res.rows.values()].find((x) => x.kind === "disk-folder" && x.externalKey === ROOT)!;
+    expect(group.name).toBe("docs");
+    expect(a.parent).toBe(group.id);
+    expect(files(res).map((x) => x.name).sort()).toEqual(["a.txt", "b.md"]); // subfolders only when asked
+  });
+
+  it("with subfolders: nested groups named after their folders", async () => {
+    const d = fakeDisk(tree(), roots2);
+    const res = fakeResources();
+    await imp(d, res, ROOT, true);
+    expect(files(res).map((x) => x.name).sort()).toEqual(["a.txt", "b.md", "c.txt", "d.txt"]);
+    const byKey = (k: string) => [...res.rows.values()].find((x) => x.kind === "disk-folder" && x.externalKey === k)!;
+    expect(byKey(`${SUB}/deep`).parent).toBe(byKey(SUB).id);
+    expect(byKey(SUB).parent).toBe(byKey(ROOT).id);
+    expect(files(res).find((x) => x.name === "d.txt")!.parent).toBe(byKey(`${SUB}/deep`).id);
+  });
+
+  it("importing again only updates; a changed file is updated, the rest unchanged", async () => {
+    const d = fakeDisk(tree(), roots2);
+    const res = fakeResources();
+    await imp(d, res, ROOT);
+    const n = res.rows.size;
+    d.fs.get(`${ROOT}/a.txt`)!.size = 50;
+    const r = await imp(d, res, ROOT);
+    expect(res.rows.size).toBe(n);
+    expect(r.output.text).toContain("0 new, 1 updated");
+    expect(files(res).find((x) => x.name === "a.txt")!.body.size).toBe("50");
+  });
+
+  it("a file that is gone becomes missing (not deleted); it comes back when it reappears", async () => {
+    const d = fakeDisk(tree(), roots2);
+    const res = fakeResources();
+    await imp(d, res, ROOT);
+    d.fs.delete(`${ROOT}/b.md`);
+    const r = await imp(d, res, ROOT);
+    expect(r.output.text).toContain("1 missing");
+    const b = files(res).find((x) => x.name === "b.md")!;
+    expect(b.missing).toBe(true);
+    expect(files(res).find((x) => x.name === "a.txt")!.missing).toBe(false);
+    d.fs.set(`${ROOT}/b.md`, { dir: false, size: 2 });
+    const back = await imp(d, res, ROOT);
+    expect(back.output.text).toContain("1 restored");
+    expect(b.missing).toBe(false);
+  });
+
+  it("importing one folder never marks the files of another folder, nor deeper ones when subfolders are off", async () => {
+    const d = fakeDisk(tree(), roots2);
+    const res = fakeResources();
+    await imp(d, res, ROOT, true);
+    await imp(d, res, "/Users/me/other");
+    expect(files(res).every((x) => !x.missing)).toBe(true);
+    await imp(d, res, ROOT, false); // not recursive now: c.txt and d.txt stay as they are
+    expect(files(res).every((x) => !x.missing)).toBe(true);
+    d.fs.delete(`${SUB}/c.txt`);
+    await imp(d, res, ROOT, true);
+    expect(files(res).filter((x) => x.missing).map((x) => x.name)).toEqual(["c.txt"]);
+  });
+
+  it("from a file it imports its folder; a folder outside is refused", async () => {
+    const d = fakeDisk(tree(), roots2);
+    const res = fakeResources();
+    await imp(d, res, `${ROOT}/a.txt`);
+    expect(files(res).map((x) => x.name).sort()).toEqual(["a.txt", "b.md"]);
+    await expect(imp(d, res, "/Users/me")).rejects.toThrow(EN["error.outside"]);
+  });
+
+  it("the record never holds file content", () => {
+    const item = diskFileItem({ name: "a.txt", path: `${ROOT}/a.txt`, size: 1, modifiedAt: 0 }, "g1");
+    expect(Object.keys(item.body).sort()).toEqual(["ext", "folder", "modifiedAt", "path", "size"]);
+  });
+
+  it("importFolder is usable on its own (the exported helper)", async () => {
+    const d = fakeDisk(tree(), roots2);
+    const res = fakeResources();
+    const r = await importFolder({ host: { files: d.files, resources: res }, t: tt, locale: "en-US" }, ROOT, false);
+    expect(r).toMatchObject({ created: 2, files: 2, missing: 0 });
+  });
+});
+
+describe("files plugin: package", () => {
+  const manifest = JSON.parse(readFileSync(new URL("./manifest.json", import.meta.url), "utf8"));
+  it("registers every action and page the manifest declares", () => {
+    const r = registry(plugin);
+    expect(Object.keys(r.actions).sort()).toEqual(manifest.contributes.actions.map((a: any) => a.id).sort());
+    expect(Object.keys(r.pages).sort()).toEqual(manifest.contributes.pages.map((p: any) => p.id).sort());
+    expect(Object.keys(r.trees).sort()).toEqual(manifest.contributes.trees.map((x: any) => x.id).sort());
+  });
+  it("every key the code uses exists in en, zh and ja", () => {
+    const src = readFileSync(new URL("./main.js", import.meta.url), "utf8");
+    const keys = [...src.matchAll(/(?:tr2?\(ctx, |ctx\.t\(|fail\(ctx, |done\(ctx, )"([a-zA-Z.]+)"/g)].map((m) => m[1]!);
+    for (const c of ["ask", "overwrite", "skip", "keepBoth"]) keys.push(`conflict.${c}`);
+    for (const k of keys) for (const L of [EN, ZH, JA]) expect(L[k], k).toBeTypeOf("string");
+    const mkeys = [...JSON.stringify(manifest).matchAll(/"((?:plugin|kind|action|tab|tree|confirm)\.[A-Za-z.]+)"/g)].map((m) => m[1]!);
+    for (const k of mkeys.filter((k) => k !== "plugin.grantFolder")) for (const L of [EN, ZH, JA]) expect(L[k], k).toBeTypeOf("string");
   });
 });
