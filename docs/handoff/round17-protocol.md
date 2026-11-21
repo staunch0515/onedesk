@@ -1,6 +1,6 @@
 # 第十七轮：协议与宿主接口新增的确切名字（内核会话）
 
-其它会话照这里写。**第二版**（协调会话要求后的补充）：文件接口名字**不变**（只有一套，见 3.1）；新增 `writeText` 的 `executable`/`conflict`（3.1b）、确认效果的 `choices`/`choiceArg`/`irreversible`（D428，3.6）、页面动作的 `command`（D429，3.7）、密钥的 Basic/base64 代入（3.4）、`searchPaths` 的 `~/` 与位置检查、程序最长 2 小时（3.5）。协议（`crates/protocol`）只增不改；生成的 TS 已更新（`LineTone.ts`、`TextAppearance.ts`、`PluginReplaceFolderParams.ts`，以及 `ViewNode`、`RunOutput`、`Run`、`CommandEffect` 的新可选字段）。决定编号留给主会话（提议见 `round17-kernel-done.md`）。
+其它会话照这里写。**第二版**（协调会话要求后的补充）：文件接口名字**不变**（只有一套，见 3.1）；新增 `writeText` 的 `executable`/`conflict`（3.1b）、确认效果的 `choices`/`choiceArg`/`irreversible`（D428，3.6）、页面动作的 `command`（D429，3.7）、密钥的 Basic/base64 代入（3.4）、`searchPaths` 的 `~/` 与位置检查、程序最长 2 小时（3.5）、提供树节点的 `menu`/`draggable`/`accepts`（D430，3.8）。协议（`crates/protocol`）只增不改；生成的 TS 已更新（`LineTone.ts`、`TextAppearance.ts`、`PluginReplaceFolderParams.ts`，以及 `ViewNode`、`RunOutput`、`Run`、`CommandEffect` 的新可选字段）。决定编号留给主会话（提议见 `round17-kernel-done.md`）。
 
 ## 1. X10 文字按行标色与“终端样式”
 
@@ -162,6 +162,22 @@ type ConfirmChoice = { id: string, label?: Label, danger?: boolean };
   - `run`/`save-run` 两个都没写 → 照旧 `missingAction`。
 - 协议 `ActionDecl` 多一个可选字段 **`command?: string`**，是**全名** `<插件id>:<命令>`（`page.resolve` 的 `actions` 里）。有它时没有 `action`。
 - 外壳点击时调 `command.execute { id: command, context: { target: <页面>, tabId, args: <页面上各输入框的当前值> } }`，按返回的效果处理（含 3.6 的确认与重新调用）。`save-run` 先保存再执行命令。
+
+## 3.8 提供树节点的菜单、拖动、可放入（D430，第二版）
+
+插件提供的树（`source: "provided"`）的 `children` 返回的节点，除已有的 `key/label/icon/expandable/target/badge` 外，可以带：
+
+```js
+{ key, label, icon, expandable?, target?, badge?,
+  menu?: string[],       // 命令 id：本插件的（短名或 "<插件id>:<命令>"），或内核的 node.open / node.rename / node.delete / node.favorite / node.unfavorite / node.newGroup
+  draggable?: boolean,   // 不给 = false
+  accepts?: string[] }   // 原样转给外壳（最多 32 项，每项 1–128 字符）
+```
+
+- `tree.children` 的 `TreeNode.menu` 里是对应的 `MenuCommand`（本插件命令用它清单里的文字和图标，`id` 为全名）；重复的只留一个，最多 32 项。别的插件的命令、没声明的命令、不认识的 `node.*` **丢掉**，并写一条插件警告（工作进程的标准错误 `onedesk: plugin <id>@<版本>: …`，同一条只写一次；没有界面）。
+- 不给 `menu`：与之前相同（有 `target` 就只有 `node.open`）。给了 `menu`（包括空数组）就完全照它，不再自动加 `node.open`。
+- 拖放、“移动到/复制到”、就地改名由外壳按命令 id 结尾的 `:move`、`:copy`、`:rename` 接通（D430，约定见 `plugins/README.md`）；内核不解释，执行时照常走 `command.execute`。
+- 资源类型提供的子节点（`kinds.children`，D375）也接受这三个键，但**忽略**（那里的节点不由插件拖放）。
 
 ## 3.5 程序的查找与时长（第二版）
 

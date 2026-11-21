@@ -179,6 +179,8 @@ pub(crate) struct Inner {
     pub(crate) state_queries: AtomicU64,
     /// Round 11: the languages last published (`languages` is sent when they change).
     pub(crate) languages_seen: Mutex<Option<Vec<onedesk_protocol::LanguageInfo>>>,
+    /// Round 17 (D430): plugin warnings already written (each once).
+    pub(crate) warned: Mutex<std::collections::HashSet<String>>,
 }
 
 pub(crate) fn parse<T: DeserializeOwned>(v: Value) -> KResult<T> {
@@ -266,6 +268,7 @@ impl Kernel {
             state_snapshot: Mutex::new(None),
             state_queries: AtomicU64::new(0),
             languages_seen: Mutex::new(None),
+            warned: Mutex::new(Default::default()),
         });
         // Round 13 (D400): a new workspace copies the settings it was created with, once.
         let init = inner.read(|c| Ok(crate::workspace_settings::take_init_settings(&inner.ws.dir, c))).ok().flatten();
@@ -1058,9 +1061,27 @@ impl Inner {
                 let leaf = !n.expandable;
                 let target = n.target.or_else(|| (has_page && leaf).then(|| node_target(tree, &n.key)));
                 let mut menu = Vec::new();
-                if target.is_some() {
-                    menu.push(kernel_cmd("node.open", "external-link"));
+                match &n.menu {
+                    // Round 17 (D430): the plugin's own menu, checked; without one, "open" as before.
+                    Some(ids) => {
+                        for id in ids.iter().take(crate::kind_children::MAX_NODE_MENU) {
+                            match self.provided_menu_cmd(plugin, id) {
+                                Some(c) if !menu.iter().any(|m: &MenuCommand| m.id == c.id) => menu.push(c),
+                                Some(_) => {}
+                                None => self.plugin_warning(plugin, &format!("tree {tree}: menu command {id:?} is not one of its commands; dropped")),
+                            }
+                        }
+                    }
+                    None if target.is_some() => menu.push(kernel_cmd("node.open", "external-link")),
+                    None => {}
                 }
+                let accepts: Vec<String> = n
+                    .accepts
+                    .unwrap_or_default()
+                    .into_iter()
+                    .filter(|a| !a.is_empty() && a.len() <= 128)
+                    .take(crate::kind_children::MAX_NODE_ACCEPTS)
+                    .collect();
                 TreeNode {
                     tree: tree.into(),
                     parent_key: parent.map(String::from),
@@ -1073,14 +1094,44 @@ impl Inner {
                     badge: n.badge,
                     target,
                     menu,
-                    draggable: false,
-                    accepts: vec![],
+                    draggable: n.draggable.unwrap_or(false),
+                    accepts,
                     drop_any: None,
                     key: n.key,
                 }
             })
             .collect();
         Ok(TreePage { nodes, next: page.next })
+    }
+
+    /// Round 17 (D430): a provided node's menu entry: one of the plugin's own commands (short or
+    /// full id), or one of the kernel's `node.*`. `None`: not allowed.
+    fn provided_menu_cmd(&self, plugin: &Plugin, id: &str) -> Option<MenuCommand> {
+        if crate::kind_children::NODE_COMMANDS.contains(&id) {
+            let icon = match id {
+                "node.open" => "external-link",
+                "node.rename" => "pencil",
+                "node.delete" => "trash-2",
+                "node.favorite" => "star",
+                "node.unfavorite" => "star-off",
+                _ => "folder-plus",
+            };
+            return Some(kernel_cmd(id, icon));
+        }
+        let short = match Registry::split(id) {
+            Some((p, n)) if p == plugin.id => n,
+            Some(_) => return None,
+            None => id,
+        };
+        plugin.command(short).map(|_| self.plugin_menu_cmd(plugin, short))
+    }
+
+    /// Round 17 (D430): a warning about what a plugin returned (once per plugin and text).
+    pub(crate) fn plugin_warning(&self, plugin: &Plugin, text: &str) {
+        let key = format!("{}\n{text}", plugin.id);
+        if self.warned.lock().unwrap().insert(key) {
+            eprintln!("onedesk: plugin {}@{}: {text}", plugin.id, plugin.version);
+        }
     }
 
     async fn tree_path(&self, p: TreeNodeParams, client: Option<String>) -> KResult<Vec<String>> {
