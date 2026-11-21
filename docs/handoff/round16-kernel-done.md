@@ -113,7 +113,7 @@ D421（`actions.call` 只能在运行里）：内核不用改。
 
 决定：#19 插件的 `readOnly: false` 不能解除内核定的只读（借用页、停用等）；#20 只给树的所属插件（别的插件的动作在别人的节点页上不拿键）；#22 的 `params` 随运行输出存进运行记录（运行本来就存 `params`），抹密钥同输出。
 
-测试：`ONEDESK_SECRET_STORE=memory cargo test --workspace --no-fail-fast` **588 通过、0 失败**（`round16.rs` 15 条）；`pnpm clippy`、`pnpm typecheck`、`pnpm lint` 通过。提交：E2E_COMMIT。
+测试：`ONEDESK_SECRET_STORE=memory cargo test --workspace --no-fail-fast` **588 通过、0 失败**（`round16.rs` 15 条）；`pnpm clippy`、`pnpm typecheck`、`pnpm lint` 通过。提交：`f2a16e5`。
 
 ## 没运行过的
 
