@@ -94,12 +94,28 @@ export function authParts(body) {
     return { header: user && !user.includes(":") ? ["Authorization", `Basic {{secret:${ref}|basic:${user}}}`] : null, query: null, mode, badUser: user === "" ? "noUsername" : user.includes(":") ? "badUsername" : "" };
   }
   if (mode === "header") return { header: name ? [name, value] : null, query: null, mode, badName: !HEADER_NAME.test(name) };
-  return { header: null, query: name ? [name, value] : null, mode, badName: !name };
+  // in a query the host percent-encodes the value (`|url`)
+  return { header: null, query: name ? [name, `{{secret:${ref}|url}}`] : null, mode, badName: !name };
+}
+
+// The caller (another plugin) must not name secrets: only the connection's own authentication may.
+export function hasSecretRef(text) {
+  return String(text === undefined || text === null ? "" : text).includes("{{secret:");
+}
+
+export function assertNoSecretRefs(ctx, i) {
+  const texts = [i.path, i.method];
+  for (const part of [i.query, i.headers]) {
+    if (part && typeof part === "object") for (const k of Object.keys(part)) texts.push(k, part[k]);
+  }
+  if (i.body !== undefined && i.body !== null) texts.push(typeof i.body === "string" ? i.body : JSON.stringify(i.body));
+  if (texts.some(hasSecretRef)) throw fail(ctx, "error.secretRef");
 }
 
 // Builds the request for the network host interface. Throws (with the user's language) on a bad input.
 export function buildRequest(ctx, body, input, values) {
   const i = input || {};
+  assertNoSecretRefs(ctx, i);
   const method = String(i.method || "GET").toUpperCase();
   if (!METHODS.includes(method)) throw fail(ctx, "error.method");
   const base = fillParams(body.url, values || {}).trim();
