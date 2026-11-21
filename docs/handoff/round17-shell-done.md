@@ -50,4 +50,4 @@ devhost（`ONEDESK_SECRET_STORE=memory`，临时数据目录，`target` 用共�
 - 文件冲突与永久删除实际由哪个动作发 `confirm` 要看 `org.onedesk.files` 与内核 X18。
 - 外壳新键的中日译文由测试会话补。
 
-最后提交：`2e262ba`（之后只有写入此行的文档提交）
+最后提交：`ab15b7c`（之后只有写入此行的文档提交）
