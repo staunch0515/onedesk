@@ -24,3 +24,13 @@
 | 18 | 测试缺口 | catalog/table 无真内核测试；`upsertByKey`+`grants` 审计；自有目录的符号链接/`..`/大小写；`workspace.opened` 未确认版本、`network.request` 被拒、60 秒时限、不自触发；被调方 `params` 带密钥；同步的符号链接循环、>5000 文件、报告超限 | — | 内核（内核部分）、测试会话（e2e） |
 
 核对后没有问题的：自有目录 `..` 出不去、指向别的插件目录被拒；`upsertByKey` 只能写自己的类型、整批一个事务；`workspace.opened` 只发给已启用且版本已确认的插件；内核与主进程没有插件专有词；失效从搜索消失、运行记录与标签收藏保留；200 次修剪不删保留结果，删除保留结果清文件；外壳新 CSS 只用 token、文字都走 `t()`。
+
+## e2e 发现（r16-tests，2026-11-21；补丁参考 `round16-probe-patches.diff`）
+
+| # | 问题 | 处理人 |
+|---|---|---|
+| 19 | `page.resolve` 忽略插件 `render` 返回的 `values`/`readOnly`：目录条目页 SQL 框空且可编辑 | 内核 |
+| 20 | `node:` 目标的动作 ctx 里没有 `node`（`runs.rs` 约 403 行），表动作报 “is not in the mapping” | 内核 |
+| 21 | catalog/table 清单里没有动作的 `kinds` 含 `org.onedesk.datasource:source`，`foreign_kinds` 不放行，取不到数据源（A6/A7/H5） | 插件 |
+| 22 | 运行输出的 Link 带不了初始参数（A10 的参数值丢失）：按 D423 内核加字段、外壳打开时用作初始状态、sql 插件 `create` 返回带 `params` 的 Link | 内核、外壳、测试会话 |
+| 23 | H1–H4 的 `notInRun`：e2e 是在 D421 修正（`5c3dbca`）之前跑的，合并后重跑确认 | 测试会话 |

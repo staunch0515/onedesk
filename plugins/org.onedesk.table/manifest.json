@@ -83,6 +83,17 @@
         "output": "text",
         "saveFirst": false,
         "confirm": null
+      },
+      {
+        "id": "tablesHere",
+        "label": "action.tablesHere",
+        "icon": "table",
+        "kinds": [
+          "org.onedesk.datasource:source"
+        ],
+        "output": "text",
+        "saveFirst": false,
+        "confirm": null
       }
     ],
     "pages": [

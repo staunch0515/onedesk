@@ -53,5 +53,6 @@
   "overview.none": "まだ読み込んでいません。「データベースから更新」を実行してください。",
   "tree.notLoaded": "未読み込み — 開いて更新",
   "warn.sourceFailed": "データベースを読めなかったため、欠落の表示はありません：{error}",
-  "error.snapshotTooLarge": "マッピングが大きすぎて保存できません"
+  "error.snapshotTooLarge": "マッピングが大きすぎて保存できません",
+  "action.tablesHere": "このデータベースのテーブルを読む"
 }

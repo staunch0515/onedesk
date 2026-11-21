@@ -101,6 +101,20 @@ D421（`actions.call` 只能在运行里）：内核不用改。
 
 测试：`ONEDESK_SECRET_STORE=memory cargo test --workspace --no-fail-fast` **585 通过、0 失败**（含合并进来的外壳、插件改动；`round16.rs` 12 条）；`pnpm clippy` 通过；`pnpm lint` 通过。提交：`5f203bb`。
 
+## e2e 发现的修正（`round16-review.md` “e2e 发现”，2026-11-21）
+
+先快进合入协调分支 `2e37488`。参考补丁 `round16-probe-patches.diff` 只改插件，内核按下面自己改。
+
+| # | 怎么做的 | 测试（`round16.rs`） |
+|---|---|---|
+| 19 | `pages.rs` 资源页：`render` 返回的 `values` 合进 `PageDescriptor.values`（覆盖存储的值，跳过密钥字段）；`readOnly: true` → 只读 | `e2e19_render_values_and_read_only_are_used` |
+| 20 | `runs.rs` `run_start`：`node:` 目标、树属于运行的插件时 `ctx.node = { tree, key }` | `e2e20_actions_on_a_node_page_get_the_node` |
+| 22（D423） | `crates/protocol`：`RunOutput::Link.params: Option<BTreeMap<String,String>>`（只增），`pnpm gen:types` 只改了 `RunOutput.ts`；`check_output` 按页面事件参数的上限（64 键、4 KB）检查 | `e2e22_link_output_carries_params` |
+
+决定：#19 插件的 `readOnly: false` 不能解除内核定的只读（借用页、停用等）；#20 只给树的所属插件（别的插件的动作在别人的节点页上不拿键）；#22 的 `params` 随运行输出存进运行记录（运行本来就存 `params`），抹密钥同输出。
+
+测试：`ONEDESK_SECRET_STORE=memory cargo test --workspace --no-fail-fast` **588 通过、0 失败**（`round16.rs` 15 条）；`pnpm clippy`、`pnpm typecheck`、`pnpm lint` 通过。提交：`f2a16e5`。
+
 ## 没运行过的
 
 - e2e（Playwright）、`pnpm test`（vitest）、完整 `pnpm check`：本轮内核改动不涉及界面，归测试会话与协调会话。

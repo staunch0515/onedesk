@@ -76,5 +76,9 @@
   "badge.missing": "失效",
   "reason.mappingNotAbsolute": "映射文件设置必须是完整路径",
   "message.truncated": "已在 {max} 个文件或 {depth} 层文件夹处停止：本次没有标记失效。",
-  "index.more": "……还有 {count} 个（重新索引后在结果里可看到全部）。"
+  "index.more": "……还有 {count} 个（重新索引后在结果里可看到全部）。",
+  "action.queriesHere": "使用这个数据源的目录查询",
+  "col.id": "id",
+  "col.name": "名称",
+  "message.queriesHere": "有 {count} 条目录查询使用 {source}"
 }

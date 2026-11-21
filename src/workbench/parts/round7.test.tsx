@@ -147,3 +147,15 @@ describe("output of a dependent plugin's action (D351)", () => {
     expect(screen.queryByRole("tab", { name: "Run" })).toBeNull();
   });
 });
+
+describe("a link in a run's output (D423)", () => {
+  it("opens its target in a new tab with the link's params as that page's starting state (memory only)", async () => {
+    const r = { id: "r1", seq: 1, action: "run", actionLabel: "Run", actor: "user", status: "success", cancellable: false, startedAt: 1, endedAt: 2, inTaskPanel: true, kept: false, params: {}, input: {}, title: "n", icon: "file", source: "manual", output: { type: "link", label: "Open the table", target: "resource:t1", params: { year: "2024" } }, summary: { durationMs: 3 } } as unknown as Run;
+    const base = kernelLikeClient(createMockClient({ fresh: true, quiet: true }), {});
+    const client = { ...base, run: { ...base.run, get: vi.fn(async () => r) } };
+    const { store } = renderInShell(client, <ResultArea tab={{ ...tab, runId: "r1" }} descriptor={{ ...descriptor, resultTabs: [], runId: undefined } as PageDescriptor} />);
+    store.set({ panelOpen: true });
+    fireEvent.click(await screen.findByRole("button", { name: "Open the table" }));
+    await waitFor(() => expect(store.get().tabs.find((x) => x.target === "resource:t1")?.params).toEqual({ year: "2024" }));
+  });
+});

@@ -626,3 +626,95 @@ async fn review4_callee_error_params_are_scrubbed() {
     assert_eq!((e["params"]["reason"].as_str(), e["params"]["user"].as_str()), (Some("auth"), Some("u:***")), "{e}");
     assert!(!r.to_string().contains("hunter2"), "{r}");
 }
+
+/* ------------------------------------------------------------------ e2e findings (#19, #20, #22) */
+
+const PAGES: &str = r#"
+export default { activate(host) {
+  host.pages.handle("p", { async render(ctx) {
+    return { view: [{ type: "form", id: "f", layout: "stack", fields: [
+        { name: "text", label: "t", kind: "code", bind: "body.text" },
+        { name: "token", label: "k", kind: "secret", bind: "body.token" }] }],
+      values: { "body.text": "from the file", "body.token": "leaked", "body.extra": "shown" }, readOnly: true };
+  } });
+  host.pages.handle("np", { async render() { return { view: [] }; } });
+  host.trees.handle("tr", { async children() { return { nodes: [{ key: "/k/one", label: "one", icon: "box", expandable: false }] }; } });
+  host.actions.handle("where", async (ctx) => ({ output: { type: "text", text: JSON.stringify({ node: ctx.node || null }) } }));
+  host.actions.handle("link", async (ctx, input) => ({ output: { type: "link", label: "open", target: "new:t.pg:doc", params: input.params } }));
+} };
+"#;
+
+async fn pg_world() -> (Env, Client) {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("plugins");
+    pkg(&root, "t.pg", json!({
+        "contributes": {
+            "kinds": [{ "id": "doc", "label": "D", "icon": "file", "tree": "resources", "newName": "d", "page": "p",
+                        "fields": { "token": { "type": "secret" } } }],
+            "pages": [{ "id": "p" }, { "id": "np", "actions": [] }],
+            "trees": [{ "id": "tr", "label": "T", "icon": "box", "source": "provided", "page": "np" }],
+            "actions": [{ "id": "where", "label": "w", "output": "text" }, { "id": "link", "label": "l", "output": "link" }]
+        }
+    }), PAGES);
+    let env = open_exact(tmp, &root, config_for(&root));
+    let c = Client::in_proc(env.kernel.clone());
+    c.hello().await;
+    (env, c)
+}
+
+async fn run_on(c: &Client, action: &str, target: &str, input: Value) -> Value {
+    let id = c.ok("run.start", json!({ "action": action, "target": target, "tabId": "t", "input": input })).await;
+    for _ in 0..500 {
+        let r = c.ok("run.get", json!({ "id": id })).await;
+        if r["status"] != "running" {
+            return r;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    panic!("run did not end");
+}
+
+/// e2e #19: a resource page shows the values `render` gives and honours `readOnly: true`;
+/// never a value for a secret field.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn e2e19_render_values_and_read_only_are_used() {
+    let (_env, c) = pg_world().await;
+    let saved = c.ok("page.save", json!({ "target": "new:t.pg:doc", "changes": { "name": "a", "body.text": "stored" } })).await;
+    let id = saved["page"]["resourceId"].as_str().unwrap().to_string();
+    let page = c.ok("page.resolve", json!({ "target": format!("resource:{id}") })).await;
+    assert_eq!((page["values"]["body.text"].as_str(), page["values"]["body.extra"].as_str()), (Some("from the file"), Some("shown")), "{page}");
+    assert_eq!(page["values"]["body.token"], json!(false), "a secret field only says whether it is saved: {page}");
+    assert_eq!(page["readOnly"], true, "{page}");
+}
+
+/// e2e #20: an action on a provided tree's node page gets `ctx.node`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn e2e20_actions_on_a_node_page_get_the_node() {
+    let (_env, c) = pg_world().await;
+    let r = run_on(&c, "t.pg:where", "node:t.pg:tr/%2Fk%2Fone", json!({})).await;
+    assert_eq!(r["status"], "success", "{r}");
+    let out: Value = serde_json::from_str(r["output"]["text"].as_str().unwrap()).unwrap();
+    assert_eq!(out["node"], json!({ "tree": "t.pg:tr", "key": "/k/one" }), "{out}");
+    // Elsewhere there is no node.
+    let r = run_on(&c, "t.pg:where", "core:none", json!({})).await;
+    let out: Value = serde_json::from_str(r["output"]["text"].as_str().unwrap()).unwrap();
+    assert_eq!(out["node"], Value::Null);
+}
+
+/// e2e #22 (D423): a link output carries the initial params of the tab it opens; limits checked.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn e2e22_link_output_carries_params() {
+    let (_env, c) = pg_world().await;
+    let r = run_on(&c, "t.pg:link", "core:none", json!({ "params": { "day": "2026-11-21", "n": "3" } })).await;
+    assert_eq!(r["status"], "success", "{r}");
+    assert_eq!(r["output"], json!({ "type": "link", "label": "open", "target": "new:t.pg:doc", "params": { "day": "2026-11-21", "n": "3" } }));
+    // Without params: as before.
+    let r = run_on(&c, "t.pg:link", "core:none", json!({})).await;
+    assert_eq!(r["output"], json!({ "type": "link", "label": "open", "target": "new:t.pg:doc" }));
+    // Not text, too many keys, too long: a bad output.
+    let many: serde_json::Map<String, Value> = (0..65).map(|i| (format!("k{i}"), json!("v"))).collect();
+    for bad in [json!({ "n": 3 }), Value::Object(many), json!({ "long": "x".repeat(4097) })] {
+        let r = run_on(&c, "t.pg:link", "core:none", json!({ "params": bad })).await;
+        assert_eq!((r["status"].as_str(), r["error"]["code"].as_str()), (Some("error"), Some("badOutput")), "{r}");
+    }
+}
