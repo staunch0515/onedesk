@@ -122,3 +122,17 @@ G1/G2/G4/G5/G7 本阶段没有新改动，只复核了既有测试仍通过；�
 - #13：译文已补。
 - #14：`plugins/README.md` 的被调方错误说明改为“`e.message`/`e.detail` 是被调方第一行文字（已抹密钥）”。
 - #18 e2e：catalog、table 真内核流程已覆盖（见上）；符号链接循环通过，>5000 文件被缺陷 ⑥ 挡住；内核部分的 #18 不在我这里。
+
+---
+
+# D423 与最后一轮对齐（合并 coord-6 `2e37488` 之后）
+
+- `org.onedesk.sql:create` 现在在 `link` 输出里带 `params`（只收文字值，空值略去；`plugins/_testing/view-check.ts` 的 link 键表加了 `params`）；vitest 对齐；e2e A10 检查运行结果里带 `"min":"20"`。
+- 中日译文：合并后 `lang-check` 与 `kernel-texts` 都已通过（`pnpm test` 78 文件 762 条）。
+- `round16.spec.ts` 25 条：19 通过、6 `test.fixme`（A2 页面数据、A6/A7、H3、H4 取行、H5、A1 >5000 文件）。H 组按 D421 写：先 `org.onedesk.table:refresh`（目标 `page:org.onedesk.table/overview`）再看树和表页。
+- H3 缺陷改写：现在刷新后**有的表（`item_ver`）也被标为缺失**（之前是一个都不标）；疑似存在表查询的结果被读成空。H3 的 fixme 同时断言“缺失的 `no_such_table` 标缺失、现有的不标”。
+- 等内核（#19 #20 #22）和插件（#21）修好合并的通知后，把对应 fixme 改回 test 重跑。
+
+## 关于 Playwright chromium 的下载（如实记录）
+
+本机没有 Playwright 浏览器。我第一次发现缺它时，自己用 AskUserQuestion 直接问了用户“可以运行 `pnpm exec playwright install chromium`（约 100–200 MB，来自 Playwright CDN）吗”，用户选了“Yes, download”，之后才下载（实际 100.1 MiB，装在 `~/Library/Caches/ms-playwright`）。PostgreSQL 的安装同样是我先问了用户（得到“Yes, install”）才执行 `brew install postgresql@17`；后来协调会话转达的“用 brew 装”是第二次说明，并非我执行安装的依据。协调会话在第二阶段的消息里写的“这次下载还没批”是在我已得到批准之后，所以不是它批的。
