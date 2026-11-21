@@ -1,0 +1,56 @@
+# 第十七轮内核会话：完成情况
+
+分支 `claude/r17-kernel-6cb08c`。提交：`de2e73b`（协议与 `process.run` 按行）、`9e9a207`（其余实现与测试），以及写这份文件的提交（最后提交号见本文件所在提交，`git log -1 -- docs/handoff/round17-kernel-done.md`）。
+
+协议新增的确切名字全部在 [`round17-protocol.md`](round17-protocol.md)（也复制到了协调会话的共享笔记文件夹 `round17-protocol.md`）。
+
+## 1. 先核对的结果
+
+- `round17-plan.md` 说 `files.*` 已有 copy、move、remove、open——**代码里没有**。已有的只有 `roots/list/stat/readText/writeText`（加上内部用的 `part_file`、`open_source`）。这一轮全部补上。
+- 授权文件夹的增（`plugin.grantFolder`）、查（`plugin.grants`、`files.roots`）、移除（`plugin.revokeFolder`）已有；缺“改”和移除的审计（之前只记一行隐藏状态资源的 `resource.update`）。
+- `process.run` 已有：超时、取消立即结束进程组（SIGTERM，2 秒后 SIGKILL）、`onOutput` 按块交出。缺：按行、标明 stdout/stderr 的结果、行数上限、超时后保留已有输出、部分输出推给外壳。
+- 搜索已有：3 个字符以上走 trigram 索引、更短的走子串、多词同时满足。缺：短词的“模糊匹配”（之前只是子串），两处（`search.query` 与插件的 `resources.search`）各写一份。
+
+## 2. 做了什么
+
+| 项 | 内容 | 测试 |
+|---|---|---|
+| X10 | `LineTone`、`TextAppearance`；文字节点与 `RunOutput::Text` 的 `lineTones`/`appearance`；`RunOutput::Table` 的 `appearance`/`toneColumn`/`lineColumn`（数据文件输出也能带） | `round17.rs` `x10_…`；`datafile` 单元测试 `round17_a_file_output_keeps_…` |
+| X17 | `process.run` 的 `lines`、`maxLines`（默认/上限 100000）；结果 `lines: [{stream, text}]`、`stopped`；`lines` 时超时不抛错而返回已有行；`onOutput` 在 `lines` 时按整行；审计摘要带 `stopped`。`ctx.host.runs.partial(output)` → `Run.partial` | `x17_output_comes_back_as_lines…`、`x17_line_limit_and_timeout…`、`x17_cancelling…`、`x17_partial_output…` |
+| X18 | `files.mkdir/copy/move/trash/remove/open/reveal/find/addRoot/replaceRoot/removeRoot`；同名 `fail/overwrite/skip/keepBoth`；`plugin.replaceFolder`；`pick-folder.replace`；授权增、改、移除各一行审计；`KernelConfig.trash_dir`、`KernelConfig.opener`；工作进程读 `ONEDESK_TRASH_DIR`、`ONEDESK_OPEN_LOG` | `x18_mkdir_copy_move…`、`x18_trash_remove_open_reveal_and_find`、`x18_granted_folders…`、`x18_pick_folder_effects…`；`files` 单元测试 `round17_keep_both_names…` |
+| X6 | `round2::search_words`：短词（1–2 字符）在名字里按顺序匹配（`ab` 找到 `a-x-b`），或在其它文字里作子串；两处共用 | `x6_long_words_use_the_index…` |
+
+所有测试只用临时目录：废纸篓是临时目录，打开/显示写进临时日志文件；`tests/common` 的 `test_config` 默认把废纸篓设成一个不存在的临时路径、打开设成什么都不做，**绝不碰真的 `~/.Trash`，也不弹 Finder**。
+
+## 3. 自行决定的（设计没写到的，请主会话确认并编号）
+
+1. **按行标色放在哪**：文字用 `lineTones` 数组（按 `\n` 切行，`null` = 默认），表格用 `toneColumn`（一列的值就是语气名），而不是每行一个数组——这样分页的表、数据文件输出也成立。多出的项、写错的列名内核不报错，外壳按默认处理。
+2. `LineTone` 比计划多一个 `warning`；`Tone`（旧的三值）没动，免得外壳的 `Record<Tone,…>` 要改。
+3. **`lines: true` 时超时不抛错**，返回 `stopped: "timeout"` 和已有的行（服务器命令要看到超时前的输出）；不带 `lines` 的旧行为不变。
+4. **部分输出由插件推**（`runs.partial`），内核不自动把程序输出变成部分输出：输出的样子（表或文字、列名）是插件的事。只在内存、不写库、不审计；按声明的输出类型检查；不接受数据文件。
+5. **两个路径的操作可以跨“自己的目录”和授权文件夹**（例如备份先下载到 `plugin-data/<id>/`，再复制到用户的文件夹）；每个路径各自先按原规则检查。
+6. **符号链接**：新操作的最后一段不跟随（删除链接只删链接；复制链接复制成链接；覆盖一个指向外面的链接只替换链接本身）。
+7. **废纸篓**：直接移进 `~/.Trash`（同名按“保留两份”起名），不用系统的 `NSFileManager trashItem`（那需要新依赖 objc），所以 Finder 里没有“放回原处”。不同卷上的文件 → `invalid/trashUnavailable`，插件可改用永久删除（二次确认）。
+8. **打开、在 Finder 中显示**由工作进程直接调 `/usr/bin/open [-R] <绝对路径>`（清空环境），不经外壳、主进程——不需要外壳和主进程配合。
+9. **移除授权的审计**由用户身份记（`plugin.revokeFolder`，`actor` = user），即使是插件调 `files.removeRoot` 发起的（那也总是用户在插件界面上点的）。
+10. `files.find` 跳过 `.` 开头的文件夹，最多看 100000 个条目（`capped: true`）。
+11. 授权文件夹本身不能 `move/trash/remove`（`invalid/isRoot`）；要“移除”它用 `removeRoot`。
+
+## 4. 验证
+
+本机、本工作树（`target/` 只在这里一份）：
+
+- `cargo test --workspace`：全部通过（含新的 `tests/round17.rs` 10 个、单元测试 2 个）。
+- `pnpm clippy`：通过（警告即失败）。
+- `pnpm lint`：通过。
+- `pnpm typecheck`：通过。
+- `pnpm test`（vitest）：78 个文件、767 个测试通过。
+- `sh scripts/gen-types.sh --check`：最新。
+- **没运行**：`pnpm e2e`（Playwright）、完整的 `pnpm check`（其中的 e2e 部分没跑）、真机 `pnpm start` 手动试 `files.open/reveal`（只用日志记录器测过；`Opener::system()` 没有自动测试）。真的 `~/.Trash` 一次都没用过。
+
+## 5. 范围外（发现但没改）
+
+- `round17-plan.md` §3 说 `files.*` 已有 copy、move、remove、open，实际没有（见 §1）；插件会话若按计划以为已有，请改照 `round17-protocol.md`。
+- 外壳要做的：`pick-folder` 带 `replace` 时调 `plugin.replaceFolder`；运行中读 `Run.partial` 并在 `run:<id>` 时重取；`lineTones`/`appearance`/`toneColumn`/`lineColumn` 的显示；新原因码 `intoItself`、`isRoot`、`trashUnavailable`、`notFound/grant` 的文字。
+- 测试会话：e2e 启动工作进程时请设 `ONEDESK_TRASH_DIR`（临时目录，且与测试文件同卷）和 `ONEDESK_OPEN_LOG`，否则 `files.trash` 会进真的废纸篓、`files.open` 会真的打开（内核源码里指向 `~/.Trash` 的只有 `default_trash_dir()` 一处）。
+- `decisions.md` 需要主会话为 §3 的决定编号（我没有改它）。

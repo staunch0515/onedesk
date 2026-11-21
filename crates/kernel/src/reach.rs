@@ -196,22 +196,10 @@ impl Inner {
         let mut join = "";
         if let Some(text) = text {
             // The kernel's full-text search (name, description, tags, body): long words through the
-            // index, short ones (two-character Chinese words) by substring — as `search.query`.
+            // index, short ones fuzzily (round 17, `search_words`) — as `search.query`.
             join = "JOIN search s ON s.rowid = r.rowid";
-            let mut long = Vec::new();
-            for t in text.split_whitespace().map(str::to_lowercase) {
-                if t.chars().count() >= 3 {
-                    long.push(format!("\"{}\"", t.replace('"', "\"\"")));
-                } else {
-                    let like = format!("%{}%", t.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_"));
-                    let i = push(&mut args, like);
-                    wheres.push(format!("(lower(s.name) LIKE ?{i} ESCAPE '\\' OR lower(s.text) LIKE ?{i} ESCAPE '\\')"));
-                }
-            }
-            if !long.is_empty() {
-                let i = push(&mut args, long.join(" AND "));
-                wheres.push(format!("search MATCH ?{i}"));
-            }
+            let words: Vec<String> = text.split_whitespace().map(str::to_lowercase).collect();
+            crate::round2::search_words(&words, &mut args, &mut wheres);
         }
         let from = format!("FROM resources r {join} WHERE {}", wheres.join(" AND "));
         let total: u32 = self.read(|c| {

@@ -48,6 +48,8 @@ pub const FLUSH_EVERY: Duration = Duration::from_millis(100);
 /// After the program exited, how long to wait for output still in the pipes (held open by
 /// something it left running) before that is killed.
 pub const EXIT_GRACE: Duration = Duration::from_millis(500);
+/// Round 17 (X17): the most lines `lines: true` keeps (and the largest `maxLines`).
+pub const MAX_LINES: usize = 100_000;
 /// The plugin's own folder inside the workspace (§7.5).
 pub const PLUGIN_DATA: &str = "plugin-data";
 
@@ -400,21 +402,76 @@ struct Out {
     secrets: Vec<String>,
     /// Longest secret − 1 (0 without secrets): how much text is held back.
     hold: usize,
+    /// Round 17 (X17): `lines: true` — whole lines in arrival order, at most `max_lines`.
+    lines: Option<Lines>,
+}
+
+/// Round 17 (X17): output split into lines as it comes.
+struct Lines {
+    max: usize,
+    out: Vec<Value>,
+    pending: [Vec<u8>; 2],
+    /// Bytes of each stream taken into lines (cut at `MAX_OUTPUT`).
+    bytes: [usize; 2],
+    /// `max` lines were reached: the program is ended.
+    full: bool,
 }
 
 const STREAMS: [&str; 2] = ["stdout", "stderr"];
 
 impl Out {
-    fn new(stream: Option<Arc<Stream>>, secrets: Vec<String>) -> Out {
+    fn new(stream: Option<Arc<Stream>>, secrets: Vec<String>, max_lines: Option<usize>) -> Out {
         // `scrub` ignores values shorter than 3.
         let hold = secrets.iter().filter(|v| v.len() >= 3).map(|v| v.len() - 1).max().unwrap_or(0);
-        Out { buf: [vec![], vec![]], received: [0, 0], pending: [vec![], vec![]], carry: [String::new(), String::new()], streamed: [0, 0], stream, secrets, hold }
+        let lines = max_lines.map(|max| Lines { max, out: vec![], pending: [vec![], vec![]], bytes: [0, 0], full: false });
+        Out { buf: [vec![], vec![]], received: [0, 0], pending: [vec![], vec![]], carry: [String::new(), String::new()], streamed: [0, 0], stream, secrets, hold, lines }
+    }
+
+    /// Round 17 (X17): one whole line (without its newline) of stream `s`.
+    fn line(&mut self, s: usize, raw: &[u8]) {
+        let Some(l) = self.lines.as_mut() else { return };
+        if l.full || l.bytes[s] >= MAX_OUTPUT {
+            return;
+        }
+        let raw = raw.strip_suffix(b"\r").unwrap_or(raw);
+        let raw = &raw[..raw.len().min(MAX_OUTPUT - l.bytes[s])];
+        l.bytes[s] += raw.len() + 1;
+        let mut v = Value::String(String::from_utf8_lossy(raw).into_owned());
+        crate::secrets::scrub(&mut v, &self.secrets);
+        let item = json!({ "stream": STREAMS[s], "text": v });
+        l.out.push(item.clone());
+        if l.out.len() >= l.max {
+            l.full = true;
+        }
+        if let Some(st) = &self.stream {
+            st.push(item);
+        }
+    }
+
+    /// Round 17 (X17): `maxLines` was reached.
+    fn full(&self) -> bool {
+        self.lines.as_ref().is_some_and(|l| l.full)
     }
 
     fn push(&mut self, s: usize, bytes: &[u8]) {
         self.received[s] += bytes.len();
         let room = (MAX_OUTPUT + self.hold).saturating_sub(self.buf[s].len());
         self.buf[s].extend_from_slice(&bytes[..bytes.len().min(room)]);
+        if self.lines.is_some() {
+            let mut rest = std::mem::take(&mut self.lines.as_mut().expect("checked").pending[s]);
+            rest.extend_from_slice(bytes);
+            let mut start = 0;
+            while let Some(i) = rest[start..].iter().position(|b| *b == b'\n') {
+                let line = rest[start..start + i].to_vec();
+                self.line(s, &line);
+                start += i + 1;
+            }
+            rest.drain(..start);
+            if let Some(l) = self.lines.as_mut() {
+                l.pending[s] = rest;
+            }
+            return;
+        }
         if self.stream.is_some() {
             self.pending[s].extend_from_slice(bytes);
             if let Some(i) = self.pending[s].iter().rposition(|b| *b == b'\n') {
@@ -425,7 +482,19 @@ impl Out {
     }
 
     /// Partial lines that waited a tick (cut at a whole UTF-8 character); `all` at the end.
+    /// With `lines`, only at the end: the last line without a newline.
     fn flush(&mut self, all: bool) {
+        if self.lines.is_some() {
+            if all {
+                for s in 0..2 {
+                    let rest = std::mem::take(&mut self.lines.as_mut().expect("checked").pending[s]);
+                    if !rest.is_empty() {
+                        self.line(s, &rest);
+                    }
+                }
+            }
+            return;
+        }
         for s in 0..2 {
             if !self.pending[s].is_empty() {
                 let upto = match std::str::from_utf8(&self.pending[s]) {
@@ -487,6 +556,8 @@ struct Spec {
     cwd: Option<String>,
     stdin: Option<String>,
     timeout: Duration,
+    /// Round 17 (X17): `lines: true` → the line limit (`maxLines`, default `MAX_LINES`).
+    lines: Option<usize>,
 }
 
 fn parse_spec(o: &Value, default_timeout: u64, max_timeout: u64) -> KResult<Spec> {
@@ -531,7 +602,22 @@ fn parse_spec(o: &Value, default_timeout: u64, max_timeout: u64) -> KResult<Spec
         None | Some(Value::Null) => default_timeout,
         Some(v) => v.as_f64().ok_or_else(|| invalid_params("timeoutMs"))?.clamp(1.0, max_timeout as f64) as u64,
     };
-    Ok(Spec { program, args, env, cwd, stdin, timeout: Duration::from_millis(timeout) })
+    let lines = match o.get("lines") {
+        None | Some(Value::Null) | Some(Value::Bool(false)) => None,
+        Some(Value::Bool(true)) => Some(MAX_LINES),
+        Some(_) => return Err(invalid_params("lines must be true or false")),
+    };
+    let lines = match o.get("maxLines") {
+        None | Some(Value::Null) => lines,
+        Some(v) => {
+            let n = v.as_f64().filter(|n| n.fract() == 0.0 && *n >= 1.0).ok_or_else(|| invalid_params("maxLines must be a positive integer"))?;
+            if lines.is_none() {
+                return Err(invalid_params("maxLines needs lines: true"));
+            }
+            Some((n as usize).min(MAX_LINES))
+        }
+    };
+    Ok(Spec { program, args, env, cwd, stdin, timeout: Duration::from_millis(timeout), lines })
 }
 
 impl Inner {
@@ -645,6 +731,9 @@ impl Inner {
                             summary["signal"] = s.clone();
                         } else {
                             summary["code"] = v.get("code").cloned().unwrap_or(Value::Null);
+                        }
+                        if let Some(s) = v.get("stopped").filter(|s| !s.is_null()) {
+                            summary["stopped"] = s.clone();
                         }
                         let failed = v.get("code").is_none_or(|c| c != &json!(0));
                         let cmd = Command::CountedAudit { run: info.run_id.clone(), op: "process.run".into(), object: program, summary, failed, error: None };
@@ -827,7 +916,10 @@ impl Inner {
             }));
         }
         drop(tx);
-        let mut out = Out::new(stream.clone(), scrub_values);
+        let mut out = Out::new(stream.clone(), scrub_values, spec.lines);
+        // Round 17 (X17): with `lines`, a timeout or the line limit ends the program and the call
+        // returns what came so far.
+        let mut ended_by: Option<&'static str> = None;
         let deadline = tokio::time::sleep(spec.timeout);
         tokio::pin!(deadline);
         let mut tick = tokio::time::interval(FLUSH_EVERY);
@@ -849,8 +941,18 @@ impl Inner {
             if status.is_some() && open == 0 {
                 break;
             }
+            if out.full() {
+                ended_by = Some("maxLines");
+                break;
+            }
             tokio::select! {
-                _ = &mut deadline => return Err(invalid("timeout")),
+                _ = &mut deadline => {
+                    if out.lines.is_none() {
+                        return Err(invalid("timeout"));
+                    }
+                    ended_by = Some("timeout");
+                    break;
+                }
                 _ = &mut stopped => return Err(denied("cancelled")),
                 m = rx.recv(), if open > 0 => match m {
                     // `transfer.capture`: standard output goes to the file, never into memory.
@@ -867,20 +969,30 @@ impl Inner {
                 _ = tick.tick() => out.flush(false),
             }
         }
-        out.flush(true);
+        if ended_by.is_none() {
+            out.flush(true);
+        }
         drop(readers);
-        group.finished = true;
+        // Stopped early: dropping the group ends it at once (SIGTERM, SIGKILL after the grace).
+        group.finished = ended_by.is_none();
         drop(group);
-        let status = status.unwrap_or_else(|| unreachable!());
         use std::os::unix::process::ExitStatusExt;
-        let (code, signal) = match (status.code(), status.signal()) {
-            (Some(c), _) => (json!(c), Value::Null),
-            (None, Some(s)) => (Value::Null, json!(signal_name(s))),
-            (None, None) => (Value::Null, Value::Null),
+        let (code, signal) = match (ended_by, status) {
+            (Some(_), _) | (None, None) => (Value::Null, Value::Null),
+            (None, Some(st)) => match (st.code(), st.signal()) {
+                (Some(c), _) => (json!(c), Value::Null),
+                (None, Some(s)) => (Value::Null, json!(signal_name(s))),
+                (None, None) => (Value::Null, Value::Null),
+            },
         };
         let (stdout, t1) = out.take(0);
         let (stderr, t2) = out.take(1);
-        Ok(json!({ "code": code, "signal": signal, "stdout": stdout, "stderr": stderr, "truncated": t1 || t2 }))
+        let mut res = json!({ "code": code, "signal": signal, "stdout": stdout, "stderr": stderr, "truncated": t1 || t2 || ended_by == Some("maxLines") });
+        if let Some(l) = out.lines.take() {
+            res["lines"] = Value::Array(l.out);
+            res["stopped"] = json!(ended_by);
+        }
+        Ok(res)
     }
 
     /// `cwd`: inside `plugin-data/<id>/` (relative paths are taken from there) or inside a folder

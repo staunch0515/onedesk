@@ -90,7 +90,14 @@ fn main() -> ExitCode {
         Err(e) => return fail(format!("runtime: {e}")),
     };
     rt.block_on(async move {
-        let cfg = KernelConfig { builtin: args.builtin.clone(), plugin_idle: plugin_idle(), ..KernelConfig::default() };
+        let mut cfg = KernelConfig { builtin: args.builtin.clone(), plugin_idle: plugin_idle(), ..KernelConfig::default() };
+        // Round 17 (X18): tests and acceptance never touch the real Trash or open Finder.
+        if let Some(d) = std::env::var_os("ONEDESK_TRASH_DIR").filter(|v| !v.is_empty()) {
+            cfg.trash_dir = std::path::PathBuf::from(d);
+        }
+        if let Some(log) = std::env::var_os("ONEDESK_OPEN_LOG").filter(|v| !v.is_empty()) {
+            cfg.opener = onedesk_kernel::Opener::log_to(std::path::PathBuf::from(log));
+        }
         // Round 9: listen before opening the workspace. With thousands of plugin packages opening
         // takes seconds; the main process may connect meanwhile (the connection waits in the
         // backlog) and its `hello` is answered once the kernel is ready.
