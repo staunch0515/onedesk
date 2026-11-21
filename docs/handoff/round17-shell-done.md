@@ -13,7 +13,8 @@
 2. **右键“移动到…/复制到…”**：菜单命令以 `:move`/`:copy` 结尾时，不直接执行，弹文件夹选择框（`parts/folder-picker.tsx`，只列该树里的文件夹，自己不列出；插件的树本身只显示授权文件夹内的内容，所以选不到授权之外），选好后调命令并带 `args.destination`。
 3. **重命名**：菜单命令以 `:rename` 结尾时进入就地改名（`renaming.command`），提交后调该命令并带 `args.newName`；不再走 `tree.rename`。
 4. **D429 页面按钮运行命令**：页面动作声明里带 `command` 时（与 role 无关），点击调 `command.execute(command, { target, tabId, tree/nodeKey（页面所在节点）, args: 页面输入框当前值（含未保存的）})`，不启动运行；返回效果照常处理（含 choices 重新调用）。用生成的 `ActionDecl.command`（全名，有它时没有 `action`）；`save-run` 带 `command` 时先保存再执行命令。
-5. 判断“是 move/copy/rename 命令”的规则在 `parts/file-ops.ts`：命令 id 匹配 `:(move|copy|rename)$`。
+5. D430（已合并）：提供树节点的 `menu`（全名命令 id）、`draggable`、`accepts` 由外壳直接读生成类型；目标文件夹声明了 `accepts` 就按它判断能否放下（含 `*`），没声明则任何可展开节点都可放。
+6. 判断“是 move/copy/rename 命令”的规则在 `parts/file-ops.ts`：命令 id 匹配 `:(move|copy|rename)$`。
 
 **对真内核走的结果（重要缺口，不在外壳）**：内核给插件自供树的节点只发 `node.open` 一个菜单项，且 `draggable: false`（`crates/kernel/src/kernel.rs` 的 `provided_page`）。所以 Files 树里右键只有 Open，拖放、移动到、复制到、重命名都**到不了**，同名复制的流程在真内核上没能走。要让这些入口出现，需要内核让插件自供树的节点带上插件声明的 `menu`（命令 id 列表，如 `org.onedesk.files:move`）——文件夹节点还要 `accepts`/可放——并由 `org.onedesk.files` 的 `children` 返回它们。外壳这边已经按这个约定做好并有 vitest（`parts/round17-files-ui.test.tsx`，用替身 Tree 直接调 `canDrop`/`onDrop`/菜单/改名）。
 另：授权文件夹后，Files 树不自动刷新（要切到别的树再回来才出现新根）——内核似乎没在授权后给 `tree:files` 事件，或外壳没订阅到，待查（范围外）。

@@ -294,7 +294,8 @@ export function TreePanel({ tree }: { tree: TreeInfo }) {
       const onto = targetKey ? index.get(targetKey) : null;
       if (!from || !onto || position !== "inside" || !onto.expandable || !opCommand(from, "move")) return false;
       for (let p: TreeNode | undefined = onto; p; p = p.parentKey ? index.get(p.parentKey) : undefined) if (p.key === dragKey) return false;
-      return true;
+      // A folder that names what it accepts (D430) is believed; one that says nothing takes anything the plugin let be moved.
+      return onto.accepts.length === 0 || onto.accepts.includes("*") || onto.accepts.includes(from.kind);
     }
     if (isSyntheticKey(dragKey) || (targetKey !== null && isSyntheticKey(targetKey))) return false;
     const drag = index.get(dragKey);
