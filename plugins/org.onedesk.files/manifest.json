@@ -42,23 +42,23 @@
           {
             "id": "rename",
             "role": "run",
-            "action": "rename",
             "label": "action.rename",
-            "icon": "pencil"
+            "icon": "pencil",
+            "command": "rename"
           },
           {
             "id": "move",
             "role": "run",
-            "action": "move",
             "label": "action.move",
-            "icon": "folder-input"
+            "icon": "folder-input",
+            "command": "move"
           },
           {
             "id": "copy",
             "role": "run",
-            "action": "copy",
             "label": "action.copy",
-            "icon": "copy"
+            "icon": "copy",
+            "command": "copy"
           },
           {
             "id": "trash",
@@ -70,10 +70,10 @@
           {
             "id": "delete",
             "role": "run",
-            "action": "delete",
             "label": "action.delete",
             "icon": "trash",
-            "danger": true
+            "danger": true,
+            "command": "delete"
           },
           {
             "id": "open",
@@ -184,10 +184,10 @@
           {
             "id": "delete",
             "role": "run",
-            "action": "delete",
             "label": "action.delete",
             "icon": "trash",
-            "danger": true
+            "danger": true,
+            "command": "delete"
           }
         ],
         "resultTabs": [

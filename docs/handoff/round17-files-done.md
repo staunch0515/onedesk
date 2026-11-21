@@ -43,7 +43,7 @@
 - 授权文件夹的“改”现在是 **更换文件夹**（动作 `grantReplace` → `replaceRoot(path)`，弹外壳的选择框），不再是改显示名；“增”是 `grantAdd` → `addRoot()`。
 - 原因码：`conflict/exists`（同名）、`invalid/intoItself`、`invalid/isRoot`、`invalid/trashUnavailable`、`notFound/grant` 都转成用户的话（`explain`）。
 - 冲突与永久删除按 D428：插件命令 `move`、`copy`、`rename`、`delete`（读 `context.nodeKey` 与 `context.args`）。同名：先用 `conflict:"fail"` 调宿主，遇 `conflict/exists` 返回 `confirm` 效果（`choices` overwrite/skip/keepBoth、`choiceArg:"conflict"`），外壳带选择重跑，插件再用该值调一次。永久删除：第一次返回 `irreversible:true` 的 `confirm`，带 `confirmed` 重跑才删。页面上的“同名时”下拉已去掉。
-- **缺口（需内核/外壳）**：页面里的按钮是“动作”，动作不能返回 `confirm` 效果，所以页面按钮遇到同名只会报“已存在”（宿主用 `fail`，什么都没动），弹对话框只发生在以命令方式调用时（`disk-file` 资源的右键菜单已挂 copy/move/rename/delete，但菜单调用不带 `destination`/`newName`，所以实际能用的是 delete 和带参数的调用）。要让页面表单的值进到命令，需要一个“页面按钮运行命令并带上表单值”的角色，或让动作结果可带效果。建议主会话决定。
+- 页面按钮（D429）：复制、移动、重命名、永久删除四个按钮改成 `command`（指向同名命令，不再写 `action`），命令从 `args` 里读 `destination`、`newName`（裸名或 `params.<名>` 都认），在 `disk-file` 资源上用资源记的路径。**待核对**：内核把 `command` 与表单值的确切名字写进 `round17-protocol.md` 后，对一遍输入框的 args 名；在内核支持之前，清单里的 `command` 字段会让旧内核拒绝加载本插件。
 
 ## 限制与范围外
 
