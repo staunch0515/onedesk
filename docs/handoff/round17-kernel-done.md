@@ -112,6 +112,6 @@
   - 用途：调用 `NSFileManager trashItemAtURL:`。
   - 加的是 `objc2 = "0.6"`（锁定 0.6.5，MIT）与 `objc2-foundation = "0.3"`（锁定 0.3.2，MIT），后者关掉默认特性，只开 `std`、`NSFileManager`、`NSURL`、`NSError`、`NSString`。这样引入的子依赖只有 `objc2-encode` 4.1.0（MIT）、`bitflags` 2.13.2（MIT OR Apache-2.0）、`libc`（MIT OR Apache-2.0，原来就有）；`objc2-exception-helper`、`block2`、`objc2-core-foundation`、`objc2-proc-macros` 都是可选的，没开。**这些包原来都已在 `Cargo.lock` 里（Tauri 用它们）**，`Cargo.lock` 只多了内核包对这两个名字的引用，没有新包。
   - 替代方案：`trash` crate（同样调这个系统接口，但会多带 `log`、`once_cell` 等，也做跨平台我们用不到）；自己用 `objc_msgSend` 写 FFI（不安全代码更多）；调 `/usr/bin/osascript` 让 Finder 删（会弹出自动化授权，而且慢）；继续自己改名（就是现在的问题）。
-- **测试**：`files` 单元测试 `round17_trash_errors_say_what_happened`（不许打开的废纸篓文件夹 → `trashDenied`；不存在 → `trashUnavailable`；系统错误码的映射）；`round17.rs` 里原有的废纸篓测试仍走测试用的文件夹；工作进程单元测试改为默认 `None`。真接口只有一条 `#[ignore]` 的手动测试 `system_trash_moves_a_temporary_file_into_the_trash`（把临时目录里的一个测试文件移进真的废纸篓），**没有运行**，要手动跑：`cargo test -p onedesk-kernel --lib -- --ignored system_trash`。
+- **测试**：`files` 单元测试 `round17_trash_errors_say_what_happened`（不许打开的废纸篓文件夹 → `trashDenied`；不存在 → `trashUnavailable`；系统错误码的映射）；`round17.rs` 里原有的废纸篓测试仍走测试用的文件夹；工作进程单元测试改为默认 `None`。真接口只有一条 `#[ignore]` 的手动测试 `system_trash_moves_a_temporary_file_into_the_trash`（把临时目录里的一个测试文件移进真的废纸篓），要手动跑：`cargo test -p onedesk-kernel --lib -- --ignored system_trash`。**用户 2026-11-21 在主仓库里手动运行，通过**（1 passed）。
 - 外壳文字：只加了 `denied.trashDenied` 的英文（`en-US.ts`、`kernel-texts.ts` 各一行）。
 - 验证：`cargo test --workspace`、`pnpm clippy`、`pnpm lint`、`pnpm typecheck`、`gen-types --check` 通过；`pnpm test` 只有中日语言包那 4 个旧失败。
