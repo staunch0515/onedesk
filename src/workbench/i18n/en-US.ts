@@ -711,6 +711,7 @@ export const enUS = {
   "kernel.error.reason.badDropAnswer": "The plugin answered a drop in a form the kernel does not understand; nothing was moved.",
   "kernel.error.reason.notExported": "The plugin that owns this does not offer it to other plugins, so it cannot be used.",
   "kernel.error.reason.notExecutable": "That program file is not executable.",
+  "kernel.error.reason.unsafeLocation": "That program is in a folder other users can change, so it is not used.",
   "kernel.error.reason.badArgs": "The program arguments are not valid (too many, too long, or containing a NUL).",
   "kernel.error.reason.badEnv": "An environment variable is not valid (empty name, “=” or NUL in the name, or a name starting with DYLD_ or LD_).",
   "kernel.error.reason.tooManyProcesses": "Too many programs are already running at once (limit 4).",

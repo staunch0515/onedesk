@@ -1,5 +1,8 @@
 //! `command.execute` and folder grants (week1-protocol §4, §7).
 
+/// Round 17 (D428): most answers a `confirm` effect may offer.
+pub const MAX_CONFIRM_CHOICES: usize = 8;
+
 use onedesk_protocol::*;
 use serde_json::{json, Value};
 
@@ -141,6 +144,9 @@ impl Inner {
                         message: Label::Text("deleted.purge.confirm".into()),
                         command: "deleted.purge".into(),
                         danger: Some(true),
+                            choices: None,
+                            choice_arg: None,
+                            irreversible: Some(true),
                     }]);
                 }
                 self.purge(&id).await?;
@@ -197,9 +203,20 @@ impl Inner {
                         CommandEffect::Open { target, .. } if !crate::pages::is_target(target) => {
                             return Err(bad_effects(format!("bad open target {target}")))
                         }
-                        CommandEffect::PickFolder { .. } | CommandEffect::Confirm { .. } => {
-                            return Err(bad_effects("effect not allowed from a plugin command".into()))
+                        // Round 17 (D428): a confirmation that runs one of its own commands again.
+                        CommandEffect::Confirm { command, choices, choice_arg, .. } => {
+                            let own = Registry::split(command).is_some_and(|(p, n)| p == pid && plugin.command(n).is_some());
+                            if !own {
+                                return Err(bad_effects(format!("confirm may only run the plugin's own commands, not {command}")));
+                            }
+                            let ok_id = |s: &str| !s.is_empty() && s.len() <= 64 && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-');
+                            if choices.as_ref().is_some_and(|c| c.is_empty() || c.len() > MAX_CONFIRM_CHOICES || c.iter().any(|x| !ok_id(&x.id)))
+                                || choice_arg.as_deref().is_some_and(|a| !ok_id(a) || a == "confirmed")
+                            {
+                                return Err(bad_effects("bad confirm choices".into()));
+                            }
                         }
+                        CommandEffect::PickFolder { .. } => return Err(bad_effects("effect not allowed from a plugin command".into())),
                         _ => {}
                     }
                 }
@@ -225,7 +242,14 @@ impl Inner {
         let full = plugin.full(&a.id);
         let confirmed = c.args.as_ref().and_then(|x| x.get("confirmed")).and_then(Value::as_bool).unwrap_or(false);
         if let (Some(k), false) = (a.confirm.as_deref(), confirmed) {
-            return Ok(vec![CommandEffect::Confirm { message: plugin.label(k), command: full, danger: None }]);
+            return Ok(vec![CommandEffect::Confirm {
+                message: plugin.label(k),
+                command: full,
+                danger: None,
+                choices: None,
+                choice_arg: None,
+                irreversible: None,
+            }]);
         }
         let p = RunStartParams {
             action: full,

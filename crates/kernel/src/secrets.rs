@@ -135,17 +135,64 @@ impl SecretStoreHandle {
 
 /// `{{secret:name}}` references in a text.
 pub fn references(text: &str) -> Vec<String> {
+    reference_specs(text).into_iter().map(|r| r.name).collect()
+}
+
+/// One `{{secret:<name>}}` in a text. Round 17: `{{secret:<name>|base64}}` puts the value in
+/// base64; `{{secret:<name>|basic:<user>}}` puts `<user>:<value>` in base64 (HTTP Basic). The
+/// plugin never sees the value either way.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Reference {
+    /// The whole `{{…}}` as written.
+    pub token: String,
+    pub name: String,
+    pub encode: Encode,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Encode {
+    Plain,
+    Base64,
+    Basic(String),
+    /// A modifier the kernel does not know (refused when substituted).
+    Unknown,
+}
+
+pub fn reference_specs(text: &str) -> Vec<Reference> {
     let mut out = Vec::new();
     let mut rest = text;
     while let Some(i) = rest.find("{{secret:") {
         let after = &rest[i + 9..];
         match after.find("}}") {
             Some(j) => {
-                out.push(after[..j].trim().to_string());
+                let inner = &after[..j];
+                let (name, encode) = match inner.split_once('|') {
+                    None => (inner, Encode::Plain),
+                    Some((n, "base64")) => (n, Encode::Base64),
+                    Some((n, m)) => match m.strip_prefix("basic:") {
+                        Some(user) if !user.contains(':') => (n, Encode::Basic(user.to_string())),
+                        _ => (n, Encode::Unknown),
+                    },
+                };
+                out.push(Reference { token: format!("{{{{secret:{inner}}}}}"), name: name.trim().to_string(), encode });
                 rest = &after[j + 2..];
             }
             None => break,
         }
+    }
+    out
+}
+
+/// Standard base64 with padding (RFC 4648 §4).
+pub fn base64(bytes: &[u8]) -> String {
+    const A: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for c in bytes.chunks(3) {
+        let n = (u32::from(c[0]) << 16) | (u32::from(*c.get(1).unwrap_or(&0)) << 8) | u32::from(*c.get(2).unwrap_or(&0));
+        out.push(A[(n >> 18) as usize & 63] as char);
+        out.push(A[(n >> 12) as usize & 63] as char);
+        out.push(if c.len() > 1 { A[(n >> 6) as usize & 63] as char } else { '=' });
+        out.push(if c.len() > 2 { A[n as usize & 63] as char } else { '=' });
     }
     out
 }
@@ -255,12 +302,24 @@ impl Inner {
     /// refuses the whole call. Returns the text and the values used (to scrub responses).
     pub fn substitute(&self, p: &Plugin, text: &str, allowed: &BTreeSet<String>, used: &mut Vec<String>) -> KResult<String> {
         let mut out = text.to_string();
-        for name in references(text) {
-            if !allowed.contains(&name) {
+        for r in reference_specs(text) {
+            if !allowed.contains(&r.name) {
                 return Err(denied("secretNotAllowed"));
             }
-            let v = self.secret_value(&name)?.ok_or_else(|| denied("unknownSecret"))?;
-            out = out.replace(&format!("{{{{secret:{name}}}}}"), &v);
+            if r.encode == Encode::Unknown {
+                return Err(invalid("badSecretFormat"));
+            }
+            let v = self.secret_value(&r.name)?.ok_or_else(|| denied("unknownSecret"))?;
+            let put = match &r.encode {
+                Encode::Plain | Encode::Unknown => v.clone(),
+                Encode::Base64 => base64(v.as_bytes()),
+                Encode::Basic(user) => base64(format!("{user}:{v}").as_bytes()),
+            };
+            out = out.replace(&r.token, &put);
+            // Both are scrubbed from what comes back (the encoded form is what a server echoes).
+            if put != v {
+                used.push(put);
+            }
             used.push(v);
         }
         let _ = p;
@@ -378,6 +437,22 @@ pub fn resource_secret_names(k: &crate::manifest::KindDecl, body: &JsonMap) -> B
 #[cfg(test)]
 mod prefix_tests {
     use super::*;
+
+    #[test]
+    fn round17_basic_and_base64_references() {
+        assert_eq!(base64(b""), "");
+        assert_eq!(base64(b"f"), "Zg==");
+        assert_eq!(base64(b"fo"), "Zm8=");
+        assert_eq!(base64(b"foo"), "Zm9v");
+        assert_eq!(base64(b"Aladdin:open sesame"), "QWxhZGRpbjpvcGVuIHNlc2FtZQ==");
+        let r = reference_specs("Basic {{secret:pw|basic:Aladdin}} and {{secret:tok|base64}} {{secret:x}} {{secret:y|rot13}} {{secret:z|basic:a:b}}");
+        assert_eq!(r[0], Reference { token: "{{secret:pw|basic:Aladdin}}".into(), name: "pw".into(), encode: Encode::Basic("Aladdin".into()) });
+        assert_eq!(r[1].encode, Encode::Base64);
+        assert_eq!((r[2].name.as_str(), &r[2].encode), ("x", &Encode::Plain));
+        assert_eq!(r[3].encode, Encode::Unknown);
+        assert_eq!(r[4].encode, Encode::Unknown, "a user name cannot hold ':'");
+        assert_eq!(references("{{secret:pw|basic:u}}"), vec!["pw".to_string()]);
+    }
 
     #[test]
     fn the_memory_store_deletes_by_prefix_and_leaves_other_workspaces_alone() {

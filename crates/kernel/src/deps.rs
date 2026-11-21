@@ -238,6 +238,7 @@ impl Inner {
                     disabled: None,
                     action: Some(p.full(&a.id)),
                     confirm: a.confirm.as_deref().map(|k| p.label(k)),
+                    command: None,
                 });
             }
         }
@@ -262,6 +263,7 @@ impl Inner {
                 disabled: None,
                 action: Some(p.full(&a.id)),
                 confirm: a.confirm.as_deref().map(|k| p.label(k)),
+                command: None,
             })
             .collect()
     }

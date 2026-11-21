@@ -328,6 +328,9 @@ async fn server() -> u16 {
                     ("302 Found", format!("Location: {to}\r\n"), String::new())
                 } else if path == "/big" {
                     ("200 OK", String::new(), "x".repeat(9 * 1024 * 1024))
+                } else if let Some(want) = path.strip_prefix("/match/") {
+                    // Round 17: whether the Authorization header is exactly `want` (never echoed).
+                    ("200 OK", String::new(), format!("match={}", auth == want.replace("%20", " ")))
                 } else if path == "/slow" {
                     tokio::time::sleep(Duration::from_secs(3)).await;
                     ("200 OK", String::new(), "late".into())
@@ -408,6 +411,16 @@ async fn secrets_are_substituted_scoped_and_never_stored_in_the_database() {
     // Substituted on the way out, scrubbed on the way back.
     let r = c.probe("test.net", "network.request", req(ok.clone(), "Bearer {{secret:api-key}}")).await;
     assert_eq!(r["ok"]["body"], "hello auth=Bearer ***", "{r}");
+    // Round 17: HTTP Basic and base64 encoded by the kernel; the encoded form is scrubbed too.
+    let basic = format!("Basic {}", "YWxpY2U6UzNjcmV0VmFsdWUtOXo="); // alice:S3cretValue-9z
+    let r = c.probe("test.net", "network.request", req(format!("http://127.0.0.1:{port}/match/{}", basic.replace(' ', "%20")), "Basic {{secret:api-key|basic:alice}}")).await;
+    assert_eq!(r["ok"]["body"], "match=true", "{r}");
+    let r = c.probe("test.net", "network.request", req(ok.clone(), "Basic {{secret:api-key|basic:alice}}")).await;
+    assert_eq!(r["ok"]["body"], "hello auth=Basic ***", "{r}");
+    let r = c.probe("test.net", "network.request", req(format!("http://127.0.0.1:{port}/match/UzNjcmV0VmFsdWUtOXo="), "{{secret:api-key|base64}}")).await;
+    assert_eq!(r["ok"]["body"], "match=true", "{r}");
+    let r = c.probe("test.net", "network.request", req(ok.clone(), "{{secret:api-key|rot13}}")).await;
+    assert_eq!((r["error"].as_str(), r["params"]["reason"].as_str()), (Some("invalid"), Some("badSecretFormat")), "{r}");
     // Not on its list, another plugin's, unknown, plaintext without declaring it.
     assert_eq!(c.probe("test.net", "network.request", req(ok.clone(), "{{secret:other-key}}")).await["params"]["reason"], "secretNotAllowed");
     assert_eq!(c.probe("test.other", "network.request", req(ok.clone(), "{{secret:api-key}}")).await["params"]["reason"], "secretNotAllowed");

@@ -159,7 +159,8 @@ pub const MAX_SEARCH_PATHS: usize = 8;
 /// Whether a `searchPaths` entry is acceptable.
 pub fn valid_search_path(p: &str) -> bool {
     let parts: Vec<&str> = p.split('/').collect();
-    p.starts_with('/')
+    // Round 17: `~/…` is the current user's home folder.
+    (p.starts_with('/') || p.starts_with("~/"))
         && p.len() <= 512
         && !parts.iter().any(|c| *c == ".." || *c == ".")
         // Review #5: at most one `*` in all, inside one component (`tool@*`).
@@ -433,6 +434,9 @@ pub struct ActionDeclM {
     /// `run` / `save-run`: the action (short id in `contributes.actions`) this item runs.
     #[serde(default)]
     pub action: Option<String>,
+    /// Round 17 (D429): instead of `action`, a command (short id in `contributes.commands`).
+    #[serde(default)]
+    pub command: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -922,6 +926,19 @@ pub fn parse_package(dir: &Path, bytes: &[u8], check_folder: bool) -> Result<Plu
                 return Err(reject(dir, "duplicate", format!("page {} action {}", pg.id, item.id)));
             }
             let runs = matches!(item.role, ActionRole::Run | ActionRole::SaveRun);
+            // Round 17 (D429): `action` or `command`, never both.
+            if item.action.is_some() && item.command.is_some() {
+                return Err(reject(dir, "actionAndCommand", format!("page {} item {}", pg.id, item.id)));
+            }
+            if let Some(cmd) = &item.command {
+                if !runs {
+                    return Err(reject(dir, "actionAndCommand", format!("page {} item {}: a command needs role run or save-run", pg.id, item.id)));
+                }
+                if !c.commands.iter().any(|x| &x.id == cmd) {
+                    return Err(reject(dir, "unknownCommand", format!("page {} item {} command {cmd}", pg.id, item.id)));
+                }
+                continue;
+            }
             match (&item.action, runs) {
                 (None, true) => return Err(reject(dir, "missingAction", format!("page {} item {}", pg.id, item.id))),
                 (Some(a), _) if !c.actions.iter().any(|x| &x.id == a) => {
@@ -1803,6 +1820,14 @@ mod tests {
         assert_eq!(reason(with(good(), &["contributes", "pages", "0", "actions"], run_item)), "missingAction");
         let run_item = json!([{ "id": "go", "role": "run", "label": "a", "action": "nope" }]);
         assert_eq!(reason(with(good(), &["contributes", "pages", "0", "actions"], run_item)), "unknownAction");
+        // Round 17 (D429): a command instead of an action; one of the two, its own, on a run item.
+        let cmd_of = |v: Value| with(good(), &["contributes", "pages", "0", "actions"], v);
+        let own_cmd = good()["contributes"]["commands"][0]["id"].as_str().unwrap().to_string();
+        assert_eq!(reason(cmd_of(json!([{ "id": "go", "role": "run", "label": "a", "command": own_cmd }]))), "ok");
+        assert_eq!(reason(cmd_of(json!([{ "id": "go", "role": "run", "label": "a", "command": "nope" }]))), "unknownCommand");
+        let both = json!([{ "id": "go", "role": "run", "label": "a", "command": own_cmd, "action": "run" }]);
+        assert_eq!(reason(cmd_of(both)), "actionAndCommand");
+        assert_eq!(reason(cmd_of(json!([{ "id": "go", "role": "save", "label": "a", "command": own_cmd }]))), "actionAndCommand");
         let act = |o: Value| with(good(), &["contributes", "actions"], json!([o]));
         assert_eq!(reason(act(json!({ "id": "run", "label": "a", "output": "table", "kinds": ["nope"] }))), "unknownKind");
         assert_eq!(reason(act(json!({ "id": "run", "label": "a", "output": "chart" }))), "schema");

@@ -38,7 +38,8 @@ pub const MAX_ARGS_BYTES: usize = 256 * 1024;
 pub const MAX_STDIN: usize = 8 * 1024 * 1024;
 pub const MAX_OUTPUT: usize = 8 * 1024 * 1024;
 pub const DEFAULT_TIMEOUT_MS: u64 = 60_000;
-pub const MAX_TIMEOUT_MS: u64 = 600_000;
+/// Round 17: two hours (large dumps and restores); the default stays one minute. Cancelling still ends it at once.
+pub const MAX_TIMEOUT_MS: u64 = 7_200_000;
 /// Programs running at the same time within one run.
 pub const MAX_CONCURRENT: usize = 4;
 /// SIGTERM, then SIGKILL this much later (D333).
@@ -63,6 +64,8 @@ pub enum NotReady {
     NotFound,
     NotExecutable,
     BlockedByPolicy,
+    /// Round 17 (round 15 review #15): a `searchPaths` program in a place other users can change.
+    UnsafeLocation,
 }
 
 impl NotReady {
@@ -72,6 +75,7 @@ impl NotReady {
             NotReady::NotFound => "notFound",
             NotReady::NotExecutable => "notExecutable",
             NotReady::BlockedByPolicy => "blockedByPolicy",
+            NotReady::UnsafeLocation => "unsafeLocation",
         }
     }
 }
@@ -307,8 +311,19 @@ fn is_executable(p: &Path) -> bool {
 /// holding a `*` stands for each folder there whose name matches (`*` = any; `pg@*` = names
 /// starting `pg@`), highest name first.
 pub fn search_candidates(paths: &[String], name: &str) -> Vec<PathBuf> {
+    let home = std::env::var("HOME").unwrap_or_default();
     let mut out = Vec::new();
     for p in paths {
+        // Round 17: `~/…` in the current user's home folder (none known: skipped).
+        let expanded;
+        let p = match p.strip_prefix("~/") {
+            Some(rest) if home.starts_with('/') => {
+                expanded = format!("{}/{rest}", home.trim_end_matches('/'));
+                &expanded
+            }
+            Some(_) => continue,
+            None => p,
+        };
         let parts: Vec<&str> = p.split('/').collect();
         let Some(i) = parts.iter().position(|c| c.contains('*')) else {
             out.push(Path::new(p).join(name));
@@ -348,6 +363,29 @@ fn natural(p: &Path) -> Vec<(u64, String)> {
     }
     out.push(cur);
     out.into_iter().map(|c| (c.parse::<u64>().unwrap_or(0), c)).collect()
+}
+
+/// Round 17 (round 15 review #15): the program and every folder above it are owned by root or the
+/// current user and not writable by others (a sticky folder like `/tmp` does not count as safe
+/// either). Links are followed: what counts is where the file really is.
+pub fn safe_location(p: &Path) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    let Ok(real) = std::fs::canonicalize(p) else { return false };
+    // SAFETY: plain system call without arguments.
+    let me = unsafe { libc::getuid() };
+    real.ancestors().all(|a| {
+        std::fs::metadata(a).is_ok_and(|m| (m.uid() == 0 || m.uid() == me) && m.mode() & 0o002 == 0)
+    })
+}
+
+/// `pick` for `searchPaths` candidates: the first existing one, refused in an unsafe place.
+fn pick_searched(candidates: &[PathBuf]) -> Result<PathBuf, NotReady> {
+    let p = pick(candidates)?;
+    if safe_location(&p) {
+        Ok(p)
+    } else {
+        Err(NotReady::UnsafeLocation)
+    }
 }
 
 /// The first existing candidate, or why there is none.
@@ -643,7 +681,7 @@ impl Inner {
         } else {
             let fixed = pick(&SYSTEM_DIRS.iter().map(|d| Path::new(d).join(name)).collect::<Vec<_>>());
             match (fixed, &decl.search_paths) {
-                (Err(NotReady::NotFound), Some(more)) => pick(&search_candidates(more, name)),
+                (Err(NotReady::NotFound), Some(more)) => pick_searched(&search_candidates(more, name)),
                 (r, _) => r,
             }
         }
@@ -698,6 +736,7 @@ impl Inner {
             }
             NotReady::NotFound => err_p(ErrorCode::NotFound, &[("what", "program"), ("program", name)]),
             NotReady::NotExecutable => err_p(ErrorCode::Invalid, &[("reason", "notExecutable"), ("program", name)]),
+            NotReady::UnsafeLocation => err_p(ErrorCode::Denied, &[("reason", "unsafeLocation"), ("program", name)]),
         }
     }
 
@@ -1062,5 +1101,41 @@ mod search_tests {
         let c = search_candidates(&[pat], "tool");
         assert_eq!(c, vec![d.path().join("opt/pg@16/bin/tool"), d.path().join("opt/pg@14/bin/tool")]);
         assert_eq!(pick(&c).unwrap(), d.path().join("opt/pg@14/bin/tool"));
+    }
+
+    #[test]
+    fn round17_programs_may_run_up_to_two_hours() {
+        let s = parse_spec(&json!({ "program": "x", "timeoutMs": 7_200_000 }), DEFAULT_TIMEOUT_MS, MAX_TIMEOUT_MS).unwrap();
+        assert_eq!(s.timeout, Duration::from_secs(7200));
+        let s = parse_spec(&json!({ "program": "x", "timeoutMs": 9_000_000 }), DEFAULT_TIMEOUT_MS, MAX_TIMEOUT_MS).unwrap();
+        assert_eq!(s.timeout, Duration::from_secs(7200));
+        let s = parse_spec(&json!({ "program": "x" }), DEFAULT_TIMEOUT_MS, MAX_TIMEOUT_MS).unwrap();
+        assert_eq!(s.timeout, Duration::from_secs(60));
+    }
+
+    #[test]
+    fn round17_home_paths_expand_and_unsafe_places_are_refused() {
+        let home = std::env::var("HOME").unwrap();
+        let c = search_candidates(&["~/.tool/bin".into()], "tool");
+        assert_eq!(c, vec![Path::new(&home).join(".tool/bin/tool")]);
+        assert!(crate::manifest::valid_search_path("~/.docker/bin"));
+        assert!(!crate::manifest::valid_search_path("~user/bin"));
+        assert!(!crate::manifest::valid_search_path("~/../x"));
+        let d = tempfile::tempdir().unwrap();
+        let dir = d.path().join("bin");
+        std::fs::create_dir_all(&dir).unwrap();
+        let exe = dir.join("tool");
+        std::fs::write(&exe, "#!/bin/sh\n").unwrap();
+        std::fs::set_permissions(&exe, std::fs::Permissions::from_mode(0o755)).unwrap();
+        // The temporary folder may sit under a world-writable sticky folder; judge only the change.
+        let base_safe = safe_location(&exe);
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o777)).unwrap();
+        assert!(!safe_location(&exe));
+        assert!(matches!(pick_searched(std::slice::from_ref(&exe)), Err(NotReady::UnsafeLocation)));
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert_eq!(safe_location(&exe), base_safe);
+        std::fs::set_permissions(&exe, std::fs::Permissions::from_mode(0o757)).unwrap();
+        assert!(!safe_location(&exe));
+        assert!(safe_location(Path::new("/bin/sh")));
     }
 }

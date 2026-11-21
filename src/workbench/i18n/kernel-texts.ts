@@ -163,6 +163,7 @@ export const KERNEL_ERRORS: Table = {
   "reason.notInRun": "kernel.error.reason.notInRun",
   "reason.notExported": "kernel.error.reason.notExported",
   "reason.notExecutable": "kernel.error.reason.notExecutable",
+  "reason.unsafeLocation": "kernel.error.reason.unsafeLocation",
   "reason.badArgs": "kernel.error.reason.badArgs",
   "reason.badEnv": "kernel.error.reason.badEnv",
   "reason.tooManyProcesses": "kernel.error.reason.tooManyProcesses",

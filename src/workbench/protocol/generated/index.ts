@@ -10,6 +10,7 @@ export type * from "./CommandEffect";
 export type * from "./CommandExecuteParams";
 export type * from "./ConfigGetParams";
 export type * from "./ConfigSetParams";
+export type * from "./ConfirmChoice";
 export type * from "./ConnectionState";
 export type * from "./CreateWorkspaceParams";
 export type * from "./Crumb";
