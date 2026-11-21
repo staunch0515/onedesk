@@ -448,3 +448,181 @@ async fn a_called_plugins_error_text_reaches_the_caller_scrubbed() {
     assert_eq!((r["error"]["code"].as_str(), r["error"]["message"].as_str()), (Some("pluginError"), Some("connection refused, password *** rejected")), "{r}");
     assert!(!r.to_string().contains("hunter2"), "{r}");
 }
+
+/* ------------------------------------------------------------------ review fixes (round16-review.md) */
+
+fn audit_objects(env: &Env, op: &str) -> Vec<String> {
+    let conn = rusqlite::Connection::open(env.kernel.db_path()).unwrap();
+    let mut st = conn.prepare("SELECT object FROM audit WHERE op = ?1 ORDER BY seq").unwrap();
+    st.query_map([op], |r| r.get(0)).unwrap().map(|r| r.unwrap()).collect()
+}
+
+/// Review #3: a grant coming back through `upsertByKey` (a restore) is audited; one that was
+/// already there is not audited again.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn review3_upsert_audits_grants_it_brings_back() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("plugins");
+    pkg(&root, "t.g", json!({
+        "requires": { "network": { "fromResources": true } },
+        "contributes": {
+            "kinds": [{ "id": "site", "label": "S", "icon": "globe", "tree": "resources", "page": "p", "newName": "s",
+                        "fields": { "url": { "type": "text", "grants": "network" } } }],
+            "pages": [{ "id": "p" }],
+            "commands": [{ "id": "probe", "label": "p" }]
+        }
+    }), r#"export default { activate(host) {
+      host.commands.handle("probe", probe);
+      host.pages.handle("p", { async render() { return { view: [] }; } });
+    } };"#);
+    let env = open_exact(tmp, &root, config_for(&root));
+    let c = Client::in_proc(env.kernel.clone());
+    c.hello().await;
+    let up = |items: Value| c.probe("t.g", "resources.upsertByKey", json!(["site", items, {}]));
+    let u = up(json!([{ "key": "k1" }])).await;
+    let id = u["ok"]["ids"]["k1"].as_str().unwrap().to_string();
+    // The plugin may not set the granting field itself (D311).
+    let e = up(json!([{ "key": "k1", "body": { "url": "http://evil.example/" } }])).await;
+    assert_eq!(e["params"]["reason"], "grantField", "{e}");
+    // The user does: one grant.
+    c.ok("page.save", json!({ "target": format!("resource:{id}"), "changes": { "body.url": "http://granted.example/" } })).await;
+    assert_eq!(audit_objects(&env, "network.grant"), vec!["granted.example:80"]);
+    // Updating other fields of it: nothing new is granted.
+    up(json!([{ "key": "k1", "description": "d" }])).await;
+    assert_eq!(audit_objects(&env, "network.grant"), vec!["granted.example:80"]);
+    // Deleted, then brought back by the sync: granted again, audited again.
+    c.ok("resource.delete", json!({ "id": id })).await;
+    let u = up(json!([{ "key": "k1" }])).await;
+    assert_eq!(u["ok"]["restored"], 1, "{u}");
+    assert_eq!(audit_objects(&env, "network.grant"), vec!["granted.example:80", "granted.example:80"]);
+}
+
+/// Review #16, #18: the own folder — letter case of `bin/`, links out of it or into `bin/`,
+/// absolute paths with `..`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn review16_18_own_folder_case_links_and_dotdot() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("plugins");
+    pkg(&root, "t.own", json!({ "contributes": { "commands": [{ "id": "probe", "label": "p" }] } }),
+        r#"export default { activate(host) { host.commands.handle("probe", probe); } };"#);
+    let outside = tmp.path().join("outside");
+    std::fs::create_dir_all(&outside).unwrap();
+    std::fs::write(outside.join("secret.txt"), "s").unwrap();
+    let env = open_exact(tmp, &root, config_for(&root));
+    let c = Client::in_proc(env.kernel.clone());
+    c.hello().await;
+    let p = |m: &'static str, a: Value| c.probe("t.own", m, a);
+    // The folder exists once the plugin has run anything (`plugin_data_dir` makes it).
+    p("files.writeText", json!(["a.txt", "a"])).await;
+    let mine = std::fs::canonicalize(own(&env, "t.own")).unwrap();
+    std::fs::write(mine.join("bin/tool"), "#!").unwrap();
+    let why = |v: &Value| (v["error"].as_str().unwrap_or("ok").to_string(), v["params"]["reason"].as_str().unwrap_or("").to_string());
+    let pair = |a: &str, b: &str| (a.to_string(), b.to_string());
+    for path in ["BIN/x", "Bin/tool", "bin/tool"] {
+        assert_eq!(why(&p("files.writeText", json!([path, "x"])).await), pair("denied", "ownPrograms"), "{path}");
+    }
+    assert_eq!(why(&p("files.readText", json!(["BIN/tool"])).await), pair("denied", "ownPrograms"));
+    // A link inside it that leads out, or into `bin/`.
+    std::os::unix::fs::symlink(&outside, mine.join("out")).unwrap();
+    std::os::unix::fs::symlink(mine.join("bin"), mine.join("tools")).unwrap();
+    assert_eq!(why(&p("files.readText", json!(["out/secret.txt"])).await), pair("denied", "outsideGrant"));
+    assert_eq!(why(&p("files.list", json!(["out", {}])).await), pair("denied", "outsideGrant"));
+    assert_eq!(why(&p("files.readText", json!(["tools/tool"])).await), pair("denied", "ownPrograms"));
+    assert_eq!(why(&p("files.writeText", json!(["tools/new", "x"])).await), pair("denied", "ownPrograms"));
+    // Absolute paths with `..`: resolved first; out of it is the granted folders' business (none).
+    let up = format!("{}/../t.other/x", mine.display());
+    assert_eq!(why(&p("files.readText", json!([up])).await), pair("denied", "notRequested"));
+    let back = format!("{}/bin/../a.txt", mine.display());
+    assert_eq!(p("files.readText", json!([back])).await["ok"]["text"], "a");
+    let into_bin = format!("{}/x/../bin/tool", mine.display());
+    std::fs::create_dir_all(mine.join("x")).unwrap();
+    assert_eq!(why(&p("files.readText", json!([into_bin])).await), pair("denied", "ownPrograms"));
+    assert_eq!(std::fs::read_to_string(outside_file(&env)).unwrap(), "s", "nothing outside was touched");
+}
+
+fn outside_file(env: &Env) -> std::path::PathBuf {
+    env.path().join("outside/secret.txt")
+}
+
+/// Review #18: `workspace.opened` — not for an unconfirmed version; no network; may take longer
+/// than an ordinary event (5 s); its own writes raise no `resource.changed` for itself.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn review18_workspace_opened_rules() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("plugins");
+    pkg(&root, "t.slow", json!({
+        "activation": ["workspace.opened"],
+        "requires": { "network": { "hosts": ["example.com"] } },
+        "contributes": {
+            "kinds": [{ "id": "q", "label": "Q", "icon": "file", "tree": "resources", "newName": "q" }],
+            "events": ["resource.changed"],
+            "commands": [{ "id": "probe", "label": "p" }]
+        }
+    }), r#"export default { activate(host) {
+      host.commands.handle("probe", probe);
+      host.events.on("resource.changed", async (ctx, e) => { await ctx.host.files.writeText("changed-" + e.change, "1"); });
+      host.events.on("workspace.opened", async (ctx) => {
+        let net;
+        try { await ctx.host.network.request({ url: "https://example.com/" }); net = "ok"; }
+        catch (e) { net = e.code + "/" + (e.params && e.params.reason); }
+        await ctx.host.util.sleep(6000);
+        await ctx.host.resources.upsertByKey("q", [{ key: "k" }], {});
+        await ctx.host.files.writeText("opened.json", JSON.stringify({ net }));
+      });
+    } };"#);
+    // An unconfirmed one: not built in, asks for a program, never confirmed.
+    pkg(&root, "t.new", json!({
+        "activation": ["workspace.opened"],
+        "requires": { "programs": [{ "name": "sh", "source": "system" }] }
+    }), r#"export default { activate(host) {
+      host.events.on("workspace.opened", async (ctx) => { await ctx.host.files.writeText("ran", "1"); });
+    } };"#);
+    let mut cfg = test_config();
+    cfg.builtin = vec!["t.slow@0.1.0".into()];
+    let env = open_exact(tmp, &root, cfg);
+    let c = Client::in_proc(env.kernel.clone());
+    c.hello().await;
+    let f = own(&env, "t.slow").join("opened.json");
+    for _ in 0..600 {
+        if f.exists() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    let r: Value = serde_json::from_str(&std::fs::read_to_string(&f).expect("ran past 5 s")).unwrap();
+    assert_eq!(r["net"], "denied/notInRun", "{r}");
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert!(!own(&env, "t.slow").join("changed-created").exists(), "its own write raised no event for it");
+    assert!(!own(&env, "t.new").join("ran").exists(), "an unconfirmed version is not called");
+    let d = c.ok("plugin.get", json!({ "plugin": "t.new" })).await;
+    assert!(d.to_string().contains("confirm") || d.to_string().contains("Confirm"), "it is waiting for confirmation: {d}");
+}
+
+/// Review #4: params a called plugin fills in are scrubbed too.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn review4_callee_error_params_are_scrubbed() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("plugins");
+    pkg(&root, "t.src", json!({
+        "requires": { "secrets": { "names": ["pw"], "plaintext": true } },
+        "contributes": { "actions": [{ "id": "exec", "label": "e", "output": "text" }] },
+        "exports": { "actions": ["exec"] }
+    }), r#"export default { activate(host) {
+      host.actions.handle("exec", async (ctx) => {
+        const pw = await ctx.host.secrets.get("pw");
+        const e = new Error("bad"); e.code = "invalid"; e.params = { reason: "auth", user: "u:" + pw }; throw e;
+      });
+    } };"#);
+    pkg(&root, "t.use", json!({
+        "depends": [{ "id": "t.src", "version": ">=0.1.0" }],
+        "contributes": { "actions": [{ "id": "via", "label": "v", "output": "text" }] }
+    }), USE);
+    let env = open_exact(tmp, &root, config_for(&root));
+    let c = Client::in_proc(env.kernel.clone());
+    c.hello().await;
+    c.ok("secrets.set", json!({ "name": "pw", "value": "hunter2" })).await;
+    let r = run_to_end(&c, "t.use:via", json!({})).await;
+    let e: Value = serde_json::from_str(r["output"]["text"].as_str().unwrap()).unwrap();
+    assert_eq!((e["params"]["reason"].as_str(), e["params"]["user"].as_str()), (Some("auth"), Some("u:***")), "{e}");
+    assert!(!r.to_string().contains("hunter2"), "{r}");
+}
