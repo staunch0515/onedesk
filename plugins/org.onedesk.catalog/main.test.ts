@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 // @ts-ignore plain JS module, no types
-import plugin, { rememberSent, sentOf, asOfExpr, checks, expand, groupsOf, normalizeMapping, paramDeclLines, paramNames, parseEntry, parseMapping, parseYaml, placeholders, quoteIdent, renderSql, splitHeader, sync, treeChildren, treePath, versionedSubquery } from "./main.js";
+import plugin, { formatIndex, indexChildren, INDEX_FILE, parseIndex, TREE_PAGE, rememberSent, sentOf, asOfExpr, checks, expand, groupsOf, normalizeMapping, paramDeclLines, paramNames, parseEntry, parseMapping, parseYaml, placeholders, quoteIdent, renderSql, splitHeader, sync, treeChildren, treePath, versionedSubquery } from "./main.js";
 import { checkActionResult, checkView, hostError, onlyKeys, RENDER_KEYS, TREE_NODE_KEYS } from "../_testing/view-check";
 
 const load = (f: string) => JSON.parse(readFileSync(new URL(`./locales/${f}.json`, import.meta.url), "utf8")) as Record<string, string>;
@@ -72,6 +72,7 @@ SELECT * FROM {{customer}} LIMIT :n`;
 // `links`: folder links (link path → real path), resolved by `files.stat` like the kernel does.
 function fakeHost(files: Record<string, string>, over: Host = {}, links: Record<string, string> = {}) {
   const store = new Map<string, string>();
+  const own = new Map<string, string>();
   const resources: any[] = [];
   let next = 1;
   const real = (p: string): string => {
@@ -94,7 +95,17 @@ function fakeHost(files: Record<string, string>, over: Host = {}, links: Record<
         for (const l of Object.keys(links)) if (l.startsWith(realPrefix) && !l.slice(realPrefix.length).includes("/")) names.set(l.slice(realPrefix.length), true);
         return { entries: [...names].map(([name, isDir]) => ({ name, path: prefix + name, dir: isDir, hidden: false })) };
       }),
+      // relative paths are the plugin's own folder (round16-protocol.md §2.1)
+      writeText: vi.fn(async (p: string, text: string) => {
+        if (p.startsWith("/")) throw Object.assign(new Error("denied"), { code: "denied" });
+        own.set(p, text);
+        return { basis: "b" };
+      }),
       readText: vi.fn(async (p: string) => {
+        if (!p.startsWith("/")) {
+          if (!own.has(p)) throw Object.assign(new Error("notFound"), { code: "notFound" });
+          return { text: own.get(p), basis: "b" };
+        }
         const r = real(p);
         if (!(r in files)) throw Object.assign(new Error("notFound"), { code: "notFound" });
         return { text: files[r], basis: "b" };
@@ -147,7 +158,7 @@ function fakeHost(files: Record<string, string>, over: Host = {}, links: Record<
     ui: { copy: vi.fn(async () => undefined) },
     ...over,
   };
-  return { host, resources, store };
+  return { host, resources, store, own };
 }
 
 // Like the kernel (D421): `actions.call` only inside a run, i.e. when the ctx has a runId.
@@ -371,17 +382,12 @@ describe("catalog: sync (A1, A3, A4, A5)", () => {
     const files = { ...FILES, "/work/broken.sql": "SELECT 1", "/work/notes.txt": "x", "/work/.hidden/x.sql": TOP_SQL, "/work/dup.sql": TOP_SQL };
     const { host, resources, store } = fakeHost(files);
     const report = await sync(ctxOf(host));
-    // one batch with the content, then one naming the new entries after their header
-    expect(host.resources.upsertByKey).toHaveBeenCalledTimes(2);
+    // one batch (e2e ⑥: no second batch renaming new entries); new files carry their header's name
+    expect(host.resources.upsertByKey).toHaveBeenCalledTimes(1);
     const [kind, items, opts] = host.resources.upsertByKey.mock.calls[0];
     expect([kind, opts]).toEqual(["entry", { othersMissing: true }]);
     expect(items.map((i: any) => i.key)).toEqual(["/work/dup.sql", "/work/sales/orders.sql"]);
-    expect(items.every((i: any) => !("name" in i))).toBe(true);
-    expect(items[1]).toMatchObject({ description: "Orders since a time", body: { id: "sales.orders.recent", path: "/work/sales/orders.sql" } });
-    expect(host.resources.upsertByKey.mock.calls[1][1]).toEqual([
-      { key: "/work/dup.sql", name: "sales.top" },
-      { key: "/work/sales/orders.sql", name: "Recent orders" },
-    ]);
+    expect(items[1]).toMatchObject({ name: "Recent orders", description: "Orders since a time", body: { id: "sales.orders.recent", path: "/work/sales/orders.sql" } });
     expect(resources.map((r) => r.name)).toEqual(["sales.top", "Recent orders"]);
     expect(report).toMatchObject({ files: 4, indexed: 2, created: 2, missing: 0 });
     expect(report.skipped).toEqual([
@@ -403,8 +409,8 @@ describe("catalog: sync (A1, A3, A4, A5)", () => {
     const report = await sync(ctxOf(host));
     expect(report).toMatchObject({ created: 0, updated: 1, unchanged: 1 });
     // an entry already indexed is sent without a name
-    expect(host.resources.upsertByKey).toHaveBeenCalledTimes(3); // nothing new: no naming batch
-    expect(host.resources.upsertByKey.mock.calls[2][1].every((i: any) => !("name" in i))).toBe(true);
+    expect(host.resources.upsertByKey).toHaveBeenCalledTimes(2);
+    expect(host.resources.upsertByKey.mock.calls[1][1].every((i: any) => !("name" in i))).toBe(true); // known files: no name
     expect(r).toMatchObject({ tags: ["mine"], favorite: true, name: "Renamed by me", description: "changed", id: r.id });
   });
 
@@ -452,10 +458,56 @@ describe("catalog: sync (A1, A3, A4, A5)", () => {
     const cut = await sync(ctxOf(host));
     expect(cut.truncated).toBe(true);
     expect(cut.files).toBe(5000);
-    expect(host.resources.upsertByKey.mock.calls[2][2]).toEqual({});
+    expect(host.resources.upsertByKey.mock.calls[1][2]).toEqual({});
     expect(resources.find((r) => r.externalKey === "/work/top.sql").missing).toBe(false);
     expect(resources.find((r) => r.externalKey === "/work/sales/orders.sql").missing).toBe(false);
     expect(await registry().commands.reindex(ctxOf(host), {})).toEqual([{ type: "toast", message: expect.stringContaining("nothing was marked missing"), tone: "warning" }]);
+  });
+
+  it("keeps an index in its own folder: later syncs and the tree need no list of every entry (e2e ⑥)", async () => {
+    const files: Record<string, string> = { ...FILES };
+    const { host, resources, own } = fakeHost(files);
+    await sync(ctxOf(host));
+    expect(host.resources.list).toHaveBeenCalledTimes(1); // the first sync has no index yet
+    const ids = Object.fromEntries(resources.map((r) => [r.externalKey, r.id]));
+    expect(parseIndex(own.get(INDEX_FILE))).toEqual(
+      new Map([
+        ["/work/sales/orders.sql", { id: ids["/work/sales/orders.sql"], cid: "sales.orders.recent" }],
+        ["/work/top.sql", { id: ids["/work/top.sql"], cid: "sales.top" }],
+      ]),
+    );
+    host.resources.list.mockClear();
+    delete files["/work/top.sql"];
+    await sync(ctxOf(host));
+    expect(host.resources.list).not.toHaveBeenCalled();
+    expect(parseIndex(own.get(INDEX_FILE)).has("/work/top.sql")).toBe(true); // still listed, now missing
+
+    const reg = registry();
+    const root = await reg.trees.catalog.children(ctxOf(host), "", 0);
+    expect(root.nodes.map((n: any) => n.key)).toEqual(["g:sales"]);
+    const sales = await reg.trees.catalog.children(ctxOf(host), "g:sales", 0);
+    expect(sales.nodes.map((n: any) => [n.key, n.label, n.badge])).toEqual([
+      ["g:sales.orders", "orders", undefined],
+      [ids["/work/top.sql"], "sales.top", EN["badge.missing"]],
+    ]);
+    expect(host.resources.list).not.toHaveBeenCalled();
+    expect(await reg.trees.catalog.path(ctxOf(host), ids["/work/sales/orders.sql"])).toEqual(["g:sales", "g:sales.orders", ids["/work/sales/orders.sql"]]);
+    resources.find((r) => r.id === ids["/work/top.sql"]).deleted = true; // the user deleted it: gone from the tree
+    expect((await reg.trees.catalog.children(ctxOf(host), "g:sales", 0)).nodes.map((n: any) => n.key)).toEqual(["g:sales.orders"]);
+  });
+
+  it("a large group comes in pages, each entry read on its own", async () => {
+    const index = new Map(Array.from({ length: 450 }, (_, i) => [`/w/q${i}.sql`, { id: `r${i}`, cid: `big.q${String(i).padStart(3, "0")}` }]));
+    const host: Host = { resources: { get: vi.fn(async (id: string) => ({ id, name: `N${id}`, missing: id === "r3" })) } };
+    const first = await indexChildren(ctxOf(host), index, "g:big", 0, "gone");
+    expect(first.nodes.length).toBe(TREE_PAGE);
+    expect(first.next).toBe(TREE_PAGE);
+    expect(first.nodes[3]).toMatchObject({ key: "r3", icon: "triangle-alert", badge: "gone" });
+    const last = await indexChildren(ctxOf(host), index, "g:big", 400, "gone");
+    expect(last.nodes.length).toBe(50);
+    expect(last.next).toBeUndefined();
+    expect(host.resources.get).toHaveBeenCalledTimes(250);
+    expect(formatIndex(parseIndex("/b\tr2\tb\n/a\tr1\ta\nbroken"))).toBe("/a\tr1\ta\n/b\tr2\tb");
   });
 
   it("the stored report stays small and a failed write does not fail the sync (review #5)", async () => {
@@ -482,7 +534,7 @@ describe("catalog: sync (A1, A3, A4, A5)", () => {
     const reg = registry();
     const { host } = fakeHost(FILES);
     await reg.events["workspace.opened"](ctxOf(host));
-    expect(host.resources.upsertByKey).toHaveBeenCalledTimes(2);
+    expect(host.resources.upsertByKey).toHaveBeenCalledTimes(1);
     const effects = await reg.commands.reindex(ctxOf(host), {});
     expect(effects).toEqual([{ type: "toast", message: "2 queries indexed, 0 skipped, 0 missing", tone: "success" }]);
     const res = await reg.actions.reindex(ctxOf(host, { runId: "run-x" }));

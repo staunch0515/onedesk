@@ -54,5 +54,6 @@
   "tree.notLoaded": "尚未加载——打开后刷新",
   "warn.sourceFailed": "无法读取数据库，因此没有标记缺失：{error}",
   "error.snapshotTooLarge": "映射太大，无法保存",
-  "action.tablesHere": "读取这个库的表"
+  "action.tablesHere": "读取这个库的表",
+  "error.noRows": "数据源没有返回行（需要它支持直接返回结果）"
 }
