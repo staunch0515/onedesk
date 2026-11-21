@@ -275,7 +275,7 @@ test("E1/E2/E3: every run is recorded with its values; reuse reopens the stateme
   const info = await call<RunInfo & { params: Record<string, string> }>(page, "run.get", { id: run.id });
   expect(info.params.min).toBe("5");
   const groups = await nodes(page, "runs");
-  expect(groups.map((g) => g.label)).toEqual(["Recent runs", "Saved results"]);
+  expect(groups.map((g) => g.label)).toEqual(["Saved results", "Recent runs"]);
   const recent = await nodes(page, "runs", "@runs:recent");
   const node = recent.find((n) => n.key === run.id)!;
   expect(node, "the run is in Recent runs").toBeTruthy();
