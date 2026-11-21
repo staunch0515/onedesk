@@ -397,7 +397,7 @@ describe("datasource: backup helpers", () => {
       args: ["-T", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "staging", "docker exec postgres pg_dump -Fc --no-password -U postgres -d shop"],
       to: "backups/shop-x.dump",
       overwrite: false,
-      timeoutMs: 3600000,
+      timeoutMs: 7200000,
     });
   });
 
