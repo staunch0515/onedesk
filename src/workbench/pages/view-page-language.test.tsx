@@ -65,3 +65,26 @@ describe("required parameter fields (D414)", () => {
     await waitFor(() => expect(start).toHaveBeenCalled());
   });
 });
+
+describe("a page button that declares a command (D429)", () => {
+  it("runs the command on this page with the input values as args, and does not start a run", async () => {
+    const { fireEvent, screen, waitFor } = await import("@testing-library/react");
+    const { vi } = await import("vitest");
+    const execute = vi.fn(async () => []);
+    const start = vi.fn(async () => "run1");
+    const base = kernelLikeClient(createMockClient({ fresh: true, quiet: true }), {});
+    const client = { ...base, command: { ...base.command, execute }, run: { ...base.run, start } };
+    const page = {
+      ...descriptor,
+      view: [{ type: "form", id: "f", layout: "stack", fields: [{ name: "newName", label: "New name", kind: "text", bind: "newName" }] }],
+      values: { newName: "a.txt" },
+      actions: [{ id: "rename", label: "Rename it", role: "command", command: "org.example:rename" }],
+    } as unknown as PageDescriptor;
+    const { store } = renderInShell(client, <ViewPage tab={tab} descriptor={page} />);
+    store.set({ tabs: [tab], activeTabId: "t1" });
+    fireEvent.change(screen.getByLabelText("New name"), { target: { value: "b.txt" } });
+    fireEvent.click(screen.getByRole("button", { name: /Rename it/ }));
+    await waitFor(() => expect(execute).toHaveBeenCalledWith("org.example:rename", expect.objectContaining({ target: "resource:r1", args: expect.objectContaining({ newName: "b.txt" }) })));
+    expect(start).not.toHaveBeenCalled();
+  });
+});

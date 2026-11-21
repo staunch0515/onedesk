@@ -15,6 +15,7 @@ export function CommandDialogs() {
     store.set({ confirmCommand: null });
     void actions.command(pending.command, { ...pending.context, args: { ...pending.context.args, confirmed: true, ...more } });
   };
+  const choiceText = (id: string) => (id === "overwrite" || id === "skip" || id === "keepBoth" ? t(`confirm.choice.${id}`) : id);
   const grant = () => {
     const plugin = folderPrompt?.plugin;
     const replace = folderPrompt?.replace;
@@ -59,13 +60,21 @@ export function CommandDialogs() {
         onOpenChange={(open) => !open && store.set({ confirmCommand: null })}
         size="sm"
         title={confirm ? (confirmTexts(confirm.message)?.title ?? t("confirm.title")) : t("confirm.title")}
-        description={confirm ? tx(confirm.message) : undefined}
+        description={confirm ? [tx(confirm.message), confirm.irreversible ? t("confirm.irreversible") : ""].filter(Boolean).join(" ") : undefined}
         footer={
           <>
             <Button onClick={() => store.set({ confirmCommand: null })}>{t("common.cancel")}</Button>
-            <Button variant={confirm?.danger ? "danger" : "primary"} onClick={() => confirm && answer(confirm, {})}>
-              {confirm ? (confirmTexts(confirm.message)?.ok ?? t("confirm.ok")) : t("confirm.ok")}
-            </Button>
+            {confirm?.choices ? (
+              confirm.choices.map((choice) => (
+                <Button key={choice.id} variant={confirm.irreversible && choice.id === "overwrite" ? "danger" : "secondary"} onClick={() => answer(confirm, { [confirm.choiceArg ?? "conflict"]: choice.id })}>
+                  {choice.label ? tx(choice.label) : choiceText(choice.id)}
+                </Button>
+              ))
+            ) : (
+              <Button variant={confirm?.danger || confirm?.irreversible ? "danger" : "primary"} onClick={() => confirm && answer(confirm, {})}>
+                {confirm ? (confirmTexts(confirm.message)?.ok ?? t("confirm.ok")) : t("confirm.ok")}
+              </Button>
+            )}
           </>
         }
       />

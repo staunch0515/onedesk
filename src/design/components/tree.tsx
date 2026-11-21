@@ -44,7 +44,8 @@ export interface TreeProps {
   onContextMenu?: (key: string | null, point: { x: number; y: number }) => void;
   /** Whether `dragKey` may be dropped at this place. `targetKey` null = the empty area (root). */
   canDrop?: (dragKey: string, targetKey: string | null, position: TreeDropPosition) => boolean;
-  onDrop?: (dragKey: string, targetKey: string | null, position: TreeDropPosition) => void;
+  /** `alt`: ⌥ was held when the pointer was released (a plugin may read it as "copy instead of move"). */
+  onDrop?: (dragKey: string, targetKey: string | null, position: TreeDropPosition, modifiers: { alt: boolean }) => void;
   /** Text of the uniform "cannot drop here" hint. */
   dropDeniedLabel?: string;
   /** Substring to highlight in labels (tree filter). */
@@ -202,7 +203,7 @@ export function Tree({
         if (cancelled || !ev) return;
         const at = locate(ev);
         if (at.inside && at.target !== row.key && latest.current.canDrop?.(row.key, at.target, at.position)) {
-          latest.current.onDrop?.(row.key, at.target, at.position);
+          latest.current.onDrop?.(row.key, at.target, at.position, { alt: ev.altKey });
         }
       },
     });

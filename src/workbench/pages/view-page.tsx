@@ -272,6 +272,12 @@ export function ViewPage({ tab, descriptor: initial }: { tab: TabState; descript
     const context = { envId: now.tab.envId, draft: typedAll({ ...now.descriptor.values, ...now.draft }), params: pageParams(now.tab.params) };
     try {
       setBusy(action.id);
+      // D429: a page button that declares a `command` runs that command on this page, with the values of the inputs as `args`.
+      const command = (action as ActionDecl & { command?: string }).command;
+      if (command) {
+        await actions.command(command, { target: tab.target, tabId: tab.id, ...(tab.node ? { tree: tab.node.tree, nodeKey: tab.node.key } : {}), args: context.draft });
+        return;
+      }
       if (action.role === "save" || action.role === "save-run") {
         if (!(await actions.save(tab.id))) return;
         if (action.role === "save") toast({ tone: "success", title: t("page.saved") });

@@ -63,12 +63,18 @@ export type InstallState = { stage: "path" } | { stage: "preview"; folder: strin
 /** Exporting and importing a workspace: asking for a folder (browser mode), then what an import would do. */
 export type TransferState = { stage: "export-path" } | { stage: "import-path" } | { stage: "import-preview"; folder: string; preview: ImportPreview };
 
-/** A command that asked to be confirmed before it runs again with `confirmed: true`. */
+/**
+ * A command that asked to be confirmed before it runs again with `confirmed: true` (D428). With `choices` the user picks one
+ * answer instead (overwrite / skip / keep both); its id goes back as `args[choiceArg]`. `irreversible` adds a "cannot be undone" line.
+ */
 export interface ConfirmState {
   message: Label;
   command: string;
   danger: boolean;
   context: CommandContext;
+  choices?: Array<{ id: string; label?: Label }>;
+  choiceArg?: string;
+  irreversible?: boolean;
 }
 
 export interface UiState extends LayoutState {
@@ -84,7 +90,8 @@ export interface UiState extends LayoutState {
   /** Unsaved fields whose saved value changed elsewhere, and the ones the user chose to keep (D374). Per tab. */
   merge: Record<string, MergeState>;
   selected: Record<string, string | null>;
-  renaming: { tree: string; key: string } | null;
+  /** `command`: a plugin command to run with `args.newName` instead of `tree.rename` (provided trees). */
+  renaming: { tree: string; key: string; command?: string } | null;
   /** Tabs waiting for the "unsaved changes" answer. */
   confirmClose: string[] | null;
   /** Browser mode only: asks for a folder path, since there is no system dialog (pick-folder effect). */
