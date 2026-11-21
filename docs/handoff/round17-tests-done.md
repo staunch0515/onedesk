@@ -91,3 +91,12 @@ fake.reset()        // 清规则和记录
 - 中日译文：补全了外壳新键（含 `terminal.label`、`kernel.error.reason.unsafeOpen`、`kernel.error.denied.trashDenied`），`lang-check` 通过。
 - 新截图：`docs/screenshots/round17-terminal.png`、`round17-folder-picker.png`、`round17-delete-permanently.png`。基准截图已还原（`git checkout -- docs/screenshots` 后只留这三张）。
 - 假程序只在清单声明了 `ssh`/`scp`/`docker` 的插件里生效；e2e 从不碰真的 `~/.Trash`、真服务器、真容器。
+
+---
+
+# 缺陷修复后的复核（合并了集成分支的修复）
+
+`round17.spec.ts` 跑两次都是 **44 通过、0 失败、0 fixme**；`round16.spec.ts` 两次都是 25 通过。缺陷 A、B 的两条 `test.fixme` 改回 `test` 并通过（A 的现象是 B 造成的，B 修了就好）；缺陷 C 已由运维会话修。
+- I4 按 D435：命令非零退出 → 运行状态 error，输出保留，历史里有这次运行。
+- 新增：文件树右键菜单有“移到废纸篓”和“永久删除”，移到废纸篓不弹确认，文件进了测试用的废纸篓目录。
+- 说明 D（stdout/stderr 到达顺序）仍是说明，不是缺陷。

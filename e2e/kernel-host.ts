@@ -59,7 +59,7 @@ export const ui = {
   node: (page: Page, label: string) => page.locator("[data-tree-key]", { hasText: label }).first(),
   nodeKey: (page: Page, key: string) => page.locator(`[data-tree-key="${key}"]`),
   activity: (page: Page, name: string) => page.getByRole("navigation", { name: "Views" }).getByRole("button", { name, exact: true }),
-  menuItem: (page: Page, name: string) => page.getByRole("menuitem", { name }),
+  menuItem: (page: Page, name: string | RegExp) => page.getByRole("menuitem", { name }),
   editor: (page: Page) => page.getByRole("textbox", { name: "Content", exact: true }),
 };
 

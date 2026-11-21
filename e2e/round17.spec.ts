@@ -143,7 +143,7 @@ test("I3: a host name that could be read as an ssh option is refused before ssh 
   expect(fake.calls("ssh")).toHaveLength(0);
 });
 
-test("I4: ssh failing by itself (255) is a failed run that carries ssh's own words; a non-zero exit of the command is not a failure", async ({ page }) => {
+test("I4: ssh failing by itself (255) is a failed run that carries ssh's own words; a non-zero exit of the command is a failed run too (D435) but keeps its output and is in the history", async ({ page }) => {
   await openKernel(page, host);
   fake.reset();
   fake.rule("ssh", { match: "down-host", steps: [{ err: "ssh: connect to host down-host port 22: Connection refused" }], code: 255 });
@@ -154,8 +154,11 @@ test("I4: ssh failing by itself (255) is a failed run that carries ssh's own wor
   expect(JSON.stringify(r1.error)).toContain("Connection refused");
   const ok = await create(page, CMD, { name: "Exit 3", "body.host": "web-1", "body.command": "echo before\nexit 3" });
   const r2 = await runRes(page, ok, "run");
-  expect(r2.status, JSON.stringify(r2.error)).toBe("success");
+  expect(r2.status, "non-zero exit = failed (D435)").toBe("error");
+  expect(JSON.stringify(r2.error)).toMatch(/3/);
+  expect((await rowsOf(page, r2)).map((r) => r[1]), "the output is kept").toContain("before");
   expect(r2.summary?.message ?? "").toMatch(/3/);
+  expect(JSON.stringify(await call(page, "run.listFor", { id: ok })), "the run is in the history").toContain(r2.id);
 });
 
 test("I5: the output is a stream/line table that can be exported, kept and found in the history", async ({ page }) => {
@@ -814,9 +817,8 @@ test("I5/X17: while a command runs, the lines received so far are the run's part
   expect(done.partial ?? null).toBeNull();
 });
 
-// DEFECT (org.onedesk.command `runLines`): a line that arrives less than PARTIAL_EVERY_MS after the last push is not pushed and nothing pushes it
-// later (no trailing flush), so with `echo a; echo b; sleep 5` the later lines stay invisible until the next output (5 s).
-test.fixme("I5/X17: lines that arrive in a burst are all shown in the partial output without waiting for the next line", async ({ page }) => {
+// Was a defect (no trailing flush after the partial-output throttle); fixed in the command plugin.
+test("I5/X17: lines that arrive in a burst are all shown in the partial output without waiting for the next line", async ({ page }) => {
   await openKernel(page, host);
   fake.reset();
   fake.rule("ssh", { mode: "exec" });
@@ -857,10 +859,8 @@ test("I6 (page): the server command's output is a dark terminal and stderr has i
   await shot(page, "terminal");
 });
 
-// DEFECT (shell, result-area.tsx `OutputTab`): the kernel does send `Run.partial` (the protocol test above passes), but the page of a
-// running command shows only "Running on web-1…" and no lines. Most likely the run the page holds comes from the task list, which
-// carries no `partial`, and `run:<id>` does not make it call `run.get`. Fix there, then un-fixme.
-test.fixme("I5/I6 (page): while the command runs the lines received so far are already on the page", async ({ page }) => {
+// Was a defect (partial output not shown on the page while running); fixed in the shell and the command plugin (burst flush).
+test("I5/I6 (page): while the command runs the lines received so far are already on the page", async ({ page }) => {
   await openKernel(page, host);
   fake.reset();
   fake.rule("ssh", { mode: "exec" });
@@ -930,6 +930,26 @@ test("I.10b-2 (page): copy onto an existing name asks overwrite / skip / keep bo
   await ui.menuItem(page, "Copy").click();
   await shot(page, "folder-picker");
   await page.getByRole("dialog").getByRole("button", { name: "Cancel" }).click();
+});
+
+test("I.10b-2 (page): the file tree menu offers Move to Trash and Delete permanently; Move to Trash asks nothing and the file lands in the (test) Trash", async ({ page }) => {
+  await openKernel(page, host);
+  const f = put("ui-trash/bin-me.txt", "x");
+  await call(page, "plugin.grantFolder", { plugin: FILES, path: granted });
+  await openKernel(page, host);
+  await view(page, "Files");
+  await page.getByRole("treeitem", { name: "granted", exact: true }).click();
+  await page.keyboard.press("ArrowRight");
+  await page.getByRole("treeitem", { name: "ui-trash", exact: true }).click();
+  await page.keyboard.press("ArrowRight");
+  await page.getByRole("treeitem", { name: "bin-me.txt" }).click({ button: "right" });
+  await expect(ui.menuItem(page, "Delete permanently")).toBeVisible();
+  const trash = ui.menuItem(page, /Trash/);
+  await expect(trash).toBeVisible();
+  await trash.click();
+  await expect(page.getByRole("dialog"), "no confirmation").toHaveCount(0);
+  await expect.poll(() => existsSync(f)).toBe(false);
+  expect(readdirSync(trashDir)).toContain("bin-me.txt");
 });
 
 test("I.10b-2 (page): permanent delete says it cannot be undone and deletes only after the confirmation", async ({ page }) => {
