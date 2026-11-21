@@ -150,7 +150,7 @@ export function WorkbenchProvider({ store, children }: { store: Store; children:
     const grantFolder: Actions["grantFolder"] = async (plugin, path, replace) => {
       try {
         const grants = replace ? await client.plugin.replaceFolder(plugin, replace, path) : await client.plugin.grantFolder(plugin, path);
-        live.current.toast({ tone: "success", title: live.current.i18n.t("folder.granted", { path: grants.folders[grants.folders.length - 1] ?? path }) });
+        live.current.toast({ tone: "success", title: live.current.i18n.t("folder.granted", { path: replace ? path : (grants.folders[grants.folders.length - 1] ?? path) }) });
       } catch (error) {
         fail(error);
       }

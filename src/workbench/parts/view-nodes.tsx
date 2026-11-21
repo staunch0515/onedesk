@@ -41,14 +41,14 @@ function MarkdownNode({ source }: { source: string }) {
 /** Draws the read-only view nodes (text, table, link, placeholder). Forms are drawn by the view page. */
 export function ViewNodes({ nodes, onRowAction }: { nodes: ViewNode[]; onRowAction?: (event: string, row: string) => void }) {
   const { actions } = useWorkbench();
-  const { tx } = useI18n();
+  const { t, tx } = useI18n();
   return (
     <>
       {nodes.map((node) => {
         switch (node.type) {
           case "text": {
             // Round 17 (X10): `lineTones` colors single lines, `appearance: "terminal"` draws the dark terminal look.
-            if (node.appearance === "terminal") return <TerminalText key={node.id} label={node.id} lines={textLines(node.text, node.lineTones)} />;
+            if (node.appearance === "terminal") return <TerminalText key={node.id} label={t("terminal.label")} lines={textLines(node.text, node.lineTones)} />;
             if (node.lineTones?.some((x) => x && x !== "default")) {
               return (
                 <Pane key={node.id} pad="md">

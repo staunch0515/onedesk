@@ -7,13 +7,16 @@
   background: var(--term-bg);
   color: var(--term-fg);
   font-size: var(--text-sm);
-  line-height: var(--leading-sm);
+  max-height: var(--term-max-height);
   overflow: auto;
 }
 
 .od-terminal__line {
   display: flex;
   gap: var(--space-3);
+  height: var(--term-line-height);
+  line-height: var(--term-line-height);
+  white-space: pre;
 }
 
 .od-terminal__stream {
@@ -25,8 +28,11 @@
 
 .od-terminal__text {
   min-width: 0;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
+  white-space: pre;
+}
+
+.od-terminal__gap {
+  flex: none;
 }
 
 .od-terminal__line--default { color: var(--term-fg); }
