@@ -18,8 +18,8 @@ export function AddParamDialog({ layer, own, open, onOpenChange, onAdd }: { laye
   const [name, setName] = useState<string | undefined>(undefined);
   const [value, setValue] = useState("");
   const [busy, setBusy] = useState(false);
-  // A reference to a resource (G3), e.g. the environment's `datasource`: any name, the value is picked from the resources.
-  const [refName, setRefName] = useState("datasource");
+  // A reference to a resource (G3), any name the user gives, the value is picked from the resources.
+  const [refName, setRefName] = useState("");
   const [refPicked, setRefPicked] = useState<{ id: string; name: string } | null>(null);
   const [picking, setPicking] = useState(false);
   const isRef = name === REF_CHOICE;
