@@ -232,6 +232,18 @@ describe("datasource: page and actions", () => {
     expect(Object.keys(r.actions).sort()).toEqual(["query", "test"]);
   });
 
+  it("query with inline: true returns the rows themselves (capped by maxRows) and writes no data file", async () => {
+    const { actions } = registry(plugin);
+    const host = fakeHost({ process: { run: vi.fn(async () => csv("n\n1\n2\n3\n")) } });
+    const r = await actions.query(ctxOf(host, { resource: SOURCE }), { sql: "SELECT n FROM t", inline: true, maxRows: 2 });
+    expect(r.output.type).toBe("table");
+    expect(r.output.file).toBeUndefined();
+    expect(r.output.rows).toEqual([["1"], ["2"]]);
+    expect(host.transfer.capture).not.toHaveBeenCalled();
+    const plain = await actions.query(ctxOf(fakeHost(), { resource: SOURCE }), { sql: "SELECT 1" });
+    expect(plain.output.file).toMatch(/^tmp\//);
+  });
+
   it("render: direct shows host, port, database, user and the secret password; ssh shows ssh host and container and no password", async () => {
     const { pages } = registry(plugin);
     const direct = await pages.editor.render(ctxOf(fakeHost(), { resource: SOURCE }));

@@ -142,3 +142,9 @@ G1/G2/G4/G5/G7 本阶段没有新改动，只复核了既有测试仍通过；�
 # 内核/插件修复合并后（coord-6 `c750e0f`/`192982a`）
 
 `round16.spec.ts` 25 条：**23 通过、2 `test.fixme`**。原 fixme 里 A2 页面数据、A6/A7、H4 取行、H5 改回 `test` 并通过（页面用 `values`/`readOnly`；`node` 在动作 ctx 里；catalog/table 的数据源可读）。还挂着两个：**A1 >5000 文件**（缺陷 ⑥，5100 个文件时索引仍不能完成）和 **H3**：刷新后库里有的 `item_ver` 仍被标为缺失（缺陷 ⑤，已转插件会话）。sql `create` 带 `params` 的 link（D423）已做。Playwright chromium 的下载：我先问了用户并得到同意（见上一节）。
+
+## Final rerun (after the plugin session fixed ⑤ and ⑥)
+
+- `org.onedesk.datasource` `query` now takes `{ sql, inline: true, maxRows }` and returns the rows directly (via `runReadonly`, default 1000, at most 10,000), no data file; vitest added. This was the rest of defect ⑤ (the table plugin could not read "which tables exist").
+- `e2e/round16.spec.ts`: the symlink-loop test and the >5000 test each use their own temp folder and data dir (`limitsHost(page, files, tag)`); no more `EEXIST`. H3 and A1 >5000 are plain `test` again.
+- Result against the real kernel + PostgreSQL 17: 25 of 25 pass. Defects ⑤ and ⑥ are closed.
