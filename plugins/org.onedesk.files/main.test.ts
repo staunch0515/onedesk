@@ -138,7 +138,7 @@ describe("files plugin: text page", () => {
 
 import { readFileSync } from "node:fs";
 // @ts-ignore plain JS module, no types
-import { diskFileItem, importFolder, joinPath, normalize, rootOf, validName } from "./main.js";
+import { argOf, diskFileItem, importFolder, joinPath, normalize, rootOf, validName } from "./main.js";
 import { checkActionResult } from "../_testing/view-check";
 
 const loadLocale = (f: string) => JSON.parse(readFileSync(new URL(`./locales/${f}.json`, import.meta.url), "utf8")) as Record<string, string>;
@@ -691,5 +691,37 @@ describe("files plugin: package", () => {
         for (const k of keys) for (const L of [EN, ZH, JA]) expect(L[k], k).toBeTypeOf("string");
     const mkeys = [...JSON.stringify(manifest).matchAll(/"((?:plugin|kind|action|tab|tree|confirm)\.[A-Za-z.]+)"/g)].map((m) => m[1]!);
     for (const k of mkeys.filter((k) => k !== "plugin.grantFolder")) for (const L of [EN, ZH, JA]) expect(L[k], k).toBeTypeOf("string");
+  });
+});
+
+describe("files plugin: page buttons run commands (D429)", () => {
+  const manifest = JSON.parse(readFileSync(new URL("./manifest.json", import.meta.url), "utf8"));
+  it("copy, move, rename and delete buttons name a command that exists, and no action", () => {
+    const names = manifest.contributes.commands.map((c: any) => c.id);
+    for (const page of manifest.contributes.pages)
+      for (const it of page.actions.filter((a: any) => ["copy", "move", "rename", "delete"].includes(a.id))) {
+        expect(it.command, `${page.id}/${it.id}`).toBe(it.id);
+        expect(it.action).toBeUndefined();
+        expect(names).toContain(it.command);
+      }
+  });
+  it("the form's input names are the names the commands read (bare or as params.<name>)", async () => {
+    expect(argOf({ "params.newName": "x" }, "newName")).toBe("x");
+    expect(argOf({ newName: "y", "params.newName": "x" }, "newName")).toBe("y");
+    expect(argOf({ newName: "" }, "newName")).toBeUndefined();
+    const d = fakeDisk({ [`${ROOT}/a.txt`]: 1, [SUB]: null });
+    const [toast] = await registry(plugin).commands.move({ locale: "en-US", host: { files: d.files }, t: tt }, { nodeKey: `${ROOT}/a.txt`, args: { "params.destination": SUB } });
+    expect(toast).toMatchObject({ type: "toast", tone: "success" });
+    expect(d.fs.has(`${SUB}/a.txt`)).toBe(true);
+    const form = (await registry(plugin).pages.text.render(ctxOf({ roots: d.files.roots, stat: d.files.stat, readText: async () => ({ text: "", basis: "b" }) }, `${ROOT}/a.txt`))).view.find((n: any) => n.id === "ops");
+    expect(form.fields.map((f: any) => f.name)).toEqual(expect.arrayContaining(["newName", "destination"]));
+  });
+  it("on a disk-file resource the command finds the recorded path", async () => {
+    const d = fakeDisk({ [`${ROOT}/a.txt`]: 1 });
+    const host = { files: d.files, resources: { get: async () => ({ id: "r1", body: { path: `${ROOT}/a.txt` } }) } };
+    const [ask] = await registry(plugin).commands.delete({ locale: "en-US", host, t: tt }, { nodeKey: "r1", target: "resource:r1", args: {} });
+    expect(ask).toMatchObject({ type: "confirm", irreversible: true });
+    await registry(plugin).commands.delete({ locale: "en-US", host, t: tt }, { nodeKey: "r1", args: { confirmed: true } });
+    expect(d.files.remove).toHaveBeenCalledWith(`${ROOT}/a.txt`);
   });
 });

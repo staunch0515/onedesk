@@ -293,6 +293,28 @@ const PLUGIN = "org.onedesk.files";
 const nodeTarget = (tree, key) => `node:${PLUGIN}:${tree}/${encodeURIComponent(key)}`;
 const ADD_KEY = "~add";
 
+// A page button runs a command with the inputs' current values as `args` (D429): the names may arrive bare or as
+// the page's parameter path.
+export function argOf(args, name) {
+  const a = args || {};
+  for (const k of [name, `params.${name}`]) if (a[k] !== undefined && a[k] !== null && a[k] !== "") return a[k];
+  return undefined;
+}
+
+// The path a command works on: a tree node key (a path) or a disk-file resource (its recorded path).
+export async function commandPath(ctx, context) {
+  const key = String((context && (context.nodeKey || context.target)) || "");
+  if (key.startsWith("/")) return key;
+  const id = key.startsWith("resource:") ? key.slice(9) : key;
+  if (!id) return "";
+  try {
+    const r = await ctx.host.resources.get(id);
+    return String((r && r.body && r.body.path) || "");
+  } catch (e) {
+    return "";
+  }
+}
+
 // The effect that makes the shell ask "overwrite, skip or keep both" and run `command` again with the answer.
 export function conflictAsk(ctx, command, name) {
   return {
@@ -625,7 +647,7 @@ export default {
     // `args.confirmed` deletes.
     host.commands.handle("delete", async (ctx, context) => {
       const args = (context && context.args) || {};
-      const path = String((context && context.nodeKey) || "");
+      const path = await commandPath(ctx, context);
       try {
         const { path: p, roots } = await scoped({ ...ctx, node: { key: path } }, path);
         if (roots.some((r) => normalize(r.path) === p)) throw fail(ctx, "error.isRoot");
@@ -644,8 +666,9 @@ export default {
     // on the node, with `args.destination` / `args.newName`. A taken name asks "overwrite, skip or keep both".
     for (const op of ["move", "copy", "rename"]) {
       host.commands.handle(op, async (ctx, context) => {
-        const args = (context && context.args) || {};
-        const path = String((context && context.nodeKey) || "");
+        const raw = (context && context.args) || {};
+        const args = { ...raw, newName: argOf(raw, "newName"), destination: argOf(raw, "destination"), conflict: raw.conflict };
+        const path = await commandPath(ctx, context);
         const cctx = { ...ctx, node: { key: path }, params: { conflict: args.conflict, newName: args.newName, destination: args.destination } };
         try {
           const { path: from } = await scoped(cctx, path);
