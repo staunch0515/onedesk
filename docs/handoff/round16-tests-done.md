@@ -141,4 +141,4 @@ G1/G2/G4/G5/G7 本阶段没有新改动，只复核了既有测试仍通过；�
 
 # 内核/插件修复合并后（coord-6 `c750e0f`/`192982a`）
 
-`round16.spec.ts` 25 条：**24 通过、1 `test.fixme`**。原 fixme 里 A2 页面数据、A6/A7、H4 取行、H5、A1 >5000 文件全部改回 `test` 并通过（页面用 `values`/`readOnly`；`node` 在动作 ctx 里；catalog/table 的数据源可读）。唯一还挂着的是 **H3**：刷新后库里有的 `item_ver` 仍被标为缺失（缺陷 ⑤，已转插件会话）。sql `create` 带 `params` 的 link（D423）已做。Playwright chromium 的下载：我先问了用户并得到同意（见上一节）。
+`round16.spec.ts` 25 条：**23 通过、2 `test.fixme`**。原 fixme 里 A2 页面数据、A6/A7、H4 取行、H5 改回 `test` 并通过（页面用 `values`/`readOnly`；`node` 在动作 ctx 里；catalog/table 的数据源可读）。还挂着两个：**A1 >5000 文件**（缺陷 ⑥，5100 个文件时索引仍不能完成）和 **H3**：刷新后库里有的 `item_ver` 仍被标为缺失（缺陷 ⑤，已转插件会话）。sql `create` 带 `params` 的 link（D423）已做。Playwright chromium 的下载：我先问了用户并得到同意（见上一节）。
