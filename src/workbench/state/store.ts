@@ -63,6 +63,20 @@ export type InstallState = { stage: "path" } | { stage: "preview"; folder: strin
 /** Exporting and importing a workspace: asking for a folder (browser mode), then what an import would do. */
 export type TransferState = { stage: "export-path" } | { stage: "import-path" } | { stage: "import-preview"; folder: string; preview: ImportPreview };
 
+/**
+ * A command that asked to be confirmed. `choices` (round 17, X18): instead of one OK button the user picks one answer
+ * (overwrite / skip / keep both); it is sent back as `args[choiceArg]`. `irreversible` adds "This cannot be undone."
+ */
+export interface ConfirmState {
+  message: Label;
+  command: string;
+  danger: boolean;
+  context: CommandContext;
+  choices?: Array<{ id: string; label?: Label; danger?: boolean }>;
+  choiceArg?: string;
+  irreversible?: boolean;
+}
+
 export interface UiState extends LayoutState {
   tasksOpen: boolean;
   /** The list of this session's notices (D376): memory only. */
@@ -88,7 +102,7 @@ export interface UiState extends LayoutState {
   /** Exporting a run's table as CSV: the run, while the file path is being asked for (browser mode). */
   exportCsv: { run: string } | null;
   /** A command that asked to be confirmed before it runs again with `confirmed: true`. */
-  confirmCommand: { message: Label; command: string; danger: boolean; context: CommandContext } | null;
+  confirmCommand: ConfirmState | null;
   /** Most recently active tab that uses an environment. */
   envTabId: string | null;
   /** Bumped to move keyboard focus to the search box. */

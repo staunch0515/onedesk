@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Button, Dialog, FormField, Input } from "../../design";
 import { useI18n } from "../i18n";
 import { useUi, useWorkbench } from "../state/context";
+import type { ConfirmState } from "../state/store";
 
 /** Dialogs a command can ask for: pick a folder (browser mode) and confirm. */
 export function CommandDialogs() {
@@ -10,6 +11,11 @@ export function CommandDialogs() {
   const folderPrompt = useUi((s) => s.folderPrompt);
   const confirm = useUi((s) => s.confirmCommand);
   const [path, setPath] = useState("");
+  const answer = (pending: ConfirmState, more: Record<string, unknown>) => {
+    store.set({ confirmCommand: null });
+    void actions.command(pending.command, { ...pending.context, args: { ...pending.context.args, confirmed: true, ...more } });
+  };
+  const choiceText = (id: string) => (id === "overwrite" || id === "skip" || id === "keepBoth" ? t(`confirm.choice.${id}`) : id);
   const grant = () => {
     const plugin = folderPrompt?.plugin;
     if (!path.trim().startsWith("/")) return;
@@ -53,20 +59,21 @@ export function CommandDialogs() {
         onOpenChange={(open) => !open && store.set({ confirmCommand: null })}
         size="sm"
         title={confirm ? (confirmTexts(confirm.message)?.title ?? t("confirm.title")) : t("confirm.title")}
-        description={confirm ? tx(confirm.message) : undefined}
+        description={confirm ? [tx(confirm.message), confirm.irreversible ? t("confirm.irreversible") : ""].filter(Boolean).join(" ") : undefined}
         footer={
           <>
             <Button onClick={() => store.set({ confirmCommand: null })}>{t("common.cancel")}</Button>
-            <Button
-              variant={confirm?.danger ? "danger" : "primary"}
-              onClick={() => {
-                const pending = confirm;
-                store.set({ confirmCommand: null });
-                if (pending) void actions.command(pending.command, { ...pending.context, args: { ...pending.context.args, confirmed: true } });
-              }}
-            >
-              {confirm ? (confirmTexts(confirm.message)?.ok ?? t("confirm.ok")) : t("confirm.ok")}
-            </Button>
+            {confirm?.choices ? (
+              confirm.choices.map((choice) => (
+                <Button key={choice.id} variant={choice.danger ? "danger" : "secondary"} onClick={() => answer(confirm, { [confirm.choiceArg ?? "conflict"]: choice.id })}>
+                  {choice.label ? tx(choice.label) : choiceText(choice.id)}
+                </Button>
+              ))
+            ) : (
+              <Button variant={confirm?.danger ? "danger" : "primary"} onClick={() => confirm && answer(confirm, {})}>
+                {confirm ? (confirmTexts(confirm.message)?.ok ?? t("confirm.ok")) : t("confirm.ok")}
+              </Button>
+            )}
           </>
         }
       />

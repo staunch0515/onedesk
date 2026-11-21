@@ -1,5 +1,5 @@
 import { useCallback } from "react";
-import { Button, CodeEditor, DataGrid, EmptyState, IconButton, MarkdownText, Pane, Text, TextBlock, type DataGridColumn, type ReferenceState } from "../../design";
+import { Button, CodeEditor, DataGrid, EmptyState, IconButton, MarkdownText, Pane, Text, TerminalText, TextBlock, type DataGridColumn, type ReferenceState, type TerminalLine } from "../../design";
 import { useI18n } from "../i18n";
 import type { OutputCell, ViewNode } from "../protocol";
 import { useQuery, useUi, useWorkbench } from "../state/context";
@@ -40,12 +40,25 @@ function MarkdownNode({ source }: { source: string }) {
 /** Draws the read-only view nodes (text, table, link, placeholder). Forms are drawn by the view page. */
 export function ViewNodes({ nodes, onRowAction }: { nodes: ViewNode[]; onRowAction?: (event: string, row: string) => void }) {
   const { actions } = useWorkbench();
-  const { tx } = useI18n();
+  const { t, tx } = useI18n();
   return (
     <>
       {nodes.map((node) => {
         switch (node.type) {
-          case "text":
+          case "text": {
+            // Round 17 (X10): per-line tones and the terminal look (field names follow round17-protocol.md).
+            const lined = node as typeof node & { lines?: TerminalLine[]; style?: string };
+            if (lined.lines?.length || lined.style === "terminal") {
+              const lines: TerminalLine[] = lined.lines?.length ? lined.lines : node.text.split("\n").map((text) => ({ text, tone: node.tone }));
+              if (lined.style === "terminal") return <TerminalText key={node.id} label={node.id} lines={lines} showStreams={lines.some((l) => l.stream)} streamLabels={{ stdout: t("stream.stdout"), stderr: t("stream.stderr") }} />;
+              return (
+                <Pane key={node.id} pad="md">
+                  {lines.map((l, i) => (
+                    <TextBlock key={i} tone={l.tone === "danger" || l.tone === "stderr" ? "danger" : l.tone === "muted" ? "muted" : l.tone === "success" ? "success" : l.tone === "warning" ? "warning" : "default"}>{l.text || " "}</TextBlock>
+                  ))}
+                </Pane>
+              );
+            }
             if (node.format === "markdown" && !node.mono) return <MarkdownNode key={node.id} source={node.text} />;
             return node.mono ? (
               <CodeEditor key={node.id} label={node.id} value={node.text} readOnly tokenize={node.language ? TOKENIZERS[node.language] : undefined} />
@@ -54,6 +67,7 @@ export function ViewNodes({ nodes, onRowAction }: { nodes: ViewNode[]; onRowActi
                 <TextBlock tone={node.tone === "danger" ? "danger" : node.tone === "muted" ? "muted" : "default"}>{node.text}</TextBlock>
               </Pane>
             );
+          }
           case "table": {
             const columns: Array<DataGridColumn<Indexed>> = node.columns.map((c, i) => ({ key: c.key, header: c.label, numeric: c.numeric, value: (row) => row.cells[i], width: i === 0 ? 320 : 144 }));
             const rowActions = onRowAction ? (node.rowActions ?? []) : [];
