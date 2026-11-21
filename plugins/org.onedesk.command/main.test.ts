@@ -207,6 +207,25 @@ describe("command: running", () => {
     expect(res.summary).toEqual({ rows: 3, message: "3 lines · exit code 0" });
   });
 
+  it("timeout, line limit, server and command: the run's input first, else the resource's saved body (e2e C)", async () => {
+    const { actions } = registry(plugin);
+    const saved = { ...CMD, body: { host: "saved-host", command: "uptime", timeoutSec: "7", maxLines: "3" } };
+    const fromBody = fakeHost();
+    await actions.run(ctxOf(fromBody, { resource: saved }), {});
+    expect(fromBody.process.run.mock.calls[0]![0]).toMatchObject({ timeoutMs: 7000, maxLines: 3 });
+    expect(fromBody.process.run.mock.calls[0]![0].args).toContain("saved-host");
+    expect(fromBody.process.run.mock.calls[0]![0].stdin.endsWith("uptime\n")).toBe(true);
+    const fromInput = fakeHost();
+    await actions.run(ctxOf(fromInput, { resource: saved }), input({ "body.timeoutSec": "9", "body.maxLines": "4" }));
+    expect(fromInput.process.run.mock.calls[0]![0]).toMatchObject({ timeoutMs: 9000, maxLines: 4 });
+    expect(fromInput.process.run.mock.calls[0]![0].args).toContain("staging");
+    // an empty field on the page means the default, not the saved value
+    const empty = fakeHost();
+    await actions.run(ctxOf(empty, { resource: saved }), input());
+    expect(empty.process.run.mock.calls[0]![0]).toMatchObject({ timeoutMs: 60000, maxLines: 5000 });
+    await expect(actions.run(ctxOf(fakeHost(), { resource: { ...saved, body: { ...saved.body, timeoutSec: "0" } } }), {})).rejects.toThrow("1 to 7200");
+  });
+
   it("takes parameter values from the environment when none is typed, and refuses a bad one before ssh starts", async () => {
     const { actions } = registry(plugin);
     const host = fakeHost({ params: { get: vi.fn(async (n: string) => (n === "app" ? { found: true, value: "api", sourceName: "Prod" } : { found: false, value: "", sourceName: "" })) } });
@@ -235,10 +254,10 @@ describe("command: running", () => {
 
   it("hands the lines so far to the shell while the program runs (runs.partial), drawn the same way", async () => {
     const { actions } = registry(plugin);
-    // at most one partial output per 300 ms: lines that come quicker wait for the next one (or the result)
+    // at most one partial output per 300 ms; what came in the window goes out before the run ends
     const quick = fakeHost({ process: { run: program([out("a"), out("b")]) } });
     await actions.run(ctxOf(quick), input());
-    expect(quick.runs.partial.mock.calls.map((c: any[]) => c[0].rows)).toEqual([[["stdout", "a"]]]);
+    expect(quick.runs.partial.mock.calls.map((c: any[]) => c[0].rows)).toEqual([[["stdout", "a"]], [["stdout", "a"], ["stdout", "b"]]]);
     let clock = 0;
     const now = vi.spyOn(Date, "now").mockImplementation(() => (clock += 1000));
     const host = fakeHost({ process: { run: program([out("a"), out("b")]) } });
@@ -250,6 +269,39 @@ describe("command: running", () => {
     // without the capability the run still works
     const old = fakeHost({ runs: undefined });
     expect((await actions.run(ctxOf(old), input())).output.rows).toEqual([["stdout", "hello"]]);
+  });
+
+  it("a burst within the throttle window is sent when the window ends, not held until the next line (e2e B)", async () => {
+    const { actions } = registry(plugin);
+    const sent: string[][] = [];
+    let release: () => void = () => {};
+    const slept: number[] = [];
+    const now = vi.spyOn(Date, "now").mockImplementation(() => 1000); // every line inside one window
+    // the program writes a, b, c, then is silent until the trailing send has happened
+    const run = vi.fn(async (opts: any) => {
+      for (const t of ["a", "b", "c"]) opts.onOutput(out(t));
+      await new Promise<void>((r) => (release = r));
+      return { code: 0, signal: null, stdout: "", stderr: "", truncated: false, lines: [out("a"), out("b"), out("c")], stopped: null };
+    });
+    const host = fakeHost({
+      process: { run },
+      runs: { partial: vi.fn(async (o: any) => sent.push(o.rows.map((r: string[]) => r[1]))) },
+      util: {
+        sleep: vi.fn(async (ms: number) => {
+          slept.push(ms);
+          await Promise.resolve();
+        }),
+      },
+    });
+    const done = actions.run(ctxOf(host), input());
+    await new Promise((r) => setTimeout(r, 0));
+    // first line at once; b and c in the window: one sleep for the rest of it, then one send with all three
+    expect(slept).toEqual([300]);
+    expect(sent).toEqual([["a"], ["a", "b", "c"]]);
+    release();
+    await done;
+    now.mockRestore();
+    expect(sent.length).toBe(2); // nothing new at the end: no extra send
   });
 
   it("partial output carries only the last 500 lines (review #12), with the count so far as its total", async () => {
@@ -277,25 +329,37 @@ describe("command: running", () => {
     expect(res.output.rows).toEqual([["stdout", "1"], ["stdout", "2"]]);
     expect(res.output.total).toBe(3);
     expect(res.summary.message).toBe("2 lines · stopped at the line limit");
+    // D435: a failed run that keeps its output
+    expect(res.failed).toEqual({ message: "Stopped at the line limit (2 lines)." });
   });
 
-  it("a timeout keeps the lines so far; a non-zero exit is reported, not an error", async () => {
+  it("a timeout and a non-zero exit fail the run (D435) and keep the lines so far; exit 0 does not", async () => {
     const { actions } = registry(plugin);
     const slow = program([out("started")], { stopped: "timeout", code: null });
     const res = await actions.run(ctxOf(fakeHost({ process: { run: slow } })), input({ "body.timeoutSec": "5" }));
     expect(slow.mock.calls[0]![0].timeoutMs).toBe(5000);
     expect(res.output.rows).toEqual([["stdout", "started"]]);
     expect(res.summary.message).toBe("1 lines · stopped after 5 s (timeout)");
+    expect(res.failed).toEqual({ message: "Stopped after 5 s: the timeout was reached." });
     const failing = program([err("grep: x: No such file")], { code: 2 });
     const r2 = await actions.run(ctxOf(fakeHost({ process: { run: failing } })), input());
     expect(r2.summary.message).toBe("1 lines · exit code 2");
     expect(r2.output.rows).toEqual([["stderr", "grep: x: No such file"]]);
+    expect(r2.failed).toEqual({ message: "The program exited with code 2." });
+    const killed = await actions.run(ctxOf(fakeHost({ process: { run: program([out("x")], { code: null, signal: "SIGTERM" }) } })), input());
+    expect(killed.failed).toEqual({ message: "The program was ended by SIGTERM." });
+    const fine = await actions.run(ctxOf(fakeHost()), input());
+    expect(fine.failed).toBeUndefined();
+    expect(onlyKeys(fine, ["output", "summary"])).toEqual([]);
+    expect(onlyKeys(r2, ["output", "summary", "failed"])).toEqual([]);
   });
 
   it("ssh's own failure (255, nothing on stdout) fails the run with what ssh said", async () => {
     const { actions } = registry(plugin);
     const refused = program([err("staging: Permission denied (publickey).")], { code: 255 });
-    await expect(actions.run(ctxOf(fakeHost({ process: { run: refused } })), input())).rejects.toThrow("ssh could not run the command on staging: staging: Permission denied (publickey).");
+    const res = await actions.run(ctxOf(fakeHost({ process: { run: refused } })), input());
+    expect(res.failed).toEqual({ message: "ssh could not run the command on staging: staging: Permission denied (publickey)." });
+    expect(res.output.rows).toEqual([["stderr", "staging: Permission denied (publickey)."]]);
   });
 
   it("a missing ssh names the program; a cancelled run stays cancelled", async () => {

@@ -517,16 +517,27 @@ describe("datasource: backup to this Mac", () => {
     expect(host.resources.create).not.toHaveBeenCalled();
   });
 
-  it("a failing pg_restore stops: our copy removed, no data source; only ignored errors let it go on, with a warning", async () => {
+  it("a failing pg_restore stops: our copy removed, no data source, the new database left as it is", async () => {
     const failing = backupHost({ docker: { restore: { code: 1, stderr: "pg_restore: error: input file does not appear to be a valid archive\n" } } });
-    await expect(backupToLocal(ctxOf(failing.host), SSH, plan)).rejects.toThrow("stopped while restoring into shop_copy: pg_restore: error: input file does not appear to be a valid archive");
+    await expect(backupToLocal(ctxOf(failing.host), SSH, plan)).rejects.toThrow("stopped while restoring into shop_copy: pg_restore: error: input file does not appear to be a valid archive (the new database shop_copy in pg-local is left as it is)");
     expect(failing.log).toEqual(["ready docker", "docker check", "mkdir", "ssh dump", "docker copy", "docker create", "docker restore", "docker cleanup"]);
     expect(failing.host.resources.create).not.toHaveBeenCalled();
+    const killed = backupHost({ docker: { restore: { code: null, signal: "SIGKILL", stderr: "pg_restore: warning: errors ignored on restore: 1\n" } } });
+    await expect(backupToLocal(ctxOf(killed.host), SSH, plan)).rejects.toThrow("stopped while restoring");
+    expect(killed.host.resources.create).not.toHaveBeenCalled();
+  });
 
-    const warned = backupHost({ docker: { restore: { code: 1, stderr: "pg_restore: error: could not execute query: ERROR:  must be owner of extension plpgsql\npg_restore: warning: errors ignored on restore: 1\n" } } });
+  it("only errors pg_restore ignored let it go on (D435): the data source is made, the summary warns with the count and the first error", async () => {
+    const stderr = 'pg_restore: error: could not execute query: ERROR:  role "shop_owner" does not exist\nCommand was: ALTER TABLE x OWNER TO shop_owner;\npg_restore: error: could not execute query: ERROR:  role "reader" does not exist\npg_restore: warning: errors ignored on restore: 2\n';
+    const warned = backupHost({ docker: { restore: { code: 1, stderr } } });
     const r = await backupToLocal(ctxOf(warned.host), SSH, plan);
     expect(warned.log).toEqual(ALL_STEPS);
-    expect(r.warning).toBe("pg_restore: warning: errors ignored on restore: 1");
+    expect(r.warning).toEqual({ count: 2, first: 'could not execute query: ERROR:  role "shop_owner" does not exist' });
+    const { actions } = registry(plugin);
+    const again = backupHost({ docker: { restore: { code: 1, stderr } } });
+    const out = await actions.backup(ctxOf(again.host, { resource: SSH, params: PLAN }), {});
+    expect(out.summary.message).toMatch(/ Warning: pg_restore ignored 2 errors \(often roles of the server missing here\)\. The first: could not execute query: ERROR:  role "shop_owner" does not exist$/);
+    expect(out.output.type).toBe("link");
   });
 
   it("never asks the server or the local container to drop, clean or overwrite anything", async () => {

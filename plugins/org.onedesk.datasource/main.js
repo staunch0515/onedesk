@@ -440,6 +440,20 @@ export function dumpSpec(c, file) {
   return { program: "ssh", args: ["-T", "-o", "BatchMode=yes", "-o", `ConnectTimeout=${CONNECT_TIMEOUT_S}`, c.sshHost, remote], to: file, overwrite: false, timeoutMs: DUMP_TIMEOUT_MS };
 }
 
+// When pg_restore failed only with errors it ignored (it still restored the rest): { count, first } — how many
+// and the first one in its own words; otherwise null.
+export function ignoredRestoreErrors(res) {
+  if (!res || res.code !== 1 || res.signal) return null;
+  const text = String(res.stderr || "");
+  const m = /errors ignored on restore: (\d+)/.exec(text);
+  if (!m) return null;
+  const first = text
+    .split("\n")
+    .map((l) => l.trim())
+    .find((l) => /^pg_restore: error:/.test(l));
+  return { count: Number(m[1]), first: (first || "").replace(/^pg_restore: error: /, "") };
+}
+
 // The local `docker` calls of the restore; every value in them passed the checks above.
 export function dockerArgs(step, plan, extra) {
   const x = extra || {};
@@ -471,7 +485,8 @@ function formatBytes(n) {
 
 // Copies the database of an ssh data source into a new database in a local container, step by step, and makes
 // a direct data source for it. Nothing that exists is ever changed: an existing database stops the run before
-// the server is touched, and `createdb` refuses one that appeared meanwhile. Returns { created, file, bytes, warning }.
+// the server is touched, and `createdb` refuses one that appeared meanwhile. Returns { created, file, bytes, warning }
+// (warning: null, or { count, first } when pg_restore only ignored errors).
 export async function backupToLocal(ctx, source, plan) {
   const c = connectionOf(source && source.body);
   if (c.mode !== "ssh") throw fail(ctx, "error.backup.notSsh", {});
@@ -529,19 +544,21 @@ export async function backupToLocal(ctx, source, plan) {
   const copied = await docker(dockerArgs("copy", plan, { file: localFile, inContainer }), LONG_TIMEOUT_MS);
   if (copied.code !== 0) throw stepFailed(2, errorText(copied));
 
-  let warning = "";
+  let warning = null;
   try {
     // 4. a new database; createdb itself refuses a name that exists.
     step(3);
     const made = await docker(dockerArgs("create", plan), DOCKER_TIMEOUT_MS);
     if (made.code !== 0) throw stepFailed(3, errorText(made));
 
-    // 5. pg_restore into it. Errors pg_restore only reports ("errors ignored on restore") leave a usable copy.
+    // 5. pg_restore into it. Any other non-zero exit stops the backup (the new database is left as it is, nothing
+    // is dropped, no data source is made). Only "errors ignored on restore: N" goes on (D435): usually roles of
+    // the server missing in the local container; the copy is usable, and the summary says what was ignored.
     step(4);
     const restored = await docker(dockerArgs("restore", plan, { inContainer }), LONG_TIMEOUT_MS);
     if (restored.code !== 0) {
-      if (/errors ignored on restore: \d+/.test(String(restored.stderr || ""))) warning = errorText(restored).split("\n").slice(-1)[0];
-      else throw stepFailed(4, errorText(restored));
+      warning = ignoredRestoreErrors(restored);
+      if (!warning) throw stepFailed(4, `${errorText(restored)} (${tr(ctx, "backup.leftDb", { name: plan.name, container: plan.container })})`);
     }
   } finally {
     try {
@@ -653,7 +670,8 @@ export default {
       if (!ctx.resource) throw fail(ctx, "error.noSource", {});
       const r = await backupToLocal(ctx, ctx.resource, backupPlanOf(ctx.params));
       const vars = { name: r.created.name || "", file: r.file, size: formatBytes(r.bytes) };
-      const message = tr(ctx, "summary.backup", vars) + (r.warning ? ` ${tr(ctx, "summary.backupWarning", { warning: r.warning })}` : "");
+      const w = r.warning;
+      const message = tr(ctx, "summary.backup", vars) + (w ? ` ${tr(ctx, "summary.backupWarning", { count: w.count, first: w.first })}` : "");
       return { output: { type: "link", label: r.created.name || tr(ctx, "kind.source.new"), target: `resource:${r.created.id}` }, summary: { message } };
     });
 

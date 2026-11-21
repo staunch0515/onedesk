@@ -455,19 +455,40 @@ export function intIn(text, lo, hi, fallback) {
 export async function runLines(ctx, spec, maxLines) {
   const runs = ctx.host.runs;
   const partial = runs && typeof runs.partial === "function" ? runs.partial : null;
+  const util = ctx.host.util;
+  const sleep = util && typeof util.sleep === "function" ? util.sleep : null;
   let tail = [];
   let seen = 0;
   let last = 0;
   let shown = 0;
-  const show = () => {
-    if (!partial || seen === shown) return;
-    const now = Date.now();
-    if (now - last < PARTIAL_EVERY_MS) return;
-    last = now;
+  let waiting = false;
+  let ended = false;
+  const send = () => {
+    last = Date.now();
     shown = seen;
     // only the last lines: the shell redraws the whole partial output each time
     const rows = tail.slice(-PARTIAL_LINES);
-    Promise.resolve(partial(linesOutput(ctx, rows, seen > rows.length, seen))).catch(() => {});
+    return Promise.resolve(partial(linesOutput(ctx, rows, seen > rows.length, seen))).catch(() => {});
+  };
+  // At most one partial output per PARTIAL_EVERY_MS; lines that come within the window are sent when it ends
+  // (a trailing send), so a burst followed by silence is not held back until the next line.
+  const show = () => {
+    if (!partial || seen === shown) return;
+    const wait = PARTIAL_EVERY_MS - (Date.now() - last);
+    if (wait <= 0) {
+      send();
+      return;
+    }
+    if (waiting || !sleep) return;
+    waiting = true;
+    Promise.resolve(sleep(wait))
+      .then(() => {
+        waiting = false;
+        if (!ended && seen !== shown) send();
+      })
+      .catch(() => {
+        waiting = false;
+      });
   };
   const res = await ctx.host.process.run({
     ...spec,
@@ -480,6 +501,9 @@ export async function runLines(ctx, spec, maxLines) {
       show();
     },
   });
+  ended = true;
+  // the last lines go out before the run ends, whatever the window
+  if (partial && seen !== shown) await send();
   const rows = (Array.isArray(res.lines) ? res.lines.map(lineRow) : tail).slice(0, maxLines);
   return {
     rows,
@@ -498,6 +522,33 @@ export function endMessage(ctx, r, timeoutS) {
   else if (r.signal) parts.push(tr(ctx, "summary.signal", { signal: r.signal }));
   else if (r.code !== null && r.code !== undefined) parts.push(tr(ctx, "summary.exit", { code: r.code }));
   return parts.join(" · ");
+}
+
+// A field of the run: what the run was given (`input`, the page's values), else the resource's own body — so a
+// run started with only the resource (another plugin, history) uses the saved settings.
+export function fieldOf(ctx, input, key) {
+  const v = input && input[`body.${key}`];
+  if (v !== undefined && v !== null) return String(v);
+  const b = bodyOf(ctx)[key];
+  return b === undefined || b === null ? "" : String(b);
+}
+
+// D435: why this run counts as failed (a non-zero exit, a signal, the timeout, the line limit), or null. The
+// run still keeps its output; the kernel only marks it as an error with this message.
+export function failureOf(ctx, r, timeoutS) {
+  if (r.timedOut) return tr(ctx, "failed.timeout", { s: timeoutS });
+  if (r.truncated) return tr(ctx, "failed.limit", { n: r.rows.length });
+  if (r.signal) return tr(ctx, "failed.signal", { signal: r.signal });
+  if (r.code !== 0 && r.code !== null && r.code !== undefined) return tr(ctx, "failed.exit", { code: r.code });
+  return null;
+}
+
+// The action's result: the lines, the summary, and `failed` when the program did not end well.
+export function runResult(ctx, r, timeoutS, failure) {
+  const out = { output: linesOutput(ctx, r.rows, r.truncated || r.timedOut), summary: { rows: r.rows.length, message: endMessage(ctx, r, timeoutS) } };
+  const why = failure || failureOf(ctx, r, timeoutS);
+  if (why) out.failed = { message: why };
+  return out;
 }
 
 export function programError(ctx, err) {
@@ -671,11 +722,11 @@ export default {
 
     host.actions.handle("run", async (ctx, input) => {
       const i = input || {};
-      const script = String(i["body.script"] !== undefined ? i["body.script"] : bodyOf(ctx).script);
+      const script = fieldOf(ctx, i, "script");
       if (!script.trim()) throw new Error(tr(ctx, "error.empty"));
-      const timeoutS = intIn(i["body.timeoutSec"], 1, MAX_TIMEOUT_S, DEFAULT_TIMEOUT_S);
+      const timeoutS = intIn(fieldOf(ctx, i, "timeoutSec"), 1, MAX_TIMEOUT_S, DEFAULT_TIMEOUT_S);
       if (timeoutS === null) throw new Error(tr(ctx, "error.badTimeout", { max: MAX_TIMEOUT_S }));
-      const maxLines = intIn(i["body.maxLines"], 1, MAX_MAX_LINES, DEFAULT_MAX_LINES);
+      const maxLines = intIn(fieldOf(ctx, i, "maxLines"), 1, MAX_MAX_LINES, DEFAULT_MAX_LINES);
       if (maxLines === null) throw new Error(tr(ctx, "error.badMaxLines", { max: MAX_MAX_LINES }));
       const values = await paramValues(ctx, script);
       ctx.progress(undefined, tr(ctx, "step.running"));
@@ -686,7 +737,7 @@ export default {
         if (err && err.code === "denied" && err.params && err.params.reason === "cancelled") throw err;
         throw programError(ctx, err);
       }
-      return { output: linesOutput(ctx, r.rows, r.truncated || r.timedOut), summary: { rows: r.rows.length, message: endMessage(ctx, r, timeoutS) } };
+      return runResult(ctx, r, timeoutS);
     });
 
     // Every saved script as `<name>.sh` in one granted folder (the page's choice; the first one if only one).

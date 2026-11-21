@@ -67,5 +67,9 @@
   "result.renamed": "已用新名字写入",
   "result.skipped": "已跳过（已存在）",
   "error.exists": "这些文件已经存在：{files}。请在“同名文件”里选怎么处理，再导出。",
-  "error.badConflict": "不认识这个同名处理方式。"
+  "error.badConflict": "不认识这个同名处理方式。",
+  "failed.exit": "程序以退出码 {code} 结束。",
+  "failed.signal": "程序被 {signal} 结束。",
+  "failed.timeout": "{s} 秒后停止：到达超时。",
+  "failed.limit": "到达行数上限（{n} 行）后停止。"
 }

@@ -67,5 +67,9 @@
   "result.renamed": "written under a new name",
   "result.skipped": "skipped (exists)",
   "error.exists": "These files already exist: {files}. Choose what to do in “If a file exists”, then export again.",
-  "error.badConflict": "That choice for an existing file is not known."
+  "error.badConflict": "That choice for an existing file is not known.",
+  "failed.exit": "The program exited with code {code}.",
+  "failed.signal": "The program was ended by {signal}.",
+  "failed.timeout": "Stopped after {s} s: the timeout was reached.",
+  "failed.limit": "Stopped at the line limit ({n} lines)."
 }

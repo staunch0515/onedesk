@@ -73,3 +73,14 @@
 真 bash 的测试在 `plugins/_testing/shell-quote-bash.test.ts`（从两个插件 import 函数来测，只在临时目录里用 `/bin/bash`）；插件包里的测试仍只用沙箱有的东西，`check-arch.mjs` 没有放宽（之前放宽的提交已撤回）。
 
 `plugins/_testing/lang-check.test.ts` 在集成分支 `abe9fb4` 上本来就有 4 条失败（外壳新键的中日译文还没补），与本会话无关。
+
+## 7. 验收后修改（D435）
+
+- 服务器命令、本机脚本：非零退出、被信号结束、超时、达到行数上限时，动作返回 `failed: { message }`（消息分别写明退出码、信号、超时秒数、行数上限），`output` 和 `summary` 照常带上，运行状态由内核标为 error，输出照样进历史。ssh 自己失败（255、stdout 为空）也改为 `failed` 并保留 ssh 的话，不再抛错丢掉输出。退出码 0 时没有 `failed`，返回值仍只有 `output`、`summary`。
+- 备份：其余任何一步非零（或被信号结束、超时）都停下；只有 `pg_restore` 只报 “errors ignored on restore: N” 时继续、新建数据源，运行算成功，摘要里有警告、被忽略的条数和第一条错误原话。
+- 测试：`command/main.test.ts`、`script/main.test.ts`（含 `exit 3` 保留输出）、`datasource/main.test.ts`（忽略的错误继续并带警告；其他错误与被信号结束都停下）。
+- e2e B（`runLines` 部分输出）：节流窗口（300 ms）内到的行，在窗口结束时补发一次（`ctx.host.util.sleep` 等到窗口结束）；程序结束后、动作返回前，若还有没发出去的行，再发最后一次。仍只发最后 500 行。
+- e2e C（命令、脚本）：主机、命令/脚本、超时、行数上限都按“运行的 input 里有这个字段就用它，否则用资源保存的 body”（`fieldOf`）。input 里有但为空串时算“用默认值”（页面上清空了该框），不回退到保存的值。
+- 测试：`command/main.test.ts`（连发几行后静默时补发；input 优先、否则 body；空串用默认）、`script/main.test.ts`（同上）。
+- 真内核验证（集成分支合并 D435 后，`target/debug/onedesk-devhost`，临时数据目录，`ONEDESK_SECRET_STORE=memory`，只用本机 bash）：本机脚本 `echo before; echo oops >&2; exit 3` → `status: "error"`，`error = { code: "pluginError", message: "The program exited with code 3." }`，输出是终端样式的表，`run.rows` 为 `[stdout, before]`、`[stderr, oops]`，`run.listFor` 里有这次运行；同样的 `exit 0` 脚本仍为 `success`。
+- 注意（测试会话的文件）：`e2e/round17.spec.ts` 的 “I4 … a non-zero exit of the command is not a failure” 按旧行为写，期望 `exit 3` 为 `success`；按 D435 现在是 `error`（输出保留），这条需要改成期望 `error`。
