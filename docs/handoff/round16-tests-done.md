@@ -83,7 +83,7 @@ G1/G2/G4/G5/G7 本阶段没有新改动，只复核了既有测试仍通过；�
 ## 别人的缺陷（我没改别人的文件；7 条 fixme 对应它们）
 
 1. **内核 `pages.rs`（`page.resolve`）**：插件 `render` 返回的 `values` 和 `readOnly` 被忽略（`values` 只来自有 `bind` 的字段，`readOnly` 只来自类型）。查询目录条目的 SQL 框是空的，也不是只读；已保留的运行页同理。`catalog/main.js:949` 返回了 `values: {sql}`、`readOnly: true`。
-2. **`org.onedesk.catalog` 与 `org.onedesk.table` 清单**：插件只有在自己某个动作的 `kinds` 里写了 `org.onedesk.datasource:source` 才能 `resources.list` 数据源（`manifest.rs foreign_kinds`）。两个清单都没有，`sourceList` 吞掉拒绝返回空，运行报 “Data source … does not exist”。补丁（只加一个无关动作用来声明）见 `/private/tmp/claude-501/probe-patches.diff`；更好的做法是内核给 `requires`/`depends` 声明一个读取权限，或这两个插件改用 `datasource` 提供的列表动作。
+2. **`org.onedesk.catalog` 与 `org.onedesk.table` 清单**：插件只有在自己某个动作的 `kinds` 里写了 `org.onedesk.datasource:source` 才能 `resources.list` 数据源（`manifest.rs foreign_kinds`）。两个清单都没有，`sourceList` 吞掉拒绝返回空，运行报 “Data source … does not exist”。补丁（只加一个无关动作用来声明）见 `docs/handoff/round16-probe-patches.diff`；更好的做法是内核给 `requires`/`depends` 声明一个读取权限，或这两个插件改用 `datasource` 提供的列表动作。
 3. **内核 + 表插件**：提供树和页面（`children`/`path`/`render`）里没有运行，`host.actions.call` 一律 `denied/notInRun`，而表插件的树、页面都靠 `catalog:mapping` 动作取映射。需要内核允许树/页面处理函数调被调动作（只读），或表插件改读映射的另一条路径（例如文件直接读、或催内核“提供”）。
 4. **内核 `runs.rs` ~403**：`node:` 目标的动作运行 ctx 没有 `node`（页面 ctx 有），表插件 `entityOfNode` 读 `ctx.node.key`，所有表动作报 “ is not in the mapping”。补丁：键取自 `ctx.target` 的最后一段。
 5. 提醒：提供树节点的状态（H3 的“节点状态”）和同步后树的刷新（`round16-plugins-done.md` 里 2、3）本轮没有测，因为 H 树整个不通。
