@@ -1,6 +1,6 @@
 # 第十六轮：内核会话交接（2026-11-21）
 
-分支 `claude/r16-kernel-487bdf`（从协调分支 `8863757` 切出），不推送、不合并。最后一次提交：见文末。
+分支 `claude/r16-kernel-487bdf`（从协调分支 `8863757` 切出），不推送、不合并。最后一次功能提交：`ce41b2a`（之后只有本文件补提交号）。
 
 确切名字见 [`round16-protocol.md`](round16-protocol.md)（第一次提交 `127b4e1` 就写好，后来只补了计数说明）。**协议 crate 和生成的 TS 本轮没有改动**（`pnpm gen:types` 之后 `src/workbench/protocol/generated/` 无差异）。
 
