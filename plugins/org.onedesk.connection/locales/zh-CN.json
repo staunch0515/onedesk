@@ -19,7 +19,7 @@
   "field.authName.query": "查询参数名称，如 api_key",
   "field.secret": "密钥",
   "field.secret.hint": "只写入钥匙串，之后不再显示。",
-  "field.secret.hintBasic": "只写入钥匙串。填 user:password 的 base64。",
+  "field.secret.hintBasic": "只写入钥匙串：密码。",
   "field.headers": "默认请求头",
   "field.headers.placeholder": "每行一个：名称: 值。每次请求都会带上。",
   "auth.none": "无",
@@ -40,5 +40,9 @@
   "test.ok": "连接成功：{status}，用时 {ms} 毫秒",
   "test.failed": "服务器返回 {status}。",
   "summary.test": "{status} · {ms} 毫秒",
-  "summary.request": "{status}"
+  "summary.request": "{status}",
+  "field.username": "用户名",
+  "field.username.placeholder": "用户名",
+  "error.badUsername": "Basic 的用户名不能含“:”。",
+  "error.noUsername": "请填写 Basic 的用户名。"
 }
