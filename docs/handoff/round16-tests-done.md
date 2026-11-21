@@ -92,4 +92,4 @@ G1/G2/G4/G5/G7 本阶段没有新改动，只复核了既有测试仍通过；�
 
 - 新增：`e2e/round16.spec.ts`（22 条，15 通过、7 fixme）、`plugins/org.onedesk.sql` 的 `create`、`docs/screenshots/round16/saved-result.png`。
 - `pnpm typecheck`、`pnpm lint` 通过；`pnpm test` 只剩 5 条失败：`lang-check`（4）与 `kernel-texts`（1），都是外壳新增的文字键尚无中日译文，等协调会话通知合并外壳提交后补。
-- 最后提交：见下一行。
+- 最后提交：`ac24ad8`（译文提交另计）。
