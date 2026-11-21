@@ -359,7 +359,7 @@ export const enUS = {
   "env.refChange": "Change",
   "env.refKind": "Resource reference",
   "env.refName": "Parameter name",
-  "env.refNamePlaceholder": "for example datasource",
+  "env.refNamePlaceholder": "Name used by the plugin that reads it",
   "env.openRef": "Open",
   "env.noParams": "No parameter matches",
   "env.usedBy": "Used by {count} open tab(s)",
