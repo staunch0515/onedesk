@@ -37,6 +37,7 @@
       { "id": "run", "label": "action.run", "icon": "play", "kinds": ["entry"], "output": "table", "shortcut": ["Mod", "Enter"], "saveFirst": false, "confirm": null },
       { "id": "saveAsSql", "label": "action.saveAsSql", "icon": "file-plus", "kinds": ["entry"], "output": "link", "saveFirst": false, "confirm": null },
       { "id": "reindex", "label": "action.reindex", "icon": "refresh-cw", "output": "table", "saveFirst": false, "confirm": null },
+      { "id": "queriesHere", "label": "action.queriesHere", "icon": "folder-search", "kinds": ["org.onedesk.datasource:source"], "output": "table", "saveFirst": false, "confirm": null },
       { "id": "mapping", "label": "action.mapping", "icon": "map", "output": "text", "saveFirst": false, "confirm": null }
     ],
     "pages": [

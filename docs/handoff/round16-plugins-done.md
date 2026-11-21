@@ -1,7 +1,7 @@
 # 第十六轮：新插件会话完成记录（r16-plugins）
 
 分支 `claude/r16-plugins-fd9132`。只改了 `plugins/org.onedesk.catalog/**`、`plugins/org.onedesk.table/**` 和本文件。
-插件代码的最后提交：**`813a875`**（审查修正；之前 `52dd001`、`d4ccbc9`），README 与本文件在其后单独提交。已合入协调分支 `claude/onedesk-coord-6` 的 `23d9380`。
+插件代码的最后提交：**`fd0bdda`**（e2e #21；之前 `813a875` 审查修正、`52dd001`、`d4ccbc9`），本文件在其后单独提交。已合入协调分支 `claude/onedesk-coord-6` 的 `2e37488`。
 
 验证：`pnpm test`（74 个文件 727 条全过，其中查询目录 35 条、表 18 条，另有公共的语言文件检查覆盖两个新插件）、`pnpm lint`（架构检查：16 个内置插件、沙箱全局对象检查通过；界面规范通过）、`pnpm typecheck` 通过。没有做 Rust 构建，也没有在真内核上跑过两个插件（需要合并内核分支后由第二阶段 e2e 验证）。没有新依赖：YAML 头与映射文件由插件自带的小解析器读取（规则 9 不涉及）。
 
@@ -50,6 +50,17 @@
 | 17 | `mappingFile` 不是以 `/` 开头时报 `mappingNotAbsolute`，不读文件 | “a mapping file named in the settings is used…” 中的相对路径断言 |
 
 验证（`813a875`）：`pnpm lint`、`pnpm typecheck` 通过；`pnpm test` 中查询目录 41 条、表 23 条全过。全量 753 条里有 4 条失败，都在 `plugins/_testing/lang-check.test.ts`（外壳新键缺中日译文，审查 #13，归测试会话），与本会话的文件无关。
+
+## e2e #21（数据源读不到）
+
+内核按清单里动作的 `kinds` 判断插件能否读依赖方导出的类型（`foreign_kinds`）。两个插件原来都没有在 `org.onedesk.datasource:source` 上声明动作，所以 `resources.list` 取不到数据源。没有采用参考补丁里的占位动作 `probe`：`kinds` 含数据源类型的动作会作为按钮出现在每个数据源页上。改为各加一个有用的动作：
+
+- 表：`tablesHere`“读取这个库的表”：用这个数据源刷新快照，不看环境。
+- 查询目录：`queriesHere`“使用这个数据源的目录查询”：列出头部 `datasource` 指向它（id 或名称）的条目。
+
+测试：两个插件各一条清单检查（照内核规则：有外部类型的动作，且依赖数据源插件），以及两个动作的行为测试。参考补丁里 `entityOfNode` 从 `target` 取键的改动没有采用，那是内核 #20（动作 ctx 缺 `node`）的绕过，应由内核修。
+
+建议（内核/主会话）：“能否读依赖方导出的类型”现在取决于是否在那个类型上声明了动作，这一点不直观；可以考虑让 `depends` + `exports.kinds[].read` 本身就够，或在清单里加一个显式的“读取”声明。
 
 ## 需要别的会话做的（插件里没有绕过）
 

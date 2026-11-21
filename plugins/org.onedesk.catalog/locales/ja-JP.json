@@ -76,5 +76,9 @@
   "badge.missing": "無効",
   "reason.mappingNotAbsolute": "マッピングファイルの設定はフルパスでなければなりません",
   "message.truncated": "{max} ファイルまたは {depth} 階層で停止しました。今回は無効の印を付けていません。",
-  "index.more": "…ほか {count} 件（再インデックスすると結果ですべて見られます）。"
+  "index.more": "…ほか {count} 件（再インデックスすると結果ですべて見られます）。",
+  "action.queriesHere": "このデータソースを使うカタログのクエリ",
+  "col.id": "id",
+  "col.name": "名前",
+  "message.queriesHere": "{count} 件のカタログのクエリが {source} を使います"
 }

@@ -355,11 +355,12 @@ async function query(ctx, sql, source) {
 
 // In a run: the mapping plus which of its tables the database has (`existing` null when no data source is set
 // or it cannot be reached), stored for the tree and the page.
-export async function refreshSnapshot(ctx) {
+// `sourceGiven`: a data source chosen by the user (the action on a data source's page), else the environment's.
+export async function refreshSnapshot(ctx, sourceGiven) {
   const mapping = await readMapping(ctx);
   let existing = null;
   let error = "";
-  const source = await sourceId(ctx);
+  const source = sourceGiven || (await sourceId(ctx));
   if (source) {
     try {
       const all = existingSet((await query(ctx, EXISTING_SQL, source)).output.rows);
@@ -478,6 +479,16 @@ export default {
     host.actions.handle("refresh", async (ctx) => {
       ctx.progress(undefined, tr(ctx, "step.refreshing"));
       const snap = await refreshSnapshot(ctx);
+      return { output: { type: "text", text: refreshedText(ctx, snap) }, summary: { message: refreshedText(ctx, snap) } };
+    });
+
+    // On a data source's page (review #21): read the tables of this database. Declaring an action on the data
+    // source kind is also what lets this plugin list data sources (the kernel's `foreign_kinds`).
+    host.actions.handle("tablesHere", async (ctx) => {
+      const src = ctx.resource;
+      if (!src || !src.id) throw new Error(tr(ctx, "error.noSource"));
+      ctx.progress(undefined, tr(ctx, "step.refreshing"));
+      const snap = await refreshSnapshot(ctx, src.id);
       return { output: { type: "text", text: refreshedText(ctx, snap) }, summary: { message: refreshedText(ctx, snap) } };
     });
 

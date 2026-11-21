@@ -53,5 +53,6 @@
   "overview.none": "Not loaded yet: run “Refresh from the database”.",
   "tree.notLoaded": "Not loaded — open to refresh",
   "warn.sourceFailed": "The database could not be read, so nothing is marked missing: {error}",
-  "error.snapshotTooLarge": "The mapping is too large to store"
+  "error.snapshotTooLarge": "The mapping is too large to store",
+  "action.tablesHere": "Read this database's tables"
 }

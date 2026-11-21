@@ -53,5 +53,6 @@
   "overview.none": "尚未加载：请运行“从数据库刷新”。",
   "tree.notLoaded": "尚未加载——打开后刷新",
   "warn.sourceFailed": "无法读取数据库，因此没有标记缺失：{error}",
-  "error.snapshotTooLarge": "映射太大，无法保存"
+  "error.snapshotTooLarge": "映射太大，无法保存",
+  "action.tablesHere": "读取这个库的表"
 }
