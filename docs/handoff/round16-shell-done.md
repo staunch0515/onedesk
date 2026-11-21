@@ -35,3 +35,5 @@
 - `RunKeepBar` 的改名对话框里按 Enter 在真浏览器里没有提交（点按钮可以；单测没覆盖 Enter）——未查清，可能是对话框焦点问题。
 - `params.addBody` 的说明文字仍写“Parameters the workspace itself understands.”，加了“Resource reference”后略不准。
 - 运行树订阅 `runs` 事件，运行过程中进度事件会让树整层重读（量不大，没做节流）。
+
+最后提交：`0e501d2`
