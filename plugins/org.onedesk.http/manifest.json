@@ -78,6 +78,17 @@
         ],
         "saveFirst": false,
         "confirm": null
+      },
+      {
+        "id": "fetch",
+        "label": "action.fetch",
+        "icon": "send",
+        "kinds": [
+          "org.onedesk.connection:connection"
+        ],
+        "output": "text",
+        "saveFirst": false,
+        "confirm": null
       }
     ],
     "pages": [

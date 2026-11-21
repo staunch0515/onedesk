@@ -39,5 +39,6 @@
   "connection.none": "不使用（写完整地址）",
   "field.url.placeholderPath": "/items/:item_id",
   "error.connectionMissing": "找不到连接“{connection}”。",
-  "error.connectionAnswer": "连接返回的内容无法读取。"
+  "error.connectionAnswer": "连接返回的内容无法读取。",
+  "action.fetch": "向这条连接发送 GET"
 }
