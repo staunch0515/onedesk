@@ -76,3 +76,8 @@
 - 先合并了 `claude/onedesk-r17` 的最新提交。`PNode` 加 `menu`、`draggable`、`accepts`（之前 `deny_unknown_fields`，带这些键的整批会失败）；提供树按 3.8 节校验后透传，非法命令丢掉并写一次工作进程标准错误里的警告。资源类型的子节点接受但忽略。
 - 测试：`round17.rs` `d430_provided_nodes_carry_…`。检查同第二批（`cargo test`、clippy、lint、typecheck、gen-types 通过；vitest 只有中日语言包那 4 个旧失败）。
 - 范围外：“插件警告”目前只写到标准错误，界面上看不到；若要在插件页显示，需要协议加字段（主会话决定）。
+
+## 8. D431：运行记录树根层“已保留结果”在前
+
+- `runs.rs` 根层顺序改为 `@runs:saved`、`@runs:recent`；`tests/round3.rs` 的顺序断言一起改。`cargo test --workspace`、clippy、lint 通过。
+- 范围外：`e2e/round16.spec.ts:278` 还断言旧顺序 `["Recent runs", "Saved results"]`，需测试会话改成新顺序（e2e 没跑）。

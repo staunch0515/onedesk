@@ -410,8 +410,9 @@ async fn palette_plugins_tree_and_broken_packages() {
     let a = run_text(&c, &j, "rows 1").await;
     let b = run_text(&c, &j, "rows 2").await;
     let runs = c.ok("tree.children", json!({ "tree": "runs" })).await;
-    assert_eq!(runs["nodes"][0]["key"], "@runs:recent");
-    assert_eq!(runs["nodes"][1]["key"], "@runs:saved");
+    // D431: saved results first.
+    assert_eq!(runs["nodes"][0]["key"], "@runs:saved");
+    assert_eq!(runs["nodes"][1]["key"], "@runs:recent");
     let recent = c.ok("tree.children", json!({ "tree": "runs", "parent": "@runs:recent" })).await;
     assert_eq!(recent["nodes"][0]["key"], b["id"]);
     assert_eq!(recent["nodes"][1]["target"], format!("run:{}", a["id"].as_str().unwrap()));
