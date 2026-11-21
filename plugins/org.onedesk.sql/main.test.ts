@@ -236,6 +236,12 @@ describe("sql: run action", () => {
       await expect(pickSource(ctxOf(fakeHost()), "")).rejects.toThrow("No data source");
       await expect(pickSource(ctxOf(fakeHost()), "ghost")).rejects.toThrow("“ghost” was not found");
     });
+    it("a stale reference says where it came from (environment or workspace default), not only the id", async () => {
+      const env = fakeHost({ params: { get: vi.fn(async () => ({ found: true, value: "gone", sourceName: "Prod" })), config: vi.fn() } });
+      await expect(pickSource(ctxOf(env), "")).rejects.toThrow("(from the environment) was not found");
+      const def = fakeHost(cfg("gone2"));
+      await expect(pickSource(ctxOf(def), "")).rejects.toThrow("“gone2” (the workspace default) was not found");
+    });
   });
 
   it("a parameter not typed takes the environment's value; an empty one is NULL", async () => {

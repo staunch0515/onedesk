@@ -38,5 +38,7 @@
   "error.param.max": "参数 :{name} 超过 {max} 个字符。",
   "error.param.time": "参数 :{name} 必须是时间（HH:MM）。",
   "error.sourceMissing": "找不到数据源“{source}”。",
+  "error.sourceMissingEnv": "找不到环境里指定的数据源“{source}”，请在环境中重新选择。",
+  "error.sourceMissingDefault": "找不到工作区默认数据源“{source}”，请在工作区设置中重新选择。",
   "error.param.nul": "参数 :{name} 含有 NUL 字符。"
 }

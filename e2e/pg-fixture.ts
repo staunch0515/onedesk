@@ -10,15 +10,26 @@ import net from "node:net";
 import path from "node:path";
 
 export function findPgBin(): string | null {
-  const roots = ["/Library/PostgreSQL", "/opt/homebrew/opt/postgresql@16", "/opt/homebrew/opt/postgresql@15", "/opt/homebrew/opt/libpq", "/usr/local/opt/postgresql@15"];
+  const roots = ["/Library/PostgreSQL", "/Applications/Postgres.app/Contents/Versions", "/opt/homebrew/opt", "/usr/local/opt"];
+  const has = (d: string) => existsSync(path.join(d, "bin/initdb"));
+  const fromEnv = process.env.ONEDESK_E2E_PG_BIN; // a bin directory holding initdb/pg_ctl/psql
+  if (fromEnv && existsSync(path.join(fromEnv, "initdb"))) return fromEnv;
   for (const r of roots) {
-    if (existsSync(path.join(r, "bin/initdb"))) return path.join(r, "bin");
-    if (existsSync(r)) for (const v of readdirSync(r).sort().reverse()) if (existsSync(path.join(r, v, "bin/initdb"))) return path.join(r, v, "bin");
+    if (!existsSync(r)) continue;
+    if (has(r)) return path.join(r, "bin");
+    // newest first: postgresql@18, postgresql@17, ..., libpq has no initdb and is skipped by `has`
+    const names = readdirSync(r).filter((n) => /^(postgresql(@\d+)?|libpq|\d+|Latest)$/.test(n));
+    for (const v of names.sort((a, b) => b.localeCompare(a, undefined, { numeric: true }))) if (has(path.join(r, v))) return path.join(r, v, "bin");
   }
   return null;
 }
 
 export const pgBinOrNull = findPgBin();
+
+/** Why the PostgreSQL specs cannot run here (null when they can). Set ONEDESK_E2E_REQUIRE_PG=1 to turn the skip into a failure. */
+export const PG_SKIP_REASON: string | null = pgBinOrNull
+  ? null
+  : "no PostgreSQL server programs (initdb/pg_ctl/psql) found — install one (e.g. `brew install postgresql@17`) or set ONEDESK_E2E_PG_BIN to its bin directory";
 
 async function freePort(): Promise<number> {
   return new Promise((resolve, reject) => {

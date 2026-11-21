@@ -78,7 +78,10 @@ for (const dir of kernelSide) {
     const re = f.includes(`${sep}crates${sep}kernel${sep}`) ? wordReNoSql : wordRe;
     if (isTestFile) continue;
     const inKernel = f.includes(`${sep}crates${sep}kernel${sep}`) && f.endsWith(".rs");
-    code.split("\n").forEach((line, i) => {
+    code.split("\n").forEach((rawLine, i) => {
+      // Migration file names (`include_str!("migrations/0003_x.sql")`) and the SQLite binding's own names
+      // (`rusqlite`, `SQLITE_*`) belong to the kernel's storage layer, not to a database plugin.
+      const line = rawLine.replace(/include_str!\s*\([^)]*\)/g, "").replace(/\brusqlite\b|\bSQLITE_[A-Z0-9_]+/g, "");
       const m = re.exec(line);
       if (m) errors_.push(`${rel(f)}:${i + 1}: 出现具体插件相关的词 "${m[1]}"`);
       const k = inKernel ? kernelDbRe.exec(line) : null;

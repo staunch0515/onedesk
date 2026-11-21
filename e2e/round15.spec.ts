@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { expect, test, type Page } from "@playwright/test";
 import { DEVHOST, openKernel, rpc, startHost, stopHost, type Host } from "./kernel-host";
-import { DB1, DB2, PG_PASSWORD, PG_USER, pgBinOrNull, startPg, type Pg } from "./pg-fixture";
+import { DB1, DB2, PG_PASSWORD, PG_USER, PG_SKIP_REASON, startPg, type Pg } from "./pg-fixture";
 
 test.use({ viewport: { width: 1280, height: 800 }, locale: "en-US" });
 test.describe.configure({ mode: "serial" });
@@ -18,7 +18,8 @@ let pg: Pg;
 test.beforeAll(async () => {
   if (process.env.ONEDESK_E2E_REQUIRE_DEVHOST === "1") expect(existsSync(DEVHOST), `onedesk-devhost not built at ${DEVHOST}`).toBe(true);
   else test.skip(!existsSync(DEVHOST), `onedesk-devhost not built at ${DEVHOST}`);
-  expect(pgBinOrNull, "no PostgreSQL (initdb) on this machine").not.toBeNull();
+  if (process.env.ONEDESK_E2E_REQUIRE_PG === "1") expect(PG_SKIP_REASON, "PostgreSQL is required").toBeNull();
+  else test.skip(PG_SKIP_REASON !== null, PG_SKIP_REASON ?? "");
   base = realpathSync(mkdtempSync(path.join(tmpdir(), "od-round15-")));
   pg = await startPg(path.join(base, "pg"));
   host = await startHost(path.join(base, "data"));
@@ -78,7 +79,7 @@ test("F1/F2/F4: a direct data source is made in the page; the password goes to t
   await tb(page, "User").fill(PG_USER);
   await page.getByLabel("Password", { exact: true }).fill(PG_PASSWORD);
   await page.getByRole("button", { name: "Save & test" }).click();
-  await expect(page.getByText(/Connected\. PostgreSQL 15/)).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByText(/Connected\. PostgreSQL \d+/)).toBeVisible({ timeout: 30_000 });
   await expect(page.getByLabel("Password", { exact: true })).toHaveAttribute("placeholder", /Saved/);
   await tb(page, "Name").fill("Local shop");
   await tb(page, "Name").press("Enter");
@@ -127,7 +128,7 @@ test("F6: a connection string fills the form (the password in it is not taken)",
   await expect(page.getByLabel("Password", { exact: true })).toHaveAttribute("placeholder", /Not set/);
   await page.getByLabel("Password", { exact: true }).fill(PG_PASSWORD);
   await page.getByRole("button", { name: "Save & test" }).click();
-  await expect(page.getByText(/Connected\. PostgreSQL 15/)).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByText(/Connected\. PostgreSQL \d+/)).toBeVisible({ timeout: 30_000 });
   await tb(page, "Name").fill("Other db");
   await tb(page, "Name").press("Enter");
   await expect(treeItem(page, "Other db")).toBeVisible();
