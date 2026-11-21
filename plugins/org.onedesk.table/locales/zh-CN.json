@@ -15,7 +15,7 @@
   "tab.history": "历史",
   "message.depth1": "按一层前缀分组",
   "message.depth2": "按两层前缀分组",
-  "message.refreshed": "已读取 {count} 张表，并与数据库核对",
+  "message.refreshed": "已读取 {count} 张表，库里缺 {missing} 张",
   "message.refreshedNoSource": "已读取 {count} 张表；没有数据源可供核对",
   "warn.mapping": "映射文件不可用；请看查询目录的索引报告",
   "warn.missing": "{table} 在映射里有，但库里没有",
@@ -45,5 +45,13 @@
   "error.at": "请填写有效的时刻",
   "error.period": "请填写有效的开始和结束时间",
   "error.noDeleted": "映射没有给这张表删除标记或结束时间",
-  "badge.missing": "缺失"
+  "badge.missing": "缺失",
+  "action.refresh": "从数据库刷新",
+  "step.refreshing": "正在读取映射和数据库里的表…",
+  "overview.title": "表",
+  "overview.about": "表树显示上次刷新读到的内容：查询目录的映射，以及库里有其中哪些表（取环境的 datasource，否则 datasource.default）。两者有变化后请刷新。",
+  "overview.none": "尚未加载：请运行“从数据库刷新”。",
+  "tree.notLoaded": "尚未加载——打开后刷新",
+  "warn.sourceFailed": "无法读取数据库，因此没有标记缺失：{error}",
+  "error.snapshotTooLarge": "映射太大，无法保存"
 }

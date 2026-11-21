@@ -13,17 +13,77 @@
     "files": false
   },
   "depends": [
-    { "id": "org.onedesk.datasource", "version": ">=0.1.0, <1.0.0" },
-    { "id": "org.onedesk.catalog", "version": ">=0.1.0, <1.0.0" }
+    {
+      "id": "org.onedesk.datasource",
+      "version": ">=0.1.0, <1.0.0"
+    },
+    {
+      "id": "org.onedesk.catalog",
+      "version": ">=0.1.0, <1.0.0"
+    }
   ],
   "contributes": {
     "actions": [
-      { "id": "rows", "label": "action.rows", "icon": "table", "output": "table", "shortcut": ["Mod", "Enter"], "saveFirst": false, "confirm": null },
-      { "id": "current", "label": "action.current", "icon": "badge-check", "output": "table", "saveFirst": false, "confirm": null },
-      { "id": "history", "label": "action.history", "icon": "history", "output": "table", "saveFirst": false, "confirm": null },
-      { "id": "at", "label": "action.at", "icon": "clock", "output": "table", "saveFirst": false, "confirm": null },
-      { "id": "changes", "label": "action.changes", "icon": "git-compare", "output": "table", "saveFirst": false, "confirm": null },
-      { "id": "deleted", "label": "action.deleted", "icon": "trash-2", "output": "table", "saveFirst": false, "confirm": null }
+      {
+        "id": "rows",
+        "label": "action.rows",
+        "icon": "table",
+        "output": "table",
+        "shortcut": [
+          "Mod",
+          "Enter"
+        ],
+        "saveFirst": false,
+        "confirm": null
+      },
+      {
+        "id": "current",
+        "label": "action.current",
+        "icon": "badge-check",
+        "output": "table",
+        "saveFirst": false,
+        "confirm": null
+      },
+      {
+        "id": "history",
+        "label": "action.history",
+        "icon": "history",
+        "output": "table",
+        "saveFirst": false,
+        "confirm": null
+      },
+      {
+        "id": "at",
+        "label": "action.at",
+        "icon": "clock",
+        "output": "table",
+        "saveFirst": false,
+        "confirm": null
+      },
+      {
+        "id": "changes",
+        "label": "action.changes",
+        "icon": "git-compare",
+        "output": "table",
+        "saveFirst": false,
+        "confirm": null
+      },
+      {
+        "id": "deleted",
+        "label": "action.deleted",
+        "icon": "trash-2",
+        "output": "table",
+        "saveFirst": false,
+        "confirm": null
+      },
+      {
+        "id": "refresh",
+        "label": "action.refresh",
+        "icon": "refresh-cw",
+        "output": "text",
+        "saveFirst": false,
+        "confirm": null
+      }
     ],
     "pages": [
       {
@@ -31,17 +91,103 @@
         "recompute": false,
         "usesEnv": true,
         "actions": [
-          { "id": "rows", "role": "run", "action": "rows", "label": "action.rows", "icon": "table", "primary": true, "shortcut": ["Mod", "Enter"] },
-          { "id": "current", "role": "run", "action": "current", "label": "action.current", "icon": "badge-check" },
-          { "id": "history", "role": "run", "action": "history", "label": "action.history", "icon": "history" },
-          { "id": "at", "role": "run", "action": "at", "label": "action.at", "icon": "clock" },
-          { "id": "changes", "role": "run", "action": "changes", "label": "action.changes", "icon": "git-compare" },
-          { "id": "deleted", "role": "run", "action": "deleted", "label": "action.deleted", "icon": "trash-2" }
+          {
+            "id": "rows",
+            "role": "run",
+            "action": "rows",
+            "label": "action.rows",
+            "icon": "table",
+            "primary": true,
+            "shortcut": [
+              "Mod",
+              "Enter"
+            ]
+          },
+          {
+            "id": "current",
+            "role": "run",
+            "action": "current",
+            "label": "action.current",
+            "icon": "badge-check"
+          },
+          {
+            "id": "history",
+            "role": "run",
+            "action": "history",
+            "label": "action.history",
+            "icon": "history"
+          },
+          {
+            "id": "at",
+            "role": "run",
+            "action": "at",
+            "label": "action.at",
+            "icon": "clock"
+          },
+          {
+            "id": "changes",
+            "role": "run",
+            "action": "changes",
+            "label": "action.changes",
+            "icon": "git-compare"
+          },
+          {
+            "id": "deleted",
+            "role": "run",
+            "action": "deleted",
+            "label": "action.deleted",
+            "icon": "trash-2"
+          },
+          {
+            "id": "refresh",
+            "role": "run",
+            "action": "refresh",
+            "label": "action.refresh",
+            "icon": "refresh-cw"
+          }
         ],
         "resultTabs": [
-          { "id": "result", "type": "output", "label": "tab.result", "icon": "table" },
-          { "id": "sent", "type": "view", "label": "tab.sent", "icon": "file-code" },
-          { "id": "history", "type": "history", "label": "tab.history", "icon": "history" }
+          {
+            "id": "result",
+            "type": "output",
+            "label": "tab.result",
+            "icon": "table"
+          },
+          {
+            "id": "sent",
+            "type": "view",
+            "label": "tab.sent",
+            "icon": "file-code"
+          },
+          {
+            "id": "history",
+            "type": "history",
+            "label": "tab.history",
+            "icon": "history"
+          }
+        ]
+      },
+      {
+        "id": "overview",
+        "recompute": false,
+        "usesEnv": true,
+        "actions": [
+          {
+            "id": "refresh",
+            "role": "run",
+            "action": "refresh",
+            "label": "action.refresh",
+            "icon": "refresh-cw",
+            "primary": true
+          }
+        ],
+        "resultTabs": [
+          {
+            "id": "result",
+            "type": "output",
+            "label": "tab.result",
+            "icon": "file-text"
+          }
         ]
       }
     ],
@@ -52,12 +198,24 @@
         "icon": "table",
         "source": "provided",
         "page": "table",
-        "toolbar": ["toggleDepth", "refresh"]
+        "toolbar": [
+          "toggleDepth",
+          "refresh"
+        ]
       }
     ],
     "commands": [
-      { "id": "toggleDepth", "label": "command.toggleDepth", "icon": "list-tree" },
-      { "id": "refresh", "label": "command.refresh", "icon": "refresh-cw", "palette": true }
+      {
+        "id": "toggleDepth",
+        "label": "command.toggleDepth",
+        "icon": "list-tree"
+      },
+      {
+        "id": "refresh",
+        "label": "command.refresh",
+        "icon": "refresh-cw",
+        "palette": true
+      }
     ],
     "locales": {
       "en-US": "locales/en-US.json",

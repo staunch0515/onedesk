@@ -15,7 +15,7 @@
   "tab.history": "履歴",
   "message.depth1": "接頭辞 1 階層でグループ化",
   "message.depth2": "接頭辞 2 階層でグループ化",
-  "message.refreshed": "{count} 個のテーブルを読み、データベースと照合しました",
+  "message.refreshed": "{count} 個のテーブルを読み、{missing} 個がデータベースにありません",
   "message.refreshedNoSource": "{count} 個のテーブルを読みました。照合するデータソースがありません",
   "warn.mapping": "マッピングファイルを使えません。カタログのインデックスのレポートを見てください",
   "warn.missing": "{table} はマッピングにありますがデータベースにありません",
@@ -45,5 +45,13 @@
   "error.at": "正しい時点を入力してください",
   "error.period": "正しい開始と終了を入力してください",
   "error.noDeleted": "マッピングにこのテーブルの削除フラグも終了時刻もありません",
-  "badge.missing": "なし"
+  "badge.missing": "なし",
+  "action.refresh": "データベースから更新",
+  "step.refreshing": "マッピングとデータベースのテーブルを読み込み中…",
+  "overview.title": "テーブル",
+  "overview.about": "テーブルのツリーは前回の更新で読んだ内容を表示します：カタログのマッピングと、そのうちデータベースにあるテーブル（環境の datasource、なければ datasource.default）。どちらかを変えたら更新してください。",
+  "overview.none": "まだ読み込んでいません。「データベースから更新」を実行してください。",
+  "tree.notLoaded": "未読み込み — 開いて更新",
+  "warn.sourceFailed": "データベースを読めなかったため、欠落の表示はありません：{error}",
+  "error.snapshotTooLarge": "マッピングが大きすぎて保存できません"
 }

@@ -15,7 +15,7 @@
   "tab.history": "History",
   "message.depth1": "Grouped by one prefix level",
   "message.depth2": "Grouped by two prefix levels",
-  "message.refreshed": "{count} tables read; compared with the database",
+  "message.refreshed": "{count} tables read, {missing} missing in the database",
   "message.refreshedNoSource": "{count} tables read; no data source to compare with",
   "warn.mapping": "The mapping file is not available; see the catalog's index report",
   "warn.missing": "{table} is in the mapping but not in the database",
@@ -45,5 +45,13 @@
   "error.at": "Enter a valid time",
   "error.period": "Enter a valid start and end",
   "error.noDeleted": "The mapping gives this table no deleted flag and no end time",
-  "badge.missing": "missing"
+  "badge.missing": "missing",
+  "action.refresh": "Refresh from the database",
+  "step.refreshing": "Reading the mapping and the database's tables…",
+  "overview.title": "Tables",
+  "overview.about": "The table tree shows what the last refresh read: the catalog's mapping, and which of its tables the database has (environment datasource, else datasource.default). Refresh after changing either.",
+  "overview.none": "Not loaded yet: run “Refresh from the database”.",
+  "tree.notLoaded": "Not loaded — open to refresh",
+  "warn.sourceFailed": "The database could not be read, so nothing is marked missing: {error}",
+  "error.snapshotTooLarge": "The mapping is too large to store"
 }

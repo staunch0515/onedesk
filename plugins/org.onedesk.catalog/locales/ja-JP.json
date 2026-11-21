@@ -72,5 +72,9 @@
   "error.param.time": "{name} は時刻（HH:MM）でなければなりません",
   "error.param.datetime": "{name} は日時でなければなりません",
   "error.param.enum": "{name} は一覧の値のいずれかでなければなりません",
-  "error.param.max": "{name} が {max} 文字を超えています"
+  "error.param.max": "{name} が {max} 文字を超えています",
+  "badge.missing": "無効",
+  "reason.mappingNotAbsolute": "マッピングファイルの設定はフルパスでなければなりません",
+  "message.truncated": "{max} ファイルまたは {depth} 階層で停止しました。今回は無効の印を付けていません。",
+  "index.more": "…ほか {count} 件（再インデックスすると結果ですべて見られます）。"
 }

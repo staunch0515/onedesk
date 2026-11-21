@@ -15,7 +15,9 @@ export const SOURCE_KIND = "org.onedesk.datasource:source";
 export const SQL_CREATE = "org.onedesk.sql:create";
 export const AS_OF = "as_of";
 const REPORT_KEY = "lastReport";
-const SENT_KEY = "lastSent";
+const SENT_KEY = "sent";
+const SENT_RUNS = 30;
+const SENT_MAX = 6000;
 const MAPPING_NAMES = ["mapping.yaml", "mapping.yml", "mapping.json"];
 const TYPES = ["text", "number", "date", "datetime", "time", "enum"];
 const MAX_DEPTH = 12;
@@ -455,7 +457,9 @@ export function renderSql(sql, values, decls) {
     }
     const v = values[t.param];
     const decl = (decls || []).find((d) => d.name === t.param);
-    out += sqlLiteral(v === undefined || v === null || v === "" ? null : toSqlValue(decl ? decl.type : "text", String(v)));
+    const lit = sqlLiteral(v === undefined || v === null || v === "" ? null : toSqlValue(decl ? decl.type : "text", String(v)));
+    // `E:p` / `U&:p` turn the literal into an escape string, where a backslash escapes: double it too (review #9).
+    out += lit !== "NULL" && /(^|[^A-Za-z0-9_$])([eE]|[uU]&)$/.test(out) ? lit.replace(/\\/g, "\\\\") : lit;
   }
   return out;
 }
@@ -606,8 +610,10 @@ export function groupsOf(id) {
 const GROUP = "g:";
 
 // Tree nodes under `parentKey` ("" = root) from the catalog's resources.
-export function treeChildren(resources, parentKey) {
-  const live = resources.filter((r) => !isMissing(r) && !r.deleted);
+// D422: entries whose file is gone stay in the tree, marked (provided nodes cannot carry a state: a warning
+// icon and a badge), so they can be opened and their history read; only search drops them.
+export function treeChildren(resources, parentKey, missingBadge) {
+  const live = resources.filter((r) => !r.deleted);
   const parent = parentKey ? parentKey.slice(GROUP.length) : "";
   const groups = new Set();
   const entries = [];
@@ -623,7 +629,11 @@ export function treeChildren(resources, parentKey) {
   const g = [...groups].sort().map((k) => ({ key: GROUP + k, label: k.split(".").pop(), icon: "folder", expandable: true }));
   const e = entries
     .sort((a, b) => (catalogId(a) < catalogId(b) ? -1 : catalogId(a) > catalogId(b) ? 1 : 0))
-    .map((r) => ({ key: r.id, label: r.name || catalogId(r), icon: "file-search", expandable: false, target: `resource:${r.id}` }));
+    .map((r) => {
+      const n = { key: r.id, label: r.name || catalogId(r), icon: "file-search", expandable: false, target: `resource:${r.id}` };
+      if (isMissing(r)) (n.icon = "triangle-alert"), (n.badge = missingBadge || "missing");
+      return n;
+    });
   return [...g, ...e];
 }
 
@@ -648,26 +658,40 @@ export function treePath(resources, key) {
 
 /* ---------------------------------------------------------------- files and sync (A1, A3, A4, A5) */
 
-async function walk(ctx, root, out, depth) {
-  if (depth > MAX_DEPTH || out.length >= MAX_FILES) return;
+// Review #6: a folder is entered once by its real path (`files.stat` resolves links), so a link back up does
+// not loop; when the depth or file limit cuts the walk short, `st.truncated` says so.
+async function walk(ctx, dir, st, depth) {
+  if (depth > MAX_DEPTH) return void (st.truncated = true);
+  let real = dir;
+  try {
+    real = (await ctx.host.files.stat(dir)).path || dir;
+  } catch (e) {
+    real = dir;
+  }
+  if (st.visited.has(real)) return;
+  st.visited.add(real);
   let offset = 0;
   for (;;) {
-    const page = await ctx.host.files.list(root, { offset, limit: PAGE });
+    const page = await ctx.host.files.list(dir, { offset, limit: PAGE });
     for (const e of page.entries || []) {
       if (e.hidden || String(e.name).startsWith(".")) continue;
-      if (e.dir) await walk(ctx, e.path, out, depth + 1);
-      else if (/\.sql$/i.test(e.name) && out.length < MAX_FILES) out.push(e.path);
+      if (e.dir) await walk(ctx, e.path, st, depth + 1);
+      else if (/\.sql$/i.test(e.name)) {
+        if (st.files.length >= MAX_FILES) st.truncated = true;
+        else if (!st.seen.has(e.path)) (st.seen.add(e.path), st.files.push(e.path));
+      }
     }
     if (page.next === undefined || page.next === null) return;
     offset = page.next;
   }
 }
 
+// { files, truncated }
 export async function listSqlFiles(ctx) {
   const roots = (await ctx.host.files.roots()) || [];
-  const out = [];
-  for (const r of roots) await walk(ctx, r.path, out, 0);
-  return out.sort();
+  const st = { files: [], seen: new Set(), visited: new Set(), truncated: false };
+  for (const r of roots) await walk(ctx, r.path, st, 0);
+  return { files: st.files.sort(), truncated: st.truncated };
 }
 
 // The mapping: the `mappingFile` setting, else mapping.yaml / .yml / .json at the top of a granted folder.
@@ -679,6 +703,8 @@ export async function loadMapping(ctx) {
   } catch (e) {
     configured = "";
   }
+  // Review #17: a relative path would mean the plugin's own folder; only absolute paths are mapping files.
+  if (configured && !configured.startsWith("/")) return { mapping: { path: configured, entities: {} }, problem: "mappingNotAbsolute", problems: [] };
   const candidates = [];
   if (configured) candidates.push(configured);
   else {
@@ -704,7 +730,7 @@ export async function loadMapping(ctx) {
 // path; only `description` and the body are written for files already indexed (tags, favorites and runs stay);
 // indexed files that are gone or no longer parse are marked missing. Returns the report it also stores.
 export async function sync(ctx) {
-  const paths = await listSqlFiles(ctx);
+  const { files: paths, truncated } = await listSqlFiles(ctx);
   const items = [];
   const skipped = [];
   const seen = {};
@@ -734,14 +760,15 @@ export async function sync(ctx) {
       body: { id: e.id, path, sql: e.sql, params: e.params, permissions: e.permissions, datasource: e.datasource, tags: e.tags },
     });
   }
-  // One batch keyed by external key (round16-protocol.md §2.2). A file already indexed gets only its
-  // description and body written, so a name the user gave it stays; indexed files not in this batch are
-  // marked missing (`othersMissing`).
+  // One batch keyed by external key (round16-protocol.md §2.2). Only description and body are sent, so a name
+  // the user gave an entry stays — also when a deleted entry comes back (review #8). Indexed files not in the
+  // batch are marked missing, unless the walk was cut short: then nothing is (review #6).
   const existing = new Set(
     ((await ctx.host.resources.list({ kind: KIND })) || []).map((r) => r.externalKey).filter((k) => typeof k === "string"),
   );
-  const batch = items.map((it) => (existing.has(it.externalKey) ? { key: it.externalKey, description: it.description, body: it.body } : { key: it.externalKey, name: it.name, description: it.description, body: it.body }));
-  const result = (await ctx.host.resources.upsertByKey(KIND, batch, { othersMissing: true })) || {};
+  const batch = items.map((it) => ({ key: it.externalKey, description: it.description, body: it.body }));
+  const result = (await ctx.host.resources.upsertByKey(KIND, batch, truncated ? {} : { othersMissing: true })) || {};
+  await nameNew(ctx, items.filter((it) => !existing.has(it.externalKey)), result);
   const report = {
     at: Date.now(),
     files: paths.length,
@@ -751,10 +778,46 @@ export async function sync(ctx) {
     unchanged: Number(result.unchanged || 0),
     restored: Number(result.restored || 0),
     missing: Number(result.missing || 0),
+    truncated,
     skipped,
   };
-  await ctx.host.storage.set(REPORT_KEY, JSON.stringify(report));
+  await storeReport(ctx, report);
   return report;
+}
+
+// New entries are named after their header (title or id). The kernel names a new resource after the last part
+// of its key; a deleted entry that came back keeps its name, so when anything was restored only entries still
+// carrying that default name are renamed.
+async function nameNew(ctx, fresh, result) {
+  if (fresh.length === 0) return;
+  let rename = fresh;
+  if (Number(result.restored || 0) > 0) {
+    const ids = result.ids || {};
+    rename = [];
+    for (const it of fresh) {
+      const r = ids[it.externalKey] ? await ctx.host.resources.get(ids[it.externalKey]) : null;
+      if (r && r.name === it.externalKey.split("/").pop()) rename.push(it);
+    }
+  }
+  if (rename.length) await ctx.host.resources.upsertByKey(KIND, rename.map((it) => ({ key: it.externalKey, name: it.name })), {});
+}
+
+// Review #5: the stored report stays well under the 256 KB value limit (the run's own output has the whole list);
+// failing to store it does not fail the sync.
+const REPORT_SKIPPED = 300;
+const REPORT_DETAIL = 200;
+
+async function storeReport(ctx, report) {
+  const short = {
+    ...report,
+    skippedTotal: report.skipped.length,
+    skipped: report.skipped.slice(0, REPORT_SKIPPED).map((x) => ({ path: x.path.slice(0, 1024), reason: x.reason, detail: String(x.detail || "").slice(0, REPORT_DETAIL) })),
+  };
+  try {
+    await ctx.host.storage.set(REPORT_KEY, JSON.stringify(short));
+  } catch (e) {
+    /* the toast and the run output still have it */
+  }
 }
 
 async function lastReport(ctx) {
@@ -785,10 +848,38 @@ export function reasonText(ctx, s) {
 }
 
 function summaryText(ctx, report) {
-  return tr(ctx, "message.synced", { indexed: report.indexed, skipped: report.skipped.length, missing: report.missing });
+  const skipped = report.skippedTotal !== undefined ? report.skippedTotal : report.skipped.length;
+  const text = tr(ctx, "message.synced", { indexed: report.indexed, skipped, missing: report.missing });
+  return report.truncated ? `${text} ${tr(ctx, "message.truncated", { max: MAX_FILES, depth: MAX_DEPTH })}` : text;
 }
 
 /* ---------------------------------------------------------------- running */
+
+// The statements runs sent, newest first, in one key: at most SENT_RUNS of them, SENT_MAX characters each
+// (review #2: one key per run would fill the plugin's 1000 keys). Writing it never fails the run.
+export async function rememberSent(ctx, runId, sql) {
+  try {
+    let list = [];
+    const raw = await ctx.host.storage.get(SENT_KEY);
+    if (raw) list = JSON.parse(raw);
+    if (!Array.isArray(list)) list = [];
+    const text = sql.length > SENT_MAX ? `${sql.slice(0, SENT_MAX)}\n-- …` : sql;
+    list = [{ run: runId || "-", sql: text }, ...list.filter((x) => x && x.run !== runId)].slice(0, SENT_RUNS);
+    await ctx.host.storage.set(SENT_KEY, JSON.stringify(list));
+  } catch (e) {
+    /* only a convenience: the run goes on */
+  }
+}
+
+export async function sentOf(ctx, runId) {
+  try {
+    const list = JSON.parse((await ctx.host.storage.get(SENT_KEY)) || "[]");
+    const hit = Array.isArray(list) ? list.find((x) => x && x.run === runId) : null;
+    return hit ? hit.sql : null;
+  } catch (e) {
+    return null;
+  }
+}
 
 function entryOf(ctx) {
   const r = ctx.resource || {};
@@ -959,7 +1050,7 @@ export default {
 
       async renderResultTab(ctx, tabId) {
         if (tabId !== "sent") throw new Error(`unknown result tab ${tabId}`);
-        const raw = ctx.run ? await ctx.host.storage.get(`${SENT_KEY}:${ctx.run.id}`) : null;
+        const raw = ctx.run ? await sentOf(ctx, ctx.run.id) : null;
         if (raw) return [{ type: "text", id: "sent", text: raw, mono: true, language: "sql" }];
         const entry = entryOf(ctx);
         const { mapping } = await loadMapping(ctx);
@@ -980,6 +1071,7 @@ export default {
           if (report.skipped.length) {
             const t = skippedTable(ctx, report);
             view.push({ type: "table", id: "skipped", columns: t.columns, rows: t.rows });
+            if (report.skippedTotal > report.skipped.length) view.push({ type: "text", id: "more", text: tr(ctx, "index.more", { count: report.skippedTotal - report.skipped.length }), tone: "muted" });
           }
         }
         return { view, title: tr(ctx, "index.title"), icon: "folder-search" };
@@ -989,7 +1081,7 @@ export default {
     host.trees.handle("catalog", {
       async children(ctx, parentKey) {
         const all = (await ctx.host.resources.list({ kind: KIND })) || [];
-        return { nodes: treeChildren(Array.isArray(all) ? all : all.items || [], parentKey || "") };
+        return { nodes: treeChildren(Array.isArray(all) ? all : all.items || [], parentKey || "", tr(ctx, "badge.missing")) };
       },
       async path(ctx, key) {
         const all = (await ctx.host.resources.list({ kind: KIND })) || [];
@@ -1001,7 +1093,7 @@ export default {
 
     host.commands.handle("reindex", async (ctx) => {
       const report = await reindex(ctx);
-      return [{ type: "toast", message: summaryText(ctx, report), tone: report.skipped.length ? "warning" : "success" }];
+      return [{ type: "toast", message: summaryText(ctx, report), tone: report.skipped.length || report.truncated ? "warning" : "success" }];
     });
 
     host.commands.handle("openIndex", async () => [{ type: "open", target: `page:${PLUGIN}/index` }]);
@@ -1031,7 +1123,7 @@ export default {
       const decls = declsWithAsOf(entry, ex.versioned);
       const values = await valuesOf(ctx, paramNames(ex.sql), decls);
       const rendered = renderSql(ex.sql, values, decls);
-      await ctx.host.storage.set(`${SENT_KEY}:${ctx.runId || "-"}`, rendered);
+      await rememberSent(ctx, ctx.runId, rendered);
       const sourceId = await pickSource(ctx, entry.datasource);
       ctx.progress(undefined, tr(ctx, "step.running"));
       const res = await ctx.host.actions.call(`${DATASOURCE}:query`, { sql: rendered }, { resource: sourceId });

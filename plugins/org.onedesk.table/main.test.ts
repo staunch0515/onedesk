@@ -1,8 +1,8 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 // @ts-ignore plain JS module, no types
-import plugin, { atSql, changesSql, currentSql, deletedSql, existingSet, historySql, isMissing, prefixesOf, rowsSql, selectList, timeLiteral, treeChildren, treePath } from "./main.js";
-import { checkActionResult, checkView, onlyKeys, registry, RENDER_KEYS, TREE_NODE_KEYS } from "../_testing/view-check";
+import plugin, { getChunked, putChunked, rememberSent, sentOf, snapshot, atSql, changesSql, currentSql, deletedSql, existingSet, historySql, isMissing, prefixesOf, rowsSql, selectList, timeLiteral, treeChildren, treePath } from "./main.js";
+import { checkActionResult, checkView, hostError, onlyKeys, registry, RENDER_KEYS, TREE_NODE_KEYS } from "../_testing/view-check";
 
 const load = (f: string) => JSON.parse(readFileSync(new URL(`./locales/${f}.json`, import.meta.url), "utf8")) as Record<string, string>;
 const EN = load("en-US");
@@ -44,7 +44,16 @@ const DB_TABLES = [
 function fakeHost(over: Host = {}) {
   const store = new Map<string, string>();
   const host: Host = {
-    storage: { get: vi.fn(async (k: string) => store.get(k) ?? null), set: vi.fn(async (k: string, v: string) => void store.set(k, v)) },
+    storage: {
+      get: vi.fn(async (k: string) => store.get(k) ?? null),
+      set: vi.fn(async (k: string, v: string) => {
+        // the kernel's limits (host.rs): 256 KB a value, 1000 keys
+        if (JSON.stringify(v).length > 256 * 1024) throw hostError("invalid", { reason: "tooLarge" });
+        if (!store.has(k) && store.size >= 1000) throw hostError("invalid", { reason: "tooManyKeys" });
+        store.set(k, v);
+      }),
+      remove: vi.fn(async (k: string) => void store.delete(k)),
+    },
     params: {
       get: vi.fn(async (n: string) => (n === "datasource" ? { found: true, value: "Prod", sourceName: "dev" } : { found: false, value: "" })),
       config: vi.fn(async () => ({ found: false, value: "" })),
@@ -61,7 +70,14 @@ function fakeHost(over: Host = {}) {
   };
   return { host, store };
 }
-const ctxOf = (host: Host, extra: Record<string, unknown> = {}) => ({ locale: "en-US", host, t, params: {}, progress: vi.fn(), cancelled: () => false, ...extra });
+// Like the kernel (D421): `actions.call` only inside a run, i.e. when the ctx has a runId.
+const ctxOf = (host: Host, extra: Record<string, unknown> = {}) => {
+  const inRun = typeof extra.runId === "string";
+  const call = (...a: unknown[]) => (inRun ? host.actions.call(...a) : Promise.reject(hostError("denied", { reason: "notInRun" })));
+  return { locale: "en-US", host: { ...host, actions: { ...host.actions, call } }, t, params: {}, progress: vi.fn(), cancelled: () => false, ...extra };
+};
+// Runs the refresh action, as the user does from the overview page.
+const refreshed = async (host: Host) => registry(plugin).actions.refresh(ctxOf(host, { runId: "refresh-1" }), {});
 const nodeCtx = (host: Host, key: string, extra: Record<string, unknown> = {}) => ctxOf(host, { target: `node:org.onedesk.table:tables/${encodeURIComponent(key)}`, node: { tree: "org.onedesk.table:tables", key }, ...extra });
 
 describe("table: SQL of the five version queries (H5)", () => {
@@ -148,7 +164,10 @@ describe("table: tree (H1–H3)", () => {
     expect(marked({ mapping: MAPPING, existing: null })).toEqual([]);
     expect(isMissing({ table: "price_list" }, existingSet(DB_TABLES))).toBe(false);
     expect(isMissing({ table: "public.customer" }, existingSet(DB_TABLES))).toBe(false);
-    expect(isMissing({ table: "SHOP.Order_Head" }, existingSet(DB_TABLES))).toBe(false);
+    // review #10: names keep their case — a query quotes `Order_Head`, so only that exact name exists
+    expect(isMissing({ table: "SHOP.Order_Head" }, existingSet(DB_TABLES))).toBe(true);
+    expect(isMissing({ table: "Orders" }, existingSet([["public", "orders"]]))).toBe(true);
+    expect(isMissing({ table: "Orders" }, existingSet([["public", "Orders"]]))).toBe(false);
   });
 
   it("paths from the root", () => {
@@ -157,12 +176,31 @@ describe("table: tree (H1–H3)", () => {
     expect(treePath(snap, "g:order_line", 2)).toEqual(["g:order", "g:order_line"]);
   });
 
-  it("the handler reads the catalog's mapping and the database's tables, and the toolbar switches the depth (X9)", async () => {
+  it("outside a run nothing is fetched: the tree asks for a refresh (D421)", async () => {
     const { host } = fakeHost();
     const reg = registry(plugin);
-    const one = await reg.trees.tables.children(ctxOf(host), "");
+    const out = await reg.trees.tables.children(ctxOf(host), "");
+    expect(out.nodes).toEqual([{ key: "none", label: EN["tree.notLoaded"], icon: "refresh-cw", expandable: false, target: "page:org.onedesk.table/overview" }]);
+    expect((await reg.trees.tables.children(ctxOf(host), "g:order")).nodes).toEqual([]);
+    expect(await reg.commands.refresh(ctxOf(host), {})).toEqual([{ type: "open", target: "page:org.onedesk.table/overview" }]);
+    const page = await reg.pages.overview.render(ctxOf(host));
+    expect(checkView(page.view)).toEqual([]);
+    expect(page.view.map((n: any) => n.id)).toEqual(["about", "none"]);
+    const table = await reg.pages.table.render(nodeCtx(host, "t:line"));
+    expect(table.view.map((n: any) => n.text)).toEqual([EN["overview.none"]]);
+    expect(host.actions.call).not.toHaveBeenCalled();
+  });
+
+  it("the refresh action reads the mapping and the database in its run; the tree then reads the stored snapshot, and the toolbar switches the depth (X9)", async () => {
+    const { host } = fakeHost();
+    const reg = registry(plugin);
+    const res = await refreshed(host);
+    expect(checkActionResult(res)).toEqual([]);
+    expect(res.output.text).toBe("6 tables read, 1 missing in the database");
     expect(host.actions.call.mock.calls[0]).toEqual(["org.onedesk.catalog:mapping", {}]);
     expect(host.actions.call.mock.calls[1][2]).toEqual({ resource: "s1" });
+    const calls = host.actions.call.mock.calls.length;
+    const one = await reg.trees.tables.children(ctxOf(host), "");
     expect(one.nodes.find((n: any) => n.key === "t:ghost").badge).toBe("missing");
     expect((await reg.trees.tables.children(ctxOf(host), "g:order")).nodes.map((n: any) => n.key)).toEqual(["t:order", "t:line", "t:lineTax"]);
     expect(await reg.commands.toggleDepth(ctxOf(host), {})).toEqual([{ type: "toast", message: EN["message.depth2"], tone: "info" }]);
@@ -170,22 +208,50 @@ describe("table: tree (H1–H3)", () => {
     expect(await reg.trees.tables.path(ctxOf(host), "t:lineTax")).toEqual(["g:order", "g:order_line", "t:lineTax"]);
     await reg.commands.toggleDepth(ctxOf(host), {});
     expect(await reg.trees.tables.path(ctxOf(host), "t:lineTax")).toEqual(["g:order", "t:lineTax"]);
+    expect(host.actions.call.mock.calls.length).toBe(calls); // tree and commands fetch nothing
     expect(manifest.contributes.trees[0].toolbar).toEqual(["toggleDepth", "refresh"]);
+    const overview = await reg.pages.overview.render(ctxOf(host));
+    expect(overview.view.find((n: any) => n.id === "summary").text).toBe("6 tables read, 1 missing in the database");
   });
 
-  it("without a data source the tree still shows the mapping", async () => {
+  it("without a data source the snapshot has the mapping and marks nothing missing", async () => {
     const { host } = fakeHost();
     host.params.get = vi.fn(async () => ({ found: false, value: "" }));
-    const reg = registry(plugin);
-    const out = await reg.trees.tables.children(ctxOf(host), "");
+    expect((await refreshed(host)).output.text).toBe("6 tables read; no data source to compare with");
+    const out = await registry(plugin).trees.tables.children(ctxOf(host), "");
     expect(out.nodes.some((n: any) => n.icon === "triangle-alert")).toBe(false);
-    expect(await reg.commands.refresh(ctxOf(host), {})).toEqual([{ type: "toast", message: "6 tables read; no data source to compare with", tone: "info" }]);
+  });
+
+  it("a database that cannot be read marks nothing missing and says why on the overview", async () => {
+    const { host } = fakeHost();
+    const call = host.actions.call;
+    host.actions.call = vi.fn(async (id: string, input: any, o: any) => (id.endsWith(":query") ? Promise.reject(new Error("connection refused")) : call(id, input, o)));
+    await refreshed(host);
+    const page = await registry(plugin).pages.overview.render(ctxOf(host));
+    expect(page.view.find((n: any) => n.id === "error").text).toContain("connection refused");
+  });
+
+  it("a large snapshot is stored in chunks under the 256 KB value limit (review #11)", async () => {
+    const { host, store } = fakeHost();
+    const ctx = ctxOf(host);
+    const big = "é\"".repeat(150000); // escapes make it bigger in JSON
+    await putChunked(ctx, "snapshot", big);
+    expect(await getChunked(ctx, "snapshot")).toBe(big);
+    expect(store.has("snapshot.2")).toBe(true);
+    await putChunked(ctx, "snapshot", "small");
+    expect(await getChunked(ctx, "snapshot")).toBe("small");
+    expect(store.has("snapshot.1")).toBe(false);
+    store.set("snapshot.0", "torn");
+    expect(await getChunked(ctx, "snapshot")).toBeNull();
+    expect(await snapshot(ctx)).toBeNull();
+    await expect(putChunked(ctx, "snapshot", "x".repeat(100000 * 41))).rejects.toThrow("too large");
   });
 });
 
 describe("table: page and actions (H4, H5)", () => {
   it("shows description, source, columns to tick and the version inputs", async () => {
     const { host } = fakeHost();
+    await refreshed(host);
     const out = await registry(plugin).pages.table.render(nodeCtx(host, "t:line"));
     expect(checkView(out.view)).toEqual([]);
     expect(onlyKeys(out, RENDER_KEYS)).toEqual([]);
@@ -204,7 +270,7 @@ describe("table: page and actions (H4, H5)", () => {
   it("a missing or plain table says so", async () => {
     const { host } = fakeHost();
     const reg = registry(plugin);
-    await reg.trees.tables.children(ctxOf(host), "");
+    await refreshed(host);
     const ghost = await reg.pages.table.render(nodeCtx(host, "t:ghost"));
     expect(ghost.view.find((n: any) => n.id === "missing")).toMatchObject({ tone: "danger", text: "shop.ghost is in the mapping but not in the database" });
     const plain = await reg.pages.table.render(nodeCtx(host, "t:customer"));
@@ -220,7 +286,8 @@ describe("table: page and actions (H4, H5)", () => {
     expect(checkActionResult(res)).toEqual([]);
     const last = () => host.actions.call.mock.calls[host.actions.call.mock.calls.length - 1];
     expect(last()).toEqual(["org.onedesk.datasource:query", { sql: "SELECT qty FROM shop.order_line LIMIT 7" }, { resource: "s1" }]);
-    expect(store.get("sent:r1")).toBe("SELECT qty FROM shop.order_line LIMIT 7");
+    expect(await sentOf(ctxOf(host), "r1")).toBe("SELECT qty FROM shop.order_line LIMIT 7");
+    expect([...store.keys()].filter((k) => k.startsWith("sent"))).toEqual(["sent"]);
     const tab = await reg.pages.table.renderResultTab(nodeCtx(host, "t:line", { run: { id: "r1" } }), "sent");
     expect(tab[0].text).toBe("SELECT qty FROM shop.order_line LIMIT 7");
 
@@ -233,7 +300,7 @@ describe("table: page and actions (H4, H5)", () => {
       deleted: deletedSql(ORDERS, [], undefined),
     };
     for (const a of Object.keys(expected)) {
-      await reg.actions[a](nodeCtx(host, "t:line", { params: p }), {});
+      await reg.actions[a](nodeCtx(host, "t:line", { runId: `run-${a}`, params: p }), {});
       expect(last()[1].sql, a).toBe(expected[a]);
     }
   });
@@ -241,20 +308,39 @@ describe("table: page and actions (H4, H5)", () => {
   it("explains missing inputs and refuses version queries on plain tables", async () => {
     const { host } = fakeHost();
     const reg = registry(plugin);
-    await expect(reg.actions.history(nodeCtx(host, "t:line"), {})).rejects.toThrow("Enter the record key (line_id)");
-    await expect(reg.actions.at(nodeCtx(host, "t:line", { params: { at: "soon" } }), {})).rejects.toThrow("Enter a valid time");
-    await expect(reg.actions.changes(nodeCtx(host, "t:line", { params: { from: "2026-01-01" } }), {})).rejects.toThrow("valid start and end");
-    await expect(reg.actions.current(nodeCtx(host, "t:customer"), {})).rejects.toThrow("not time-versioned");
-    await expect(reg.actions.deleted(nodeCtx(host, "t:pricing"), {})).rejects.toThrow("no deleted flag");
+    await expect(reg.actions.history(nodeCtx(host, "t:line", { runId: "x" }), {})).rejects.toThrow("Enter the record key (line_id)");
+    await expect(reg.actions.at(nodeCtx(host, "t:line", { runId: "x", params: { at: "soon" } }), {})).rejects.toThrow("Enter a valid time");
+    await expect(reg.actions.changes(nodeCtx(host, "t:line", { runId: "x", params: { from: "2026-01-01" } }), {})).rejects.toThrow("valid start and end");
+    await expect(reg.actions.current(nodeCtx(host, "t:customer", { runId: "x" }), {})).rejects.toThrow("not time-versioned");
+    await expect(reg.actions.deleted(nodeCtx(host, "t:pricing", { runId: "x" }), {})).rejects.toThrow("no deleted flag");
     host.params.get = vi.fn(async () => ({ found: false, value: "" }));
-    await expect(reg.actions.rows(nodeCtx(host, "t:line"), {})).rejects.toThrow("No data source");
+    await expect(reg.actions.rows(nodeCtx(host, "t:line", { runId: "x" }), {})).rejects.toThrow("No data source");
+  });
+
+  it("an action without a stored snapshot takes one in its run; outside a run it is refused like the real kernel", async () => {
+    const { host } = fakeHost();
+    const reg = registry(plugin);
+    await reg.actions.rows(nodeCtx(host, "t:line", { runId: "r5" }), {});
+    expect(await snapshot(ctxOf(host))).toMatchObject({ mapping: { path: "/work/mapping.yaml" } });
+    await expect(reg.actions.rows(nodeCtx(host, "t:line"), {})).rejects.toMatchObject({ code: "denied", params: { reason: "notInRun" } });
+  });
+
+  it("sent statements share one key, newest 30; a failed write does not fail the run (review #2)", async () => {
+    const { host, store } = fakeHost();
+    for (let i = 0; i < 1100; i++) await rememberSent(ctxOf(host), `run${i}`, `SELECT ${i}`);
+    expect([...store.keys()]).toEqual(["sent"]);
+    expect(await sentOf(ctxOf(host), "run1099")).toBe("SELECT 1099");
+    expect(await sentOf(ctxOf(host), "run1069")).toBeNull();
+    await refreshed(host);
+    host.storage.set = vi.fn(async () => Promise.reject(hostError("invalid", { reason: "tooManyKeys" })));
+    await expect(registry(plugin).actions.rows(nodeCtx(host, "t:line", { runId: "r6" }), {})).resolves.toBeTruthy();
   });
 
   it("registers what the manifest declares", () => {
     const reg = registry(plugin);
     expect(Object.keys(reg.actions).sort()).toEqual(manifest.contributes.actions.map((a: any) => a.id).sort());
     expect(Object.keys(reg.commands).sort()).toEqual(manifest.contributes.commands.map((c: any) => c.id).sort());
-    expect(Object.keys(reg.pages)).toEqual(["table"]);
-    expect(manifest.contributes.pages[0].actions.map((a: any) => a.action)).toEqual(["rows", "current", "history", "at", "changes", "deleted"]);
+    expect(Object.keys(reg.pages).sort()).toEqual(["overview", "table"]);
+    expect(manifest.contributes.pages[0].actions.map((a: any) => a.action)).toEqual(["rows", "current", "history", "at", "changes", "deleted", "refresh"]);
   });
 });
