@@ -7,7 +7,7 @@ import { createMockClient } from "../protocol/mock";
 import { kernelLikeClient, renderInShell } from "../testing/harness";
 import { CommandDialogs } from "./command-dialogs";
 import { useWorkbench } from "../state/context";
-import { TreePanel } from "./side-panel";
+import { clearTreeCache, TreePanel } from "./side-panel";
 
 type TreeProps = {
   rows: Array<{ key: string; draggable?: boolean }>;
@@ -62,6 +62,18 @@ describe("file commands in a plugin's tree (D428)", () => {
     expect(captured.props!.canDrop("/g/a.txt", "/g/sub", "before")).toBe(false);
     expect(captured.props!.canDrop("/g/a.txt", "/g/a.txt", "inside")).toBe(false);
     expect(captured.props!.canDrop("/g/sub", "/g/sub", "inside")).toBe(false);
+  });
+
+  it("honours a folder's `accepts` when the plugin declares it (D430)", async () => {
+    clearTreeCache(); // levels are remembered per tree id
+    const { store } = setup();
+    const picky = nodes["/g"]!.map((n) => (n.key === "/g/sub" ? { ...n, accepts: ["disk-folder"] } : n));
+    const saved = nodes["/g"];
+    nodes["/g"] = picky;
+    await ready(store);
+    expect(captured.props!.canDrop("/g/a.txt", "/g/sub", "inside")).toBe(false); // a disk-file is not accepted there
+    nodes["/g"] = saved!;
+    clearTreeCache();
   });
 
   it("dropping calls the move command with the target folder as destination; with ⌥ it calls copy", async () => {
