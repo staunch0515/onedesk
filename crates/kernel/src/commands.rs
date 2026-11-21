@@ -153,7 +153,7 @@ impl Inner {
                     .or_else(|| c.tree.as_deref().and_then(Registry::split).map(|(p, _)| p.to_string()))
                     .ok_or_else(|| invalid_params("plugin"))?;
                 self.registry.plugin(&plugin).ok_or_else(|| not_found("plugin"))?;
-                Ok(vec![CommandEffect::PickFolder { plugin }])
+                Ok(vec![CommandEffect::PickFolder { plugin, replace: None }])
             }
             id if id.starts_with("new:") => {
                 let kind = &id[4..];

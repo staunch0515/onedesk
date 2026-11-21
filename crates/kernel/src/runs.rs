@@ -49,6 +49,8 @@ pub struct ActiveRun {
     /// Review #12 (round 15): data files `actions.call` moved into the plugin's folder for this
     /// run; whatever is still there when the run ends is removed.
     pub handed: Vec<std::path::PathBuf>,
+    /// Round 17 (X17): the output so far (`runs.partial`), checked and scrubbed; memory only.
+    pub partial: Option<RunOutput>,
 }
 
 pub type ActiveRuns = std::sync::Mutex<HashMap<String, ActiveRun>>;
@@ -111,7 +113,7 @@ struct SummaryIn {
 }
 
 #[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
 struct TableIn {
     #[serde(rename = "type")]
     _t: String,
@@ -124,6 +126,12 @@ struct TableIn {
     /// D414: set by the kernel for a table read from a data file (`datafile`).
     #[serde(default)]
     paged: Option<bool>,
+    #[serde(default)]
+    appearance: Option<TextAppearance>,
+    #[serde(default)]
+    tone_column: Option<String>,
+    #[serde(default)]
+    line_column: Option<String>,
 }
 
 /// Checks the plugin's output against the declared type, truncates tables, limits the size.
@@ -146,7 +154,16 @@ fn check_output(declared: OutputType, out: Value) -> Result<RunOutput, String> {
             let mut rows = t.rows;
             rows.truncate(MAX_ROWS);
             let truncated = t.truncated.unwrap_or(false) || total > rows.len() as u64;
-            RunOutput::Table { columns: t.columns, rows, total, truncated, paged: t.paged.filter(|p| *p) }
+            RunOutput::Table {
+                columns: t.columns,
+                rows,
+                total,
+                truncated,
+                paged: t.paged.filter(|p| *p),
+                appearance: t.appearance,
+                tone_column: t.tone_column,
+                line_column: t.line_column,
+            }
         }
         _ => serde_json::from_value::<RunOutput>(out).map_err(|e| e.to_string())?,
     };
@@ -398,7 +415,7 @@ impl Inner {
         let token = CancelToken::default();
         self.runs_active.lock().unwrap().insert(
             id.clone(),
-            ActiveRun { plugin: plugin.id.clone(), token: token.clone(), last_progress: None, stopped: None, secrets: vec![], handed: vec![] },
+            ActiveRun { plugin: plugin.id.clone(), token: token.clone(), last_progress: None, stopped: None, secrets: vec![], handed: vec![], partial: None },
         );
         let resource = match res {
             // A dependent sees the resource without its secret fields (round 7).
@@ -634,7 +651,10 @@ impl Inner {
     }
 
     pub fn run_to_protocol(&self, r: RunRow, with_output: bool) -> Run {
-        let cancellable = r.status == "running" && self.runs_active.lock().unwrap().contains_key(&r.id);
+        let (cancellable, partial) = match self.runs_active.lock().unwrap().get(&r.id) {
+            Some(a) if r.status == "running" => (true, if with_output { a.partial.clone() } else { None }),
+            _ => (false, None),
+        };
         Run {
             status: match r.status.as_str() {
                 "running" => RunStatus::Running,
@@ -672,6 +692,7 @@ impl Inner {
             } else {
                 None
             },
+            partial,
             kept: r.kept,
             kept_name: r.kept_name,
             in_task_panel: r.in_task_panel,
