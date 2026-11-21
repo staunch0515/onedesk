@@ -33,5 +33,11 @@
   "info.value": "Value",
   "info.status": "Status",
   "info.time": "Time",
-  "info.size": "Size"
+  "info.size": "Size",
+  "field.connection": "Connection",
+  "field.connection.hint": "The address becomes a path below the connection's address; the connection adds the authentication.",
+  "connection.none": "None (full address)",
+  "field.url.placeholderPath": "/items/:item_id",
+  "error.connectionMissing": "The connection \"{connection}\" was not found.",
+  "error.connectionAnswer": "The connection returned an answer that could not be read."
 }
