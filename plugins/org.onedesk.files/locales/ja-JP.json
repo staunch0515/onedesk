@@ -16,9 +16,8 @@
   "tree.folders": "許可したフォルダー",
   "folders.add": "フォルダーを追加…",
   "folders.addNote": "「フォルダーを追加」を実行して、この Mac のフォルダーを選びます。中のファイルを閲覧・編集・取り込みできるようになります。",
-  "folders.note": "名前の変更はここでの表示名だけを変えます。許可を外しても、リソースやファイルは削除されません。取り込み済みの記録は残りますが、ここでそのファイルを開けなくなります。",
+  "folders.note": "「変更」でこのフォルダーを別のフォルダーに置き換えます。許可を外しても、リソースやファイルは削除されません。取り込み済みの記録は残りますが、ここでそのファイルを開けなくなります。",
   "action.grantAdd": "フォルダーを追加",
-  "action.grantRename": "名前を変更",
   "action.grantRemove": "許可を外す",
   "action.import": "フォルダーを取り込む",
   "action.mkdir": "新規フォルダー",
@@ -64,9 +63,6 @@
   "error.isRoot": "許可したフォルダー自体はここでは削除できません。許可を外してください。",
   "error.noQuery": "検索する語を入力してください。",
   "error.tooMany": "登録するファイルが多すぎます（上限 {max}）。もっと小さいフォルダーを取り込んでください。",
-  "grant.added": "{path} を許可しました",
-  "grant.cancelled": "フォルダーは選ばれませんでした。",
-  "grant.renamed": "「{name}」に名前を変更しました",
   "grant.removed": "{path} の許可を外しました。リソースとファイルはそのままです。",
   "step.importing": "フォルダーを読み込み中…",
   "import.done": "{files} 個のファイルを読みました：新規 {created}、更新 {updated}、復活 {restored}、消失 {missing}。",
@@ -86,5 +82,9 @@
   "col.path": "パス",
   "col.size": "サイズ",
   "col.modified": "更新日時",
-  "conflict.exists": "そこには既に「{name}」があります。「同じ名前があるとき」で上書き・スキップ・両方残すのどれかを選んで、もう一度実行してください。"
+  "conflict.exists": "そこには既に「{name}」があります。「同じ名前があるとき」で上書き・スキップ・両方残すのどれかを選んで、もう一度実行してください。",
+  "action.grantReplace": "フォルダーを変更",
+  "grant.choose": "ダイアログでフォルダーを選んでください。",
+  "error.trashUnavailable": "この場所ではゴミ箱を使えません（別のディスク）。完全に削除してください。",
+  "error.notGranted": "このフォルダーは許可リストにありません。"
 }

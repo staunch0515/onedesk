@@ -37,23 +37,16 @@
 
 通过。新增可选字段 `connection`（资源选择，`kinds: [org.onedesk.connection:connection]`）；选了连接后“地址”写成路径，请求经 `org.onedesk.connection:request` 发出，认证由连接添加。清单加了 `depends`。没有连接时页面不显示选择器，行为不变。
 
-## 我假设的内核接口（`round17-protocol.md` 出现前按设计写；名字不同时改 `plugins/org.onedesk.files/main.js` 的几处调用）
+## 与内核接口对齐（合并 `claude/onedesk-r17` 之后）
 
-`ctx.host.files.*`（要求 `requires.files`）：
-- `addFolder()` → `{ path, name }` 或 `null`（用户取消）；系统文件夹选择框
-- `renameFolder(path, name)`、`removeFolder(path)`（移除授权，进审计，不动资源和文件）
-- `createFolder(path)`
-- `copy(from, to, opts?)`、`move(from, to, opts?)`，`opts = { onConflict: "overwrite" }`；目标已存在且没给 `onConflict` 时应失败
-- `trash(path)`、`remove(path)`（永久，目录递归）
-- `open(path)`、`reveal(path)`
-- 已有的 `roots/list/stat/readText/writeText` 不变；`stat` 要有 `dir`，找不到时 `notFound`；新建文件用 `writeText(path, "")`
-
-另外假设：节点页动作的参数（`param: true` 的字段）在 `ctx.params`；节点页动作的 `ctx.node.key` 是页面所在节点。
+已改为 `round17-protocol.md` 的名字：`files.addRoot/replaceRoot/removeRoot`、`files.mkdir`、`copy/move(from, to, { conflict })`（`fail|overwrite|skip|keepBoth`，同名由宿主处理，返回 `{path, skipped}`）、`trash`、`remove`、`open`、`reveal`、`find`（搜索用它）。
+- 授权文件夹的“改”现在是 **更换文件夹**（动作 `grantReplace` → `replaceRoot(path)`，弹外壳的选择框），不再是改显示名；“增”是 `grantAdd` → `addRoot()`。
+- 原因码：`conflict/exists`（同名）、`invalid/intoItself`、`invalid/isRoot`、`invalid/trashUnavailable`、`notFound/grant` 都转成用户的话（`explain`）。
+- 冲突对话框：新增插件命令 `move`、`copy`、`rename`（`palette: false`），读 `context.nodeKey` 与 `context.args.{destination,newName,conflict}`；同名时返回 `confirm` 效果（`choices` 为 overwrite/skip/keepBoth，`choiceArg: "conflict"`），外壳带着选择重跑同一命令。页面上的动作按钮仍用“同名时”下拉（默认“先问”则停下提示）。**缺口**：页面动作（按钮）无法返回 `confirm` 效果，所以只有当外壳/菜单以 `args` 调这三个命令时才弹对话框；谁来给 `destination`/`newName` 需要外壳约定。另 `confirm` 效果的 `choices`/`choiceArg`/`irreversible` 还不在协议生成类型里（外壳用类型断言读取）。
 
 ## 限制与范围外
 
 - **Basic 认证**：宿主只能替换 `{{secret:…}}`，不能做 base64，所以密钥字段要填 `user:password` 的 base64。想要“用户名+密码”，需要内核支持带编码的替换（例如 `{{secret:名字|base64}}`）或 Basic 专用字段。建议主会话决定。
-- **同名“让用户选”**：现在是表单里的下拉（默认“先问”则停下并提示），不是弹对话框；若 `r17-shell` 做了冲突对话框，需要约定它怎样把选择交回动作（建议还是写进 `conflict` 参数）。
 - **导入的上限**：一批最多 5000 条（`upsertByKey` 限制）；已有 `disk-file` 加新文件超过就报 `error.tooMany`。大文件夹需要分批的“只更新不标失效”模式，留给后续。
 - **授权文件夹页的“改”**只改显示名；是否支持由内核的 `renameFolder` 决定。
 - 内置的 `plugin.grantFolder` 工具栏命令保留在“文件”树上。

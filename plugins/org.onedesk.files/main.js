@@ -55,10 +55,8 @@ export function chain(path, roots) {
 
 
 /* ---------------------------------------------------------------- round 17: paths, scope, operations */
-// Host interface names assumed for X18 (docs/handoff/round17-files-done.md lists them):
-//   files.addFolder() / files.renameFolder(path, name) / files.removeFolder(path)   (authorized folders)
-//   files.createFolder(path), files.copy(from, to, { onConflict }), files.move(from, to, { onConflict }),
-//   files.trash(path), files.remove(path), files.open(path), files.reveal(path)
+// Host interface (docs/handoff/round17-protocol.md §3.1): files.mkdir, copy/move(from, to, { conflict }) with conflict
+// fail | overwrite | skip | keepBoth, trash, remove, open, reveal, find, addRoot/replaceRoot/removeRoot.
 // Everything below checks the scope itself first, so a path outside the authorized folders never reaches the host.
 
 const DISK_FILE = "disk-file";
@@ -127,18 +125,6 @@ export function rootOf(path, roots) {
   return hit === undefined ? null : hit;
 }
 
-// "name copy.ext", "name copy 2.ext", … the first one `taken` says is free.
-export async function freeName(dir, name, taken) {
-  const dot = name.lastIndexOf(".");
-  const stem = dot <= 0 ? name : name.slice(0, dot);
-  const ext = dot <= 0 ? "" : name.slice(dot);
-  for (let i = 1; i < 1000; i++) {
-    const candidate = `${stem} copy${i === 1 ? "" : ` ${i}`}${ext}`;
-    if (!(await taken(joinPath(dir, candidate)))) return candidate;
-  }
-  throw new Error("noFreeName");
-}
-
 async function exists(ctx, path) {
   try {
     await ctx.host.files.stat(path);
@@ -184,22 +170,32 @@ function done(ctx, key, vars) {
   return { output: { type: "text", text }, summary: { message: text } };
 }
 
-// Copy or move `from` into `destDir` as `name`; the three answers to a name that is taken:
-// overwrite, skip, keep both (the new one gets "copy" in its name). `ask` stops with a question.
+// Copy or move `from` into `destDir` as `name`. `mode` is what to do when the name is taken: overwrite, skip,
+// keepBoth (the host names the new one "name 2.ext"); "ask" stops with a question (the shell's dialog asks it
+// when it is the command that runs, see `conflictAsk`).
 export async function transfer(ctx, op, from, destDir, name, mode) {
   const to = joinPath(destDir, name);
   if (to === from) throw fail(ctx, "error.sameFile");
   if (to.startsWith(`${from}/`)) throw fail(ctx, "error.intoItself");
-  let target = to;
-  let opts;
-  if (await exists(ctx, to)) {
-    if (mode === "skip") return { skipped: true, path: to };
-    if (mode === "overwrite") opts = { onConflict: "overwrite" };
-    else if (mode === "keepBoth") target = joinPath(destDir, await freeName(destDir, name, (p) => exists(ctx, p)));
-    else throw fail(ctx, "conflict.exists", { name });
+  const conflict = CONFLICTS.includes(mode) && mode !== "ask" ? mode : "fail";
+  try {
+    const r = await ctx.host.files[op](from, to, { conflict });
+    return { skipped: r && r.skipped === true, path: (r && r.path) || to };
+  } catch (err) {
+    throw explain(ctx, err, name);
   }
-  await ctx.host.files[op](from, target, opts);
-  return { skipped: false, path: target, overwrote: opts !== undefined };
+}
+
+// Host error codes (round 17) to the user's words; other errors pass through.
+export function explain(ctx, err, name) {
+  const code = err && err.code;
+  const reason = err && err.params && err.params.reason;
+  if (code === "conflict") return Object.assign(fail(ctx, "conflict.exists", { name: name || "" }), { isConflict: true, conflictName: name || "" });
+  if (code === "invalid" && reason === "intoItself") return fail(ctx, "error.intoItself");
+  if (code === "invalid" && reason === "isRoot") return fail(ctx, "error.isRoot");
+  if (code === "invalid" && reason === "trashUnavailable") return fail(ctx, "error.trashUnavailable");
+  if (code === "notFound" && reason === "grant") return fail(ctx, "error.notGranted");
+  return err;
 }
 
 async function walk(ctx, start, visit, { recursive = true } = {}) {
@@ -301,6 +297,17 @@ const PLUGIN = "org.onedesk.files";
 const nodeTarget = (tree, key) => `node:${PLUGIN}:${tree}/${encodeURIComponent(key)}`;
 const ADD_KEY = "~add";
 
+// The effect that makes the shell ask "overwrite, skip or keep both" and run `command` again with the answer.
+export function conflictAsk(ctx, command, name) {
+  return {
+    type: "confirm",
+    message: tr2(ctx, "conflict.exists", { name }),
+    command,
+    choices: [{ id: "overwrite", danger: true }, { id: "skip" }, { id: "keepBoth" }],
+    choiceArg: "conflict",
+  };
+}
+
 function opsForm(ctx, { withConflict }) {
   const f = (name, kind, extra) => ({ name, label: ctx.t(`field.${name}`), kind, param: true, ...(extra || {}) });
   const fields = [f("newName", "text", { placeholder: ctx.t("field.newName.placeholder") }), f("destination", "text", { placeholder: ctx.t("field.destination.placeholder") })];
@@ -380,7 +387,7 @@ export default {
           readOnly: true,
           view: [
             { type: "text", id: "path", text: key, mono: true },
-            { type: "form", id: "ops", layout: "strip", fields: [f("newName", "text", { placeholder: root.name }), f("recursive", "boolean")] },
+            { type: "form", id: "ops", layout: "strip", fields: [f("recursive", "boolean")] },
             { type: "text", id: "note", text: tr2(ctx, "folders.note"), tone: "muted" },
           ],
           values: {},
@@ -474,23 +481,30 @@ export default {
     /* ------------------------------------------------------------ actions */
 
     host.actions.handle("grantAdd", async (ctx) => {
-      const added = await ctx.host.files.addFolder();
-      if (!added) return done(ctx, "grant.cancelled");
-      return done(ctx, "grant.added", { path: added.path });
+      // The shell opens its folder chooser; what the user picks becomes a grant.
+      await ctx.host.files.addRoot();
+      return done(ctx, "grant.choose");
     });
 
-    host.actions.handle("grantRename", async (ctx) => {
+    // "Change": the chosen folder takes the place of this one in the list.
+    host.actions.handle("grantReplace", async (ctx) => {
       const { path } = await scoped(ctx, targetOf(ctx));
-      const label = param(ctx, "newName");
-      if (!label) throw fail(ctx, "error.noName");
-      await ctx.host.files.renameFolder(path, label);
-      return done(ctx, "grant.renamed", { name: label });
+      try {
+        await ctx.host.files.replaceRoot(path);
+      } catch (err) {
+        throw explain(ctx, err, "");
+      }
+      return done(ctx, "grant.choose");
     });
 
     // Removing the authorization changes nothing else: no resource and no file is touched.
     host.actions.handle("grantRemove", async (ctx) => {
       const { path } = await scoped(ctx, targetOf(ctx));
-      await ctx.host.files.removeFolder(path);
+      try {
+        await ctx.host.files.removeRoot(path);
+      } catch (err) {
+        throw explain(ctx, err, "");
+      }
       return done(ctx, "grant.removed", { path });
     });
 
@@ -509,7 +523,11 @@ export default {
       const target = joinPath(await folderOf(ctx, path), name);
       await scoped(ctx, target);
       if (await exists(ctx, target)) throw fail(ctx, "error.exists", { name });
-      await ctx.host.files.createFolder(target);
+      try {
+        await ctx.host.files.mkdir(target);
+      } catch (err) {
+        throw explain(ctx, err, name);
+      }
       return done(ctx, "done.mkdir", { path: target });
     });
 
@@ -549,7 +567,11 @@ export default {
     // The default delete: to the Trash, recoverable.
     host.actions.handle("trash", async (ctx) => {
       const { path } = await scoped(ctx, targetOf(ctx));
-      await ctx.host.files.trash(path);
+      try {
+        await ctx.host.files.trash(path);
+      } catch (err) {
+        throw explain(ctx, err, "");
+      }
       return done(ctx, "done.trashed", { path });
     });
 
@@ -557,7 +579,11 @@ export default {
     host.actions.handle("delete", async (ctx) => {
       const { path, roots } = await scoped(ctx, targetOf(ctx));
       if (roots.some((r) => normalize(r.path) === path)) throw fail(ctx, "error.isRoot");
-      await ctx.host.files.remove(path);
+      try {
+        await ctx.host.files.remove(path);
+      } catch (err) {
+        throw explain(ctx, err, "");
+      }
       return done(ctx, "done.deleted", { path });
     });
 
@@ -579,13 +605,9 @@ export default {
       const words = param(ctx, "query").toLowerCase().split(/\s+/).filter(Boolean);
       if (words.length === 0) throw fail(ctx, "error.noQuery");
       const dir = await folderOf(ctx, path);
-      const rows = [];
-      const res = await walk(ctx, dir, (e) => {
-        const n = e.name.toLowerCase();
-        if (words.every((w) => n.includes(w))) rows.push([e.name, e.path, e.dir ? "" : String(e.size ?? 0), isoOf(e.modifiedAt)]);
-        if (rows.length >= MAX_RESULTS) return "stop";
-        return undefined;
-      });
+      const found = await ctx.host.files.find(dir, words.join(" "), { limit: MAX_RESULTS });
+      const rows = (found.entries || []).map((e) => [e.name, e.path, e.dir ? "" : String(e.size ?? 0), isoOf(e.modifiedAt)]);
+      const res = { truncated: found.capped === true || (found.next !== undefined && found.next !== null) };
       const message = tr2(ctx, res.truncated ? "search.partial" : "search.found", { count: rows.length });
       return {
         output: {
@@ -602,6 +624,36 @@ export default {
         summary: { rows: rows.length, message },
       };
     });
+
+    // Commands (the shell's conflict dialog reruns a command with the chosen `args.conflict`): the same operations
+    // on the node, with `args.destination` / `args.newName`. A taken name asks "overwrite, skip or keep both".
+    for (const op of ["move", "copy", "rename"]) {
+      host.commands.handle(op, async (ctx, context) => {
+        const args = (context && context.args) || {};
+        const path = String((context && context.nodeKey) || "");
+        const cctx = { ...ctx, node: { key: path }, params: { conflict: args.conflict, newName: args.newName, destination: args.destination } };
+        try {
+          const { path: from } = await scoped(cctx, path);
+          let destDir;
+          let name;
+          if (op === "rename") {
+            name = String(args.newName || "");
+            if (!validName(name)) throw fail(ctx, "error.badName");
+            destDir = dirName(from);
+          } else {
+            destDir = normalize(String(args.destination || ""));
+            if (destDir === null) throw fail(ctx, "error.noDestination");
+            await scoped(cctx, destDir);
+            name = baseName(from);
+          }
+          const r = await transfer(ctx, op === "copy" ? "copy" : "move", from, destDir, name, args.conflict || "ask");
+          return [{ type: "toast", message: tr2(ctx, r.skipped ? "done.skipped" : op === "copy" ? "done.copied" : op === "move" ? "done.moved" : "done.renamed", { path: r.path }), tone: "success" }];
+        } catch (err) {
+          if (err && err.isConflict) return [conflictAsk(ctx, `${PLUGIN}:${op}`, err.conflictName)];
+          return [{ type: "toast", message: String((err && err.message) || err), tone: "danger" }];
+        }
+      });
+    }
   },
 };
 

@@ -125,11 +125,11 @@
             "primary": true
           },
           {
-            "id": "grantRename",
+            "id": "grantReplace",
             "role": "run",
-            "action": "grantRename",
-            "label": "action.grantRename",
-            "icon": "pencil"
+            "action": "grantReplace",
+            "label": "action.grantReplace",
+            "icon": "folder-sync"
           },
           {
             "id": "grantRemove",
@@ -273,9 +273,9 @@
         "confirm": null
       },
       {
-        "id": "grantRename",
-        "label": "action.grantRename",
-        "icon": "pencil",
+        "id": "grantReplace",
+        "label": "action.grantReplace",
+        "icon": "folder-sync",
         "output": "text",
         "saveFirst": false,
         "confirm": null
@@ -387,6 +387,26 @@
         "output": "table",
         "saveFirst": false,
         "confirm": null
+      }
+    ],
+    "commands": [
+      {
+        "id": "move",
+        "label": "action.move",
+        "icon": "folder-input",
+        "palette": false
+      },
+      {
+        "id": "copy",
+        "label": "action.copy",
+        "icon": "copy",
+        "palette": false
+      },
+      {
+        "id": "rename",
+        "label": "action.rename",
+        "icon": "pencil",
+        "palette": false
       }
     ]
   },

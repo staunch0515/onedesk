@@ -138,7 +138,7 @@ describe("files plugin: text page", () => {
 
 import { readFileSync } from "node:fs";
 // @ts-ignore plain JS module, no types
-import { diskFileItem, freeName, importFolder, joinPath, normalize, rootOf, validName } from "./main.js";
+import { diskFileItem, importFolder, joinPath, normalize, rootOf, validName } from "./main.js";
 import { checkActionResult } from "../_testing/view-check";
 
 const loadLocale = (f: string) => JSON.parse(readFileSync(new URL(`./locales/${f}.json`, import.meta.url), "utf8")) as Record<string, string>;
@@ -160,6 +160,24 @@ function fakeDisk(initial: Record<string, number | null>, roots = [{ path: ROOT,
   const parent = (p: string) => p.slice(0, p.lastIndexOf("/")) || "/";
   const under = (p: string) => [...fs.keys()].filter((k) => k === p || k.startsWith(`${p}/`));
   const log = (name: string, ...a: unknown[]) => void calls.push(`${name} ${a.filter((x) => typeof x === "string").join(" ")}`);
+  // The host's own conflict handling (round 17 §3.1): fail | overwrite | skip | keepBoth.
+  const place = (op: "copy" | "move", a: string, b: string, conflict: string) => {
+    let to = b;
+    if (fs.has(b)) {
+      if (conflict === "fail") throw hostError("conflict", { reason: "exists" });
+      if (conflict === "skip") return { path: b, skipped: true };
+      if (conflict === "keepBoth") {
+        const dot = b.lastIndexOf(".");
+        for (let i = 2; fs.has(to); i++) to = dot > b.lastIndexOf("/") ? `${b.slice(0, dot)} ${i}${b.slice(dot)}` : `${b} ${i}`;
+      } else for (const k of under(b)) fs.delete(k);
+    }
+    log(op, a, to, conflict);
+    for (const k of under(a)) {
+      put(to + k.slice(a.length), fs.get(k)!.dir ? null : fs.get(k)!.size);
+      if (op === "move") fs.delete(k);
+    }
+    return { path: to, skipped: false };
+  };
   const files = {
     roots: vi.fn(async () => grants.map((g) => ({ ...g }))),
     stat: vi.fn(async (p: string) => {
@@ -170,23 +188,24 @@ function fakeDisk(initial: Record<string, number | null>, roots = [{ path: ROOT,
     list: vi.fn(async (p: string) => ({
       entries: [...fs.entries()].filter(([k]) => k !== p && parent(k) === p).map(([k, n]) => ({ name: k.split("/").pop(), path: k, dir: n.dir, size: n.size, modifiedAt: 1700000000000, hidden: false })),
     })),
-    createFolder: vi.fn(async (p: string) => (log("createFolder", p), put(p, null))),
+    mkdir: vi.fn(async (p: string) => {
+      if (fs.has(p)) throw hostError("conflict", { reason: "exists" });
+      log("mkdir", p);
+      put(p, null);
+      return { name: p.split("/").pop(), path: p, dir: true };
+    }),
     writeText: vi.fn(async (p: string) => (log("writeText", p), put(p, 0), { basis: "b" })),
-    copy: vi.fn(async (a: string, b: string, o?: { onConflict?: string }) => {
-      log("copy", a, b, o?.onConflict);
-      for (const k of under(a)) put(b + k.slice(a.length), fs.get(k)!.dir ? null : fs.get(k)!.size);
-    }),
-    move: vi.fn(async (a: string, b: string, o?: { onConflict?: string }) => {
-      log("move", a, b, o?.onConflict);
-      for (const k of under(a)) {
-        put(b + k.slice(a.length), fs.get(k)!.dir ? null : fs.get(k)!.size);
-        fs.delete(k);
-      }
-    }),
+    copy: vi.fn(async (a: string, b: string, o?: { conflict?: string }) => place("copy", a, b, o?.conflict ?? "fail")),
+    move: vi.fn(async (a: string, b: string, o?: { conflict?: string }) => place("move", a, b, o?.conflict ?? "fail")),
     trash: vi.fn(async (p: string) => {
       log("trash", p);
       trash.push(p);
       for (const k of under(p)) fs.delete(k);
+      return { path: `/Users/me/.Trash/${p.split("/").pop()}` };
+    }),
+    find: vi.fn(async (dir: string, query: string) => {
+      const words = query.toLowerCase().split(/\s+/).filter(Boolean);
+      return { entries: [...fs.entries()].filter(([k]) => k.startsWith(`${dir}/`) && words.every((w) => k.split("/").pop()!.toLowerCase().includes(w))).map(([k, n]) => ({ name: k.split("/").pop(), path: k, dir: n.dir, size: n.size, modifiedAt: 1700000000000, hidden: false })), next: null };
     }),
     remove: vi.fn(async (p: string) => {
       log("remove", p);
@@ -194,14 +213,22 @@ function fakeDisk(initial: Record<string, number | null>, roots = [{ path: ROOT,
     }),
     open: vi.fn(async (p: string) => void log("open", p)),
     reveal: vi.fn(async (p: string) => void log("reveal", p)),
-    addFolder: vi.fn(async () => {
-      const g = { path: "/Users/me/new", name: "new" };
-      grants.push(g);
-      put(g.path, null);
-      return g;
+    addRoot: vi.fn(async () => {
+      // the shell's chooser: the grant arrives later
+      grants.push({ path: "/Users/me/new", name: "new" });
+      put("/Users/me/new", null);
+      return null;
     }),
-    renameFolder: vi.fn(async (p: string, name: string) => void (grants.find((g) => g.path === p)!.name = name)),
-    removeFolder: vi.fn(async (p: string) => void grants.splice(grants.findIndex((g) => g.path === p), 1)),
+    replaceRoot: vi.fn(async (p: string) => {
+      if (!grants.some((g) => g.path === p)) throw hostError("notFound", { reason: "grant" });
+      return null;
+    }),
+    removeRoot: vi.fn(async (p: string) => {
+      const i = grants.findIndex((g) => g.path === p);
+      if (i < 0) throw hostError("notFound", { reason: "grant" });
+      grants.splice(i, 1);
+      return { folders: grants.map((g) => g.path) };
+    }),
   };
   return { fs, trash, calls, files, grants };
 }
@@ -263,11 +290,6 @@ describe("files plugin: paths", () => {
     expect(joinPath("/", "a")).toBe("/a");
     expect(joinPath("/a/", "b")).toBe("/a/b");
   });
-  it("freeName counts up", async () => {
-    const taken = new Set([`${ROOT}/a copy.txt`, `${ROOT}/a copy 2.txt`]);
-    expect(await freeName(ROOT, "a.txt", async (p: string) => taken.has(p))).toBe("a copy 3.txt");
-    expect(await freeName(ROOT, "dir", async () => false)).toBe("dir copy");
-  });
 });
 
 describe("files plugin: nothing outside the authorized folders", () => {
@@ -282,13 +304,14 @@ describe("files plugin: nothing outside the authorized folders", () => {
     ["search", { query: "a" }],
     ["import", {}],
     ["grantRemove", {}],
+    ["grantReplace", {}],
   ];
   it.each(cases)("%s on a path outside, a sibling with the same prefix, or one that climbs out is refused before the host is called", async (name, params) => {
     for (const key of ["/etc/passwd", "/Users/me/docs2/a.txt", `${ROOT}/../secret.txt`, "relative.txt"]) {
       const d = fakeDisk({ "/Users/me/docs2": null, "/Users/me/docs2/a.txt": 1, "/etc": null, "/etc/passwd": 1 });
       await expect(run(name, { files: d.files, resources: fakeResources() }, key, params), `${name} ${key}`).rejects.toThrow(EN["error.outside"]);
       expect(d.calls).toEqual([]);
-      for (const m of ["createFolder", "writeText", "copy", "move", "trash", "remove", "open", "reveal", "removeFolder", "list"] as const) expect(d.files[m], `${name} ${key} ${m}`).not.toHaveBeenCalled();
+      for (const m of ["mkdir", "writeText", "copy", "move", "trash", "remove", "open", "reveal", "removeRoot", "replaceRoot", "find", "list"] as const) expect(d.files[m], `${name} ${key} ${m}`).not.toHaveBeenCalled();
     }
   });
 
@@ -359,6 +382,7 @@ describe("files plugin: a name that is taken (copy and move)", () => {
     const d = setup();
     const r = await go("copy", d, "overwrite");
     expect(d.calls).toEqual([`copy ${ROOT}/a.txt ${SUB}/a.txt overwrite`]);
+    expect(d.files.copy).toHaveBeenCalledWith(`${ROOT}/a.txt`, `${SUB}/a.txt`, { conflict: "overwrite" });
     expect(d.fs.get(`${SUB}/a.txt`)?.size).toBe(1);
     expect(r.output.text).toContain("Copied");
   });
@@ -372,30 +396,78 @@ describe("files plugin: a name that is taken (copy and move)", () => {
     expect(r.output.text).toContain("Skipped");
   });
 
-  it("keep both: the new one gets the first free “copy” name and the old one is untouched", async () => {
+  it("keep both: the host names the new one, the old one is untouched, the result path is the new one", async () => {
     const d = setup();
-    await go("copy", d, "keepBoth");
+    const r = await go("copy", d, "keepBoth");
+    expect(d.files.copy).toHaveBeenCalledWith(`${ROOT}/a.txt`, `${SUB}/a.txt`, { conflict: "keepBoth" });
     expect(d.fs.get(`${SUB}/a.txt`)?.size).toBe(99);
-    expect(d.fs.get(`${SUB}/a copy 2.txt`)?.size).toBe(1);
-    expect(d.fs.get(`${SUB}/a copy.txt`)?.size).toBe(5);
+    expect(d.fs.get(`${SUB}/a 2.txt`)?.size).toBe(1);
+    expect(r.output.text).toContain(`${SUB}/a 2.txt`);
     const m = setup();
     await go("move", m, "keepBoth");
     expect(m.fs.has(`${ROOT}/a.txt`)).toBe(false);
-    expect(m.fs.has(`${SUB}/a copy 2.txt`)).toBe(true);
+    expect(m.fs.has(`${SUB}/a 2.txt`)).toBe(true);
   });
 
-  it("no conflict: no option is passed", async () => {
+  it("no conflict: the host is asked to fail on a clash (the default), so nothing is overwritten by accident", async () => {
     const d = fakeDisk({ [`${ROOT}/a.txt`]: 1, [SUB]: null });
-    await go("copy", d, "overwrite");
-    expect(d.calls).toEqual([`copy ${ROOT}/a.txt ${SUB}/a.txt`]);
-    expect(d.files.copy).toHaveBeenCalledWith(`${ROOT}/a.txt`, `${SUB}/a.txt`, undefined);
+    await go("copy", d);
+    expect(d.files.copy).toHaveBeenCalledWith(`${ROOT}/a.txt`, `${SUB}/a.txt`, { conflict: "fail" });
+  });
+
+  it("host codes become words: into itself, authorized folder itself, Trash unavailable", async () => {
+    const d = fakeDisk({ [`${ROOT}/a.txt`]: 1, [SUB]: null });
+    d.files.copy.mockRejectedValueOnce(hostError("invalid", { reason: "intoItself" }));
+    await expect(go("copy", d)).rejects.toThrow(EN["error.intoItself"]);
+    d.files.move.mockRejectedValueOnce(hostError("invalid", { reason: "isRoot" }));
+    await expect(go("move", d)).rejects.toThrow(EN["error.isRoot"]);
+    d.files.trash.mockRejectedValueOnce(hostError("invalid", { reason: "trashUnavailable" }));
+    await expect(run("trash", { files: d.files }, `${ROOT}/a.txt`)).rejects.toThrow(EN["error.trashUnavailable"]);
+    d.files.removeRoot.mockRejectedValueOnce(hostError("notFound", { reason: "grant" }));
+    await expect(run("grantRemove", { files: d.files }, ROOT)).rejects.toThrow(EN["error.notGranted"]);
+  });
+
+  describe("commands (the shell's conflict dialog)", () => {
+    const cmd = (name: string, d: ReturnType<typeof setup>, args: Record<string, unknown>, nodeKey = `${ROOT}/a.txt`) =>
+      registry(plugin).commands[name]({ locale: "en-US", host: { files: d.files }, t: tt }, { nodeKey, args });
+
+    it("a taken name returns a confirm effect with overwrite / skip / keep both, answered through args.conflict", async () => {
+      const d = setup();
+      const effects = await cmd("copy", d, { destination: SUB });
+      expect(effects).toEqual([
+        {
+          type: "confirm",
+          message: expect.stringContaining("a.txt"),
+          command: "org.onedesk.files:copy",
+          choices: [{ id: "overwrite", danger: true }, { id: "skip" }, { id: "keepBoth" }],
+          choiceArg: "conflict",
+        },
+      ]);
+      expect(d.calls).toEqual([]);
+    });
+    it("run again with the answer", async () => {
+      const d = setup();
+      const [toast] = await cmd("copy", d, { destination: SUB, conflict: "keepBoth", confirmed: true });
+      expect(toast).toMatchObject({ type: "toast", tone: "success" });
+      expect(d.fs.has(`${SUB}/a 2.txt`)).toBe(true);
+      const [skipped] = await cmd("move", d, { destination: SUB, conflict: "skip", confirmed: true });
+      expect(skipped.message).toContain("Skipped");
+      expect(d.fs.has(`${ROOT}/a.txt`)).toBe(true);
+    });
+    it("rename asks too, and a path outside is a danger toast without touching the host", async () => {
+      const d = fakeDisk({ [`${ROOT}/a.txt`]: 1, [`${ROOT}/b.txt`]: 2 });
+      expect((await cmd("rename", d, { newName: "b.txt" }, `${ROOT}/a.txt`))[0]).toMatchObject({ type: "confirm", command: "org.onedesk.files:rename" });
+      const out = await cmd("move", d, { destination: ROOT }, "/etc/passwd");
+      expect(out[0]).toMatchObject({ type: "toast", tone: "danger" });
+      expect(d.calls).toEqual([]);
+    });
   });
 
   it("rename onto a taken name follows the same choice", async () => {
     const d = fakeDisk({ [`${ROOT}/a.txt`]: 1, [`${ROOT}/b.txt`]: 2 });
     await expect(run("rename", { files: d.files }, `${ROOT}/a.txt`, { newName: "b.txt" })).rejects.toThrow("already exists");
     await run("rename", { files: d.files }, `${ROOT}/a.txt`, { newName: "b.txt", conflict: "keepBoth" });
-    expect([...d.fs.keys()].sort()).toEqual([ROOT, `${ROOT}/b.txt`, `${ROOT}/b copy.txt`].sort());
+    expect([...d.fs.keys()].sort()).toEqual([ROOT, `${ROOT}/b.txt`, `${ROOT}/b 2.txt`].sort());
   });
 });
 
@@ -464,14 +536,14 @@ describe("files plugin: authorized folders", () => {
     expect((await trees.folders.children(ctxOf(d.files, ""), null, 0)).nodes.map((n: any) => n.key)).toEqual(["~add", ROOT]);
 
     const added = await run("grantAdd", host, "~add");
-    expect(added.output.text).toContain("/Users/me/new");
+    expect(d.files.addRoot).toHaveBeenCalledTimes(1); // the shell's chooser
+    expect(added.output.text).toBe(EN["grant.choose"]);
     const nodes = (await trees.folders.children(ctxOf(d.files, ""), null, 0)).nodes;
     expect(nodes.map((n: any) => (typeof n.label === "string" ? n.label : n.label["en-US"]))).toEqual(["folders.add", "docs", "new"]);
     expect(onlyKeys(nodes[1], TREE_NODE_KEYS)).toEqual([]);
 
-    await run("grantRename", host, "/Users/me/new", { newName: "Fresh" });
-    expect(d.grants[1]!.name).toBe("Fresh");
-    await expect(run("grantRename", host, "/Users/me/new", { newName: " " })).rejects.toThrow(EN["error.noName"]);
+    await run("grantReplace", host, "/Users/me/new");
+    expect(d.files.replaceRoot).toHaveBeenCalledWith("/Users/me/new");
 
     await run("import", host, ROOT, {});
     const before = [...res.rows.values()].map((r) => ({ ...r, body: { ...r.body } }));
@@ -482,13 +554,6 @@ describe("files plugin: authorized folders", () => {
     expect([...res.rows.values()]).toEqual(before);
     expect([...d.fs.keys()]).toEqual(fsBefore);
     expect(d.calls.filter((c) => /^(trash|remove|move)/.test(c))).toEqual([]);
-  });
-
-  it("cancelled picker is not an error", async () => {
-    const d = fakeDisk({});
-    d.files.addFolder.mockResolvedValue(null as never);
-    const r = await run("grantAdd", { files: d.files }, "~add");
-    expect(r.output.text).toBe(EN["grant.cancelled"]);
   });
 
   it("the grant page shows the form for a folder and a hint for the add node", async () => {
