@@ -39,7 +39,9 @@ export default { activate(host) {
       { key: "/c", label: "c", icon: "file", menu: [] },
     ] };
   } });
-  host.pages.handle("p", { async render() {
+  host.pages.handle("p", { async renderResultTab(ctx) {
+    return [{ type: "text", id: "v", text: "rows " + ((ctx.run.output && ctx.run.output.rows) || []).length }];
+  }, async render() {
     return { view: [{ type: "text", id: "t", text: "ok\nbad\nplain", mono: true,
                       lineTones: ["success", "stderr"], appearance: "terminal" }] };
   } });
@@ -63,6 +65,16 @@ export default { activate(host) {
     return { output: { type: "table", columns: COLS,
     rows: [["stdout", "a"], ["stderr", "b"]], appearance: "terminal", toneColumn: "stream", lineColumn: "line" } };
   });
+  host.actions.handle("failtable", async (ctx) => {
+    const v = await ctx.host.secrets.get("ml");
+    return { output: { type: "table", columns: COLS, rows: [["stdout", "kept"], ["stderr", "boom"]], toneColumn: "stream" },
+             summary: { message: "exit 2" }, failed: { message: "exit code 2 with " + v + " " + "x".repeat(5000) } };
+  });
+  host.actions.handle("failpartial", async (ctx) => {
+    await ctx.host.runs.partial({ type: "text", text: "so far" });
+    return { failed: { message: "timed out" } };
+  });
+  host.actions.handle("nooutput", async () => ({ summary: { message: "x" } }));
   host.actions.handle("badtone", async () => ({ output: { type: "table", columns: COLS, rows: [], toneColumn: "nope" } }));
   host.actions.handle("text", async () => ({ output: { type: "text", text: "a\nb", lineTones: [null, "danger"], appearance: "plain" } }));
   host.actions.handle("badpartial", async (ctx) => {
@@ -83,17 +95,20 @@ export default { activate(host) {
 fn manifest() -> Value {
     json!({
         "requires": { "files": true, "resources": true, "programs": [{ "name": "sh", "source": "system" }],
-                      "secrets": { "names": ["ml"] } },
+                      "secrets": { "names": ["ml"], "plaintext": true } },
         "contributes": {
             "kinds": [{ "id": "k", "label": "K", "icon": "box", "tree": "resources", "page": "p", "newName": "k" }],
             "actions": [{ "id": "lines", "label": "a", "output": "text" },
                         { "id": "table", "label": "a", "output": "table" },
                         { "id": "badtone", "label": "a", "output": "table" },
+                        { "id": "failtable", "label": "a", "output": "table" },
+                        { "id": "failpartial", "label": "a", "output": "text" },
+                        { "id": "nooutput", "label": "a", "output": "text" },
                         { "id": "text", "label": "a", "output": "text" },
                         { "id": "badpartial", "label": "a", "output": "table" }],
             "commands": [{ "id": "probe", "label": "p" }, { "id": "ask", "label": "a" }],
             "trees": [{ "id": "t", "label": "T", "icon": "folder", "source": "provided" }],
-            "pages": [{ "id": "p", "actions": [{ "id": "go", "role": "run", "label": "Go", "command": "ask" },
+            "pages": [{ "id": "p", "resultTabs": [{ "id": "v", "type": "view", "label": "V" }], "actions": [{ "id": "go", "role": "run", "label": "Go", "command": "ask" },
                                                { "id": "run", "role": "run", "label": "Run", "action": "text" }] }],
             "events": ["resource.changed"]
         }
@@ -671,6 +686,41 @@ async fn review16_multi_line_secrets_are_scrubbed_by_line_and_tone_columns_are_c
     let r = wait_run(&w.c, &start(&w.c, "badtone", json!({})).await).await;
     assert_eq!(r["status"], "error");
     assert_eq!(r["error"]["code"], "badOutput", "{r}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn d435_a_failed_run_keeps_its_output_summary_and_history() {
+    let w = world().await;
+    w.c.ok("secrets.set", json!({ "name": "ml", "value": "Sekret-Value-42" })).await;
+    let rid = w.ok("resources.create", json!([{ "kind": "k", "name": "res" }])).await["id"].as_str().unwrap().to_string();
+    let start_on = |action: &str| {
+        json!({ "action": format!("t.r17:{action}"), "resourceId": rid, "target": format!("resource:{rid}"), "tabId": "t", "input": {} })
+    };
+    let id = w.c.ok("run.start", start_on("failtable")).await.as_str().unwrap().to_string();
+    let r = wait_run(&w.c, &id).await;
+    assert_eq!(r["status"], "error");
+    assert_eq!(r["error"]["code"], "pluginError");
+    let msg = r["error"]["message"].as_str().unwrap();
+    assert!(msg.starts_with("exit code 2 with *** xxx"), "scrubbed: {msg}");
+    assert!(msg.chars().count() <= 2000, "cut: {}", msg.chars().count());
+    assert_eq!(r["summary"]["message"], "exit 2");
+    assert_eq!(r["summary"]["rows"], 2);
+    assert_eq!(r["output"]["rows"], json!([["stdout", "kept"], ["stderr", "boom"]]));
+    // The rest of the result works as for a successful run.
+    let rows = w.c.ok("run.rows", json!({ "id": id, "offset": 0, "limit": 10 })).await;
+    assert_eq!(rows["rows"].as_array().unwrap().len(), 2, "{rows}");
+    let view = w.c.ok("run.render", json!({ "id": id, "tabId": "v" })).await;
+    assert_eq!(view[0]["text"], "rows 2");
+    let history = w.c.ok("run.listFor", json!({ "id": rid })).await;
+    assert!(history.as_array().unwrap().iter().any(|h| h["id"] == id && h["status"] == "error"), "{history}");
+    // Without an output: what `runs.partial` last showed.
+    let id = w.c.ok("run.start", start_on("failpartial")).await.as_str().unwrap().to_string();
+    let r = wait_run(&w.c, &id).await;
+    assert_eq!((r["status"].as_str(), r["error"]["message"].as_str()), (Some("error"), Some("timed out")));
+    assert_eq!(r["output"]["text"], "so far");
+    // Without `failed`, `output` is still required.
+    let r = wait_run(&w.c, w.c.ok("run.start", start_on("nooutput")).await.as_str().unwrap()).await;
+    assert_eq!(r["error"]["code"], "badOutput");
 }
 
 /* ------------------------------------------------------------------ X6 */
