@@ -1,11 +1,20 @@
-// Runs what the plugin builds with the real bash of this Mac (review #4, #7, #15), in a temporary folder.
-// Nothing here connects anywhere: the "server" side of the runner is a local bash too.
+// Runs what the server command and local script plugins build with the real /bin/bash (review #4, #7, #15), only
+// inside a temporary folder. Nothing here connects anywhere: the "server" side of the runner is a local bash too.
+// It lives here, not in the plugin packages, because plugin tests use only what the sandbox has.
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 // @ts-ignore plain JS module, no types
-import { REMOTE_RUNNER, renderShell, templateProblem } from "./main.js";
+import * as command from "../org.onedesk.command/main.js";
+// @ts-ignore plain JS module, no types
+import * as script from "../org.onedesk.script/main.js";
+
+const { REMOTE_RUNNER } = command;
+const PLUGINS = [
+  ["command", command],
+  ["script", script],
+] as const;
 
 const dir = mkdtempSync(join(process.env.TMPDIR || "/tmp", "od-bash-"));
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
@@ -49,12 +58,12 @@ const TEMPLATES: [string, (v: string) => string][] = [
   ["cat <<'EOF'\n:x $(touch PWNED)\nEOF\nprintf '%s\\n' :x", (v) => `:x $(touch PWNED)\n${v}\n`],
 ];
 
-describe("command: rendered scripts in real bash", () => {
+describe.each(PLUGINS)("%s: rendered scripts in real bash", (_name, plugin) => {
   it.each(TEMPLATES.map(([t, f], i) => [i, t, f] as const))("template %i: every value comes out as data, nothing runs", (_i, template, expected) => {
-    expect(templateProblem(template)).toBeNull();
+    expect(plugin.templateProblem(template)).toBeNull();
     for (const v of HOSTILE) {
       rmSync(MARK, { force: true });
-      const r = bash(renderShell(template, { x: v }));
+      const r = bash(plugin.renderShell(template, { x: v }));
       expect(r.err, JSON.stringify(v)).toBe("");
       expect(r.out, JSON.stringify(v)).toBe(expected(v));
       expect(existsSync(MARK), JSON.stringify(v)).toBe(false);
@@ -62,7 +71,7 @@ describe("command: rendered scripts in real bash", () => {
   });
 
   it("arithmetic gets whole numbers (others are refused before, see main.test.ts)", () => {
-    expect(bash(renderShell("echo $(( :x * 2 ))\n(( y = :x + 1 )); echo $y", { x: "21" })).out).toBe("42\n22\n");
+    expect(bash(plugin.renderShell("echo $(( :x * 2 ))\n(( y = :x + 1 )); echo $y", { x: "21" })).out).toBe("42\n22\n");
   });
 });
 
