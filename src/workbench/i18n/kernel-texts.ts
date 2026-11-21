@@ -165,6 +165,7 @@ export const KERNEL_ERRORS: Table = {
   "reason.notExported": "kernel.error.reason.notExported",
   "reason.notExecutable": "kernel.error.reason.notExecutable",
   "reason.unsafeLocation": "kernel.error.reason.unsafeLocation",
+  "reason.unsafeOpen": "kernel.error.reason.unsafeOpen",
   "reason.badSecretFormat": "kernel.error.reason.badSecretFormat",
   "invalid.badSecretFormat": "kernel.error.invalid.badSecretFormat",
   "reason.badArgs": "kernel.error.reason.badArgs",

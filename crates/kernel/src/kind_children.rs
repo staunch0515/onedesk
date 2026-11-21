@@ -191,8 +191,9 @@ pub(crate) struct PNode {
     pub accepts: Option<Vec<String>>,
 }
 
-/// Round 17 (D430): the kernel's node commands a provided node's menu may name.
-pub const NODE_COMMANDS: &[&str] = &["node.open", "node.rename", "node.delete", "node.favorite", "node.unfavorite", "node.newGroup"];
+/// Round 17 (D430, D432 / review #14): the only kernel command a provided node's menu may name
+/// (the others act on stored resources, and `node.favorite` would let a plugin have any resource favourited).
+pub const NODE_COMMANDS: &[&str] = &["node.open"];
 /// Round 17 (D430): most menu entries and `accepts` entries of one node.
 pub const MAX_NODE_MENU: usize = 32;
 pub const MAX_NODE_ACCEPTS: usize = 32;

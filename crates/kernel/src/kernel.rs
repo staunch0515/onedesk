@@ -1108,15 +1108,7 @@ impl Inner {
     /// full id), or one of the kernel's `node.*`. `None`: not allowed.
     fn provided_menu_cmd(&self, plugin: &Plugin, id: &str) -> Option<MenuCommand> {
         if crate::kind_children::NODE_COMMANDS.contains(&id) {
-            let icon = match id {
-                "node.open" => "external-link",
-                "node.rename" => "pencil",
-                "node.delete" => "trash-2",
-                "node.favorite" => "star",
-                "node.unfavorite" => "star-off",
-                _ => "folder-plus",
-            };
-            return Some(kernel_cmd(id, icon));
+            return Some(kernel_cmd(id, "external-link"));
         }
         let short = match Registry::split(id) {
             Some((p, n)) if p == plugin.id => n,

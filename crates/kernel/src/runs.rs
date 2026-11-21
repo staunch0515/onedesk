@@ -186,6 +186,14 @@ fn check_output(declared: OutputType, out: Value) -> Result<RunOutput, String> {
             }
         }
     }
+    // Review #16: the tone and line columns name real columns.
+    if let RunOutput::Table { columns, tone_column, line_column, .. } = &o {
+        for (what, c) in [("toneColumn", tone_column), ("lineColumn", line_column)] {
+            if let Some(c) = c.as_deref().filter(|c| !columns.iter().any(|x| x.key == *c)) {
+                return Err(format!("{what} {c:?} is not a column"));
+            }
+        }
+    }
     let size = serde_json::to_string(&o).map(|s| s.len()).unwrap_or(usize::MAX);
     if size > MAX_OUTPUT_BYTES {
         return Err(format!("output is {size} bytes"));

@@ -547,7 +547,115 @@ fn remove_any(p: &Path) -> std::io::Result<()> {
     }
 }
 
-/// Copies a file, a link (as a link) or a folder (recursively; links inside as links).
+/// Round 17 review #10: an entry named by its pinned parent folder (opened without following a
+/// link, as `writeText` does) and its final name. Renames and creations go through the
+/// descriptor, so swapping a parent for a link afterwards changes nothing.
+struct Pinned {
+    dir: std::os::fd::OwnedFd,
+    name: std::ffi::CString,
+    path: PathBuf,
+}
+
+impl Pinned {
+    fn new(p: &Path) -> KResult<Pinned> {
+        let parent = p.parent().ok_or_else(|| invalid_params("path"))?;
+        let name = p.file_name().map(|n| n.to_string_lossy().into_owned()).ok_or_else(|| invalid_params("path"))?;
+        let dir = open_dir_nofollow(parent).map_err(|e| match e.raw_os_error() {
+            Some(libc::ENOENT) => not_found("path"),
+            _ => outside_grant(&p.display().to_string()),
+        })?;
+        Ok(Pinned { dir, name: cstr(&name).map_err(internal)?, path: p.to_path_buf() })
+    }
+
+    /// `lstat` of the entry (not following a link).
+    fn stat(&self) -> Option<libc::stat> {
+        use std::os::fd::AsRawFd;
+        // SAFETY: zeroed `stat` is a valid out-parameter; descriptor and name are valid.
+        let mut st: libc::stat = unsafe { std::mem::zeroed() };
+        (unsafe { libc::fstatat(self.dir.as_raw_fd(), self.name.as_ptr(), &mut st, libc::AT_SYMLINK_NOFOLLOW) } == 0).then_some(st)
+    }
+
+    /// Renames onto `to`; `excl`: fails with `EEXIST` if something is there (review #10).
+    fn rename(&self, to: &Pinned, excl: bool) -> std::io::Result<()> {
+        use std::os::fd::AsRawFd;
+        let flags = if excl { libc::RENAME_EXCL } else { 0 };
+        // SAFETY: valid descriptors and C strings.
+        let r = unsafe { libc::renameatx_np(self.dir.as_raw_fd(), self.name.as_ptr(), to.dir.as_raw_fd(), to.name.as_ptr(), flags) };
+        if r == 0 {
+            Ok(())
+        } else {
+            Err(std::io::Error::last_os_error())
+        }
+    }
+}
+
+/// Review #2: the same file under two names (only the case differs on a case-insensitive volume).
+fn same_file(a: &Pinned, b: &Pinned) -> bool {
+    match (a.stat(), b.stat()) {
+        (Some(x), Some(y)) => x.st_dev == y.st_dev && x.st_ino == y.st_ino,
+        _ => false,
+    }
+}
+
+/// Review #3: `p` is a granted folder or holds one (removing or replacing it would take the grant).
+fn holds_root(grants: &[PathBuf], p: &Path, root: bool) -> bool {
+    root || grants.iter().any(|g| g.starts_with(p))
+}
+
+/// Copies a file, a link (as a link) or a folder (recursively; links inside as links) to a name
+/// that must not exist (`O_EXCL`, review #10). The top level goes through pinned folders.
+fn copy_pinned(src: &Pinned, dst: &Pinned) -> std::io::Result<()> {
+    use std::os::fd::{AsRawFd, FromRawFd};
+    let st = src.stat().ok_or_else(|| std::io::Error::from(std::io::ErrorKind::NotFound))?;
+    let (sd, dd) = (src.dir.as_raw_fd(), dst.dir.as_raw_fd());
+    match st.st_mode & libc::S_IFMT {
+        libc::S_IFLNK => {
+            let target = std::fs::read_link(&src.path)?;
+            let t = cstr(&target.to_string_lossy()).map_err(std::io::Error::other)?;
+            // SAFETY: valid C strings and descriptor.
+            if unsafe { libc::symlinkat(t.as_ptr(), dd, dst.name.as_ptr()) } != 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok(())
+        }
+        libc::S_IFDIR => {
+            // SAFETY: valid descriptor and C string.
+            if unsafe { libc::mkdirat(dd, dst.name.as_ptr(), st.st_mode & 0o7777) } != 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            for e in std::fs::read_dir(&src.path)? {
+                let e = e?;
+                copy_tree(&e.path(), &dst.path.join(e.file_name()))?;
+            }
+            Ok(())
+        }
+        libc::S_IFREG => {
+            // SAFETY: valid descriptors and C strings; results checked.
+            let fi = unsafe { libc::openat(sd, src.name.as_ptr(), libc::O_RDONLY | libc::O_NOFOLLOW | libc::O_CLOEXEC) };
+            if fi < 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            // SAFETY: fresh descriptor we own.
+            let mut input = unsafe { std::fs::File::from_raw_fd(fi) };
+            let mode = st.st_mode & 0o7777;
+            let fo = unsafe {
+                libc::openat(dd, dst.name.as_ptr(), libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL | libc::O_NOFOLLOW | libc::O_CLOEXEC, libc::c_uint::from(mode))
+            };
+            if fo < 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            // SAFETY: fresh descriptor we own.
+            let mut out = unsafe { std::fs::File::from_raw_fd(fo) };
+            std::io::copy(&mut input, &mut out)?;
+            // SAFETY: valid descriptor.
+            unsafe { libc::fchmod(out.as_raw_fd(), mode) };
+            Ok(())
+        }
+        _ => Err(std::io::Error::other("not a file, folder or link")),
+    }
+}
+
+/// Copies inside a folder this call created (links as links, files `O_EXCL`).
 fn copy_tree(src: &Path, dst: &Path) -> std::io::Result<()> {
     let md = std::fs::symlink_metadata(src)?;
     if md.file_type().is_symlink() {
@@ -560,8 +668,13 @@ fn copy_tree(src: &Path, dst: &Path) -> std::io::Result<()> {
             copy_tree(&e.path(), &dst.join(e.file_name()))?;
         }
         Ok(())
+    } else if md.is_file() {
+        let mut input = std::fs::File::open(src)?;
+        let mut out = std::fs::OpenOptions::new().write(true).create_new(true).open(dst)?;
+        std::io::copy(&mut input, &mut out)?;
+        out.set_permissions(md.permissions())
     } else {
-        std::fs::copy(src, dst).map(|_| ())
+        Ok(())
     }
 }
 
@@ -591,47 +704,74 @@ pub fn mkdir(grants: &[PathBuf], raw: &str, recursive: bool) -> KResult<Entry> {
         if !base.is_dir() {
             return Err(invalid("notFolder"));
         }
-        let mut p = base;
-        for n in rest.iter().rev() {
-            p.push(n);
-        }
         if rest.is_empty() {
             return Err(err_p(ErrorCode::Conflict, &[("reason", "exists")]));
         }
-        std::fs::create_dir_all(&p).map_err(io_err)?;
+        // One level at a time through the pinned parent.
+        let mut p = base;
+        for n in rest.iter().rev() {
+            p.push(n);
+            let pin = Pinned::new(&p)?;
+            // SAFETY: valid descriptor and C string.
+            if unsafe { libc::mkdirat(std::os::fd::AsRawFd::as_raw_fd(&pin.dir), pin.name.as_ptr(), 0o755) } != 0 {
+                return Err(io_err(std::io::Error::last_os_error()));
+            }
+        }
         p
     } else {
         let (p, _) = resolve_entry(grants, raw)?;
-        std::fs::create_dir(&p).map_err(io_err)?;
+        let pin = Pinned::new(&p)?;
+        // SAFETY: valid descriptor and C string.
+        if unsafe { libc::mkdirat(std::os::fd::AsRawFd::as_raw_fd(&pin.dir), pin.name.as_ptr(), 0o755) } != 0 {
+            return Err(io_err(std::io::Error::last_os_error()));
+        }
         p
     };
     entry(&p)
 }
 
-/// Where `copy`/`move` write, after the conflict rule. `None`: skipped.
-fn target(src: &Path, dst: &Path, conflict: Conflict) -> KResult<Option<PathBuf>> {
-    let src_dir = std::fs::symlink_metadata(src).map_err(|_| not_found("path"))?.is_dir();
-    if src == dst || (src_dir && dst.starts_with(src)) {
+/// What `copy`/`move` do after the conflict rule.
+enum Plan {
+    Skip,
+    /// Write to this new name (`O_EXCL` / `RENAME_EXCL`).
+    New(Pinned),
+    /// Review #2: the target is the source under another spelling; rename in place.
+    Same(Pinned),
+}
+
+/// Where `copy`/`move` write, after the conflict rule.
+fn target(grants: &[PathBuf], src: &Pinned, dst: &Path, dst_root: bool, conflict: Conflict, is_move: bool) -> KResult<Plan> {
+    let st = src.stat().ok_or_else(|| not_found("path"))?;
+    let src_dir = st.st_mode & libc::S_IFMT == libc::S_IFDIR;
+    if src.path == dst || (src_dir && dst.starts_with(&src.path)) {
         return Err(invalid("intoItself"));
     }
-    if !exists_no_follow(dst) {
-        return Ok(Some(dst.to_path_buf()));
+    let pin = Pinned::new(dst)?;
+    if pin.stat().is_none() {
+        return Ok(Plan::New(pin));
+    }
+    if same_file(src, &pin) {
+        // Only the spelling differs: a move renames it; a copy would be onto itself.
+        return if is_move { Ok(Plan::Same(pin)) } else { Err(invalid("intoItself")) };
     }
     match conflict {
         Conflict::Fail => Err(err_p(ErrorCode::Conflict, &[("reason", "exists")])),
-        Conflict::Skip => Ok(None),
+        Conflict::Skip => Ok(Plan::Skip),
         Conflict::Overwrite => {
-            // Never a folder that holds the source.
-            if src.starts_with(dst) {
+            // Never a folder that holds the source, a granted folder or one holding a grant.
+            if src.path.starts_with(dst) {
                 return Err(invalid("intoItself"));
             }
+            if holds_root(grants, dst, dst_root) {
+                return Err(invalid("isRoot"));
+            }
             remove_any(dst).map_err(io_err)?;
-            Ok(Some(dst.to_path_buf()))
+            Ok(Plan::New(pin))
         }
         Conflict::KeepBoth => {
             let dir = dst.parent().ok_or_else(|| invalid_params("to"))?;
             let name = dst.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-            free_name(dir, &name).map(Some)
+            Ok(Plan::New(Pinned::new(&free_name(dir, &name)?)?))
         }
     }
 }
@@ -647,78 +787,132 @@ pub fn placed(p: Option<PathBuf>, asked: &Path) -> Value {
 /// `files.copy`: returns the path written (or `None` when skipped) and the asked target.
 pub fn copy(grants: &[PathBuf], from: &str, to: &str, conflict: Conflict) -> KResult<(PathBuf, Option<PathBuf>, PathBuf)> {
     let (src, _) = resolve_entry(grants, from)?;
-    let (dst, _) = resolve_entry(grants, to)?;
-    let Some(t) = target(&src, &dst, conflict)? else { return Ok((src, None, dst)) };
-    if let Err(e) = copy_tree(&src, &t) {
-        let _ = remove_any(&t);
+    let (dst, dst_root) = resolve_entry(grants, to)?;
+    let sp = Pinned::new(&src)?;
+    let t = match target(grants, &sp, &dst, dst_root, conflict, false)? {
+        Plan::Skip => return Ok((src, None, dst)),
+        Plan::New(t) | Plan::Same(t) => t,
+    };
+    if let Err(e) = copy_pinned(&sp, &t) {
+        // Only what this call made: an `EEXIST` means someone else's file appeared meanwhile.
+        if e.kind() != std::io::ErrorKind::AlreadyExists {
+            let _ = remove_any(&t.path);
+        }
         return Err(io_err(e));
     }
-    Ok((src, Some(t), dst))
+    Ok((src, Some(t.path), dst))
 }
 
 /// `files.move`: rename; across volumes, copy then remove.
 pub fn move_to(grants: &[PathBuf], from: &str, to: &str, conflict: Conflict) -> KResult<(PathBuf, Option<PathBuf>, PathBuf)> {
     let (src, root) = resolve_entry(grants, from)?;
-    if root {
+    if holds_root(grants, &src, root) {
         return Err(invalid("isRoot"));
     }
-    let (dst, _) = resolve_entry(grants, to)?;
-    let Some(t) = target(&src, &dst, conflict)? else { return Ok((src, None, dst)) };
-    match std::fs::rename(&src, &t) {
+    let (dst, dst_root) = resolve_entry(grants, to)?;
+    let sp = Pinned::new(&src)?;
+    let (t, excl) = match target(grants, &sp, &dst, dst_root, conflict, true)? {
+        Plan::Skip => return Ok((src, None, dst)),
+        Plan::New(t) => (t, true),
+        Plan::Same(t) => (t, false),
+    };
+    match sp.rename(&t, excl) {
         Ok(()) => {}
         Err(e) if e.raw_os_error() == Some(libc::EXDEV) => {
-            if let Err(e) = copy_tree(&src, &t) {
-                let _ = remove_any(&t);
+            if let Err(e) = copy_pinned(&sp, &t) {
+                if e.kind() != std::io::ErrorKind::AlreadyExists {
+                    let _ = remove_any(&t.path);
+                }
                 return Err(io_err(e));
             }
             remove_any(&src).map_err(io_err)?;
         }
+        Err(e) if e.raw_os_error() == Some(libc::EEXIST) => return Err(err_p(ErrorCode::Conflict, &[("reason", "exists")])),
         Err(e) => return Err(io_err(e)),
     }
-    Ok((src, Some(t), dst))
+    Ok((src, Some(t.path), dst))
 }
 
 /// `files.trash`: moved into `trash` (a free name there). Another volume → `invalid/trashUnavailable`.
 pub fn trash(grants: &[PathBuf], raw: &str, trash: &Path) -> KResult<(PathBuf, PathBuf)> {
     let (src, root) = resolve_entry(grants, raw)?;
-    if root {
+    if holds_root(grants, &src, root) {
         return Err(invalid("isRoot"));
     }
     if !exists_no_follow(&src) {
         return Err(not_found("path"));
     }
+    let trash = std::fs::canonicalize(trash).map_err(|_| invalid("trashUnavailable"))?;
     if !trash.is_dir() {
         return Err(invalid("trashUnavailable"));
     }
     let name = src.file_name().map(|n| n.to_string_lossy().into_owned()).ok_or_else(|| invalid_params("path"))?;
-    let mut dst = trash.join(&name);
-    if exists_no_follow(&dst) {
-        dst = free_name(trash, &name)?;
+    let sp = Pinned::new(&src)?;
+    for _ in 0..3 {
+        let mut dst = trash.join(&name);
+        if exists_no_follow(&dst) {
+            dst = free_name(&trash, &name)?;
+        }
+        let dp = Pinned::new(&dst).map_err(|_| invalid("trashUnavailable"))?;
+        match sp.rename(&dp, true) {
+            Ok(()) => return Ok((src, dst)),
+            Err(e) if e.raw_os_error() == Some(libc::EXDEV) => return Err(invalid("trashUnavailable")),
+            // Taken meanwhile: pick another name.
+            Err(e) if e.raw_os_error() == Some(libc::EEXIST) => continue,
+            Err(e) => return Err(io_err(e)),
+        }
     }
-    match std::fs::rename(&src, &dst) {
-        Ok(()) => Ok((src, dst)),
-        Err(e) if e.raw_os_error() == Some(libc::EXDEV) => Err(invalid("trashUnavailable")),
-        Err(e) => Err(io_err(e)),
-    }
+    Err(err_p(ErrorCode::Conflict, &[("reason", "exists")]))
 }
 
 /// `files.remove`: permanently (folders with everything in them).
 pub fn remove(grants: &[PathBuf], raw: &str) -> KResult<PathBuf> {
     let (p, root) = resolve_entry(grants, raw)?;
-    if root {
+    if holds_root(grants, &p, root) {
         return Err(invalid("isRoot"));
     }
-    remove_any(&p).map_err(io_err)?;
+    let pin = Pinned::new(&p)?;
+    let st = pin.stat().ok_or_else(|| not_found("path"))?;
+    if st.st_mode & libc::S_IFMT == libc::S_IFDIR {
+        std::fs::remove_dir_all(&p).map_err(io_err)?;
+    } else {
+        // SAFETY: valid descriptor and C string.
+        if unsafe { libc::unlinkat(std::os::fd::AsRawFd::as_raw_fd(&pin.dir), pin.name.as_ptr(), 0) } != 0 {
+            return Err(io_err(std::io::Error::last_os_error()));
+        }
+    }
     Ok(p)
 }
 
-/// `files.open` / `files.reveal`: the path to hand to the system (must exist).
+/// Round 17 review #1 (D432): extensions of things the system runs when they are opened.
+pub const RUNS_WHEN_OPENED: &[&str] = &[
+    "app", "command", "terminal", "tool", "workflow", "action", "scpt", "scptd", "applescript", "osax", "pkg", "mpkg",
+    "jar", "prefpane", "saver", "mobileconfig", "fileloc", "inetloc", "webloc", "url", "shortcut", "sh", "zsh",
+    "csh", "ksh", "tcsh", "fish", "py", "pl", "rb", "js", "php", "configprofile", "qlgenerator", "kext", "plugin",
+    "bundle", "service", "wflow", "dmg", "xpc", "systemextension", "appex",
+];
+
+/// `files.open`: the real path (links followed, checked against the grants again), never
+/// something the system would run (D432: executable files, applications, scripts…).
+pub fn openable(grants: &[PathBuf], raw: &str) -> KResult<PathBuf> {
+    use std::os::unix::fs::PermissionsExt;
+    let real = resolve(grants, raw)?;
+    let md = std::fs::metadata(&real).map_err(|_| not_found("path"))?;
+    let ext = real.extension().map(|e| e.to_string_lossy().to_ascii_lowercase()).unwrap_or_default();
+    let runs = RUNS_WHEN_OPENED.contains(&ext.as_str()) || (md.is_file() && md.permissions().mode() & 0o111 != 0);
+    if runs {
+        return Err(denied("unsafeOpen"));
+    }
+    Ok(real)
+}
+
+/// `files.reveal`: the real path, inside a grant (shown in Finder, never run).
 pub fn existing(grants: &[PathBuf], raw: &str) -> KResult<PathBuf> {
-    let (p, _) = resolve_entry(grants, raw)?;
-    if !exists_no_follow(&p) {
+    let real = resolve(grants, raw)?;
+    if !exists_no_follow(&real) {
         return Err(not_found("path"));
     }
-    Ok(p)
+    Ok(real)
 }
 
 /// `files.find`: names containing every word of `query` (case-insensitive), under `raw`;
@@ -993,6 +1187,28 @@ mod tests {
         assert_eq!(std::fs::read_to_string(s.grant.join("planted")).unwrap(), "inside");
         // Recursive mkdir does not climb out through `..`.
         assert!(mkdir(&g, &format!("{}/../../x/y", s.grant.display()), true).is_err());
+    }
+
+    #[test]
+    fn review10_a_target_that_appears_meanwhile_is_never_replaced() {
+        let s = setup();
+        let src = Pinned::new(&s.grant.join("in.txt")).unwrap();
+        let dst = Pinned::new(&s.grant.join("late.txt")).unwrap();
+        // Someone else's file appears after the check.
+        std::fs::write(s.grant.join("late.txt"), "theirs").unwrap();
+        assert_eq!(copy_pinned(&src, &dst).unwrap_err().kind(), std::io::ErrorKind::AlreadyExists);
+        assert_eq!(src.rename(&dst, true).unwrap_err().raw_os_error(), Some(libc::EEXIST));
+        assert_eq!(std::fs::read_to_string(s.grant.join("late.txt")).unwrap(), "theirs");
+        assert_eq!(std::fs::read_to_string(s.grant.join("in.txt")).unwrap(), "inside");
+        // A parent swapped for a link after pinning: the rename stays in the real folder.
+        let moved = s.grant.with_file_name("b-moved");
+        let dst = Pinned::new(&s.grant.join("fresh.txt")).unwrap();
+        let src = Pinned::new(&s.grant.join("in.txt")).unwrap();
+        std::fs::rename(&s.grant, &moved).unwrap();
+        std::os::unix::fs::symlink(&s.outside, &s.grant).unwrap();
+        src.rename(&dst, true).unwrap();
+        assert!(moved.join("fresh.txt").exists());
+        assert!(!s.outside.join("fresh.txt").exists());
     }
 
     #[test]

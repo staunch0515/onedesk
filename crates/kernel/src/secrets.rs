@@ -154,6 +154,8 @@ pub enum Encode {
     Plain,
     Base64,
     Basic(String),
+    /// D433: percent-encoded (a query parameter's value).
+    Url,
     /// A modifier the kernel does not know (refused when substituted).
     Unknown,
 }
@@ -169,6 +171,7 @@ pub fn reference_specs(text: &str) -> Vec<Reference> {
                 let (name, encode) = match inner.split_once('|') {
                     None => (inner, Encode::Plain),
                     Some((n, "base64")) => (n, Encode::Base64),
+                    Some((n, "url")) => (n, Encode::Url),
                     Some((n, m)) => match m.strip_prefix("basic:") {
                         Some(user) if !user.contains(':') => (n, Encode::Basic(user.to_string())),
                         _ => (n, Encode::Unknown),
@@ -178,6 +181,19 @@ pub fn reference_specs(text: &str) -> Vec<Reference> {
                 rest = &after[j + 2..];
             }
             None => break,
+        }
+    }
+    out
+}
+
+/// D433: percent-encoding of everything but RFC 3986's unreserved characters.
+pub fn percent(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for b in s.bytes() {
+        if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'.' | b'_' | b'~') {
+            out.push(b as char);
+        } else {
+            out.push_str(&format!("%{b:02X}"));
         }
     }
     out
@@ -314,6 +330,7 @@ impl Inner {
                 Encode::Plain | Encode::Unknown => v.clone(),
                 Encode::Base64 => base64(v.as_bytes()),
                 Encode::Basic(user) => base64(format!("{user}:{v}").as_bytes()),
+                Encode::Url => percent(&v),
             };
             out = out.replace(&r.token, &put);
             // Both are scrubbed from what comes back (the encoded form is what a server echoes).
@@ -452,6 +469,9 @@ mod prefix_tests {
         assert_eq!(r[3].encode, Encode::Unknown);
         assert_eq!(r[4].encode, Encode::Unknown, "a user name cannot hold ':'");
         assert_eq!(references("{{secret:pw|basic:u}}"), vec!["pw".to_string()]);
+        // D433.
+        assert_eq!(reference_specs("{{secret:k|url}}")[0].encode, Encode::Url);
+        assert_eq!(percent("a b&c=d/é~"), "a%20b%26c%3Dd%2F%C3%A9~");
     }
 
     #[test]

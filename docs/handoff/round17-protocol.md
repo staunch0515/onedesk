@@ -19,7 +19,7 @@ type TextAppearance = "plain" | "terminal";
   - `appearance?: TextAppearance`：`terminal` 时外壳可以把每行画成一行文字（导出仍是表）。
   - `toneColumn?: string`：一列的 `key`，该列每行的值是那一行的 `LineTone` 名（如 `"stderr"`、`"danger"`）；不认识的值（如 `"stdout"`）= `default`。
   - `lineColumn?: string`：终端样式下作为行文字的列 `key`；不给 = 最后一列。
-  - 列名写错内核不报错，外壳按 `default`/最后一列处理。
+  - **审查后（#16）**：`toneColumn`、`lineColumn` 必须是 `columns` 里的 `key`，否则运行失败 `badOutput`（`runs.partial` 为 `invalid/badOutput`，数据文件输出同样）。
 - 插件返回数据文件输出时（`{ type: "table", file, … }`）也可以带 `appearance`、`toneColumn`、`lineColumn`；`{ type: "text", file }` 可以带 `appearance`。
 
 服务器命令的典型输出：
@@ -48,7 +48,9 @@ return { output: { type: "table",
     stopped: null | "timeout" | "maxLines" }
   ```
 
-  - 最后一行没有换行也算一行。每个流的总字节仍受 8 MB 限制（超出 `truncated: true`，后面的行不再收）。
+  - 最后一行没有换行也算一行。**审查后（#5）**：超过 64 KB 还没有换行的，每 64 KB 切成一行（在完整的 UTF-8 字符处切）。
+  - stdout 与 stderr 的先后只是近似的（两个管道分别读取，按读到的先后排）。
+  - 跨行的密钥值（如多行私钥），除了整体，每一行（8 字节以上）也会抹掉（#16）。每个流的总字节仍受 8 MB 限制（超出 `truncated: true`，后面的行不再收）。
   - 不给 `maxLines` 时行数上限为 `100000`（超出时同样 `stopped: "maxLines"`）。
   - **超时**：`lines: true` 时不再抛 `invalid/timeout`，而是立即结束进程组，返回已收到的行，`stopped: "timeout"`、`code: null`、`signal: null`。（不带 `lines` 时与之前相同：抛 `invalid/timeout`。）
   - **行数上限**：到达时立即结束进程组，返回 `stopped: "maxLines"`、`truncated: true`，`lines` 恰好 `maxLines` 行。
@@ -81,8 +83,8 @@ return { output: { type: "table",
 | `files.move(from, to, { conflict? })` | `{ path, skipped }` | 改名也用它（同一文件夹里换名字）；跨卷时复制后删除 |
 | `files.trash(path)` | `{ path }`（在废纸篓里的位置） | 移到废纸篓；废纸篓里已有同名的就按“保留两份”起名。不在同一卷上 → `invalid/trashUnavailable` |
 | `files.remove(path)` | `null` | **永久删除**（文件夹递归）。内核不再确认，二次确认由插件（`Confirm` 效果）和外壳做 |
-| `files.open(path)` | `null` | 用系统默认程序打开 |
-| `files.reveal(path)` | `null` | 在 Finder 中显示（选中它） |
+| `files.open(path)` | `null` | 用系统默认程序打开。**审查后（D432）**：只能用于授权文件夹（插件自己的目录 → `denied/outsideGrant`）；链接被解析到真实路径后再核对授权，打开的是真实路径；会被系统执行的东西一律拒绝 → **`denied/unsafeOpen`**：有任一可执行位的文件，以及扩展名为 `app`、`command`、`terminal`、`tool`、`workflow`、`action`、`scpt`、`pkg`、`jar`、`webloc`、`sh`、`py` 等的（全表见 `files.rs` 的 `RUNS_WHEN_OPENED`，不分大小写） |
+| `files.reveal(path)` | `null` | 在 Finder 中显示（选中它）。同样只能用于授权文件夹，显示的是真实路径 |
 | `files.find(path, query, { limit?, offset? })` | `{ entries: Entry[], next }` | 在文件夹里递归按**文件名**找（不跟随符号链接，跳过 `.` 开头的文件夹）：`query` 按空白切成词，每个词都要是文件名的子串（不分大小写）。`limit` 默认 200、最多 1000；最多看 100000 个条目（看到上限时结果多 `capped: true`） |
 | `files.addRoot()` | `null` | 让外壳弹出选择文件夹的对话框（`CommandEffect` `pick-folder`），用户选了就是授权（D184）。**不等用户回答**：选好后授权以 `plugins` 事件和插件所提供的树刷新到达；取消则什么都不发生 |
 | `files.replaceRoot(path)` | `null` | 同上，但效果带 `replace: path`；外壳选好后调 `plugin.replaceFolder`。`path` 不是授权文件夹 → `notFound/grant` |
@@ -98,6 +100,10 @@ return { output: { type: "table",
 | `"keepBoth"` | 换一个名字：`name 2.ext`、`name 3.ext`…（与 Finder 相同），返回新路径 |
 
 - `from` 与 `to` 相同、或把文件夹复制/移动到它自己里面 → `invalid/intoItself`。
+- **审查后**：
+  - 只差大小写的两个名字指向同一个文件时（按 (dev, ino) 判断），`move` 直接改名，不管 `conflict` 是什么，绝不删源文件；`copy` 报 `invalid/intoItself`（#2）。
+  - `overwrite` 的目标若是授权文件夹、插件自己的目录，或里面含有授权文件夹 → `invalid/isRoot`，什么都不动；`move` 的源、`trash`、`remove` 若含有授权文件夹，同样 `isRoot`（#3）。
+  - 所有写操作都先钉住父文件夹（不跟随链接）再改名或创建；新名字用 `RENAME_EXCL`/`O_EXCL`，检查之后才冒出来的同名文件绝不被覆盖，报 `conflict/exists`（#10）。删除文件夹的内部仍按路径删（Rust 标准库的 `remove_dir_all`）。
 - 审计：`files.mkdir`、`files.copy`、`files.move`、`files.trash`、`files.remove` 各一行。`copy`/`move` 摘要 `{ from, conflict }`（`object` 是最终写到的路径；`skip` 跳过的不记），其余摘要 `{}`（`object` 是原路径）。被拒绝的调用照旧另记一行（结果 `failed:denied`）。`open`、`reveal`、`addRoot`、`replaceRoot` 不进审计（不改任何东西）；`removeRoot` 进审计（见 3.2）。
 
 ### 3.1b `files.writeText` 新选项（第二版）
@@ -121,6 +127,7 @@ return { output: { type: "table",
 - 正式：`~/.Trash`。
 - 工作进程读环境变量 **`ONEDESK_TRASH_DIR`**（测试、验收用）：设了就把它当废纸篓（须是已存在的文件夹，且与要删的文件在同一卷，例如临时目录）。
 - 工作进程读 **`ONEDESK_OPEN_LOG`**：设了就不真的打开/显示，而是往这个文件追加一行 `open <路径>` 或 `reveal <路径>`（e2e 用，免得弹出 Finder）。
+- **审查后（D433，#13）**：这两个环境变量只在同时设了 **`ONEDESK_TEST_HOOKS=1`** 时生效；正式工作进程里设了也不理。e2e 请三个一起设。
 - 内核库里是 `KernelConfig.trash_dir` 与 `KernelConfig.opener`；Rust 测试一律用临时目录和记录器。
 
 ## 3.4 密钥代入的编码（第二版，API 连接要用）
@@ -131,6 +138,7 @@ return { output: { type: "table",
 |---|---|
 | `{{secret:<名字>|basic:<用户名>}}` | `base64("<用户名>:<密钥值>")`（HTTP Basic），例：`Authorization: Basic {{secret:api-pw|basic:alice}}` |
 | `{{secret:<名字>|base64}}` | `base64(<密钥值>)`（密钥里已经存着 `user:pass` 时用） |
+| `{{secret:<名字>|url}}` | 百分号编码后的密钥值（RFC 3986 的非保留字符以外都编码），用于地址的查询参数（D433） |
 
 - 用户名就是写在里面的明文（不能含 `:` 和 `}}`）；它来自插件，不是密钥。
 - 不认识的写法（如 `|rot13`、用户名含 `:`）→ `invalid/badSecretFormat`。名字检查与原来相同（`secretNotAllowed`、`unknownSecret`）。
@@ -169,7 +177,7 @@ type ConfirmChoice = { id: string, label?: Label, danger?: boolean };
 
 ```js
 { key, label, icon, expandable?, target?, badge?,
-  menu?: string[],       // 命令 id：本插件的（短名或 "<插件id>:<命令>"），或内核的 node.open / node.rename / node.delete / node.favorite / node.unfavorite / node.newGroup
+  menu?: string[],       // 命令 id：本插件的（短名或 "<插件id>:<命令>"），或内核的 node.open（D432：其它 node.* 一律丢弃）
   draggable?: boolean,   // 不给 = false
   accepts?: string[] }   // 原样转给外壳（最多 32 项，每项 1–128 字符）
 ```
@@ -182,7 +190,7 @@ type ConfirmChoice = { id: string, label?: Label, danger?: boolean };
 ## 3.5 程序的查找与时长（第二版）
 
 - 清单 `requires.programs[].searchPaths` 可以写 **`~/` 开头**的路径（如 `~/.docker/bin`），按当前用户的家目录展开（不支持 `~其他用户`）。
-- 从 `searchPaths` 找到的程序（含 `~/`），若它自己或它上面的任何一层文件夹**属于 root 和当前用户以外的人，或别人可写**，就不用它：`process.ready` 为 `{ ready: false, reason: "unsafeLocation" }`，`process.run` 抛 `denied/unsafeLocation`（`params.program`）。固定的系统目录（`/usr/bin` 等）不受影响。这是第十五轮审查 #15 的补上。
+- 从 `searchPaths` 找到的程序（含 `~/`），若它自己或它上面的任何一层文件夹**属于 root 和当前用户以外的人，或别人可写，或组可写而组不是 0（wheel）**（审查 #6），就不用它；链接本身和它所在的各层文件夹（不跟随）也要满足；通过检查后执行的是**真实路径**：`process.ready` 为 `{ ready: false, reason: "unsafeLocation" }`，`process.run` 抛 `denied/unsafeLocation`（`params.program`）。固定的系统目录（`/usr/bin` 等）不受影响。这是第十五轮审查 #15 的补上。
 - `process.run` 的 `timeoutMs` 上限从 10 分钟提到 **2 小时**（`7200000`）；默认仍是 60 秒，长任务请显式写 `timeoutMs`。`transfer.capture` 的上限也从 1 小时提到 2 小时。取消照旧立即结束。等程序的时间不算进动作的 60 秒（D355，不变）。
 
 ## 4. X6 搜索（`search.query`、插件的 `resources.search`）
@@ -206,6 +214,7 @@ type ConfirmChoice = { id: string, label?: Label, danger?: boolean };
 | `invalid/badOutput` | `runs.partial` | 部分输出的格式不对 |
 | `actionAndCommand` | 插件加载失败原因（插件页） | 页面动作同时写了 `action` 和 `command`，或非 run 项写了 `command`（D429） |
 | `invalid/badSecretFormat` | `network.request`、`process.run` | `{{secret:…|…}}` 的写法不认识 |
+| `denied/unsafeOpen` | `files.open` | 这个文件打开时会运行程序，所以不打开（D432；外壳英文已加） |
 | `denied/unsafeLocation` | `process.run`、`process.ready` 的 `reason`、程序不可用的提示 | 找到的程序在别人可改的位置，不用它（**外壳的 `kernel-texts.test.ts` 要求为它配文字**） |
 
 运行结果里的 `stopped`（`timeout`、`maxLines`）是插件自己拿到的值，由插件配文字。

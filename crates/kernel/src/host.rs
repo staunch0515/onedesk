@@ -633,6 +633,10 @@ impl Inner {
             _ => {}
         }
         let raw = arg_str(args, 0, "path")?;
+        // D432 (review #1): open and reveal only in granted folders, never in the plugin's own.
+        if matches!(op, "open" | "reveal") && self.own_files(plugin, &raw)?.is_some() {
+            return Err(outside_grant(&raw));
+        }
         let (mut grants, raw) = self.files_scope(plugin, &raw)?;
         let changed = match op {
             "find" => {
@@ -641,7 +645,11 @@ impl Inner {
                 return blocking(Box::new(move || crate::files::find(&grants, &raw, &q, &o))).await;
             }
             "open" | "reveal" => {
-                let p = blocking(Box::new(move || crate::files::existing(&grants, &raw).map(|p| json!(p.display().to_string())))).await?;
+                let reveal = op == "reveal";
+                let p = blocking(Box::new(move || {
+                    if reveal { crate::files::existing(&grants, &raw) } else { crate::files::openable(&grants, &raw) }.map(|p| json!(p.display().to_string()))
+                }))
+                .await?;
                 let path = PathBuf::from(p.as_str().unwrap_or_default());
                 (self.cfg.opener.0)(&path, op == "reveal").map_err(internal)?;
                 return Ok(Value::Null);
