@@ -833,8 +833,9 @@ pub fn move_to(grants: &[PathBuf], from: &str, to: &str, conflict: Conflict) -> 
     Ok((src, Some(t.path), dst))
 }
 
-/// `files.trash`: moved into `trash` (a free name there). Another volume → `invalid/trashUnavailable`.
-pub fn trash(grants: &[PathBuf], raw: &str, trash: &Path) -> KResult<(PathBuf, PathBuf)> {
+/// `files.trash`: into the system's Trash (`trash: None`), or — tests only — into the folder
+/// `trash` (a free name there). Returns the original and the new path.
+pub fn trash(grants: &[PathBuf], raw: &str, trash: Option<&Path>) -> KResult<(PathBuf, PathBuf)> {
     let (src, root) = resolve_entry(grants, raw)?;
     if holds_root(grants, &src, root) {
         return Err(invalid("isRoot"));
@@ -842,21 +843,66 @@ pub fn trash(grants: &[PathBuf], raw: &str, trash: &Path) -> KResult<(PathBuf, P
     if !exists_no_follow(&src) {
         return Err(not_found("path"));
     }
-    let trash = std::fs::canonicalize(trash).map_err(|_| invalid("trashUnavailable"))?;
+    match trash {
+        None => trash_system(&src).map(|dst| (src, dst)),
+        Some(t) => trash_into(&src, t).map(|dst| (src, dst)),
+    }
+}
+
+/// `NSFileManager trashItemAtURL:resultingItemURL:error:` — the way Finder does it ("Put Back"
+/// works), and it needs no access to `~/.Trash` itself (a process without Full Disk Access gets
+/// `EPERM` there, round 17 coordinator report).
+fn trash_system(src: &Path) -> KResult<PathBuf> {
+    use objc2_foundation::{NSFileManager, NSString, NSURL};
+    objc2::rc::autoreleasepool(|_| {
+        let url = NSURL::fileURLWithPath(&NSString::from_str(&src.display().to_string()));
+        let mut out: Option<objc2::rc::Retained<NSURL>> = None;
+        match NSFileManager::defaultManager().trashItemAtURL_resultingItemURL_error(&url, Some(&mut out)) {
+            Ok(()) => Ok(out.and_then(|u| u.path()).map(|p| PathBuf::from(p.to_string())).unwrap_or_default()),
+            Err(e) => Err(trash_error(e.code() as i64, e.localizedDescription().to_string())),
+        }
+    })
+}
+
+/// Cocoa error codes of `trashItemAtURL:` to the kernel's (never "another volume" for a refusal).
+pub fn trash_error(code: i64, text: String) -> onedesk_protocol::ProtocolError {
+    let mut e = match code {
+        // NSFileNoSuchFileError, NSFileReadNoSuchFileError
+        4 | 260 => not_found("path"),
+        // NSFileReadNoPermissionError, NSFileWriteNoPermissionError, NSFileWriteVolumeReadOnlyError
+        257 | 513 | 642 => denied("trashDenied"),
+        // NSFeatureUnsupportedError: no Trash on that volume
+        3328 => invalid("trashUnavailable"),
+        _ => internal(format!("trash: Cocoa error {code}")),
+    };
+    e.detail = Some(text);
+    e
+}
+
+/// The test Trash: a rename into `trash`. Errors say what happened: another volume is
+/// `trashUnavailable`, a folder it may not use is `denied/trashDenied`.
+fn trash_into(src: &Path, trash: &Path) -> KResult<PathBuf> {
+    let refused = |e: &std::io::Error| matches!(e.raw_os_error(), Some(libc::EPERM) | Some(libc::EACCES));
+    let trash = std::fs::canonicalize(trash).map_err(|e| if refused(&e) { denied("trashDenied") } else { invalid("trashUnavailable") })?;
     if !trash.is_dir() {
         return Err(invalid("trashUnavailable"));
     }
     let name = src.file_name().map(|n| n.to_string_lossy().into_owned()).ok_or_else(|| invalid_params("path"))?;
-    let sp = Pinned::new(&src)?;
+    let sp = Pinned::new(src)?;
     for _ in 0..3 {
         let mut dst = trash.join(&name);
         if exists_no_follow(&dst) {
             dst = free_name(&trash, &name)?;
         }
-        let dp = Pinned::new(&dst).map_err(|_| invalid("trashUnavailable"))?;
+        let dp = match open_dir_nofollow(&trash) {
+            Ok(dir) => Pinned { dir, name: cstr(&dst.file_name().unwrap_or_default().to_string_lossy()).map_err(internal)?, path: dst.clone() },
+            Err(e) if refused(&e) => return Err(denied("trashDenied")),
+            Err(_) => return Err(invalid("trashUnavailable")),
+        };
         match sp.rename(&dp, true) {
-            Ok(()) => return Ok((src, dst)),
+            Ok(()) => return Ok(dst),
             Err(e) if e.raw_os_error() == Some(libc::EXDEV) => return Err(invalid("trashUnavailable")),
+            Err(e) if refused(&e) => return Err(denied("trashDenied")),
             // Taken meanwhile: pick another name.
             Err(e) if e.raw_os_error() == Some(libc::EEXIST) => continue,
             Err(e) => return Err(io_err(e)),
@@ -1209,6 +1255,44 @@ mod tests {
         src.rename(&dst, true).unwrap();
         assert!(moved.join("fresh.txt").exists());
         assert!(!s.outside.join("fresh.txt").exists());
+    }
+
+    #[test]
+    fn round17_trash_errors_say_what_happened() {
+        let s = setup();
+        let g = vec![s.grant.clone()];
+        std::fs::write(s.grant.join("t.txt"), "x").unwrap();
+        // A Trash folder it may not open (as ~/.Trash without Full Disk Access): refused, not "another disk".
+        use std::os::unix::fs::PermissionsExt;
+        let locked = s.outside.join("locked");
+        std::fs::create_dir_all(locked.join("inner")).unwrap();
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
+        let e = trash(&g, &s.grant.join("t.txt").display().to_string(), Some(&locked.join("inner"))).unwrap_err();
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert_eq!((e.code, e.params["reason"].as_str()), (ErrorCode::Denied, "trashDenied"));
+        assert!(s.grant.join("t.txt").exists());
+        // No such folder: unavailable.
+        let e = trash(&g, &s.grant.join("t.txt").display().to_string(), Some(&s.outside.join("nope"))).unwrap_err();
+        assert_eq!(e.params["reason"], "trashUnavailable");
+        // The system call's codes.
+        assert_eq!(trash_error(513, "x".into()).params["reason"], "trashDenied");
+        assert_eq!(trash_error(3328, "x".into()).params["reason"], "trashUnavailable");
+        assert_eq!(trash_error(4, "x".into()).code, ErrorCode::NotFound);
+        assert_eq!(trash_error(9999, "x".into()).code, ErrorCode::Internal);
+    }
+
+    /// Moves a temporary file into the real Trash through the system call. Not run by default
+    /// (it touches the user's Trash): `cargo test -p onedesk-kernel -- --ignored system_trash`.
+    #[test]
+    #[ignore]
+    fn system_trash_moves_a_temporary_file_into_the_trash() {
+        let d = tempfile::tempdir().unwrap();
+        let base = std::fs::canonicalize(d.path()).unwrap();
+        let name = format!("onedesk-trash-test-{}.txt", crate::util::new_id());
+        std::fs::write(base.join(&name), "onedesk test file, safe to delete").unwrap();
+        let (src, dst) = trash(std::slice::from_ref(&base), &base.join(&name).display().to_string(), None).unwrap();
+        assert!(!src.exists());
+        assert!(dst.display().to_string().contains(".Trash"), "{}", dst.display());
     }
 
     #[test]

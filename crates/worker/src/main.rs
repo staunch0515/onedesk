@@ -138,7 +138,7 @@ fn test_hooks(cfg: &mut KernelConfig, var: impl Fn(&str) -> Option<String>) -> b
         return false;
     }
     if let Some(d) = var("ONEDESK_TRASH_DIR").filter(|v| !v.is_empty()) {
-        cfg.trash_dir = std::path::PathBuf::from(d);
+        cfg.trash_dir = Some(std::path::PathBuf::from(d));
     }
     if let Some(log) = var("ONEDESK_OPEN_LOG").filter(|v| !v.is_empty()) {
         cfg.opener = onedesk_kernel::Opener::log_to(std::path::PathBuf::from(log));
@@ -172,8 +172,8 @@ mod tests {
         let mut cfg = KernelConfig::default();
         assert!(!test_hooks(&mut cfg, env(None)));
         assert!(!test_hooks(&mut cfg, env(Some("yes"))));
-        assert_eq!(cfg.trash_dir, onedesk_kernel::default_trash_dir());
+        assert_eq!(cfg.trash_dir, None, "the system Trash");
         assert!(test_hooks(&mut cfg, env(Some("1"))));
-        assert_eq!(cfg.trash_dir, std::path::PathBuf::from("/tmp/t"));
+        assert_eq!(cfg.trash_dir, Some(std::path::PathBuf::from("/tmp/t")));
     }
 }

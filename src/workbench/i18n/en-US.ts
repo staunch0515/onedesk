@@ -790,6 +790,7 @@ export const enUS = {
   "kernel.error.invalid.intoItself": "A folder cannot be copied or moved into itself.",
   "kernel.error.invalid.isRoot": "A granted folder itself cannot be moved or deleted.",
   "kernel.error.invalid.trashUnavailable": "The Trash is not available for this location.",
+  "kernel.error.denied.trashDenied": "OneDesk is not allowed to move this to the Trash.",
   "kernel.error.notFound.grant": "That folder is not granted to the plugin.",
   "kernel.error.invalid.badOutput": "The partial output does not match the action's output type.",
   "kernel.error.reason.duplicateKey": "The same key appears twice in one request.",

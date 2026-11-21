@@ -2517,6 +2517,8 @@ dependencies = [
  "http-body",
  "keyring",
  "libc",
+ "objc2",
+ "objc2-foundation",
  "onedesk-protocol",
  "reqwest 0.12.28",
  "rquickjs",

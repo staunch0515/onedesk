@@ -38,9 +38,10 @@ pub struct KernelConfig {
     /// D365: a plugin version's runtime that has nothing in flight for this long is released
     /// (10 minutes; the worker takes `ONEDESK_PLUGIN_IDLE_MS` for tests and acceptance).
     pub plugin_idle: std::time::Duration,
-    /// Round 17 (X18): where `files.trash` moves things (`~/.Trash`; the worker takes
-    /// `ONEDESK_TRASH_DIR`, tests a temporary folder).
-    pub trash_dir: std::path::PathBuf,
+    /// Round 17 (X18): `None` (the default): `files.trash` uses the system's Trash
+    /// (`NSFileManager trashItemAtURL:`). `Some(folder)`: moves things into that folder instead —
+    /// tests only (the worker takes `ONEDESK_TRASH_DIR` with `ONEDESK_TEST_HOOKS=1`).
+    pub trash_dir: Option<std::path::PathBuf>,
     /// Round 17 (X18): opens a path with its default program or reveals it in Finder.
     pub opener: Opener,
 }
@@ -91,11 +92,6 @@ impl Opener {
     }
 }
 
-/// `~/.Trash`.
-pub fn default_trash_dir() -> std::path::PathBuf {
-    std::path::PathBuf::from(std::env::var("HOME").unwrap_or_default()).join(".Trash")
-}
-
 /// D365: the default idle time before a plugin runtime is released.
 pub const DEFAULT_PLUGIN_IDLE: std::time::Duration = std::time::Duration::from_secs(600);
 
@@ -107,7 +103,7 @@ impl Default for KernelConfig {
             secrets: crate::secrets::SecretStoreHandle::from_env(),
             builtin: vec![],
             plugin_idle: DEFAULT_PLUGIN_IDLE,
-            trash_dir: default_trash_dir(),
+            trash_dir: None,
             opener: Opener::system(),
         }
     }

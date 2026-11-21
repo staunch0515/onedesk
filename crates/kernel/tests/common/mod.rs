@@ -36,7 +36,7 @@ pub fn test_config() -> KernelConfig {
         builtin: vec![],
         plugin_idle: onedesk_kernel::DEFAULT_PLUGIN_IDLE,
         // Never the real Trash, never Finder (tests that use them set their own).
-        trash_dir: std::env::temp_dir().join("onedesk-test-trash-unset"),
+        trash_dir: Some(std::env::temp_dir().join("onedesk-test-trash-unset")),
         opener: onedesk_kernel::Opener::none(),
     }
 }

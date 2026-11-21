@@ -127,7 +127,7 @@ async fn world() -> World {
     std::fs::create_dir_all(&trash).unwrap();
     let open_log = base.join("open.log");
     let mut cfg = config_for(&root);
-    cfg.trash_dir = trash.clone();
+    cfg.trash_dir = Some(trash.clone());
     cfg.opener = onedesk_kernel::Opener::log_to(open_log.clone());
     cfg.action_timeout = Duration::from_secs(20);
     let env = open_with(tmp, &root, cfg);
