@@ -38,6 +38,62 @@ pub struct KernelConfig {
     /// D365: a plugin version's runtime that has nothing in flight for this long is released
     /// (10 minutes; the worker takes `ONEDESK_PLUGIN_IDLE_MS` for tests and acceptance).
     pub plugin_idle: std::time::Duration,
+    /// Round 17 (X18): where `files.trash` moves things (`~/.Trash`; the worker takes
+    /// `ONEDESK_TRASH_DIR`, tests a temporary folder).
+    pub trash_dir: std::path::PathBuf,
+    /// Round 17 (X18): opens a path with its default program or reveals it in Finder.
+    pub opener: Opener,
+}
+
+/// Round 17 (X18): what `files.open` (`reveal: false`) and `files.reveal` (`true`) call.
+#[derive(Clone)]
+pub struct Opener(pub Arc<OpenFn>);
+
+/// `(path, reveal)`.
+pub type OpenFn = dyn Fn(&std::path::Path, bool) -> Result<(), String> + Send + Sync;
+
+impl std::fmt::Debug for Opener {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Opener")
+    }
+}
+
+impl Opener {
+    /// `/usr/bin/open <path>` or `/usr/bin/open -R <path>` (the path is absolute: never an option).
+    pub fn system() -> Opener {
+        Opener(Arc::new(|path, reveal| {
+            let mut c = std::process::Command::new("/usr/bin/open");
+            if reveal {
+                c.arg("-R");
+            }
+            c.arg(path).env_clear().stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null());
+            let mut child = c.spawn().map_err(|e| e.to_string())?;
+            // Reaped in the background; `open` returns at once.
+            std::thread::spawn(move || {
+                let _ = child.wait();
+            });
+            Ok(())
+        }))
+    }
+
+    /// Does nothing (tests that do not look).
+    pub fn none() -> Opener {
+        Opener(Arc::new(|_, _| Ok(())))
+    }
+
+    /// Appends `open <path>` / `reveal <path>` to `log` instead (tests, e2e: `ONEDESK_OPEN_LOG`).
+    pub fn log_to(log: std::path::PathBuf) -> Opener {
+        Opener(Arc::new(move |path, reveal| {
+            use std::io::Write;
+            let mut f = std::fs::OpenOptions::new().create(true).append(true).open(&log).map_err(|e| e.to_string())?;
+            writeln!(f, "{} {}", if reveal { "reveal" } else { "open" }, path.display()).map_err(|e| e.to_string())
+        }))
+    }
+}
+
+/// `~/.Trash`.
+pub fn default_trash_dir() -> std::path::PathBuf {
+    std::path::PathBuf::from(std::env::var("HOME").unwrap_or_default()).join(".Trash")
 }
 
 /// D365: the default idle time before a plugin runtime is released.
@@ -51,6 +107,8 @@ impl Default for KernelConfig {
             secrets: crate::secrets::SecretStoreHandle::from_env(),
             builtin: vec![],
             plugin_idle: DEFAULT_PLUGIN_IDLE,
+            trash_dir: default_trash_dir(),
+            opener: Opener::system(),
         }
     }
 }
@@ -542,6 +600,7 @@ impl Inner {
             }
             M::PLUGIN_GRANT_FOLDER => to_value(self.grant_folder(parse(params)?).await?),
             M::PLUGIN_REVOKE_FOLDER => to_value(self.revoke_folder(parse(params)?).await?),
+            M::PLUGIN_REPLACE_FOLDER => to_value(self.replace_folder(parse(params)?).await?),
             M::UI_GET => {
                 let p: UiGetParams = parse(params)?;
                 let c = client.unwrap_or_else(|| DEFAULT_CLIENT.into());

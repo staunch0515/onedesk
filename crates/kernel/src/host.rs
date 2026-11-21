@@ -92,6 +92,10 @@ pub fn external_object(raw: &str) -> Option<String> {
     u.host_str().map(|h| h.trim_matches(['[', ']']).to_ascii_lowercase())
 }
 
+/// Round 17 (X18): the `files.*` operations added this round (`host_files17`).
+const ROUND17_FILES: &[&str] =
+    &["mkdir", "copy", "move", "trash", "remove", "open", "reveal", "find", "addRoot", "replaceRoot", "removeRoot"];
+
 fn arg(args: &Value, i: usize) -> Value {
     args.get(i).cloned().unwrap_or(Value::Null)
 }
@@ -128,6 +132,7 @@ impl Inner {
         let args = args.clone();
         match cap {
             "resources" => self.host_resources(plugin, info, op, &args).await,
+            "files" if ROUND17_FILES.contains(&op) => self.host_files17(plugin, info, op, &args).await,
             "files" => self.host_files(plugin, op, &args).await,
             "ui" if op == "openExternal" => self.host_open_external(plugin, info, &args).await,
             "ui" => self.host_ui(info, op, &args),
@@ -146,6 +151,11 @@ impl Inner {
                 // D287: the engine has no timers. Cancellation ends the wait (host_call_inner).
                 let ms = args.get(0).and_then(Value::as_f64).unwrap_or(0.0).clamp(0.0, MAX_SLEEP_MS as f64) as u64;
                 tokio::time::sleep(std::time::Duration::from_millis(ms)).await;
+                Ok(Value::Null)
+            }
+            "runs" if op == "partial" => {
+                let run = info.run_id.as_deref().ok_or_else(|| denied("notInRun"))?;
+                self.run_partial(run, arg(&args, 0))?;
                 Ok(Value::Null)
             }
             "runs" if op == "progress" => {
@@ -537,6 +547,136 @@ impl Inner {
             }
             _ => Err(err_p(ErrorCode::UnknownMethod, &[("method", &format!("files.{op}"))])),
         }
+    }
+
+    /// The folders one path of a `files.*` call may be in: the plugin's own folder (relative path,
+    /// or absolute inside it) or the granted folders (never anything inside the data folder).
+    /// Returns them and the path made absolute.
+    fn files_scope(&self, plugin: &Plugin, raw: &str) -> KResult<(Vec<PathBuf>, String)> {
+        if let Some(own) = self.own_files(plugin, raw)? {
+            return Ok(own);
+        }
+        if !plugin.manifest.requires.files {
+            return Err(denied("notRequested"));
+        }
+        let grants: Vec<PathBuf> = self.folder_grants(&plugin.id)?.into_iter().map(PathBuf::from).collect();
+        // Review #5: nothing inside the data folder, though a granted folder may contain it.
+        let inside = |p: &std::path::Path| self.data_roots().iter().any(|d| p.starts_with(d));
+        if let Ok(real) = crate::files::resolve(&grants, raw) {
+            if inside(&real) {
+                return Err(denied("insideDataDir"));
+            }
+        }
+        if let Ok((real, _)) = crate::files::resolve_entry(&grants, raw) {
+            if inside(&real) {
+                return Err(denied("insideDataDir"));
+            }
+        }
+        Ok((grants, raw.to_string()))
+    }
+
+    /// Round 17 (X18): `files.mkdir/copy/move/trash/remove/open/reveal/find` and the granted
+    /// folder list (`addRoot/replaceRoot/removeRoot`).
+    async fn host_files17(&self, plugin: &Plugin, info: &CallInfo, op: &str, args: &Value) -> KResult<Value> {
+        // D336: an event handler reads, it does not change files or open anything.
+        if info.event && op != "find" {
+            return Err(denied("notInRun"));
+        }
+        let blocking = |f: Box<dyn FnOnce() -> KResult<Value> + Send>| async move {
+            tokio::task::spawn_blocking(f).await.map_err(internal)?
+        };
+        let actor = plugin.actor();
+        match op {
+            "addRoot" | "replaceRoot" => {
+                if !plugin.manifest.requires.files {
+                    return Err(denied("notRequested"));
+                }
+                let replace = if op == "replaceRoot" {
+                    let path = arg_str(args, 0, "path")?;
+                    if !self.folder_grants(&plugin.id)?.contains(&path) {
+                        return Err(not_found("grant"));
+                    }
+                    Some(path)
+                } else {
+                    None
+                };
+                let effect = CommandEffect::PickFolder { plugin: plugin.id.clone(), replace };
+                self.emit(topic::UI, Some(serde_json::to_value(effect).map_err(internal)?), info.client.clone());
+                return Ok(Value::Null);
+            }
+            "removeRoot" => {
+                if !plugin.manifest.requires.files {
+                    return Err(denied("notRequested"));
+                }
+                let path = arg_str(args, 0, "path")?;
+                if !self.folder_grants(&plugin.id)?.contains(&path) {
+                    return Err(not_found("grant"));
+                }
+                let g = self.revoke_folder(PluginFolderParams { plugin: plugin.id.clone(), path }).await?;
+                return Ok(json!({ "folders": g.folders }));
+            }
+            _ => {}
+        }
+        let raw = arg_str(args, 0, "path")?;
+        let (mut grants, raw) = self.files_scope(plugin, &raw)?;
+        let changed = match op {
+            "find" => {
+                let q = arg_str(args, 1, "query")?;
+                let o = arg(args, 2);
+                return blocking(Box::new(move || crate::files::find(&grants, &raw, &q, &o))).await;
+            }
+            "open" | "reveal" => {
+                let p = blocking(Box::new(move || crate::files::existing(&grants, &raw).map(|p| json!(p.display().to_string())))).await?;
+                let path = PathBuf::from(p.as_str().unwrap_or_default());
+                (self.cfg.opener.0)(&path, op == "reveal").map_err(internal)?;
+                return Ok(Value::Null);
+            }
+            "mkdir" => {
+                let recursive = arg(args, 1).get("recursive").and_then(Value::as_bool).unwrap_or(false);
+                let e = blocking(Box::new(move || crate::files::mkdir(&grants, &raw, recursive).map(|e| json!(e)))).await?;
+                let path = e["path"].as_str().unwrap_or_default().to_string();
+                (e, "files.mkdir", path, json!({}))
+            }
+            "copy" | "move" => {
+                let to = arg_str(args, 1, "to")?;
+                let (more, to) = self.files_scope(plugin, &to)?;
+                grants.extend(more);
+                let conflict = crate::files::Conflict::parse(&arg(args, 2))?;
+                let is_move = op == "move";
+                let (src, put, asked) = tokio::task::spawn_blocking(move || {
+                    if is_move {
+                        crate::files::move_to(&grants, &raw, &to, conflict)
+                    } else {
+                        crate::files::copy(&grants, &raw, &to, conflict)
+                    }
+                })
+                .await
+                .map_err(internal)??;
+                let res = crate::files::placed(put.clone(), &asked);
+                let Some(put) = put else { return Ok(res) };
+                let summary = json!({ "from": src.display().to_string(), "conflict": conflict.as_str() });
+                (res, if is_move { "files.move" } else { "files.copy" }, put.display().to_string(), summary)
+            }
+            "trash" => {
+                let trash = self.cfg.trash_dir.clone();
+                let (src, dst) = tokio::task::spawn_blocking(move || crate::files::trash(&grants, &raw, &trash)).await.map_err(internal)??;
+                (json!({ "path": dst.display().to_string() }), "files.trash", src.display().to_string(), json!({}))
+            }
+            "remove" => {
+                let p = tokio::task::spawn_blocking(move || crate::files::remove(&grants, &raw)).await.map_err(internal)??;
+                (Value::Null, "files.remove", p.display().to_string(), json!({}))
+            }
+            _ => return Err(err_p(ErrorCode::UnknownMethod, &[("method", &format!("files.{op}"))])),
+        };
+        let (res, audit_op, object, summary) = changed;
+        // Done on disk: audited even if the call is given up meanwhile (as `writeText`).
+        let me = self.me.upgrade().ok_or_else(|| internal("kernel stopped"))?;
+        let cmd = Command::Audit { op: audit_op.into(), object, summary };
+        tokio::spawn(async move { me.execute(actor, cmd).await }).await.map_err(internal)??;
+        for t in plugin.manifest.contributes.trees.iter().filter(|t| t.source == TreeSource::Provided) {
+            self.emit(format!("{}{}", topic::TREE, plugin.full(&t.id)), None, None);
+        }
+        Ok(res)
     }
 
     /* ---------------------------------------------------------------- params, storage, settings (D286) */

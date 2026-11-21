@@ -462,6 +462,22 @@ mod tests {
     }
 
     #[test]
+    fn round17_a_file_output_keeps_its_appearance_and_tone_column() {
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("r.csv");
+        std::fs::write(&p, "stream,line\nstderr,x\n").unwrap();
+        let r = read(&p, &o(json!({ "type": "table", "appearance": "terminal", "toneColumn": "c0", "lineColumn": "c1" }))).unwrap();
+        let RunOutput::Table { appearance, tone_column, line_column, .. } = r.output else { panic!() };
+        assert_eq!(appearance, Some(TextAppearance::Terminal));
+        assert_eq!((tone_column.as_deref(), line_column.as_deref()), (Some("c0"), Some("c1")));
+        assert!(read(&p, &o(json!({ "type": "table", "appearance": "neon" }))).is_err());
+        assert!(read(&p, &o(json!({ "type": "table", "toneColumn": 3 }))).is_err());
+        let r = read(&p, &o(json!({ "type": "text", "appearance": "terminal" }))).unwrap();
+        let RunOutput::Text { appearance, line_tones, .. } = r.output else { panic!() };
+        assert_eq!((appearance, line_tones), (Some(TextAppearance::Terminal), None));
+    }
+
+    #[test]
     fn text_is_cut_at_a_character_boundary() {
         let d = tempfile::tempdir().unwrap();
         let p = d.path().join("t.txt");

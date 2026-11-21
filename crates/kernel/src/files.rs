@@ -389,6 +389,354 @@ pub fn open_source(grants: &[PathBuf], raw: &str) -> KResult<(PathBuf, std::fs::
     Ok((p, f, md.len()))
 }
 
+/* ---------------------------------------------------------------- round 17 (X18) */
+
+/// Most entries `find` looks at.
+pub const FIND_MAX_VISIT: usize = 100_000;
+
+/// What to do when the target of `mkdir`, `copy` or `move` exists.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Conflict {
+    Fail,
+    Overwrite,
+    Skip,
+    KeepBoth,
+}
+
+impl Conflict {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Conflict::Fail => "fail",
+            Conflict::Overwrite => "overwrite",
+            Conflict::Skip => "skip",
+            Conflict::KeepBoth => "keepBoth",
+        }
+    }
+
+    pub fn parse(opts: &Value) -> KResult<Conflict> {
+        Ok(match opts.get("conflict").filter(|&v| !v.is_null()) {
+            None => Conflict::Fail,
+            Some(v) => match v.as_str() {
+                Some("fail") => Conflict::Fail,
+                Some("overwrite") => Conflict::Overwrite,
+                Some("skip") => Conflict::Skip,
+                Some("keepBoth") => Conflict::KeepBoth,
+                _ => return Err(invalid_params("conflict must be fail, overwrite, skip or keepBoth")),
+            },
+        })
+    }
+}
+
+/// Like `resolve`, but the final component is never followed: a link is the link itself.
+/// The parent must exist. Returns the path and whether it names a granted folder itself.
+pub fn resolve_entry(grants: &[PathBuf], raw: &str) -> KResult<(PathBuf, bool)> {
+    let p = Path::new(raw);
+    if !p.is_absolute() {
+        return Err(denied("notAbsolute"));
+    }
+    let name = match p.components().next_back() {
+        Some(Component::Normal(n)) => n.to_os_string(),
+        // `/`, `..`, `.` at the end: resolve the whole path (a folder).
+        _ => {
+            let real = std::fs::canonicalize(p).map_err(|_| not_found("path"))?;
+            return if grants.iter().any(|g| real.starts_with(g)) {
+                let root = grants.contains(&real);
+                Ok((real, root))
+            } else {
+                Err(outside_grant(raw))
+            };
+        }
+    };
+    let parent = p.parent().ok_or_else(|| outside_grant(raw))?;
+    let parent = std::fs::canonicalize(parent).map_err(|_| not_found("path"))?;
+    let real = parent.join(name);
+    if !grants.iter().any(|g| real.starts_with(g)) {
+        // A granted folder named through a link to it is still that folder.
+        if let Ok(r) = std::fs::canonicalize(&real) {
+            if grants.contains(&r) {
+                return Ok((r, true));
+            }
+        }
+        return Err(outside_grant(raw));
+    }
+    let root = grants.contains(&real)
+        || std::fs::canonicalize(&real).is_ok_and(|r| grants.contains(&r) && std::fs::symlink_metadata(&real).is_ok_and(|m| !m.file_type().is_symlink()));
+    Ok((real, root))
+}
+
+fn exists_no_follow(p: &Path) -> bool {
+    std::fs::symlink_metadata(p).is_ok()
+}
+
+/// `name 2.ext`, `name 3.ext`… (as Finder names copies): the first that is free in `dir`.
+pub fn free_name(dir: &Path, name: &str) -> KResult<PathBuf> {
+    let (stem, ext) = match name.rfind('.') {
+        Some(i) if i > 0 => (&name[..i], &name[i..]),
+        _ => (name, ""),
+    };
+    for n in 2..10_000 {
+        let c = dir.join(format!("{stem} {n}{ext}"));
+        if !exists_no_follow(&c) {
+            return Ok(c);
+        }
+    }
+    Err(err_p(ErrorCode::Conflict, &[("reason", "exists")]))
+}
+
+fn remove_any(p: &Path) -> std::io::Result<()> {
+    let md = std::fs::symlink_metadata(p)?;
+    if md.is_dir() {
+        std::fs::remove_dir_all(p)
+    } else {
+        std::fs::remove_file(p)
+    }
+}
+
+/// Copies a file, a link (as a link) or a folder (recursively; links inside as links).
+fn copy_tree(src: &Path, dst: &Path) -> std::io::Result<()> {
+    let md = std::fs::symlink_metadata(src)?;
+    if md.file_type().is_symlink() {
+        std::os::unix::fs::symlink(std::fs::read_link(src)?, dst)
+    } else if md.is_dir() {
+        std::fs::create_dir(dst)?;
+        std::fs::set_permissions(dst, md.permissions())?;
+        for e in std::fs::read_dir(src)? {
+            let e = e?;
+            copy_tree(&e.path(), &dst.join(e.file_name()))?;
+        }
+        Ok(())
+    } else {
+        std::fs::copy(src, dst).map(|_| ())
+    }
+}
+
+fn io_err(e: std::io::Error) -> onedesk_protocol::ProtocolError {
+    match e.kind() {
+        std::io::ErrorKind::NotFound => not_found("path"),
+        std::io::ErrorKind::AlreadyExists => err_p(ErrorCode::Conflict, &[("reason", "exists")]),
+        _ => internal(e),
+    }
+}
+
+/// `files.mkdir`: a new folder (`recursive`: with missing parents). Existing → `conflict/exists`.
+pub fn mkdir(grants: &[PathBuf], raw: &str, recursive: bool) -> KResult<Entry> {
+    let p = if recursive {
+        // The deepest existing ancestor decides where it is.
+        let path = Path::new(raw);
+        if !path.is_absolute() || path.components().any(|c| matches!(c, Component::ParentDir | Component::CurDir)) {
+            return Err(if path.is_absolute() { invalid_params("path") } else { denied("notAbsolute") });
+        }
+        let mut base = path.to_path_buf();
+        let mut rest = Vec::new();
+        while !exists_no_follow(&base) {
+            rest.push(base.file_name().ok_or_else(|| not_found("path"))?.to_os_string());
+            base = base.parent().ok_or_else(|| not_found("path"))?.to_path_buf();
+        }
+        let base = resolve(grants, &base.display().to_string())?;
+        if !base.is_dir() {
+            return Err(invalid("notFolder"));
+        }
+        let mut p = base;
+        for n in rest.iter().rev() {
+            p.push(n);
+        }
+        if rest.is_empty() {
+            return Err(err_p(ErrorCode::Conflict, &[("reason", "exists")]));
+        }
+        std::fs::create_dir_all(&p).map_err(io_err)?;
+        p
+    } else {
+        let (p, _) = resolve_entry(grants, raw)?;
+        std::fs::create_dir(&p).map_err(io_err)?;
+        p
+    };
+    entry(&p)
+}
+
+/// Where `copy`/`move` write, after the conflict rule. `None`: skipped.
+fn target(src: &Path, dst: &Path, conflict: Conflict) -> KResult<Option<PathBuf>> {
+    let src_dir = std::fs::symlink_metadata(src).map_err(|_| not_found("path"))?.is_dir();
+    if src == dst || (src_dir && dst.starts_with(src)) {
+        return Err(invalid("intoItself"));
+    }
+    if !exists_no_follow(dst) {
+        return Ok(Some(dst.to_path_buf()));
+    }
+    match conflict {
+        Conflict::Fail => Err(err_p(ErrorCode::Conflict, &[("reason", "exists")])),
+        Conflict::Skip => Ok(None),
+        Conflict::Overwrite => {
+            // Never a folder that holds the source.
+            if src.starts_with(dst) {
+                return Err(invalid("intoItself"));
+            }
+            remove_any(dst).map_err(io_err)?;
+            Ok(Some(dst.to_path_buf()))
+        }
+        Conflict::KeepBoth => {
+            let dir = dst.parent().ok_or_else(|| invalid_params("to"))?;
+            let name = dst.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+            free_name(dir, &name).map(Some)
+        }
+    }
+}
+
+/// The result of `copy` / `move`.
+pub fn placed(p: Option<PathBuf>, asked: &Path) -> Value {
+    match p {
+        Some(p) => json!({ "path": p.display().to_string(), "skipped": false }),
+        None => json!({ "path": asked.display().to_string(), "skipped": true }),
+    }
+}
+
+/// `files.copy`: returns the path written (or `None` when skipped) and the asked target.
+pub fn copy(grants: &[PathBuf], from: &str, to: &str, conflict: Conflict) -> KResult<(PathBuf, Option<PathBuf>, PathBuf)> {
+    let (src, _) = resolve_entry(grants, from)?;
+    let (dst, _) = resolve_entry(grants, to)?;
+    let Some(t) = target(&src, &dst, conflict)? else { return Ok((src, None, dst)) };
+    if let Err(e) = copy_tree(&src, &t) {
+        let _ = remove_any(&t);
+        return Err(io_err(e));
+    }
+    Ok((src, Some(t), dst))
+}
+
+/// `files.move`: rename; across volumes, copy then remove.
+pub fn move_to(grants: &[PathBuf], from: &str, to: &str, conflict: Conflict) -> KResult<(PathBuf, Option<PathBuf>, PathBuf)> {
+    let (src, root) = resolve_entry(grants, from)?;
+    if root {
+        return Err(invalid("isRoot"));
+    }
+    let (dst, _) = resolve_entry(grants, to)?;
+    let Some(t) = target(&src, &dst, conflict)? else { return Ok((src, None, dst)) };
+    match std::fs::rename(&src, &t) {
+        Ok(()) => {}
+        Err(e) if e.raw_os_error() == Some(libc::EXDEV) => {
+            if let Err(e) = copy_tree(&src, &t) {
+                let _ = remove_any(&t);
+                return Err(io_err(e));
+            }
+            remove_any(&src).map_err(io_err)?;
+        }
+        Err(e) => return Err(io_err(e)),
+    }
+    Ok((src, Some(t), dst))
+}
+
+/// `files.trash`: moved into `trash` (a free name there). Another volume → `invalid/trashUnavailable`.
+pub fn trash(grants: &[PathBuf], raw: &str, trash: &Path) -> KResult<(PathBuf, PathBuf)> {
+    let (src, root) = resolve_entry(grants, raw)?;
+    if root {
+        return Err(invalid("isRoot"));
+    }
+    if !exists_no_follow(&src) {
+        return Err(not_found("path"));
+    }
+    if !trash.is_dir() {
+        return Err(invalid("trashUnavailable"));
+    }
+    let name = src.file_name().map(|n| n.to_string_lossy().into_owned()).ok_or_else(|| invalid_params("path"))?;
+    let mut dst = trash.join(&name);
+    if exists_no_follow(&dst) {
+        dst = free_name(trash, &name)?;
+    }
+    match std::fs::rename(&src, &dst) {
+        Ok(()) => Ok((src, dst)),
+        Err(e) if e.raw_os_error() == Some(libc::EXDEV) => Err(invalid("trashUnavailable")),
+        Err(e) => Err(io_err(e)),
+    }
+}
+
+/// `files.remove`: permanently (folders with everything in them).
+pub fn remove(grants: &[PathBuf], raw: &str) -> KResult<PathBuf> {
+    let (p, root) = resolve_entry(grants, raw)?;
+    if root {
+        return Err(invalid("isRoot"));
+    }
+    remove_any(&p).map_err(io_err)?;
+    Ok(p)
+}
+
+/// `files.open` / `files.reveal`: the path to hand to the system (must exist).
+pub fn existing(grants: &[PathBuf], raw: &str) -> KResult<PathBuf> {
+    let (p, _) = resolve_entry(grants, raw)?;
+    if !exists_no_follow(&p) {
+        return Err(not_found("path"));
+    }
+    Ok(p)
+}
+
+/// `files.find`: names containing every word of `query` (case-insensitive), under `raw`;
+/// links are not followed, folders starting with `.` are skipped.
+pub fn find(grants: &[PathBuf], raw: &str, query: &str, opts: &Value) -> KResult<Value> {
+    let dir = resolve(grants, raw)?;
+    if !dir.is_dir() {
+        return Err(invalid("notFolder"));
+    }
+    let words: Vec<String> = query.split_whitespace().map(str::to_lowercase).collect();
+    if words.is_empty() {
+        return Ok(json!({ "entries": [], "next": null }));
+    }
+    let offset = opts.get("offset").and_then(Value::as_u64).unwrap_or(0) as usize;
+    let limit = (opts.get("limit").and_then(Value::as_u64).unwrap_or(DEFAULT_BATCH as u64) as usize).clamp(1, MAX_BATCH);
+    let mut found: Vec<PathBuf> = Vec::new();
+    let mut stack = vec![dir];
+    let (mut visited, mut capped, mut more) = (0usize, false, false);
+    'walk: while let Some(d) = stack.pop() {
+        let Ok(rd) = std::fs::read_dir(&d) else { continue };
+        let mut items: Vec<(String, PathBuf, bool)> = rd
+            .flatten()
+            .map(|e| {
+                let is_dir = e.file_type().is_ok_and(|t| t.is_dir());
+                (e.file_name().to_string_lossy().into_owned(), e.path(), is_dir)
+            })
+            .collect();
+        items.sort_by_key(|a| a.0.to_lowercase());
+        let mut subdirs = Vec::new();
+        for (name, path, is_dir) in items {
+            visited += 1;
+            if visited > FIND_MAX_VISIT {
+                capped = true;
+                break 'walk;
+            }
+            let lower = name.to_lowercase();
+            if words.iter().all(|w| lower.contains(w.as_str())) {
+                if found.len() >= offset + limit {
+                    more = true;
+                    break 'walk;
+                }
+                found.push(path.clone());
+            }
+            if is_dir && !name.starts_with('.') {
+                subdirs.push(path);
+            }
+        }
+        // Depth first, in name order.
+        stack.extend(subdirs.into_iter().rev());
+    }
+    let entries: Vec<Entry> = found.iter().skip(offset).filter_map(|p| entry_no_follow_full(p).ok()).collect();
+    let next = more.then_some(offset + limit);
+    let mut out = json!({ "entries": entries, "next": next });
+    if capped {
+        out["capped"] = json!(true);
+    }
+    Ok(out)
+}
+
+/// An entry as itself (a link is not followed), with folder and size.
+fn entry_no_follow_full(path: &Path) -> KResult<Entry> {
+    let md = std::fs::symlink_metadata(path).map_err(|_| not_found("path"))?;
+    let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    Ok(Entry {
+        hidden: name.starts_with('.'),
+        name,
+        path: path.display().to_string(),
+        dir: md.is_dir(),
+        size: if md.is_file() { md.len() } else { 0 },
+        modified_at: millis(md.modified()),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -568,6 +916,28 @@ mod tests {
         assert_eq!(std::fs::read_to_string(s.outside.join("secret.txt")).unwrap(), "outside");
         assert!(!std::fs::symlink_metadata(&p).unwrap().file_type().is_symlink());
         assert_eq!(std::fs::read_to_string(&p).unwrap(), "mine");
+    }
+
+    #[test]
+    fn round17_keep_both_names_like_finder_and_links_are_not_followed() {
+        let s = setup();
+        let g = vec![s.grant.clone()];
+        std::fs::write(s.grant.join("a.tar.gz"), "").unwrap();
+        assert_eq!(free_name(&s.grant, "a.tar.gz").unwrap(), s.grant.join("a.tar 2.gz"));
+        assert_eq!(free_name(&s.grant, ".env").unwrap(), s.grant.join(".env 2"));
+        assert_eq!(free_name(&s.grant, "folder").unwrap(), s.grant.join("folder 2"));
+        // Removing a link inside the grant removes the link, not what it points at.
+        remove(&g, &s.grant.join("link.txt").display().to_string()).unwrap();
+        assert_eq!(std::fs::read_to_string(s.outside.join("secret.txt")).unwrap(), "outside");
+        remove(&g, &s.grant.join("linkdir").display().to_string()).unwrap();
+        assert!(s.outside.is_dir());
+        // A target that is a link out of the grant is replaced as a link (overwrite), not followed.
+        std::os::unix::fs::symlink(s.outside.join("secret.txt"), s.grant.join("planted")).unwrap();
+        copy(&g, &s.grant.join("in.txt").display().to_string(), &s.grant.join("planted").display().to_string(), Conflict::Overwrite).unwrap();
+        assert_eq!(std::fs::read_to_string(s.outside.join("secret.txt")).unwrap(), "outside");
+        assert_eq!(std::fs::read_to_string(s.grant.join("planted")).unwrap(), "inside");
+        // Recursive mkdir does not climb out through `..`.
+        assert!(mkdir(&g, &format!("{}/../../x/y", s.grant.display()), true).is_err());
     }
 
     #[test]

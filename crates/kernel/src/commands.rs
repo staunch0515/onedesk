@@ -247,7 +247,11 @@ impl Inner {
     }
 
     async fn set_grant(&self, plugin: &str, folder: String, add: bool) -> KResult<()> {
-        let out = self.execute(Actor::User, Command::Grant { plugin: plugin.into(), folder, add }).await?;
+        self.set_grant_as(plugin, folder, add, None).await
+    }
+
+    async fn set_grant_as(&self, plugin: &str, folder: String, add: bool, replace: Option<String>) -> KResult<()> {
+        let out = self.execute(Actor::User, Command::Grant { plugin: plugin.into(), folder, add, replace }).await?;
         if !out.changed {
             return Ok(());
         }
@@ -260,12 +264,30 @@ impl Inner {
         Ok(())
     }
 
+    /// Round 17 (X18): `plugin.replaceFolder` — the new folder (checked as for `grantFolder`)
+    /// takes the old one's place.
+    pub async fn replace_folder(&self, p: PluginReplaceFolderParams) -> KResult<PluginGrants> {
+        let canon = self.grantable(&p.plugin, &p.new_path)?;
+        if !self.folder_grants(&p.plugin)?.contains(&p.path) {
+            return Err(not_found("grant"));
+        }
+        self.set_grant_as(&p.plugin, canon, true, Some(p.path)).await?;
+        self.grants_of(&p.plugin)
+    }
+
     pub async fn grant_folder(&self, p: PluginFolderParams) -> KResult<PluginGrants> {
-        let plugin = self.registry.plugin(&p.plugin).ok_or_else(|| not_found("plugin"))?;
+        let canon = self.grantable(&p.plugin, &p.path)?;
+        self.set_grant(&p.plugin, canon, true).await?;
+        self.grants_of(&p.plugin)
+    }
+
+    /// A folder the user may grant to `plugin`, canonicalized.
+    fn grantable(&self, plugin: &str, path: &str) -> KResult<String> {
+        let plugin = self.registry.plugin(plugin).ok_or_else(|| not_found("plugin"))?;
         if !plugin.manifest.requires.files {
             return Err(denied("notRequested"));
         }
-        let path = std::path::Path::new(&p.path);
+        let path = std::path::Path::new(path);
         if !path.is_absolute() {
             return Err(invalid("notAbsolute"));
         }
@@ -278,9 +300,7 @@ impl Inner {
         if self.data_roots().iter().any(|d| real.starts_with(d) || d.starts_with(&real)) {
             return Err(invalid("insideDataDir"));
         }
-        let canon = real.display().to_string();
-        self.set_grant(&p.plugin, canon, true).await?;
-        self.grants_of(&p.plugin)
+        Ok(real.display().to_string())
     }
 
     pub async fn revoke_folder(&self, p: PluginFolderParams) -> KResult<PluginGrants> {

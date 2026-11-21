@@ -51,6 +51,11 @@ pub struct ActiveRun {
     pub handed: Vec<std::path::PathBuf>,
     /// Round 17 (X17): the output so far (`runs.partial`), checked and scrubbed; memory only.
     pub partial: Option<RunOutput>,
+    /// The action's declared output type (`runs.partial` is checked against it).
+    pub declared: OutputType,
+    /// When `run:<id>` was last sent for a partial output; whether a trailing send is queued.
+    pub partial_sent: Option<Instant>,
+    pub partial_queued: bool,
 }
 
 pub type ActiveRuns = std::sync::Mutex<HashMap<String, ActiveRun>>;
@@ -415,7 +420,8 @@ impl Inner {
         let token = CancelToken::default();
         self.runs_active.lock().unwrap().insert(
             id.clone(),
-            ActiveRun { plugin: plugin.id.clone(), token: token.clone(), last_progress: None, stopped: None, secrets: vec![], handed: vec![], partial: None },
+            ActiveRun { plugin: plugin.id.clone(), token: token.clone(), last_progress: None, stopped: None, secrets: vec![], handed: vec![], partial: None,
+                        declared: action.output, partial_sent: None, partial_queued: false },
         );
         let resource = match res {
             // A dependent sees the resource without its secret fields (round 7).
@@ -600,6 +606,67 @@ impl Inner {
         if self.pipeline.execute(Actor::Core, Command::RunProgress { id: id.into(), progress }).await.is_ok() {
             self.run_events(id);
         }
+    }
+
+    /// Round 17 (X17): `ctx.host.runs.partial(output)` — the output so far, checked against the
+    /// declared type and scrubbed, kept in memory; `run:<id>` at most every 100 ms, the last one
+    /// always sent (a trailing send is queued when throttled).
+    pub fn run_partial(&self, id: &str, output: Value) -> KResult<()> {
+        let declared = {
+            let active = self.runs_active.lock().unwrap();
+            let a = active.get(id).ok_or_else(|| denied("notInRun"))?;
+            a.declared
+        };
+        if output.get("file").is_some() {
+            return Err(invalid("badOutput"));
+        }
+        let out = check_output(declared, output).map_err(|e| {
+            let mut pe = invalid("badOutput");
+            pe.detail = Some(e);
+            pe
+        })?;
+        let wait = {
+            let mut active = self.runs_active.lock().unwrap();
+            let Some(a) = active.get_mut(id) else { return Err(denied("notInRun")) };
+            if a.token.is_cancelled() {
+                return Ok(());
+            }
+            let mut v = serde_json::to_value(&out).map_err(internal)?;
+            crate::secrets::scrub(&mut v, &a.secrets);
+            a.partial = serde_json::from_value(v).ok();
+            match a.partial_sent {
+                Some(t) if t.elapsed() < PROGRESS_EVERY => {
+                    if a.partial_queued {
+                        return Ok(());
+                    }
+                    a.partial_queued = true;
+                    Some(PROGRESS_EVERY - t.elapsed())
+                }
+                _ => {
+                    a.partial_sent = Some(Instant::now());
+                    None
+                }
+            }
+        };
+        match wait {
+            None => self.emit(format!("{}{id}", topic3::RUN), None, None),
+            Some(d) => {
+                let me = self.me.clone();
+                let id = id.to_string();
+                tokio::spawn(async move {
+                    tokio::time::sleep(d).await;
+                    let Some(me) = me.upgrade() else { return };
+                    {
+                        let mut active = me.runs_active.lock().unwrap();
+                        let Some(a) = active.get_mut(&id) else { return };
+                        a.partial_queued = false;
+                        a.partial_sent = Some(Instant::now());
+                    }
+                    me.emit(format!("{}{id}", topic3::RUN), None, None);
+                });
+            }
+        }
+        Ok(())
     }
 
     pub async fn run_cancel(&self, id: &str) -> KResult<()> {

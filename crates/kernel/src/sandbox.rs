@@ -429,7 +429,11 @@ const BOOTSTRAP: &str = r#"
       files: Object.freeze({
         roots: c("files.roots"), list: c("files.list"), stat: c("files.stat"),
         readText: c("files.readText"), writeText: c("files.writeText"),
+        mkdir: c("files.mkdir"), copy: c("files.copy"), move: c("files.move"), trash: c("files.trash"),
+        remove: c("files.remove"), open: c("files.open"), reveal: c("files.reveal"), find: c("files.find"),
+        addRoot: c("files.addRoot"), replaceRoot: c("files.replaceRoot"), removeRoot: c("files.removeRoot"),
       }),
+      runs: Object.freeze({ partial: c("runs.partial") }),
       ui: Object.freeze({ open: c("ui.open"), notify: c("ui.notify"), copy: c("ui.copy"), openExternal: c("ui.openExternal") }),
       params: Object.freeze({ get: c("params.get"), config: c("params.config") }),
       storage: Object.freeze({

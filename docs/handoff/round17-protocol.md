@@ -70,6 +70,8 @@ return { output: { type: "table",
 
 ### 3.1 新的 `ctx.host.files.*`
 
+审计摘要：`files.copy`/`files.move` 为 `{ from, conflict }`（`object` 是最终写到的路径；`skip` 跳过的不记），`files.mkdir`、`files.trash`、`files.remove` 为 `{}`（`object` 是原路径）。被拒绝的调用照旧另记一行（结果 `failed:denied`）。
+
 所有路径规则同已有的 `files.*`：绝对路径须在授权文件夹里（符号链接解析后逐段比较），相对路径是插件自己的 `plugin-data/<id>/`。两个路径的操作（`copy`、`move`）两边都按这个规则检查（可以在两个授权文件夹之间）。**授权文件夹本身**不能被 `move`、`trash`、`remove`（`invalid/isRoot`）。写操作都进审计（`op` 即方法名，`object` 为路径，摘要见表），成功后发插件所提供的树的 `tree:<树>` 主题（同 `writeText`）。事件处理函数里只能用只读的 `list/stat/readText/find`，其余 `denied/notInRun`。
 
 | 方法 | 返回 | 说明 |

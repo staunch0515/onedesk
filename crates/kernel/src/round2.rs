@@ -55,6 +55,37 @@ fn fields_of(snap: &Value) -> BTreeMap<String, String> {
     m
 }
 
+/// Round 17 (X6, parity L7): the conditions for the words of a search (all must hold), on the
+/// `search s` table. Words of 3 characters or more go through the trigram index; shorter ones
+/// match fuzzily: the name holds their characters in order (`ab` finds `a-x-b`), or the other
+/// text holds the word. Appends to `args` / `wheres` (placeholders `?<n>`).
+pub(crate) fn search_words(words: &[String], args: &mut Vec<String>, wheres: &mut Vec<String>) {
+    let esc = |c: char| -> String {
+        match c {
+            '\\' | '%' | '_' => format!("\\{c}"),
+            c => c.to_string(),
+        }
+    };
+    let mut long = Vec::new();
+    for w in words {
+        if w.chars().count() >= 3 {
+            long.push(format!("\"{}\"", w.replace('"', "\"\"")));
+        } else {
+            let fuzzy: String = std::iter::once("%".to_string()).chain(w.chars().map(|c| format!("{}%", esc(c)))).collect();
+            let plain = format!("%{}%", w.chars().map(esc).collect::<String>());
+            args.push(fuzzy);
+            let i = args.len();
+            args.push(plain);
+            let j = args.len();
+            wheres.push(format!("(lower(s.name) LIKE ?{i} ESCAPE '\\' OR lower(s.text) LIKE ?{j} ESCAPE '\\')"));
+        }
+    }
+    if !long.is_empty() {
+        args.push(long.join(" AND "));
+        wheres.push(format!("search MATCH ?{}", args.len()));
+    }
+}
+
 impl Inner {
     /// Round-2 methods; `None` = not one of them.
     pub async fn handle2(&self, client: Option<String>, m: &str, params: Value) -> Option<KResult<Value>> {
@@ -467,25 +498,10 @@ impl Inner {
             return Ok(vec![]);
         }
         let limit = p.limit.unwrap_or(20).clamp(1, 200);
-        let mut long = Vec::new();
         // Round 16 (parity A4): a resource whose source is gone is not found.
         let mut wheres = vec!["r.deleted_at IS NULL".to_string(), "r.tree IS NOT ?1".to_string(), "r.state <> 'missing'".to_string()];
         let mut args: Vec<String> = vec![TREE_PLUGIN_STATE.to_string()];
-        for t in &terms {
-            if t.chars().count() >= 3 {
-                long.push(format!("\"{}\"", t.replace('"', "\"\"")));
-            } else {
-                // Short words (two-character Chinese words) by substring.
-                let like = format!("%{}%", t.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_"));
-                args.push(like);
-                let i = args.len();
-                wheres.push(format!("(lower(s.name) LIKE ?{i} ESCAPE '\\' OR lower(s.text) LIKE ?{i} ESCAPE '\\')"));
-            }
-        }
-        if !long.is_empty() {
-            args.push(long.join(" AND "));
-            wheres.push(format!("search MATCH ?{}", args.len()));
-        }
+        search_words(&terms, &mut args, &mut wheres);
         if let Some(k) = &p.kind {
             args.push(k.clone());
             wheres.push(format!("r.kind = ?{}", args.len()));
