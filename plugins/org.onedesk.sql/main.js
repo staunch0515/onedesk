@@ -133,11 +133,14 @@ export function declOf(decls, name) {
   return decls[name] || { type: "text", required: false, max: MAX_LEN_DEFAULT, values: [], description: "" };
 }
 
-export function sqlLiteral(value) {
+// `escapeBackslash`: the literal goes right after an `E`, so it is an E'…' string where a backslash escapes
+// the next character (`\'` would end the literal); backslashes are doubled then.
+export function sqlLiteral(value, escapeBackslash) {
   if (value === null || value === undefined) return "NULL";
   const v = String(value);
   if (v.includes("\0")) throw new Error("NUL");
-  return `'${v.replace(/'/g, "''")}'`;
+  const body = escapeBackslash ? v.replace(/\\/g, "\\\\") : v;
+  return `'${body.replace(/'/g, "''")}'`;
 }
 
 // A datetime-local form value is UTC without a zone ("2026-01-01T00:00" → "2026-01-01T00:00:00Z").
@@ -170,7 +173,8 @@ export function renderSql(sql, values, decls) {
       continue;
     }
     const v = values[t.param];
-    out += sqlLiteral(v === undefined || v === null || v === "" ? null : toSqlValue(declOf(decls || {}, t.param), String(v)));
+    const afterE = /[eE]$/.test(out) && !(out.length > 1 && IDENT_CHAR.test(out[out.length - 2]));
+    out += sqlLiteral(v === undefined || v === null || v === "" ? null : toSqlValue(declOf(decls || {}, t.param), String(v)), afterE);
   }
   return out;
 }
