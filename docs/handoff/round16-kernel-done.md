@@ -1,6 +1,6 @@
 # 第十六轮：内核会话交接（2026-11-21）
 
-分支 `claude/r16-kernel-487bdf`（从协调分支 `8863757` 切出），不推送、不合并。最后一次功能提交：`ce41b2a`（之后只有本文件补提交号）。
+分支 `claude/r16-kernel-487bdf`（从协调分支 `8863757` 切出），不推送、不合并。第一轮功能提交 `ce41b2a`；审查修正见“审查修正”一节，提交号在那里。
 
 确切名字见 [`round16-protocol.md`](round16-protocol.md)（第一次提交 `127b4e1` 就写好，后来只补了计数说明）。**协议 crate 和生成的 TS 本轮没有改动**（`pnpm gen:types` 之后 `src/workbench/protocol/generated/` 无差异）。
 
@@ -82,6 +82,24 @@
 1. 失效用 `broken` + `sourceMissing`（决定 1）外壳是否同意；外壳需给 `sourceMissing` 配文字（树节点提示、页面状态条）。
 2. 删除后同步即恢复（决定 3）是否符合预期。
 3. `new:` 运行现在有 `resourceKind`，`run.render` 会去找页面并调插件的 `renderResultTab`（`ctx.resource` 为 `null`）；todo 里的 “Loading…” 是否就此好了要看外壳与 SQL 插件，我没在界面里验证。
+
+## 审查修正（`round16-review.md` 中归内核的，2026-11-21）
+
+先把协调分支 `claude/onedesk-coord-6`（`23d9380`）合进本分支（快进）。
+
+| # | 结论 | 怎么做的 | 测试 |
+|---|---|---|---|
+| 3 | 已修 | `execute_quiet` 的 `granted_before` 加上 `Command::Upsert`：取这批键对应的**未删除**已有资源 id；新建与从删除恢复的按空集处理，所以恢复带回的授权记 `network.grant`，已有的不重复记 | `round16.rs::review3_upsert_audits_grants_it_brings_back`（插件写授权字段仍是 `denied/grantField`；用户保存记一行；同步改说明不再记；删除后同步恢复再记一行） |
+| 4 | 已修 | 被调方错误的 `params` 每个值也按这次运行读过的密钥值抹除 | `review4_callee_error_params_are_scrubbed` |
+| 15 | 已修 | `plugin_resources`：一批行的 `external_key` 用一条查询（`json_each`）取；`resources.list` 走它 | 既有 round16 用例覆盖 `externalKey` |
+| 16 | 已修并补测试 | `bin/` 判断不再靠 `canonicalize` 改大小写：`carry::in_own_bin` 取自己目录之后的第一段，忽略大小写比较 `bin`；`files.*` 与 `transfer`/输出文件共用 | `review16_18_own_folder_case_links_and_dotdot`：`BIN/x`、`Bin/tool` 写、`BIN/tool` 读都是 `ownPrograms` |
+| 18（内核部分） | 已补测试 | — | 同上一条：自己目录里指向外面的链接 → `outsideGrant`（读、列）；指向 `bin/` 的链接 → `ownPrograms`（读、写）；绝对路径带 `..` 先解析：出了自己目录按授权文件夹（这里没有 → `notRequested`），`bin/../a.txt` 可读，`x/../bin/tool` 拒绝。`review18_workspace_opened_rules`：未确认版本不调用；处理函数里 `network.request` → `denied/notInRun`；处理 6 秒（超过普通事件的 5 秒）照常完成；它自己写的资源不对它触发 `resource.changed`。60 秒上限本身没测（要等 60 秒，时限不可配） |
+
+D421（`actions.call` 只能在运行里）：内核不用改。
+
+改的文件：`crates/kernel/src/kernel.rs`（#3）、`calls.rs`（#4）、`host.rs`（#15、#16）、`carry.rs`（#16 `in_own_bin`）、`crates/kernel/tests/round16.rs`（4 条新用例，共 12 条）。
+
+测试：`ONEDESK_SECRET_STORE=memory cargo test --workspace --no-fail-fast` **585 通过、0 失败**（含合并进来的外壳、插件改动；`round16.rs` 12 条）；`pnpm clippy` 通过；`pnpm lint` 通过。提交：COMMIT_PLACEHOLDER。
 
 ## 没运行过的
 

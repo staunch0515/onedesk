@@ -139,6 +139,12 @@ impl Inner {
                 crate::secrets::scrub(&mut v, &secrets);
                 e.detail = v.as_str().map(String::from);
             }
+            // Review #4: and the params a plugin filled in.
+            for val in e.params.values_mut() {
+                let mut v = Value::String(std::mem::take(val));
+                crate::secrets::scrub(&mut v, &secrets);
+                *val = v.as_str().unwrap_or_default().to_string();
+            }
             e
         });
         let summary = json!({ "caller": p.id, "ms": ms, "ok": res.is_ok() });
