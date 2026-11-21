@@ -1,6 +1,6 @@
 # 第十六轮：协议与宿主接口新增的确切名字（内核会话）
 
-其它会话照这里写。协议（`crates/protocol`）本轮**没有改动**：下面全是清单字段、宿主接口（`ctx.host.*`）和已有字段的新取值。外壳需要配文字的新原因码见最后一节。
+其它会话照这里写。协议（`crates/protocol`）本轮只有一处改动（第 7 节，D423，只增）；其余全是清单字段、宿主接口（`ctx.host.*`）和已有字段的新取值。外壳需要配文字的新原因码见最后一节。
 
 ## 1. X13 清单 `activation`（工作区打开后）
 
@@ -66,6 +66,12 @@ const r = await ctx.host.resources.upsertByKey("query", items, { othersMissing: 
 - `ctx.host.actions.call` 被调方出错时，调用方拿到的错误：`code: "pluginError"`、`params.reason: "calleeFailed"`、`params.action`（不变），**新增**：`e.message` 与 `e.detail` 都是被调方错误的第一行文字，已按这次运行读过的密钥值抹除（`***`）。
 - 被调方抛带宿主码的错误（`{ code: "invalid", … }`）时原样带回，`detail` 缺省为它的 `message`（同样抹除）。
 - 调用方不接住、直接抛出时，运行的错误为 `pluginError`，`message` 即这段文字（外壳不再只显示 “pluginError”）。
+
+## 7. e2e 后补的（#19、#20、#22）
+
+- **协议，D423**：`RunOutput` 的 `link` 加可选字段 **`params`**（`BTreeMap<String,String>`；TS 为 `params?: { [key in string]?: string }`，见生成的 `RunOutput.ts`）。含义同 `CommandEffect::Open.params`：打开 `target` 时作为标签页的初始页面状态。插件返回 `{ output: { type: "link", label, target, params: { 名: "值" } } }`；值须是文字，最多 64 个键、每个 4 KB，否则运行失败 `badOutput`。不给则与之前相同。值和运行输出一样会被抹密钥，并随运行记录存下（与运行的 `params` 一样）；外壳只把它放进窗口内存（D419）。
+- **#19 `page.resolve`**：资源页用插件 `render` 返回的 `values`（按绑定路径，覆盖存储的值；密钥字段除外，仍只给“是否已存”），`readOnly: true` 让页面只读（插件不能把只读页改成可写）。
+- **#20 节点页的动作**：`run.start` 的目标是 `node:<树>/<键>`、且树属于运行的插件时，动作的 `ctx` 有 **`node: { tree, key }`**（与页面 `render` 相同）。别的插件的动作拿不到。
 
 ## 6. 新增原因码（外壳需配文字）
 

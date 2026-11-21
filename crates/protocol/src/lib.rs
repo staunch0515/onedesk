@@ -1281,6 +1281,9 @@ pub enum RunOutput {
     Link {
         label: String,
         target: String,
+        /// Round 16 (D423): initial page state for the tab the link opens, as
+        /// `CommandEffect::Open.params` (§9.1, D292); kept only in the window's memory (D419).
+        params: Option<BTreeMap<String, String>>,
     },
     None,
 }

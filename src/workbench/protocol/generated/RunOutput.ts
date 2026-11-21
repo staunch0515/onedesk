@@ -15,4 +15,9 @@ total: number, truncated: boolean,
  * Round 15 (D414): the result came as a data file. `rows` carries only the first
  * `PAGED_FIRST_ROWS`; the rest is read with `run.rows`.
  */
-paged?: boolean, } | { "type": "text", text: string, } | { "type": "link", label: string, target: string, } | { "type": "none" };
+paged?: boolean, } | { "type": "text", text: string, } | { "type": "link", label: string, target: string, 
+/**
+ * Round 16 (D423): initial page state for the tab the link opens, as
+ * `CommandEffect::Open.params` (§9.1, D292); kept only in the window's memory (D419).
+ */
+params?: { [key in string]: string }, } | { "type": "none" };
