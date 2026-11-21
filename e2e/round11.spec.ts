@@ -106,12 +106,17 @@ async function openResource(page: Page, name: string) {
 }
 /** A page action: a direct button, or an entry of the "More actions" menu. */
 async function pageAction(page: Page, name: string | RegExp) {
-  const direct = page.getByRole("button", { name, exact: typeof name === "string" });
+  const direct = page.getByRole("button", { name, exact: typeof name === "string" }).first();
   const more = page.getByRole("button", { name: "More actions" });
   await expect(direct.or(more).first()).toBeVisible({ timeout: 15_000 }); // the toolbar is drawn after the editor
-  if ((await direct.count()) > 0) return direct.first().click();
-  await more.click();
-  await page.getByRole("menuitem", { name }).click();
+  // locate and click in one step: the toolbar may be redrawn between two steps under load, so a lost target starts the whole step again
+  await expect(async () => {
+    if (await direct.isVisible()) await direct.click({ timeout: 2_000 });
+    else {
+      await more.click({ timeout: 2_000 });
+      await page.getByRole("menuitem", { name }).click({ timeout: 2_000 });
+    }
+  }).toPass({ timeout: 20_000 });
 }
 const setLanguage = (page: Page, locale: string) => call(page, "workspace.setConfig", { name: "ui.language", value: locale });
 
