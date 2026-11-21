@@ -32,6 +32,12 @@ export function menuEntries(commands: MenuCommand[], tx: (l: MenuCommand["label"
   ]);
 }
 
+/** The kernel's run-record tree and the group that holds the kept results (D420). */
+export const RUNS_TREE = "runs";
+export const SAVED_RUNS = "@runs:saved";
+/** A saved result's row reads `#<seq> <name>`; renaming edits the whole row, the number is not part of the name. */
+export const stripRunNumber = (text: string): string => text.replace(/^#\d+\s*/, "").trim();
+
 export function TreePanel({ tree }: { tree: TreeInfo }) {
   const { client, store, actions } = useWorkbench();
   const { t, tx, locale, error } = useI18n();
@@ -345,6 +351,11 @@ export function TreePanel({ tree }: { tree: TreeInfo }) {
             if (store.get().renaming?.key !== key) return;
             store.set({ renaming: null });
             const node = index.get(key);
+            if (tree.id === RUNS_TREE) {
+              const next = stripRunNumber(name);
+              if (next && node && node.parentKey === SAVED_RUNS && next !== stripRunNumber(node.label)) client.run.setKept(key, true, next).catch(actions.fail);
+              return;
+            }
             if (name && node && name !== node.label) client.tree.rename(tree.id, key, name).catch(actions.fail);
           }}
           onRenameCancel={() => store.set({ renaming: null })}
@@ -355,7 +366,11 @@ export function TreePanel({ tree }: { tree: TreeInfo }) {
       <ContextMenu
         point={menu?.point ?? null}
         onClose={() => setMenu(null)}
-        items={menuEntries(commands, tx, (id) => void actions.command(id, { tree: tree.id, nodeKey: menu?.node?.key ?? null, target: menu?.node?.target }))}
+        items={[
+          ...menuEntries(commands, tx, (id) => void actions.command(id, { tree: tree.id, nodeKey: menu?.node?.key ?? null, target: menu?.node?.target })),
+          // A saved result has a readable name that can be changed; the kernel keeps it with the kept run (no tree-wide rename for runs).
+          ...(tree.id === RUNS_TREE && menu?.node?.parentKey === SAVED_RUNS ? [{ key: "run.rename", label: t("run.rename"), icon: "pencil", onSelect: () => store.set({ renaming: { tree: tree.id, key: menu.node!.key } }) } as MenuEntry] : []),
+        ]}
       />
     </SidePanel>
   );

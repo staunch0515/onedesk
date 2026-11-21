@@ -13,6 +13,7 @@ import { DEFAULT_OUTPUT_TAB, isForeignAction, ResultArea, STATUS_TONE } from "..
 import { TOKENIZERS } from "../parts/sql-tokens";
 import { ViewNodes } from "../parts/view-nodes";
 import { Badge, FactRow } from "../../design";
+import { RunKeepBar } from "../parts/run-keep-bar";
 
 const EMPTY: Record<string, unknown> = {};
 
@@ -111,6 +112,7 @@ function RunHeader({ runId }: { runId: string }) {
   if (!r) return null;
   const statusName: Record<RunStatus, string> = { running: t("run.running"), success: t("run.success"), error: t("run.error"), cancelled: t("run.cancelled") };
   return (
+    <>
     <FactRow
       items={[
         { key: "status", label: t("run.status"), value: <Badge tone={STATUS_TONE[r.status]} dot>{statusName[r.status]}</Badge> },
@@ -122,6 +124,8 @@ function RunHeader({ runId }: { runId: string }) {
         ...(r.kept ? [{ key: "kept", label: t("run.keptLabel"), value: <Badge tone="accent" icon="pin">{t("run.kept")}</Badge> }] : []),
       ]}
     />
+    <RunKeepBar run={r} />
+    </>
   );
 }
 

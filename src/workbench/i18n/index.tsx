@@ -10,6 +10,8 @@ export interface I18n {
   locale: Locale;
   /** Shell text by key; missing keys fall back to English, never to the key name (I.1). */
   t: (key: MessageKey, vars?: Record<string, string | number>) => string;
+  /** `t` for a counted phrase: a count of 1 uses `<key>.one` when the language has it (built-in English always does), else the plain key. */
+  plural: (key: MessageKey, count: number, vars?: Record<string, string | number>) => string;
   /** Text supplied by the kernel or a plugin. Kernel ids (`node.rename`) get their word; unknown ones show as they are (D262). */
   tx: (label: Label | undefined) => string;
   /** A failed protocol call as a sentence: by error code for the kernel (D219), else the error's own message. */
@@ -63,9 +65,15 @@ function build(locale: Locale, texts?: Record<string, string>): I18n {
     const text: string = typeof own === "string" && own !== "" ? own : enUS[key];
     return vars ? text.replace(/\{(\w+)\}/g, (whole: string, name: string) => (name in vars ? String(vars[name]) : whole)) : text;
   };
+  const plural: I18n["plural"] = (key, count, vars) => {
+    const one = `${key}.one`;
+    const useOne = count === 1 && (texts === undefined ? one in enUS : typeof table[one] === "string" && table[one] !== "");
+    return t((useOne ? one : key) as MessageKey, { count, ...vars });
+  };
   return {
     locale,
     t,
+    plural,
     confirmTexts: (label) => {
       const known = typeof label === "string" ? KERNEL_CONFIRMS[label] : undefined;
       return known ? { title: t(known.title), ok: t(known.ok) } : undefined;

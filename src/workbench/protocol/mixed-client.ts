@@ -193,7 +193,7 @@ export function createMixedClient(kernel: KernelClient, mock: ProtocolClient): P
       rows: (id, offset, limit) => (runSide(id).run.rows ? runSide(id).run.rows!(id, offset, limit) : Promise.reject(new Error("run.rows"))),
       cancel: (id) => runSide(id).run.cancel(id),
       render: (id, tabId) => runSide(id).run.render(id, tabId),
-      setKept: (id, kept) => runSide(id).run.setKept(id, kept),
+      setKept: (id, kept, name) => runSide(id).run.setKept(id, kept, name),
       async listFor(resourceId) {
         return (await ownerOf(resourceId)) === "kernel" ? kernel.run.listFor(resourceId) : mock.run.listFor(resourceId);
       },

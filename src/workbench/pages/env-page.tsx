@@ -6,6 +6,7 @@ import { useQuery, useUi, useWorkbench } from "../state/context";
 import type { TabState } from "../state/store";
 import { Frame } from "../parts/frame";
 import { AddParamDialog } from "./add-param-dialog";
+import { RefPicker } from "./ref-picker";
 
 /** Environment page (I.4): parent chain in the breadcrumb, description, parameters with their source layer, history with restore. */
 export function EnvPage({ tab, descriptor }: { tab: TabState; descriptor: PageDescriptor }) {
@@ -21,6 +22,8 @@ export function EnvPage({ tab, descriptor }: { tab: TabState; descriptor: PageDe
   const historyWidths = useUi((s) => s.gridWidths["env-history"]);
   const [filter, setFilter] = useState("");
   const [adding, setAdding] = useState(false);
+  // The reference parameter whose resource is being chosen (G3).
+  const [picking, setPicking] = useState<string | null>(null);
   // The configuration page is this same page for a configuration node: it offers the "config" layer's parameters.
   const layer = descriptor.breadcrumb[descriptor.breadcrumb.length - 1]?.tree === "config" ? "config" : "env";
 
@@ -113,7 +116,8 @@ export function EnvPage({ tab, descriptor }: { tab: TabState; descriptor: PageDe
             <Pane grow>
               <Input size="sm" icon="link" aria-label={p.name} value={p.display ?? p.value} readOnly />
             </Pane>
-            <IconButton icon="arrow-up-right" size="sm" label={t("env.openRef")} onClick={() => actions.open(`resource:${p.value}`)} />
+            <IconButton icon="replace" size="sm" label={p.value ? t("env.refChange") : t("env.refChoose")} onClick={() => setPicking(p.name)} />
+            {p.value !== "" && <IconButton icon="arrow-up-right" size="sm" label={t("env.openRef")} onClick={() => actions.open(`resource:${p.value}`)} />}
           </Pane>
         ) : (
           <Input
@@ -326,7 +330,16 @@ export function EnvPage({ tab, descriptor }: { tab: TabState; descriptor: PageDe
           </Section>
         </Pane>
       )}
-      <AddParamDialog layer={layer} own={new Set(env.data?.params.filter((p) => p.own).map((p) => p.name))} open={adding} onOpenChange={setAdding} onAdd={async (name, value) => { await client.params.set(id, name, value, basis).catch((error) => { actions.fail(error); throw error; }); }} />
+      <AddParamDialog layer={layer} own={new Set(env.data?.params.filter((p) => p.own).map((p) => p.name))} open={adding} onOpenChange={setAdding} onAdd={async (name, value, type) => { await client.params.set(id, name, value, basis, type).catch((error) => { actions.fail(error); throw error; }); }} />
+      <RefPicker
+        open={picking !== null}
+        onOpenChange={(open) => !open && setPicking(null)}
+        onPick={(resource) => {
+          const name = picking;
+          setPicking(null);
+          if (name) void set(name, resource);
+        }}
+      />
     </Frame>
   );
 }
