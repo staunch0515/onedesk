@@ -176,8 +176,12 @@ describe("review fixes for long levels (round 10)", () => {
     await screen.findByText("n0");
     scroller().scrollTop = 26 * 190;
     fireEvent.scroll(scroller());
-    await waitFor(() => expect(document.querySelector("[data-more]")).toBeTruthy());
-    fireEvent.contextMenu(document.querySelector("[data-more]")!);
+    // The placeholder is replaced as soon as its batch arrives, so look it up and act on it in the same step; never between two awaits.
+    await waitFor(() => {
+      const more = document.querySelector("[data-more]");
+      expect(more).toBeTruthy();
+      fireEvent.contextMenu(more!);
+    });
     expect(screen.queryAllByRole("menuitem")).toHaveLength(0);
     expect(isSyntheticKey("@abc/item-1")).toBe(true);
     expect(isSyntheticKey("!abc/")).toBe(true);
