@@ -16,6 +16,8 @@ const FOLLOW_CAP = 20000;
 
 /** Children by parent key, per tree. Kept across activity switches so a tree does not flash empty. */
 const cache = new Map<string, Map<string, Level>>();
+/** For tests: levels are kept across panel mounts, so a test starts from an empty cache. */
+export const clearTreeCache = (): void => cache.clear();
 
 /**
  * Rows that are not resources: the "more is being read" row, and a plugin's own nodes (`@<resource>/<key>`, and `!…` for a
@@ -122,6 +124,20 @@ export function TreePanel({ tree }: { tree: TreeInfo }) {
     const known = new Set([...levels.values()].flatMap((l) => l.nodes).map((n) => n.key));
     for (const key of expanded) if (known.has(key) && !levels.has(key)) void load(key);
   }, [levels, expanded, load]);
+
+  // D424: the run records tree opens with its groups expanded (once; a group the user then collapses stays collapsed).
+  const autoOpened = useRef(new Set<string>());
+  useEffect(() => {
+    if (tree.id !== RUNS_TREE) return;
+    const groups = (levels.get(ROOT)?.nodes ?? []).filter((n) => (n.key === RECENT_RUNS || n.key === SAVED_RUNS) && n.expandable && !autoOpened.current.has(n.key));
+    if (groups.length === 0) return;
+    for (const g of groups) autoOpened.current.add(g.key);
+    store.set((s) => {
+      const open = s.expanded[tree.id] ?? [];
+      const add = groups.map((g) => g.key).filter((k) => !open.includes(k));
+      return add.length > 0 ? { expanded: { ...s.expanded, [tree.id]: [...open, ...add] } } : {};
+    });
+  }, [levels, tree.id, store]);
 
   // The kernel says the tree changed: read every loaded level again.
   useEffect(() => {

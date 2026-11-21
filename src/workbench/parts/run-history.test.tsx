@@ -1,17 +1,18 @@
 // @vitest-environment jsdom
 import "../../design/testing/jsdom-setup";
 import { fireEvent, screen, waitFor } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Run, TreeInfo, TreeNode } from "../protocol";
 import { createMockClient } from "../protocol/mock";
 import { buildI18n } from "../i18n";
 import { kernelLikeClient, renderInShell } from "../testing/harness";
 import { RunKeepBar } from "./run-keep-bar";
-import { stripRunNumber, TreePanel } from "./side-panel";
+import { clearTreeCache, stripRunNumber, TreePanel } from "./side-panel";
 
 const node = (key: string, label: string, parentKey: string | null, expandable = false): TreeNode => ({
   key, tree: "runs", parentKey: parentKey ?? undefined, label, icon: "history", kind: "core:run", expandable, state: "ok", menu: [{ id: "run.unkeep", label: "run.unkeep" } as never], draggable: false, accepts: [],
 });
+beforeEach(clearTreeCache);
 const info = { id: "runs", title: "Run records", icon: "history", source: "provided", toolbar: [], menu: [], groups: false } as unknown as TreeInfo;
 
 function setup() {
@@ -35,17 +36,21 @@ function setup() {
 describe("run records in two groups (D420)", () => {
   it("lists recent runs and saved results as separate groups", async () => {
     setup();
-    fireEvent.click(await screen.findByText("Saved results"));
     expect(await screen.findByText("#7 Nightly totals")).toBeTruthy();
-    expect(screen.queryByText("#8 Scratch")).toBeNull();
-    fireEvent.click(screen.getByText("Recent runs"));
     expect(await screen.findByText("#8 Scratch")).toBeTruthy();
+  });
+
+  it("opens both groups by itself (D424), and a group the user collapses stays collapsed", async () => {
+    setup();
+    expect(await screen.findByText("#8 Scratch")).toBeTruthy();
+    expect(await screen.findByText("#7 Nightly totals")).toBeTruthy();
+    fireEvent.click(screen.getByText("Recent runs"));
+    await waitFor(() => expect(screen.queryByText("#8 Scratch")).toBeNull());
+    expect(screen.getByText("#7 Nightly totals")).toBeTruthy();
   });
 
   it("offers rename on a saved result only, and renaming keeps the result under the new name without its number", async () => {
     const { setKept } = setup();
-    fireEvent.click(await screen.findByText("Saved results"));
-    fireEvent.click(await screen.findByText("Recent runs"));
     fireEvent.contextMenu(await screen.findByText("#8 Scratch"));
     await screen.findByText("Stop keeping this run");
     expect(screen.queryByText("Rename saved result")).toBeNull();
@@ -125,7 +130,6 @@ describe("opening a run record (E3)", () => {
 
   it("a recent run goes back to its query with the values it had", async () => {
     const { execute, store } = opened(async () => [{ type: "open", target: "resource:q1", params: { year: "2024" }, envId: "e1" }]);
-    fireEvent.click(await screen.findByText("Recent runs"));
     fireEvent.click(await screen.findByText("#8 Scratch"));
     await waitFor(() => expect(execute).toHaveBeenCalledWith("run.reuse", expect.objectContaining({ nodeKey: "r2", tree: "runs" })));
     await waitFor(() => {
@@ -137,7 +141,6 @@ describe("opening a run record (E3)", () => {
 
   it("falls back to the run's own page when the query cannot be reopened", async () => {
     const { store } = opened(async () => Promise.reject(new Error("notFound")));
-    fireEvent.click(await screen.findByText("Recent runs"));
     fireEvent.click(await screen.findByText("#8 Scratch"));
     await waitFor(() => expect(store.get().tabs.some((t) => t.target === "run:r2")).toBe(true));
   });
@@ -158,7 +161,6 @@ describe("the run tree follows the kernel's run events", () => {
       },
     };
     renderInShell(client as never, <TreePanel tree={{ ...info, id: "runs" }} />);
-    fireEvent.click(await screen.findByText("Saved results"));
     saved = [node("r1", "#1 Kept now", "@runs:saved")];
     handlers.forEach((h) => h("runs"));
     expect(await screen.findByText("#1 Kept now")).toBeTruthy();
