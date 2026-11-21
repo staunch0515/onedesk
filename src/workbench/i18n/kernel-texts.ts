@@ -248,6 +248,7 @@ export const KERNEL_ERRORS: Table = {
   "invalid.intoItself": "kernel.error.invalid.intoItself",
   "invalid.isRoot": "kernel.error.invalid.isRoot",
   "invalid.trashUnavailable": "kernel.error.invalid.trashUnavailable",
+  "denied.trashDenied": "kernel.error.denied.trashDenied",
   "notFound.grant": "kernel.error.notFound.grant",
   "invalid.badOutput": "kernel.error.invalid.badOutput",
 };

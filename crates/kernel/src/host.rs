@@ -682,7 +682,7 @@ impl Inner {
             }
             "trash" => {
                 let trash = self.cfg.trash_dir.clone();
-                let (src, dst) = tokio::task::spawn_blocking(move || crate::files::trash(&grants, &raw, &trash)).await.map_err(internal)??;
+                let (src, dst) = tokio::task::spawn_blocking(move || crate::files::trash(&grants, &raw, trash.as_deref())).await.map_err(internal)??;
                 (json!({ "path": dst.display().to_string() }), "files.trash", src.display().to_string(), json!({}))
             }
             "remove" => {

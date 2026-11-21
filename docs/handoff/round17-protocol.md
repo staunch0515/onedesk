@@ -124,11 +124,12 @@ return { output: { type: "table",
 
 ### 3.3 废纸篓位置（测试用）
 
-- 正式：`~/.Trash`。
-- 工作进程读环境变量 **`ONEDESK_TRASH_DIR`**（测试、验收用）：设了就把它当废纸篓（须是已存在的文件夹，且与要删的文件在同一卷，例如临时目录）。
+- 正式：用系统接口 `NSFileManager trashItemAtURL:`（与 Finder 相同，可以“放回原处”）。内核**不**自己打开 `~/.Trash`：没有“完全磁盘访问”的进程打开它会得到 `EPERM`（macOS 隐私保护）。返回的 `path` 是系统给的废纸篓里的位置。
+- 错误：文件不在 → `notFound/path`；没有权限（读写被拒、只读卷）→ **`denied/trashDenied`**；那个卷没有废纸篓 → `invalid/trashUnavailable`；其他 → `internal`（`detail` 是系统的说明）。
+- 工作进程读环境变量 **`ONEDESK_TRASH_DIR`**（测试、验收用）：设了就不用系统接口，而是改名移进这个文件夹（须是已存在的文件夹，且与要删的文件在同一卷，例如临时目录）。打不开或不许写 → `denied/trashDenied`；不同卷或不存在 → `invalid/trashUnavailable`。
 - 工作进程读 **`ONEDESK_OPEN_LOG`**：设了就不真的打开/显示，而是往这个文件追加一行 `open <路径>` 或 `reveal <路径>`（e2e 用，免得弹出 Finder）。
 - **审查后（D433，#13）**：这两个环境变量只在同时设了 **`ONEDESK_TEST_HOOKS=1`** 时生效；正式工作进程里设了也不理。e2e 请三个一起设。
-- 内核库里是 `KernelConfig.trash_dir` 与 `KernelConfig.opener`；Rust 测试一律用临时目录和记录器。
+- 内核库里是 `KernelConfig.trash_dir: Option<PathBuf>`（`None` = 系统废纸篓）与 `KernelConfig.opener`；Rust 测试一律用临时目录和记录器。
 
 ## 3.4 密钥代入的编码（第二版，API 连接要用）
 
@@ -209,7 +210,8 @@ type ConfirmChoice = { id: string, label?: Label, danger?: boolean };
 | `conflict/exists` | `files.mkdir/copy/move/writeText`（已有码，新场景） | 目标已存在 |
 | `invalid/intoItself` | `files.copy/move` | 复制或移动到它自己（里面） |
 | `invalid/isRoot` | `files.move/trash/remove` | 不能移动或删除授权文件夹本身 |
-| `invalid/trashUnavailable` | `files.trash` | 这个位置不能移到废纸篓（不同卷） |
+| `invalid/trashUnavailable` | `files.trash` | 这个位置没有废纸篓（那个卷不支持，或测试用的废纸篓文件夹不在、不同卷） |
+| `denied/trashDenied` | `files.trash` | 不许把它移到废纸篓（权限、只读卷）；外壳英文已加 |
 | `notFound/grant` | `files.removeRoot`、`plugin.replaceFolder` | 不是已授权的文件夹 |
 | `invalid/badOutput` | `runs.partial` | 部分输出的格式不对 |
 | `actionAndCommand` | 插件加载失败原因（插件页） | 页面动作同时写了 `action` 和 `command`，或非 run 项写了 `command`（D429） |
