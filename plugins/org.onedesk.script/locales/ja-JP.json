@@ -67,5 +67,9 @@
   "result.renamed": "別の名前で書き込み済み",
   "result.skipped": "スキップ（既存）",
   "error.exists": "次のファイルがすでにあります：{files}。「同名のファイル」で扱いを選んでから、もう一度書き出してください。",
-  "error.badConflict": "同名ファイルの扱いが不明です。"
+  "error.badConflict": "同名ファイルの扱いが不明です。",
+  "failed.exit": "プログラムは終了コード {code} で終わりました。",
+  "failed.signal": "プログラムは {signal} で終了しました。",
+  "failed.timeout": "{s} 秒で停止しました：タイムアウトです。",
+  "failed.limit": "行数の上限（{n} 行）で停止しました。"
 }

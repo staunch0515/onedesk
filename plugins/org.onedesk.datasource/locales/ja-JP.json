@@ -75,5 +75,6 @@
   "error.backup.exists": "{container} にはデータベース「{name}」がすでにあります。そのままにしますので、別の名前を選んでください。",
   "error.backup.failed": "「{step}」の途中でバックアップが止まりました：{detail}",
   "error.backup.emptyDump": "pg_dump が何も出力しませんでした。",
-  "backup.leftDb": "{container} の新しいデータベース {name} はそのまま残しています"
+  "backup.leftDb": "{container} の新しいデータベース {name} はそのまま残しています",
+  "summary.backupWarning": "警告：pg_restore は {count} 件のエラーを無視しました（多くはサーバーのロールがこちらにないため）。最初のもの：{first}"
 }

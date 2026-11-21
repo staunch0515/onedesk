@@ -55,5 +55,9 @@
   "template.openSubst": "$( 没有闭合",
   "template.openBrace": "${ 没有闭合",
   "error.param.unsafe": "“{name}”的值像是带命令的数组下标（[…$(…)…]），已拒绝。",
-  "error.param.arith": "“{name}”用在算术里，值须是整数。"
+  "error.param.arith": "“{name}”用在算术里，值须是整数。",
+  "failed.exit": "程序以退出码 {code} 结束。",
+  "failed.signal": "程序被 {signal} 结束。",
+  "failed.timeout": "{s} 秒后停止：到达超时。",
+  "failed.limit": "到达行数上限（{n} 行）后停止。"
 }

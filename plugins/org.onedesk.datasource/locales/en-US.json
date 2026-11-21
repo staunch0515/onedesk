@@ -75,5 +75,6 @@
   "error.backup.exists": "The database “{name}” already exists in {container}. It is left as it is: choose another name.",
   "error.backup.failed": "The backup stopped while {step}: {detail}",
   "error.backup.emptyDump": "pg_dump wrote nothing.",
-  "backup.leftDb": "the new database {name} in {container} is left as it is"
+  "backup.leftDb": "the new database {name} in {container} is left as it is",
+  "summary.backupWarning": "Warning: pg_restore ignored {count} errors (often roles of the server missing here). The first: {first}"
 }

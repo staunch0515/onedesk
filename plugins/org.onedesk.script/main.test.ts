@@ -95,6 +95,20 @@ describe("script: running", () => {
     expect(onlyKeys(res.output, ["type", "columns", "rows", "total", "appearance", "toneColumn", "lineColumn"])).toEqual([]);
     expect(res.output).toMatchObject({ appearance: "terminal", toneColumn: "stream", rows: [["stdout", "4.0K\t."]] });
     expect(res.summary.message).toBe("1 lines · exit code 0");
+    expect(res.failed).toBeUndefined();
+  });
+
+  it("timeout, line limit and script: the run's input first, else the resource's saved body (e2e C)", async () => {
+    const { actions } = registry(plugin);
+    const saved = { ...S1, body: { script: "echo saved", timeoutSec: "8", maxLines: "2" } };
+    const fromBody = fakeHost();
+    await actions.run(ctxOf(fromBody, { resource: saved }), {});
+    expect(fromBody.process.run.mock.calls[0]![0]).toMatchObject({ timeoutMs: 8000, maxLines: 2 });
+    expect(fromBody.files.writeText.mock.calls[0]![1]).toBe("echo saved\n");
+    const fromInput = fakeHost();
+    await actions.run(ctxOf(fromInput, { resource: saved }), input({ "body.timeoutSec": "11" }));
+    expect(fromInput.process.run.mock.calls[0]![0]).toMatchObject({ timeoutMs: 11000 });
+    expect(fromInput.files.writeText.mock.calls[0]![1]).toBe("echo hi\n");
   });
 
   it("the temporary file is removed when the program fails or the run is cancelled too", async () => {
@@ -111,6 +125,7 @@ describe("script: running", () => {
     expect(run.mock.calls[0]![0]).toMatchObject({ timeoutMs: 120000, lines: true, maxLines: 2 });
     expect(res.output.rows).toEqual([["stdout", "a"], ["stdout", "b"]]);
     expect(res.summary.message).toBe("2 lines · stopped at the line limit");
+    expect(res.failed).toEqual({ message: "Stopped at the line limit (2 lines)." });
     const host = fakeHost();
     await expect(actions.run(ctxOf(host), input({ "body.timeoutSec": "0" }))).rejects.toThrow("1 to 7200");
     await expect(actions.run(ctxOf(host), input({ "body.maxLines": "abc" }))).rejects.toThrow("1 to 10000");
@@ -125,6 +140,12 @@ describe("script: running", () => {
     const res = await actions.run(ctxOf(fakeHost({ process: { run } })), input({ "body.timeoutSec": "3" }));
     expect(res.output.rows).toEqual([["stderr", "export PGPASSWORD=***"]]);
     expect(res.summary.message).toBe("1 lines · stopped after 3 s (timeout)");
+    expect(res.failed).toEqual({ message: "Stopped after 3 s: the timeout was reached." });
+    // review of acceptance (D435): `exit 3` at the end is a failed run, its output kept
+    const three = await actions.run(ctxOf(fakeHost({ process: { run: program([out("partial work"), err("oops")], { code: 3 }) } })), input({ "body.script": "echo partial work; echo oops >&2; exit 3" }));
+    expect(three.failed).toEqual({ message: "The program exited with code 3." });
+    expect(three.output.rows).toEqual([["stdout", "partial work"], ["stderr", "oops"]]);
+    expect(three.summary.message).toBe("2 lines · exit code 3");
     expect(maskLine("token=abc")).toBe("token=***");
     expect(renderShell("echo :a", { a: "'" }).split("\n")).toEqual(["OD_P_a=''\\'''", 'echo "${OD_P_a}"']);
   });

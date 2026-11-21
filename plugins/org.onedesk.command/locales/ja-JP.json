@@ -55,5 +55,9 @@
   "template.openSubst": "$( が閉じていません",
   "template.openBrace": "${ が閉じていません",
   "error.param.unsafe": "「{name}」の値はコマンドを含む配列の添字（[…$(…)…]）のようなので使えません。",
-  "error.param.arith": "「{name}」は算術で使われているので、値は整数にしてください。"
+  "error.param.arith": "「{name}」は算術で使われているので、値は整数にしてください。",
+  "failed.exit": "プログラムは終了コード {code} で終わりました。",
+  "failed.signal": "プログラムは {signal} で終了しました。",
+  "failed.timeout": "{s} 秒で停止しました：タイムアウトです。",
+  "failed.limit": "行数の上限（{n} 行）で停止しました。"
 }

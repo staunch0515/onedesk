@@ -75,5 +75,6 @@
   "error.backup.exists": "{container} 里已经有库“{name}”。它不会被改动，请换一个名字。",
   "error.backup.failed": "备份在“{step}”时停下：{detail}",
   "error.backup.emptyDump": "pg_dump 没有输出任何内容。",
-  "backup.leftDb": "新库 {name}（在 {container} 里）保持原样，没有删除"
+  "backup.leftDb": "新库 {name}（在 {container} 里）保持原样，没有删除",
+  "summary.backupWarning": "警告：pg_restore 忽略了 {count} 个错误（常见原因是本机缺少服务器上的角色）。第一个：{first}"
 }

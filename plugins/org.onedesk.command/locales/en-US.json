@@ -55,5 +55,9 @@
   "template.openSubst": "$( is not closed",
   "template.openBrace": "${ is not closed",
   "error.param.unsafe": "The value of “{name}” looks like an array index with a command in it ([…$(…)…]); it is refused.",
-  "error.param.arith": "“{name}” is used in arithmetic, so its value must be a whole number."
+  "error.param.arith": "“{name}” is used in arithmetic, so its value must be a whole number.",
+  "failed.exit": "The program exited with code {code}.",
+  "failed.signal": "The program was ended by {signal}.",
+  "failed.timeout": "Stopped after {s} s: the timeout was reached.",
+  "failed.limit": "Stopped at the line limit ({n} lines)."
 }
