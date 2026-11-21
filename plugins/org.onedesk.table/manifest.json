@@ -1,0 +1,68 @@
+{
+  "id": "org.onedesk.table",
+  "version": "0.1.0",
+  "apiVersion": "2",
+  "name": "plugin.name",
+  "description": "plugin.description",
+  "icon": "table",
+  "main": "main.js",
+  "author": "OneDesk",
+  "license": "MIT",
+  "homepage": "https://onedesk.example.com/plugins/table",
+  "requires": {
+    "files": false
+  },
+  "depends": [
+    { "id": "org.onedesk.datasource", "version": ">=0.1.0, <1.0.0" },
+    { "id": "org.onedesk.catalog", "version": ">=0.1.0, <1.0.0" }
+  ],
+  "contributes": {
+    "actions": [
+      { "id": "rows", "label": "action.rows", "icon": "table", "output": "table", "shortcut": ["Mod", "Enter"], "saveFirst": false, "confirm": null },
+      { "id": "current", "label": "action.current", "icon": "badge-check", "output": "table", "saveFirst": false, "confirm": null },
+      { "id": "history", "label": "action.history", "icon": "history", "output": "table", "saveFirst": false, "confirm": null },
+      { "id": "at", "label": "action.at", "icon": "clock", "output": "table", "saveFirst": false, "confirm": null },
+      { "id": "changes", "label": "action.changes", "icon": "git-compare", "output": "table", "saveFirst": false, "confirm": null },
+      { "id": "deleted", "label": "action.deleted", "icon": "trash-2", "output": "table", "saveFirst": false, "confirm": null }
+    ],
+    "pages": [
+      {
+        "id": "table",
+        "recompute": false,
+        "usesEnv": true,
+        "actions": [
+          { "id": "rows", "role": "run", "action": "rows", "label": "action.rows", "icon": "table", "primary": true, "shortcut": ["Mod", "Enter"] },
+          { "id": "current", "role": "run", "action": "current", "label": "action.current", "icon": "badge-check" },
+          { "id": "history", "role": "run", "action": "history", "label": "action.history", "icon": "history" },
+          { "id": "at", "role": "run", "action": "at", "label": "action.at", "icon": "clock" },
+          { "id": "changes", "role": "run", "action": "changes", "label": "action.changes", "icon": "git-compare" },
+          { "id": "deleted", "role": "run", "action": "deleted", "label": "action.deleted", "icon": "trash-2" }
+        ],
+        "resultTabs": [
+          { "id": "result", "type": "output", "label": "tab.result", "icon": "table" },
+          { "id": "sent", "type": "view", "label": "tab.sent", "icon": "file-code" },
+          { "id": "history", "type": "history", "label": "tab.history", "icon": "history" }
+        ]
+      }
+    ],
+    "trees": [
+      {
+        "id": "tables",
+        "label": "tree.tables",
+        "icon": "table",
+        "source": "provided",
+        "page": "table",
+        "toolbar": ["toggleDepth", "refresh"]
+      }
+    ],
+    "commands": [
+      { "id": "toggleDepth", "label": "command.toggleDepth", "icon": "list-tree" },
+      { "id": "refresh", "label": "command.refresh", "icon": "refresh-cw", "palette": true }
+    ],
+    "locales": {
+      "en-US": "locales/en-US.json",
+      "zh-CN": "locales/zh-CN.json",
+      "ja-JP": "locales/ja-JP.json"
+    }
+  }
+}
