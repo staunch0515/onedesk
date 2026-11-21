@@ -316,6 +316,14 @@ export default {
       },
     });
 
+    // On a connection resource (this plugin's `fetch` is what lets it list connections): GET its base address.
+    host.actions.handle("fetch", async (ctx) => {
+      if (!ctx.resource) throw new Error(tr(ctx, "error.noUrl"));
+      const res = await viaConnection(ctx, ctx.resource.id, { method: "GET", url: "" });
+      const text = String(res.body || "");
+      return { output: { type: "text", text: formatBody(text, res.headers) }, summary: { message: `${res.status}` } };
+    });
+
     host.actions.handle("send", async (ctx, input) => {
       const raw = {
         method: String((input && input["body.method"]) || "GET").toUpperCase(),

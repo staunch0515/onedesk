@@ -39,5 +39,6 @@
   "connection.none": "使わない（完全なアドレス）",
   "field.url.placeholderPath": "/items/:item_id",
   "error.connectionMissing": "接続「{connection}」が見つかりません。",
-  "error.connectionAnswer": "接続の応答を読み取れませんでした。"
+  "error.connectionAnswer": "接続の応答を読み取れませんでした。",
+  "action.fetch": "この接続に GET を送信"
 }

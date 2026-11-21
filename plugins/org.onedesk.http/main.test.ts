@@ -54,7 +54,7 @@ describe("http: page", () => {
   it("registers what the manifest declares", () => {
     const r = registry(plugin);
     expect(Object.keys(r.pages)).toEqual(["editor"]);
-    expect(Object.keys(r.actions)).toEqual(["send"]);
+    expect(Object.keys(r.actions).sort()).toEqual(["fetch", "send"]);
   });
 
   it("render: method enum + address, headers, and a full-height body; no strip without parameters", async () => {

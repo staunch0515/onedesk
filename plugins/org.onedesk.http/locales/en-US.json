@@ -39,5 +39,6 @@
   "connection.none": "None (full address)",
   "field.url.placeholderPath": "/items/:item_id",
   "error.connectionMissing": "The connection \"{connection}\" was not found.",
-  "error.connectionAnswer": "The connection returned an answer that could not be read."
+  "error.connectionAnswer": "The connection returned an answer that could not be read.",
+  "action.fetch": "Send GET to this connection"
 }
