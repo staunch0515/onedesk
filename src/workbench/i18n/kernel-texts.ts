@@ -239,6 +239,12 @@ export const KERNEL_ERRORS: Table = {
   "invalidParams.tooLarge": "kernel.error.invalidParams.tooLarge",
   "invalid.timeout": "kernel.error.invalid.timeout",
   "invalid.notText": "kernel.error.invalid.notText",
+  "conflict.exists": "kernel.error.conflict.exists",
+  "invalid.intoItself": "kernel.error.invalid.intoItself",
+  "invalid.isRoot": "kernel.error.invalid.isRoot",
+  "invalid.trashUnavailable": "kernel.error.invalid.trashUnavailable",
+  "notFound.grant": "kernel.error.notFound.grant",
+  "invalid.badOutput": "kernel.error.invalid.badOutput",
 };
 
 /** Audit operation ids (kernel and demo); unknown ids are shown as they are. */

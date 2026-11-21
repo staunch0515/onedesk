@@ -55,7 +55,7 @@ function fakeKernel(): KernelClient {
       export: async (_id, path) => ({ path, rows: 2 }),
     },
     command: { palette: async () => [{ id: "k:cmd", label: "k", group: "k" }], newItems: async () => [{ id: "new:k", label: "k", icon: "file" }], execute: async () => [{ type: "reload" }] },
-    plugin: { get: async (id: string) => ({ id } as never), setEnabled: async () => undefined, setSetting: async () => undefined, reload: async () => undefined, activateVersion: async () => ({ upgraded: 1, kept: 0 }), setPinned: async () => undefined, undoUpgrade: async () => ({ restored: 0, modified: [] }), confirmPermissions: async () => undefined, grants: async (plugin) => ({ plugin, folders: [] }), grantFolder: async (plugin, path) => ({ plugin, folders: [path] }), revokeFolder: async (plugin) => ({ plugin, folders: [] }) },
+    plugin: { get: async (id: string) => ({ id } as never), setEnabled: async () => undefined, setSetting: async () => undefined, reload: async () => undefined, activateVersion: async () => ({ upgraded: 1, kept: 0 }), setPinned: async () => undefined, undoUpgrade: async () => ({ restored: 0, modified: [] }), confirmPermissions: async () => undefined, grants: async (plugin) => ({ plugin, folders: [] }), grantFolder: async (plugin, path) => ({ plugin, folders: [path] }), revokeFolder: async (plugin) => ({ plugin, folders: [] }), replaceFolder: async (plugin, _p, n) => ({ plugin, folders: [n] }) },
     i18n: { languages: async () => [{ locale: "en-US", name: "English" }], shell: async (locale) => ({ locale, texts: {} }) },
     ui: { get: async <T,>(k: string) => (ui.get(k) ?? null) as T | null, set: async (k, v) => void ui.set(k, v) },
     events: { subscribe: () => () => undefined },

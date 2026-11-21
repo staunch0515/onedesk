@@ -1879,6 +1879,10 @@ export function createMockClient(options: MockOptions = {}): ProtocolClient {
         demoGrants.set(plugin, [...new Set([...(demoGrants.get(plugin) ?? []), path])]);
         return { plugin, folders: [...demoGrants.get(plugin)!] };
       },
+      async replaceFolder(plugin, path, newPath) {
+        demoGrants.set(plugin, [...new Set((demoGrants.get(plugin) ?? []).map((p) => (p === path ? newPath : p)))]);
+        return { plugin, folders: [...demoGrants.get(plugin)!] };
+      },
       async revokeFolder(plugin, path) {
         demoGrants.set(plugin, (demoGrants.get(plugin) ?? []).filter((p) => p !== path));
         return { plugin, folders: [...demoGrants.get(plugin)!] };

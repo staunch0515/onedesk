@@ -22,7 +22,7 @@ export interface KernelClient {
   page: Pick<ProtocolClient["page"], "resolve" | "save" | "event">;
   run: ProtocolClient["run"];
   command: ProtocolClient["command"];
-  plugin: Pick<ProtocolClient["plugin"], "grants" | "grantFolder" | "revokeFolder" | "get" | "setEnabled" | "setSetting" | "reload" | "activateVersion" | "setPinned" | "undoUpgrade" | "confirmPermissions" | "installRequests" | "answerInstallRequest">;
+  plugin: Pick<ProtocolClient["plugin"], "grants" | "grantFolder" | "revokeFolder" | "replaceFolder" | "get" | "setEnabled" | "setSetting" | "reload" | "activateVersion" | "setPinned" | "undoUpgrade" | "confirmPermissions" | "installRequests" | "answerInstallRequest">;
   app: NonNullable<ProtocolClient["app"]>;
   secrets: NonNullable<ProtocolClient["secrets"]>;
   ui: ProtocolClient["ui"];
@@ -159,6 +159,7 @@ export async function createKernelClient(transport: Transport, locale?: () => st
       grants: (plugin) => call<PluginGrants>("plugin.grants", { plugin }),
       grantFolder: (plugin, path) => call<PluginGrants>("plugin.grantFolder", { plugin, path }),
       revokeFolder: (plugin, path) => call<PluginGrants>("plugin.revokeFolder", { plugin, path }),
+      replaceFolder: (plugin, path, newPath) => call<PluginGrants>("plugin.replaceFolder", { plugin, path, newPath }),
       get: async (id) => ((await call<PluginDetail | null>("plugin.get", { plugin: id })) ?? null),
       setEnabled: async (id, enabled) => void (await call("plugin.setEnabled", { plugin: id, enabled })),
       setSetting: async (id, name, value) => void (await call("plugin.setSetting", { plugin: id, name, value })),

@@ -226,6 +226,7 @@ export function createMixedClient(kernel: KernelClient, mock: ProtocolClient): P
       grants: (plugin) => kernel.plugin.grants(plugin),
       grantFolder: (plugin, path) => kernel.plugin.grantFolder(plugin, path),
       revokeFolder: (plugin, path) => kernel.plugin.revokeFolder(plugin, path),
+      replaceFolder: (plugin, path, newPath) => kernel.plugin.replaceFolder(plugin, path, newPath),
       installRequests: kernel.plugin.installRequests ? () => kernel.plugin.installRequests!() : undefined,
       answerInstallRequest: kernel.plugin.answerInstallRequest ? (answer) => kernel.plugin.answerInstallRequest!(answer) : undefined,
     },
