@@ -1,25 +1,35 @@
 import { useState } from "react";
 import { Button, Dialog, FormField, Input, Pane, Select, Switch, Text } from "../../design";
 import { useI18n } from "../i18n";
-import type { KnownParam } from "../protocol";
+import type { KnownParam, ParamType } from "../protocol";
+import { RefPicker } from "./ref-picker";
 import { useQuery } from "../state/context";
+
+/** The "other" choice of the name list: a reference to a resource under a name of the user's choosing. */
+const REF_CHOICE = "@ref";
 
 /**
  * "Add parameter": the parameters the kernel itself understands (`params.known`), for this page's layer
  * (workspace configuration or environment) and not yet set here. The value control follows the type.
  */
-export function AddParamDialog({ layer, own, open, onOpenChange, onAdd }: { layer: "config" | "env"; own: Set<string>; open: boolean; onOpenChange: (open: boolean) => void; onAdd: (name: string, value: string) => Promise<void> }) {
+export function AddParamDialog({ layer, own, open, onOpenChange, onAdd }: { layer: "config" | "env"; own: Set<string>; open: boolean; onOpenChange: (open: boolean) => void; onAdd: (name: string, value: string, type?: ParamType) => Promise<void> }) {
   const { t } = useI18n();
   const known = useQuery((c) => c.params.known(), [], []);
   const [name, setName] = useState<string | undefined>(undefined);
   const [value, setValue] = useState("");
   const [busy, setBusy] = useState(false);
+  // A reference to a resource (G3), e.g. the environment's `datasource`: any name, the value is picked from the resources.
+  const [refName, setRefName] = useState("datasource");
+  const [refPicked, setRefPicked] = useState<{ id: string; name: string } | null>(null);
+  const [picking, setPicking] = useState(false);
+  const isRef = name === REF_CHOICE;
   const options = (known.data ?? []).filter((k: KnownParam) => k.layers.includes(layer) && !own.has(k.name));
-  const chosen = options.find((k) => k.name === name);
+  const chosen = isRef ? ({ name: refName.trim(), type: "ref" } as const) : options.find((k) => k.name === name);
   const close = (next: boolean) => {
     if (!next) {
       setName(undefined);
       setValue("");
+      setRefPicked(null);
     }
     onOpenChange(next);
   };
@@ -41,11 +51,11 @@ export function AddParamDialog({ layer, own, open, onOpenChange, onAdd }: { laye
           <Button
             variant="primary"
             loading={busy}
-            disabled={!chosen}
+            disabled={!chosen || (isRef && (!refPicked || chosen.name === "" || own.has(chosen.name)))}
             onClick={() => {
               if (!chosen) return;
               setBusy(true);
-              void onAdd(chosen.name, value).then(() => {
+              void onAdd(chosen.name, isRef ? refPicked!.id : value, isRef ? "ref" : undefined).then(() => {
                 setBusy(false);
                 close(false);
               }, () => setBusy(false));
@@ -56,14 +66,27 @@ export function AddParamDialog({ layer, own, open, onOpenChange, onAdd }: { laye
         </>
       }
     >
-      {known.data && options.length === 0 ? (
-        <Text size="sm" tone="muted">{t("params.addNone")}</Text>
-      ) : (
-        <Pane gap="md">
+      <Pane gap="md">
           <FormField label={t("params.addPick")}>
-            <Select key={name ?? "none"} aria-label={t("params.addPick")} placeholder={t("params.addPickPlaceholder")} value={name} onValueChange={pick} options={options.map((k) => ({ value: k.name, label: k.name }))} />
+            <Select key={name ?? "none"} aria-label={t("params.addPick")} placeholder={t("params.addPickPlaceholder")} value={name} onValueChange={pick} options={[...options.map((k) => ({ value: k.name, label: k.name })), { value: REF_CHOICE, label: t("env.refKind") }]} />
           </FormField>
-          {chosen && (
+          {isRef && (
+            <>
+              <FormField label={t("env.refName")} error={own.has(refName.trim()) ? t("params.addExists") : undefined}>
+                <Input mono aria-label={t("env.refName")} placeholder={t("env.refNamePlaceholder")} value={refName} onChange={(e) => setRefName(e.target.value)} />
+              </FormField>
+              <FormField label={t("params.addValue")}>
+                <Pane direction="row" gap="sm" align="center">
+                  <Pane grow>
+                    <Input icon="link" aria-label={t("params.addValue")} value={refPicked?.name ?? ""} readOnly placeholder={t("env.refChoose")} />
+                  </Pane>
+                  <Button onClick={() => setPicking(true)}>{t("env.refChoose")}</Button>
+                </Pane>
+              </FormField>
+              <RefPicker open={picking} onOpenChange={setPicking} onPick={(id, picked) => { setRefPicked({ id, name: picked }); setPicking(false); }} />
+            </>
+          )}
+          {chosen && !isRef && (
             <>
               <Text size="sm" tone="muted">{t(`params.desc.${chosen.name}` as never) === `params.desc.${chosen.name}` ? "" : t(`params.desc.${chosen.name}` as never)}</Text>
               <FormField label={t("params.addValue")}>
@@ -75,8 +98,7 @@ export function AddParamDialog({ layer, own, open, onOpenChange, onAdd }: { laye
               </FormField>
             </>
           )}
-        </Pane>
-      )}
+      </Pane>
     </Dialog>
   );
 }

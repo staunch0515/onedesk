@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Badge, Banner, BottomPanel, Button, DataGrid, EmptyState, IconButton, LoadingState, Pane, Progress, Text, TextBlock, useToast, type DataGridColumn, type Tone } from "../../design";
+import { Badge, Banner, BottomPanel, Button, DataGrid, EmptyState, ErrorState, IconButton, LoadingState, Pane, Progress, Text, TextBlock, useToast, type DataGridColumn, type Tone } from "../../design";
 import { useI18n } from "../i18n";
 import type { OutputCell, PageDescriptor, Run, RunStatus } from "../protocol";
 import { useQuery, useUi, useWorkbench } from "../state/context";
@@ -232,6 +232,8 @@ function ViewTab({ runId, tabId }: { runId: string | null; tabId: string }) {
   const { t } = useI18n();
   const nodes = useQuery((c) => (runId ? c.run.render(runId, tabId) : Promise.resolve(null)), [runId, tabId], runId ? [`run:${runId}`] : []);
   if (!runId) return <EmptyState layout="inline" icon="play" message={t("result.empty")} />;
+  // A run the kernel cannot draw (for example one of an unsaved page) answers with an error: say so instead of loading for ever.
+  if (nodes.error && !nodes.data) return <ErrorState layout="inline" title={t("result.viewFailed")} reason={nodes.error} onRetry={nodes.reload} retryLabel={t("common.retry")} />;
   if (!nodes.data) return <LoadingState layout="inline" label={t("common.loading")} />;
   return <ViewNodes nodes={nodes.data} />;
 }
@@ -245,7 +247,7 @@ export const isForeignAction = (action: string | undefined): boolean => (action 
 /** Result area of a page (§9.5): the page chooses the sub-tabs, the frame owns the toolbar. */
 export function ResultArea({ tab, descriptor }: { tab: TabState; descriptor: PageDescriptor }) {
   const { client, store, actions } = useWorkbench();
-  const { t, tx, number, duration, time, runError } = useI18n();
+  const { t, tx, number, duration, time, runError, plural } = useI18n();
   const { toast } = useToast();
   const panelOpen = useUi((s) => s.panelOpen);
   const runId = descriptor.runId ?? tab.runId ?? null;
@@ -269,7 +271,7 @@ export function ResultArea({ tab, descriptor }: { tab: TabState; descriptor: Pag
       {r.status === "running" && <span>{r.progress?.message ?? t("result.running")}</span>}
       {r.status === "running" && elapsed !== undefined && <span>{duration(Math.floor(elapsed / 100) * 100)}</span>}
       {r.status === "error" && <span>{r.error ? runError(r.error) : null}</span>}
-      {r.summary?.rows !== undefined && <span>{t("result.rows", { count: number(r.summary.rows) })}</span>}
+      {r.summary?.rows !== undefined && <span>{plural("result.rows", r.summary.rows, { count: number(r.summary.rows) })}</span>}
       {r.summary?.durationMs !== undefined && <span>{duration(r.summary.durationMs)}</span>}
       {r.envName && <span>{r.envName}</span>}
       <span>{time(r.startedAt)}</span>

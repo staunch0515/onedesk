@@ -116,6 +116,10 @@ export type PageDescriptor = Omit<KernelPageDescriptor, "view" | "values"> & { v
 export type PageSaveResult = { page: PageDescriptor };
 
 /** A workspace whose `workspace.json` is missing is listed under `pending:<folder>`: it can be opened, not renamed or deleted (D404). */
+/** `stateReason` of a resource whose source file was deleted (round 16): it is `broken` on the wire but shown as "stale", not as a fault. */
+export const SOURCE_MISSING = "sourceMissing";
+export const isSourceMissing = (state: string, reason: unknown): boolean => state === "broken" && reason === SOURCE_MISSING;
+
 export const isPendingWorkspace = (w: { id: string }) => w.id.startsWith("pending:");
 
 /** Demo only: tells the user a demo page is not built yet. Never produced by the kernel. */

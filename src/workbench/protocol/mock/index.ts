@@ -1832,7 +1832,7 @@ export function createMockClient(options: MockOptions = {}): ProtocolClient {
         await wait(4);
         return resolveIn(db, envId, name);
       },
-      async set(envId, name, value) {
+      async set(envId, name, value, _basis, _type) {
         await wait(20);
         const env = db.rows[envId];
         if (!env) throw new Error("Environment not found");
@@ -2036,10 +2036,13 @@ export function createMockClient(options: MockOptions = {}): ProtocolClient {
         }
         return [];
       },
-      async setKept(id, kept) {
+      async setKept(id, kept, name) {
         await wait(4);
         const run = db.runs.find((r) => r.id === id);
-        if (run) run.kept = kept;
+        if (run) {
+          run.kept = kept;
+          if (kept && name) run.keptName = name;
+        }
         persist();
         emit(`run:${id}`, "runs");
       },

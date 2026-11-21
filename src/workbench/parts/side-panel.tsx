@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { startInstall } from "./install-dialogs";
 import { Badge, Banner, ContextMenu, EmptyState, IconButton, Input, LoadingState, SidePanel, Tree, useToast, type MenuEntry, type TreeDropPosition, type TreeRow } from "../../design";
 import { useI18n } from "../i18n";
-import { loadBatch, loadLevel, loadMore, type Level, type MenuCommand, type TreeInfo, type TreeNode } from "../protocol";
+import { isSourceMissing, loadBatch, loadLevel, loadMore, type Level, type MenuCommand, type TreeInfo, type TreeNode } from "../protocol";
 import { useUi, useWorkbench } from "../state/context";
 
 const ROOT = "";
@@ -31,6 +31,13 @@ export function menuEntries(commands: MenuCommand[], tx: (l: MenuCommand["label"
     { key: c.id, label: tx(c.label), icon: c.icon, danger: c.danger, disabled: c.disabled, shortcut: c.shortcut, onSelect: () => run(c.id) },
   ]);
 }
+
+/** The kernel's run-record tree and the group that holds the kept results (D420). */
+export const RUNS_TREE = "runs";
+export const SAVED_RUNS = "@runs:saved";
+export const RECENT_RUNS = "@runs:recent";
+/** A saved result's row reads `#<seq> <name>`; renaming edits the whole row, the number is not part of the name. */
+export const stripRunNumber = (text: string): string => text.replace(/^#\d+\s*/, "").trim();
 
 export function TreePanel({ tree }: { tree: TreeInfo }) {
   const { client, store, actions } = useWorkbench();
@@ -130,7 +137,8 @@ export function TreePanel({ tree }: { tree: TreeInfo }) {
     };
     // Shown again after another view: events were missed meanwhile, so read the cached levels again.
     if (nodesRef.current.size > 0) refresh();
-    const offs = [client.events.subscribe(`tree:${tree.id}`, refresh), client.events.subscribe("connection", refresh)];
+    // The kernel announces run changes on `runs` (it has no `tree:runs`): keeping, renaming or deleting a result moves nodes between the two groups.
+    const offs = [client.events.subscribe(`tree:${tree.id}`, refresh), client.events.subscribe("connection", refresh), ...(tree.id === RUNS_TREE ? [client.events.subscribe("runs", refresh)] : [])];
     return () => offs.forEach((off) => off());
     // `locale` is a dependency on purpose: after a language switch the loaded levels are read again in the new language.
   }, [client, tree.id, commit, actions, locale]);
@@ -219,7 +227,7 @@ export function TreePanel({ tree }: { tree: TreeInfo }) {
           expandable: n.expandable,
           expanded: isOpen,
           loading: loading.has(n.key),
-          state: n.state,
+          state: isSourceMissing(n.state, n.stateReason) ? "stale" : n.state,
           stateLabel: n.stateReason ? (n.state === "load-failed" && typeof n.stateReason === "string" ? error({ code: n.stateReason, params: {} }) : tx(n.stateReason)) : undefined,
           badge: n.badge,
           marked: tree.id === "environments" && n.key === activeEnv,
@@ -247,6 +255,15 @@ export function TreePanel({ tree }: { tree: TreeInfo }) {
     const node = index.get(key);
     if (!node) return;
     store.set((s) => ({ selected: { ...s.selected, [tree.id]: key } }));
+    // A recent run goes back to its query with the values it was run with (E3); when the kernel cannot (the query is gone), the run's own page opens.
+    if (tree.id === RUNS_TREE && node.parentKey === RECENT_RUNS) {
+      const ctx = { tree: tree.id, nodeKey: key, target: node.target };
+      client.command.execute("run.reuse", ctx).then(
+        (effects) => actions.runEffects(effects),
+        () => node.target && actions.open(node.target),
+      );
+      return;
+    }
     if (node.target) actions.open(node.target);
     else if (node.expandable) toggle(key);
   };
@@ -345,6 +362,11 @@ export function TreePanel({ tree }: { tree: TreeInfo }) {
             if (store.get().renaming?.key !== key) return;
             store.set({ renaming: null });
             const node = index.get(key);
+            if (tree.id === RUNS_TREE) {
+              const next = stripRunNumber(name);
+              if (next && node && node.parentKey === SAVED_RUNS && next !== stripRunNumber(node.label)) client.run.setKept(key, true, next).catch(actions.fail);
+              return;
+            }
             if (name && node && name !== node.label) client.tree.rename(tree.id, key, name).catch(actions.fail);
           }}
           onRenameCancel={() => store.set({ renaming: null })}
@@ -355,7 +377,11 @@ export function TreePanel({ tree }: { tree: TreeInfo }) {
       <ContextMenu
         point={menu?.point ?? null}
         onClose={() => setMenu(null)}
-        items={menuEntries(commands, tx, (id) => void actions.command(id, { tree: tree.id, nodeKey: menu?.node?.key ?? null, target: menu?.node?.target }))}
+        items={[
+          ...menuEntries(commands, tx, (id) => void actions.command(id, { tree: tree.id, nodeKey: menu?.node?.key ?? null, target: menu?.node?.target })),
+          // A saved result has a readable name that can be changed; the kernel keeps it with the kept run (no tree-wide rename for runs).
+          ...(tree.id === RUNS_TREE && menu?.node?.parentKey === SAVED_RUNS ? [{ key: "run.rename", label: t("run.rename"), icon: "pencil", onSelect: () => store.set({ renaming: { tree: tree.id, key: menu.node!.key } }) } as MenuEntry] : []),
+        ]}
       />
     </SidePanel>
   );

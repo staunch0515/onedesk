@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import { ActionBar, Badge, Banner, Breadcrumb, IconButton, PageFrame, PageTitleBar, Pane, Select, Sized, Splitter, TitleBarSlot, type ActionBarItem, type Tone } from "../../design";
 import { useI18n } from "../i18n";
-import type { NodeState, PageDescriptor } from "../protocol";
+import { isSourceMissing, type NodeState, type PageDescriptor } from "../protocol";
 import { useQuery, useUi, useWorkbench } from "../state/context";
 import type { TabState } from "../state/store";
 import { useResize } from "./hooks";
@@ -73,7 +73,7 @@ export function Frame({ tab, descriptor, meta, actions, children, panel }: Frame
           meta={
             <>
               {descriptor.kindLabel && <Badge>{tx(descriptor.kindLabel)}</Badge>}
-              {descriptor.state !== "ok" && <Badge tone={STATE_TONE[descriptor.state]}>{stateName[descriptor.state]}</Badge>}
+              {descriptor.state !== "ok" && (isSourceMissing(descriptor.state, descriptor.stateReason) ? <Badge tone="warning">{t("state.stale")}</Badge> : <Badge tone={STATE_TONE[descriptor.state]}>{stateName[descriptor.state]}</Badge>)}
               {client.demo?.target(descriptor.target) && (
                 <Badge tone="warning" icon="flask-conical">
                   {t("demo.badge")}
@@ -118,7 +118,12 @@ export function Frame({ tab, descriptor, meta, actions, children, panel }: Frame
               {t("page.envDeletedBody")}
             </Banner>
           )}
-          {descriptor.state !== "ok" && (
+          {descriptor.state !== "ok" && isSourceMissing(descriptor.state, descriptor.stateReason) && (
+            <Banner tone="warning" title={t("state.stale")}>
+              {tx(descriptor.stateReason)}
+            </Banner>
+          )}
+          {descriptor.state !== "ok" && !isSourceMissing(descriptor.state, descriptor.stateReason) && (
             <Banner tone={descriptor.state === "broken" ? "danger" : descriptor.state === "disabled" ? "info" : "warning"} title={stateName[descriptor.state]}>
               {descriptor.stateReason ? (descriptor.state === "missing-plugin" ? t("state.missingPluginNamed", { plugin: tx(descriptor.stateReason) }) : tx(descriptor.stateReason)) : stateHint[descriptor.state]}
             </Banner>

@@ -12,7 +12,7 @@ export interface Settings {
 
 export function StatusBarPart({ settings, languages, onSetting, resolvedTheme }: { settings: Settings; languages: LanguageInfo[]; onSetting: (name: "ui.language" | "ui.theme" | "ui.density", value: string) => void; resolvedTheme: "light" | "dark" }) {
   const { client, store, actions } = useWorkbench();
-  const { t, number, duration, runError } = useI18n();
+  const { t, number, duration, runError, plural } = useI18n();
   const tab = useUi((s) => s.tabs.find((x) => x.id === s.activeTabId) ?? null);
   const activity = useUi((s) => s.activity);
   const tasksOpen = useUi((s) => s.tasksOpen);
@@ -65,7 +65,7 @@ export function StatusBarPart({ settings, languages, onSetting, resolvedTheme }:
             </StatusItem>
           ) : (
             <StatusItem icon={r.status === "success" ? "circle-check" : "circle-slash"} tone={r.status === "success" ? "success" : "default"} title={t("status.showResult")} onClick={() => store.set({ panelOpen: true })}>
-              {[`#${r.seq}`, r.summary?.rows !== undefined ? t("result.rows", { count: number(r.summary.rows) }) : (r.summary?.message ?? ""), r.summary?.durationMs !== undefined ? duration(r.summary.durationMs) : ""].filter(Boolean).join(" · ")}
+              {[`#${r.seq}`, r.summary?.rows !== undefined ? plural("result.rows", r.summary.rows, { count: number(r.summary.rows) }) : (r.summary?.message ?? ""), r.summary?.durationMs !== undefined ? duration(r.summary.durationMs) : ""].filter(Boolean).join(" · ")}
             </StatusItem>
           )
         ) : undefined

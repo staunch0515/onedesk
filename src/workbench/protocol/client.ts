@@ -23,6 +23,7 @@ import type {
   ImportPreview,
   ImportResult,
   KnownParam,
+  ParamType,
   RefInfo,
   RunExportResult,
   HistoryEntry,
@@ -157,7 +158,8 @@ export interface ProtocolClient {
     resolve(envId: string | null, name: string): Promise<ResolvedParam>;
     /** Set (or override) a value in this environment. */
     /** `basis` = `EnvView.rev` the page was drawn from; a newer change to the same parameter is a `conflict`. */
-    set(envId: string, name: string, value: string, basis?: string): Promise<void>;
+    /** `type` (only when creating): `ref` makes the value a resource id (G3); absent keeps the existing type, or `text` for a new parameter. */
+    set(envId: string, name: string, value: string, basis?: string, type?: ParamType): Promise<void>;
     /** Remove this environment's own value so the inherited one applies again. */
     unset(envId: string, name: string, basis?: string): Promise<void>;
     /** Accept the parent's new value as the basis of this override (clears "changed upstream"). */
@@ -215,7 +217,8 @@ export interface ProtocolClient {
     clearFinished(): Promise<void>;
     /** A plugin-declared result tab drawn for a run (§9.5). */
     render(id: string, tabId: string): Promise<ViewNode[]>;
-    setKept(id: string, kept: boolean): Promise<void>;
+    /** Keeps a run's result (or stops keeping it); `name` is the readable name a kept result is listed under (kept runs only; keeping again with a new name renames it). */
+    setKept(id: string, kept: boolean, name?: string): Promise<void>;
     /** Writes a finished run's table to a new file as CSV (§9.5). */
     export(id: string, path: string): Promise<RunExportResult>;
     /** A page of a `paged` table result (D414): `limit` 1–1000. Absent in the demo, whose tables are whole. */
