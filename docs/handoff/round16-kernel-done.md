@@ -99,7 +99,7 @@ D421（`actions.call` 只能在运行里）：内核不用改。
 
 改的文件：`crates/kernel/src/kernel.rs`（#3）、`calls.rs`（#4）、`host.rs`（#15、#16）、`carry.rs`（#16 `in_own_bin`）、`crates/kernel/tests/round16.rs`（4 条新用例，共 12 条）。
 
-测试：`ONEDESK_SECRET_STORE=memory cargo test --workspace --no-fail-fast` **585 通过、0 失败**（含合并进来的外壳、插件改动；`round16.rs` 12 条）；`pnpm clippy` 通过；`pnpm lint` 通过。提交：COMMIT_PLACEHOLDER。
+测试：`ONEDESK_SECRET_STORE=memory cargo test --workspace --no-fail-fast` **585 通过、0 失败**（含合并进来的外壳、插件改动；`round16.rs` 12 条）；`pnpm clippy` 通过；`pnpm lint` 通过。提交：`5f203bb`。
 
 ## 没运行过的
 
