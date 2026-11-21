@@ -203,6 +203,11 @@ impl Inner {
                         _ => {}
                     }
                 }
+                // Round 16 (X9): a command (a tree toolbar's "one level / two levels") may change
+                // what its provided trees show: they are asked again.
+                for t in plugin.manifest.contributes.trees.iter().filter(|t| t.source == onedesk_protocol::TreeSource::Provided) {
+                    self.emit(format!("{}{}", onedesk_protocol::topic::TREE, plugin.full(&t.id)), None, None);
+                }
                 Ok(effects)
             }
         }

@@ -468,7 +468,8 @@ impl Inner {
         }
         let limit = p.limit.unwrap_or(20).clamp(1, 200);
         let mut long = Vec::new();
-        let mut wheres = vec!["r.deleted_at IS NULL".to_string(), "r.tree IS NOT ?1".to_string()];
+        // Round 16 (parity A4): a resource whose source is gone is not found.
+        let mut wheres = vec!["r.deleted_at IS NULL".to_string(), "r.tree IS NOT ?1".to_string(), "r.state <> 'missing'".to_string()];
         let mut args: Vec<String> = vec![TREE_PLUGIN_STATE.to_string()];
         for t in &terms {
             if t.chars().count() >= 3 {
@@ -523,7 +524,7 @@ impl Inner {
                 title: r.name.clone(),
                 icon: meta.icon,
                 subtitle: path.join(" / "),
-                state: meta.state,
+                state: store::shown_state(&r, meta.state, &None).0,
             });
         }
         Ok(out)

@@ -298,7 +298,11 @@ impl Inner {
             title: res.as_ref().map(|r| r.name.clone()).unwrap_or_else(|| action_full.clone()),
             icon: res.as_ref().map(|r| self.row_meta(r).icon).or(icon).unwrap_or_else(|| "play".into()),
             resource_id: res.as_ref().map(|r| r.id.clone()).or(p.resource_id.clone()),
-            resource_kind: res.as_ref().map(|r| r.kind.clone()),
+            // Round 16 (E3): a `new:` tab's run records its kind (reopened, and drawn, by it).
+            resource_kind: res.as_ref().map(|r| r.kind.clone()).or_else(|| match crate::pages::parse_target(&p.target) {
+                crate::pages::Target::New { kind, .. } if self.registry.kind(&kind).is_some() => Some(kind),
+                _ => None,
+            }),
             plugin: plugin_id.clone(),
             action: action_full,
             action_label: serde_json::to_value(&label).map_err(internal)?,
@@ -1222,6 +1226,9 @@ impl Inner {
                 if r.resource_id.is_some() {
                     menu.push(kernel_cmd("run.openResource", "external-link"));
                     menu.push(kernel_cmd("run.reuse", "rotate-ccw"));
+                } else if r.resource_kind.is_some() {
+                    // Round 16 (E3): a run of a `new:` tab reopens one with the same values.
+                    menu.push(kernel_cmd("run.reuse", "rotate-ccw"));
                 }
                 TreeNode {
                     key: r.id.clone(),
@@ -1290,6 +1297,13 @@ impl Inner {
                     Ok(r) => r,
                     Err(e) => return Some(Err(e)),
                 };
+                let reuse = id == "run.reuse";
+                // Round 16 (E3): a run of a `new:` tab (no resource, its kind recorded).
+                let fresh = r.resource_id.is_none() && reuse;
+                if let (true, Some(kind)) = (fresh, r.resource_kind.clone().filter(|k| self.registry.kind(k).is_some())) {
+                    let params: Option<BTreeMap<String, String>> = serde_json::from_value(r.params).ok();
+                    return Some(Ok(vec![CommandEffect::Open { target: format!("new:{kind}"), params, env_id: r.env_id }]));
+                }
                 match r.resource_id.filter(|rid| self.read(|conn| store::get(conn, rid)).ok().flatten().is_some()) {
                     None => Err(not_found("resource")),
                     Some(rid) => {

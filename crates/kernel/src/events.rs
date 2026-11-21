@@ -29,6 +29,10 @@ use crate::sandbox::{CallInfo, SandboxError};
 pub const RESOURCE_CHANGED: &str = "resource.changed";
 pub const RUN_ENDED: &str = "run.ended";
 pub const EVENT_TIMEOUT: Duration = Duration::from_secs(5);
+/// Round 16 (X13): the manifest `activation` event sent once when the workspace is open.
+pub const WORKSPACE_OPENED: &str = "workspace.opened";
+/// Its handler may index a folder: longer than an ordinary event.
+pub const OPEN_TIMEOUT: Duration = Duration::from_secs(60);
 
 pub struct Delivery {
     pub name: String,
@@ -67,7 +71,8 @@ impl Inner {
     /// Queues an event for a plugin if it subscribed and may receive it now.
     pub fn deliver(&self, plugin: &str, name: &str, payload: Value) {
         let Some(p) = self.registry.plugin(plugin) else { return };
-        if !p.manifest.contributes.events.iter().any(|e| e == name) || !self.plugin_enabled(plugin) || !self.version_confirmed(p) {
+        let wanted = p.manifest.contributes.events.iter().chain(&p.manifest.activation).any(|e| e == name);
+        if !wanted || !self.plugin_enabled(plugin) || !self.version_confirmed(p) {
             return;
         }
         let Ok(rt) = tokio::runtime::Handle::try_current() else { return };
@@ -93,11 +98,25 @@ impl Inner {
         q.notify.notify_one();
     }
 
+    /// Round 16 (X13): `workspace.opened` to every enabled, confirmed plugin whose active version
+    /// declares it in `activation` (each activates for it); in plugin id order.
+    pub fn workspace_opened(&self) {
+        let mut ids = self.registry.ids();
+        ids.sort();
+        for id in ids {
+            let declares = self.registry.plugin(&id).is_some_and(|p| p.manifest.activation.iter().any(|a| a == WORKSPACE_OPENED));
+            if declares {
+                self.deliver(&id, WORKSPACE_OPENED, json!({}));
+            }
+        }
+    }
+
     async fn handle_event(&self, plugin: &str, d: Delivery, batch: u64) {
         let ctx = json!({ "event": d.name });
         let info = CallInfo { event: true, ..Default::default() };
+        let timeout = if d.name == WORKSPACE_OPENED { OPEN_TIMEOUT } else { EVENT_TIMEOUT };
         let res = self
-            .call_plugin_with(plugin, "events", &d.name, "", json!([ctx, d.payload]), info, None, Some(EVENT_TIMEOUT))
+            .call_plugin_with(plugin, "events", &d.name, "", json!([ctx, d.payload]), info, None, Some(timeout))
             .await;
         match res {
             Ok(_) => {}

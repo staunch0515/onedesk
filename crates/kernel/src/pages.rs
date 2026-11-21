@@ -387,7 +387,9 @@ impl Inner {
             title: r.name.clone(),
             icon: meta.icon.clone(),
             kind_label: Some(meta.label.clone()),
-            state: meta.state,
+            // Round 16: a resource whose source is gone still opens, marked.
+            state: store::shown_state(r, meta.state, &None).0,
+            state_reason: store::shown_state(r, meta.state, &None).1,
             breadcrumb: self.crumbs(r)?,
             resource_id: Some(r.id.clone()),
             has_info: true,

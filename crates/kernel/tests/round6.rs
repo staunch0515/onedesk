@@ -1087,6 +1087,11 @@ async fn review5_the_data_folder_is_never_granted_nor_reachable() {
     let target = w.ws().join("plugin-data/test.cmd/bin/mine");
     std::fs::create_dir_all(target.parent().unwrap()).unwrap();
     let r = c.probe("test.cmd", "files.writeText", json!([target.display().to_string(), "#!/bin/sh\necho evil\n"])).await;
+    // Round 16: its own folder is reachable without a grant, but never its `bin/`.
+    assert_eq!((r["error"].as_str(), r["params"]["reason"].as_str()), (Some("denied"), Some("ownPrograms")), "{r}");
+    let other = w.ws().join("plugin-data/other/x");
+    std::fs::create_dir_all(other.parent().unwrap()).unwrap();
+    let r = c.probe("test.cmd", "files.writeText", json!([other.display().to_string(), "x"])).await;
     assert_eq!((r["error"].as_str(), r["params"]["reason"].as_str()), (Some("denied"), Some("insideDataDir")), "{r}");
     let r = c.probe("test.cmd", "files.list", json!([w.ws().display().to_string()])).await;
     assert_eq!(r["params"]["reason"], "insideDataDir");

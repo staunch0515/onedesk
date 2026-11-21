@@ -22,8 +22,14 @@ pub const MAX_STORAGE_TOTAL: usize = 16 * 1024 * 1024;
 
 /// Round 12 (D394): writes a kind's `drop` may not make (only `resources.update`, kept and
 /// written together with the drop).
-pub const DROP_REFUSED: &[&str] =
-    &["resources.create", "resources.move", "resources.remove", "files.writeText", "storage.set", "storage.remove"];
+pub const DROP_REFUSED: &[&str] = &[
+    "resources.create", "resources.upsertByKey", "resources.move", "resources.remove", "files.writeText", "storage.set",
+    "storage.remove",
+];
+
+/// Round 16: limits of `resources.upsertByKey`.
+pub const MAX_UPSERT: usize = 5000;
+pub const MAX_EXTERNAL_KEY: usize = 1024;
 
 pub struct PluginHost {
     pub kernel: Weak<Inner>,
@@ -208,7 +214,7 @@ impl Inner {
             "get" => {
                 let id = arg_str(args, 0, "id")?;
                 match self.read(|c| store::get(c, &id))? {
-                    Some(r) if self.own_kind(plugin, &r.kind).is_ok() => serde_json::to_value(self.resource(&r)?).map_err(internal),
+                    Some(r) if self.own_kind(plugin, &r.kind).is_ok() => self.plugin_resource(&r),
                     // Round 7 (§7.3): another plugin's kind it depends on and that is exported for reading.
                     Some(r) if self.export_allows(plugin, &r.kind, true) => self.foreign_resource(&r),
                     // Round 8 (D357): the resource its page is drawing or handling an event for,
@@ -237,7 +243,7 @@ impl Inner {
                 let list = if foreign {
                     rows.iter().map(|r| self.foreign_resource(r)).collect::<KResult<Vec<_>>>()?
                 } else {
-                    rows.iter().map(|r| serde_json::to_value(self.resource(r)?).map_err(internal)).collect::<KResult<Vec<_>>>()?
+                    rows.iter().map(|r| self.plugin_resource(r)).collect::<KResult<Vec<_>>>()?
                 };
                 Ok(Value::Array(list))
             }
@@ -279,8 +285,9 @@ impl Inner {
                     )
                     .await?;
                 let row = self.live_row(&out.id.unwrap_or_default())?;
-                serde_json::to_value(self.resource(&row)?).map_err(internal)
+                self.plugin_resource(&row)
             }
+            "upsertByKey" => self.resources_upsert(plugin, args, quiet).await,
             "update" => {
                 let id = arg_str(args, 0, "id")?;
                 self.own_row(plugin, &id)?.ok_or_else(|| not_found("resource"))?;
@@ -327,6 +334,87 @@ impl Inner {
             .is_some_and(|(owner, _)| owner == plugin.id && Registry::split(&r.kind).is_some_and(|(kp, _)| kp != plugin.id))
     }
 
+    /// A resource as a plugin gets it: the protocol's `Resource` plus (round 16) `externalKey`
+    /// and `missing` (its source is gone).
+    fn plugin_resource(&self, r: &store::Row) -> KResult<Value> {
+        let mut v = serde_json::to_value(self.resource(r)?).map_err(internal)?;
+        let key: Option<String> = self.read(|c| {
+            c.query_row("SELECT external_key FROM resources WHERE id = ?1", [&r.id], |x| x.get(0))
+        })?;
+        v["externalKey"] = json!(key);
+        v["missing"] = json!(r.state == store::STATE_MISSING);
+        Ok(v)
+    }
+
+    /// Round 16 (parity A1, A3, A4): `resources.upsertByKey(kind, items, { othersMissing })`.
+    async fn resources_upsert(&self, plugin: &Plugin, args: &Value, quiet: Option<&str>) -> KResult<Value> {
+        let kind = self.own_kind(plugin, &arg_str(args, 0, "kind")?)?;
+        self.kind_usable(&kind)?;
+        let decl = self.registry.kind(&kind).map(|(_, d)| d.clone()).ok_or_else(|| not_found("kind"))?;
+        let list = args.get(1).and_then(Value::as_array).ok_or_else(|| invalid_params("items must be an array"))?;
+        if list.len() > MAX_UPSERT {
+            return Err(invalid("tooMany"));
+        }
+        let opts = arg(args, 2);
+        let others_missing = match opts.get("othersMissing") {
+            None | Some(Value::Null) => false,
+            Some(Value::Bool(b)) => *b,
+            Some(_) => return Err(invalid_params("othersMissing must be a boolean")),
+        };
+        let mut keys = std::collections::HashSet::new();
+        let mut items = Vec::with_capacity(list.len());
+        for it in list {
+            let o = it.as_object().ok_or_else(|| invalid_params("item must be an object"))?;
+            if let Some(k) = o.keys().find(|k| !["key", "name", "description", "body", "parent"].contains(&k.as_str())) {
+                return Err(invalid_params(format!("unknown item field {k}")));
+            }
+            let key = o.get("key").and_then(Value::as_str).ok_or_else(|| invalid("badKey"))?.to_string();
+            if key.is_empty() || key.chars().count() > MAX_EXTERNAL_KEY {
+                return Err(invalid("badKey"));
+            }
+            if !keys.insert(key.clone()) {
+                return Err(invalid("duplicateKey"));
+            }
+            let text = |f: &str| -> KResult<Option<String>> {
+                match o.get(f) {
+                    None | Some(Value::Null) => Ok(None),
+                    Some(Value::String(s)) => Ok(Some(s.clone())),
+                    Some(_) => Err(invalid_params(format!("{f} must be a string"))),
+                }
+            };
+            let (name, description, parent) = (text("name")?, text("description")?, text("parent")?);
+            let body: JsonMap = match o.get("body") {
+                None | Some(Value::Null) => JsonMap::new(),
+                Some(b) => serde_json::from_value(b.clone()).map_err(|_| invalid_params("body must be an object"))?,
+            };
+            let mut changes = Changes { name: name.clone(), description: description.clone(), ..Default::default() };
+            for (k, v) in &body {
+                changes.body.insert(k.clone(), v.clone());
+            }
+            let mut create_body = decl.defaults.clone();
+            for (k, v) in body {
+                create_body.insert(k, v);
+            }
+            let fallback = key.rsplit('/').find(|s| !s.is_empty()).unwrap_or(&key).to_string();
+            items.push(crate::pipeline::UpsertItem {
+                key,
+                changes,
+                create: NewResource {
+                    kind: kind.clone(),
+                    tree: None,
+                    parent,
+                    name: name.filter(|n| !n.trim().is_empty()).unwrap_or(fallback),
+                    description: description.unwrap_or_default(),
+                    tags: vec![],
+                    body: create_body,
+                    plugin_version: Some(plugin.version.clone()),
+                },
+            });
+        }
+        let out = self.execute_quiet(plugin.actor(), Command::Upsert { kind, items, others_missing }, quiet).await?;
+        Ok(out.report)
+    }
+
     /// Another plugin's resource as a dependent reads it: without the kind's secret fields.
     fn foreign_resource(&self, r: &store::Row) -> KResult<Value> {
         let v = serde_json::to_value(self.resource(r)?).map_err(internal)?;
@@ -343,19 +431,50 @@ impl Inner {
             .unwrap_or_default())
     }
 
+    /// Round 16: a relative path — or an absolute one inside it — is the plugin's own folder
+    /// `plugin-data/<id>/` (no `files` grant needed, as for `transfer`); never its `bin/`.
+    /// `None`: an absolute path outside it (the granted folders decide).
+    fn own_files(&self, plugin: &Plugin, raw: &str) -> KResult<Option<(Vec<PathBuf>, String)>> {
+        let own = self.plugin_data_dir(&plugin.id)?.canonicalize().map_err(internal)?;
+        let relative = !std::path::Path::new(raw).is_absolute();
+        let abs = if relative { own.join(raw).display().to_string() } else { raw.to_string() };
+        match crate::files::resolve(std::slice::from_ref(&own), &abs) {
+            Ok(real) if real.starts_with(own.join("bin")) => Err(denied("ownPrograms")),
+            Ok(_) => Ok(Some((vec![own], abs))),
+            Err(e) if relative => Err(e),
+            Err(_) => Ok(None),
+        }
+    }
+
     async fn host_files(&self, plugin: &Plugin, op: &str, args: &Value) -> KResult<Value> {
-        if !plugin.manifest.requires.files {
-            return Err(denied("notRequested"));
-        }
-        let grants: Vec<PathBuf> = self.folder_grants(&plugin.id)?.into_iter().map(PathBuf::from).collect();
-        // Review #5: a folder granted earlier may contain the data folder; nothing in it is reachable.
-        if let Some(raw) = args.get(0).and_then(Value::as_str).filter(|_| op != "roots") {
-            if let Ok(real) = crate::files::resolve(&grants, raw) {
-                if self.data_roots().iter().any(|d| real.starts_with(d)) {
-                    return Err(denied("insideDataDir"));
-                }
+        let raw0 = args.get(0).and_then(Value::as_str).filter(|_| op != "roots");
+        let own = match raw0 {
+            Some(raw) => self.own_files(plugin, raw)?,
+            None => None,
+        };
+        let (grants, args) = match own {
+            Some((mine, abs)) => {
+                let mut a = args.clone();
+                a[0] = Value::String(abs);
+                (mine, a)
             }
-        }
+            None => {
+                if !plugin.manifest.requires.files {
+                    return Err(denied("notRequested"));
+                }
+                let grants: Vec<PathBuf> = self.folder_grants(&plugin.id)?.into_iter().map(PathBuf::from).collect();
+                // Review #5: a folder granted earlier may contain the data folder; nothing in it is reachable.
+                if let Some(raw) = raw0 {
+                    if let Ok(real) = crate::files::resolve(&grants, raw) {
+                        if self.data_roots().iter().any(|d| real.starts_with(d)) {
+                            return Err(denied("insideDataDir"));
+                        }
+                    }
+                }
+                (grants, args.clone())
+            }
+        };
+        let args = &args;
         // Disk access runs off the async workers.
         let blocking = |f: Box<dyn FnOnce() -> KResult<Value> + Send>| async move {
             tokio::task::spawn_blocking(f).await.map_err(internal)?
@@ -411,7 +530,7 @@ impl Inner {
 
     fn host_params(&self, info: &CallInfo, op: &str, args: &Value) -> KResult<Value> {
         if op == "config" {
-            // Round 15 (X4, sqlpool F5): a workspace configuration value by name (§6.2: the
+            // Round 15 (X4, parity F5): a workspace configuration value by name (§6.2: the
             // deepest node defining it); a secret parameter gives only its name.
             let name = arg_str(args, 0, "name")?;
             return Ok(match self.config_param(&name)? {
