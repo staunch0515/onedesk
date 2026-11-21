@@ -743,3 +743,10 @@ describe("files plugin: tree node menu (D430)", () => {
     for (const id of menu.filter((m) => m.includes(":"))) expect(own).toContain(id);
   });
 });
+
+describe("files plugin: actions run on tree nodes", () => {
+  it("no action is limited to a kind: the kernel refuses a kind-limited action on a node page (\"does not apply to this resource\")", () => {
+    const m = JSON.parse(readFileSync(new URL("./manifest.json", import.meta.url), "utf8"));
+    for (const a of m.contributes.actions) expect(a.kinds, a.id).toBeUndefined();
+  });
+});
