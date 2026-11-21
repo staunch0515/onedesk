@@ -451,6 +451,13 @@ export default {
       if (!ctx.resource) throw fail(ctx, "error.noSource", {});
       const started = Date.now();
       try {
+        // `inline: true`: small results (at most `maxRows`, default 1000) come back as rows the caller can read;
+        // a data file lives in this plugin's folder, which the caller cannot read.
+        if (i.inline === true) {
+          const max = Number.isInteger(i.maxRows) && i.maxRows > 0 ? Math.min(i.maxRows, 10000) : DEFAULT_MAX_ROWS;
+          const r = await runReadonly(ctx, connectionOf(ctx.resource.body), i.sql, { maxRows: max, timeoutMs: i.timeoutMs });
+          return { output: tableOutput(r), summary: { message: tr(ctx, "summary.ran", { ms: r.ms }) } };
+        }
         const file = await captureReadonly(ctx, connectionOf(ctx.resource.body), i.sql, { timeoutMs: i.timeoutMs });
         return { output: { type: "table", file, header: true }, summary: { message: tr(ctx, "summary.ran", { ms: Date.now() - started }) } };
       } catch (err) {
