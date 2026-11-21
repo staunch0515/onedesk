@@ -29,3 +29,18 @@
 - G：SQL 插件已有“语句指定 → 环境 datasource → 工作区 datasource.default”的解析链；仍需核验用户在环境页设置引用的完整流程。
 - 尚未开发：A 查询目录插件、H 表插件及 X13 工作区打开激活机制；本轮整体尚未验收。
 - 已运行：`cargo test -p onedesk-kernel`、`pnpm test`、`pnpm typecheck`、`pnpm lint`、`cargo clippy -p onedesk-kernel --all-targets -- -D warnings`。全量 E2E 和 `pnpm check` 尚未运行。
+
+## 分工（第六个协调会话，2026-11-21）
+
+协调分支：`claude/onedesk-coord-6`（从 main `ec053c9` 切出）。各会话从它切出自己的工作树；一个文件同一时间只有一个写入者；会话之间只通过 `docs/handoff/` 交流。范围外的问题写进各自的 `round16-<块>-done.md` 的“范围外”一节，由协调会话汇总进 `todo.md`（各会话不直接改 `todo.md`）。
+
+| 会话 | 模型 | 做什么 | 允许修改 |
+|---|---|---|---|
+| `r16-kernel` | Opus | X13 清单 `activation` 声明“工作区打开后”；核实并补齐查询目录所需的宿主能力：`files` 读授权文件夹、按外部键批量写入/按字段提交、资源“失效”状态（运行记录保留）、插件自己目录的 `files.*`（todo）；E3 从运行记录打开时带当时参数（X8 初始状态）的内核部分；X9 树清单的工具栏命令核实；被调插件的错误文字（已抹密钥）带回调用方（todo）。**协议新增的确切名字第一次提交后立即写进 `docs/handoff/round16-protocol.md`** | `crates/kernel/**`、`crates/worker/**`、`crates/protocol/**`（只增不改）、生成的 TS |
+| `r16-shell` | Sonnet | 运行记录树两组（最近运行/已保留结果）的界面、保留结果改名、取消保留、删除确认；E6 保存结果标签页（工具栏、数据源、SQL、分页行）；E3 点开回到查询并带上当时的值；X9 树工具栏按钮渲染；节点“失效/缺失”状态的显示；环境页的资源引用（datasource）字段选择（G3）；todo 里外壳小项：`new:` 运行的“实际 SQL”一直 Loading、“1 rows”单复数、`network.allow`/`ui.theme` 文字；新文字只加英语 | `crates/host/**`、`src-tauri/**`、`src/workbench/**`（`protocol/generated/` 除外）、`src/design/**`、`vite.config.ts`、`package.json` |
+| `r16-plugins` | Opus | 新插件 `org.onedesk.catalog`（A1–A10：索引授权文件夹、YAML 头解析与跳过原因、外部键=路径、只改正文与说明、删除即失效、映射文件 `{{实体}}`/`{{实体.字段}}`、时间版本实体与“截至时间”、检查警告条、按 id 前两段分组、另存为保存的 SQL）与 `org.onedesk.table`（H1–H5：映射里的表和列按前缀分组、一层/两层工具栏切换、缺失标记、表页可勾选列取行、五种版本查询），各带 `locales/`（英、中、日）和假 host 的 vitest。映射文件格式与 sqlpool 一致，写进 `plugins/org.onedesk.catalog/README.md` | `plugins/org.onedesk.catalog/**`、`plugins/org.onedesk.table/**` |
+| `r16-tests` | Sonnet | 第一阶段：G 组核实（SQL 插件“语句 → 环境 → 工作区默认”的解析在真内核上走通，缺的在 `org.onedesk.sql`/`org.onedesk.datasource` 补）；准备本机临时 PostgreSQL（本机现在没有 PostgreSQL：先查 Homebrew/Postgres.app 是否可用，装软件须请用户批准，不能装就写明并告诉协调会话）；`scripts/check-arch.mjs` 排除迁移文件名与 `rusqlite`/`SQLITE_*`（todo）。第二阶段（各块合并后由协调会话通知）：`e2e/round16.spec.ts` 按 A、E、G、H 各行；外壳新增键的中日译文 | `plugins/org.onedesk.sql/**`、`plugins/org.onedesk.datasource/**`、`plugins/org.onedesk.lang.*/**`、`plugins/_testing/**`、`e2e/**`、`playwright.config.ts`、`scripts/check-*.mjs`、`docs/screenshots/` |
+
+之后由协调会话做：合并（核对每个分支只改了自己范围）→ 对齐 → 独立审查（只读 Opus 子代理，写 `round16-review.md`）→ 第二阶段 e2e → 亲自验收（devhost，`ONEDESK_SECRET_STORE=memory`，scratchpad 数据目录）→ 完整 `pnpm check` → `round16-acceptance.md` → 经用户同意合并 main。
+
+注意：本机主检出在 `/Users/chloe/onedesk/repo`（旧交接里的 `/Users/zhongpingxue/...` 已不适用）；磁盘剩约 14G，各会话不要保留多份 `target/`，构建完成后不要复制产物。
