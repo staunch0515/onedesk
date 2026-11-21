@@ -5,7 +5,7 @@ import type { OutputCell, PageDescriptor, Run, RunStatus } from "../protocol";
 import { useQuery, useUi, useWorkbench } from "../state/context";
 import type { TabState } from "../state/store";
 import { startRunExport } from "./transfer-dialogs";
-import { terminalLinesOf } from "./terminal-lines";
+import { partialLinesOf, terminalLinesOf } from "./terminal-lines";
 import { ViewNodes } from "./view-nodes";
 
 export const STATUS_TONE: Record<RunStatus, Tone> = { running: "accent", success: "success", error: "danger", cancelled: "neutral" };
@@ -134,18 +134,18 @@ export function resultText(run: Run, all?: OutputCell[][]): string | null {
   return [out.columns.map((c) => c.label).join("\t"), ...(all ?? (out.rows as OutputCell[][])).map((r) => r.map(cell).join("\t"))].join("\n");
 }
 
-function OutputTab({ tab, run, widthKey }: { tab: TabState; run: Run | null | undefined; widthKey: string }) {
+export function OutputTab({ tab, run, widthKey }: { tab: TabState; run: Run | null | undefined; widthKey: string }) {
   const { client, actions } = useWorkbench();
   const { t, runError, duration } = useI18n();
   const live = useLiveLog(run);
   // Round 17 (X17): while the run goes, `Run.partial` is the whole output so far (it replaces the last one).
-  const partialLines = terminalLinesOf(run?.partial);
+  const partialLines = partialLinesOf(run?.partial);
   const elapsed = useElapsed(run?.startedAt, run?.status === "running");
   if (run === undefined) return <LoadingState layout="inline" label={t("common.loading")} />;
   if (run === null) return <EmptyState layout="inline" icon="play" message={tab.target.startsWith("run:") ? t("result.gone") : t("result.empty")} />;
   if (run.status === "running") {
     return (
-      <Pane grow align="center" justify="center" gap="sm" pad="lg">
+      <Pane grow align={partialLines ? "stretch" : "center"} justify={partialLines ? "start" : "center"} gap="sm" pad="lg">
         <Progress value={typeof run.progress?.fraction === "number" ? run.progress.fraction * 100 : undefined} label={t("result.running")} />
         {elapsed !== undefined && (
           <Text size="sm" tone="muted" tabular aria-label={t("result.elapsed")}>
@@ -153,7 +153,7 @@ function OutputTab({ tab, run, widthKey }: { tab: TabState; run: Run | null | un
           </Text>
         )}
         {partialLines ? (
-          <Pane grow scroll width="form">
+          <Pane grow scroll>
             <TerminalText label={t("result.liveOutput")} lines={partialLines} />
           </Pane>
         ) : live.length > 1 ? (
@@ -166,9 +166,11 @@ function OutputTab({ tab, run, widthKey }: { tab: TabState; run: Run | null | un
           </Text>
         )}
         {run.cancellable && (
-          <Button size="sm" icon="square" onClick={() => client.run.cancel(run.id).catch(actions.fail)}>
-            {t("result.cancel")}
-          </Button>
+          <Pane direction="row" justify="center">
+            <Button size="sm" icon="square" onClick={() => client.run.cancel(run.id).catch(actions.fail)}>
+              {t("result.cancel")}
+            </Button>
+          </Pane>
         )}
       </Pane>
     );

@@ -69,3 +69,10 @@ devhost（`ONEDESK_SECRET_STORE=memory`，临时数据目录，`target` 用共�
 
 ## 改名焦点（树里就地改名）
 改名框（`design/components/tree.tsx` 的 `RenameInput`）不再靠 `autoFocus`：菜单关闭后会把焦点还给行，所以挂载后立即聚焦并在下一个时间片再聚焦一次；选中文件名但不含扩展名（`report.final.txt` 选 `report.final`；`.env`、无扩展名则全选）；框还没拿到过焦点时的失焦不算提交。vitest 在 `tree.test.tsx`。**没在浏览器里复验**（只在 jsdom 里测）。
+
+## 缺陷 A（运行中看不到 Run.partial）
+合并 `7fef290` 后在真内核上复现：用本机脚本 `for i in 1 2 3 4 5; do echo $i; sleep 1; done`，运行中每秒多一行（2.9 秒时看到 1、2、3），结束后换成最终输出；“Run”和“Output”两个页签里都逐行出现。外壳读 `run.get` 的 `Run.partial`、并在 `run:<id>` 事件上重取，这条路本来就通；**没能复现命令页面只显示 “Running on web-1…”**（没有假 ssh，没走命令插件）。怀疑原因在插件：`org.onedesk.command` 的 `runLines` 在 `PARTIAL_EVERY_MS` 内到达的行不推送且没有收尾推送（e2e 里另一条 burst 缺陷），`echo early-line; sleep 5; …` 里第一行可能因此迟到。
+外壳这次改了：
+- 运行中的部分输出不要求 `appearance: "terminal"`：纯文字、普通表格也按行显示（`partialLinesOf`）。
+- 有部分输出时终端块占满宽度（以前居中缩成一小块），取消按钮仍居中。
+- vitest（`round17-terminal.test.tsx`）：运行中显示已有行、下一份替换上一份、结束后换成最终输出、没收到 partial 前仍显示 “Running…”。

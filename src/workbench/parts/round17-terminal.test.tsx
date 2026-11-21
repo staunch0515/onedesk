@@ -3,8 +3,9 @@ import "../../design/testing/jsdom-setup";
 import { screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { createMockClient } from "../protocol/mock";
-import type { ViewNode } from "../protocol";
+import type { Run, ViewNode } from "../protocol";
 import { renderInShell } from "../testing/harness";
+import { OutputTab } from "./result-area";
 import { tableLines, terminalLinesOf, textLines } from "./terminal-lines";
 import { ViewNodes } from "./view-nodes";
 
@@ -51,5 +52,34 @@ describe("the terminal block's accessible name", () => {
     renderInShell(client(), <ViewNodes nodes={[textNode({ appearance: "terminal" })]} />);
     expect(screen.getByRole("region", { name: "Terminal output" })).toBeTruthy();
     expect(screen.queryByLabelText("t")).toBeNull();
+  });
+});
+
+describe("the output tab of a running run shows Run.partial live (defect A)", () => {
+  const tab = { id: "t1", target: "resource:r1", title: "R", icon: "file", pinned: false, envId: null, params: {} } as never;
+  const running = (partial: unknown, extra: object = {}) => ({ id: "r1", seq: 1, status: "running", startedAt: Date.now(), cancellable: true, progress: { message: "Running on web-1…" }, partial, ...extra }) as unknown as Run;
+  const table = (rows: string[][], appearance?: "terminal") => ({ type: "table", columns: [{ key: "stream", label: "Stream" }, { key: "line", label: "Line" }], rows, total: rows.length, truncated: false, ...(appearance ? { appearance, toneColumn: "stream", lineColumn: "line" } : {}) });
+
+  it("draws the lines so far in the terminal look, replaces them with the next partial, and then the final output", () => {
+    const first = running(table([["stdout", "early-line"]], "terminal"));
+    const view = renderInShell(client(), <OutputTab tab={tab} run={first} widthKey="k" />);
+    expect(screen.getByText("early-line")).toBeTruthy();
+    expect(screen.queryByText("Running on web-1…")).toBeNull();
+    view.rerender(<OutputTab tab={tab} run={running(table([["stdout", "early-line"], ["stderr", "late-line"]], "terminal"))} widthKey="k" />);
+    expect(screen.getByText("late-line").closest(".od-terminal__line")!.getAttribute("data-tone")).toBe("stderr");
+    view.rerender(<OutputTab tab={tab} run={{ ...running(undefined), status: "success", partial: undefined, output: table([["stdout", "done"]], "terminal") } as unknown as Run} widthKey="k" />);
+    expect(screen.getByText("done")).toBeTruthy();
+    expect(screen.queryByText("early-line")).toBeNull();
+  });
+
+  it("shows a partial that does not ask for the terminal look as plain lines", () => {
+    renderInShell(client(), <OutputTab tab={tab} run={running({ type: "text", text: "one\ntwo" })} widthKey="k" />);
+    expect(screen.getByText("one")).toBeTruthy();
+    expect(screen.getByText("two")).toBeTruthy();
+  });
+
+  it("still says it is running until the first partial arrives", () => {
+    renderInShell(client(), <OutputTab tab={tab} run={running(undefined)} widthKey="k" />);
+    expect(screen.getByText("Running on web-1…")).toBeTruthy();
   });
 });

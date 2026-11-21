@@ -27,3 +27,12 @@ export function terminalLinesOf(out: RunOutput | null | undefined): TerminalLine
   if (out.type === "table" && "rows" in out) return tableLines(out);
   return null;
 }
+
+/** Lines of a running action's partial output: the terminal look when it asks for it, otherwise plain lines of its text or table. */
+export function partialLinesOf(out: RunOutput | null | undefined): TerminalLine[] | null {
+  const terminal = terminalLinesOf(out);
+  if (terminal || !out) return terminal;
+  if (out.type === "text") return textLines(out.text, out.lineTones);
+  if (out.type === "table") return tableLines(out);
+  return null;
+}
