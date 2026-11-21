@@ -1289,7 +1289,8 @@ impl Inner {
             } else {
                 ("Recent runs", "Saved results")
             };
-            return Ok([("@runs:recent", recent), ("@runs:saved", saved)]
+            // D431: saved results first (few and important; recent runs can be 200 rows).
+            return Ok([("@runs:saved", saved), ("@runs:recent", recent)]
                 .into_iter()
                 .map(|(key, label)| TreeNode {
                     key: key.into(),
