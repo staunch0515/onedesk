@@ -543,7 +543,9 @@ describe("files plugin: authorized folders", () => {
     expect(d.files.addRoot).toHaveBeenCalledTimes(1); // the shell's chooser
     expect(added.output.text).toBe(EN["grant.choose"]);
     const nodes = (await trees.folders.children(ctxOf(d.files, ""), null, 0)).nodes;
-    expect(nodes.map((n: any) => (typeof n.label === "string" ? n.label : n.label["en-US"]))).toEqual(["folders.add", "docs", "new"]);
+    // a tree node label is a plain string (the kernel refuses a localized object: "bad tree page")
+    for (const n of nodes) expect(typeof n.label).toBe("string");
+    expect(nodes.map((n: any) => n.label)).toEqual(["folders.add", "docs", "new"]);
     expect(onlyKeys(nodes[1], TREE_NODE_KEYS)).toEqual([]);
 
     await run("grantReplace", host, "/Users/me/new");

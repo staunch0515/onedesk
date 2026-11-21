@@ -373,7 +373,7 @@ export default {
         const roots = await ctx.host.files.roots();
         return {
           nodes: [
-            { key: ADD_KEY, label: ctx.t("folders.add"), icon: "folder-plus", expandable: false, target: nodeTarget("folders", ADD_KEY) },
+            { key: ADD_KEY, label: tr2(ctx, "folders.add"), icon: "folder-plus", expandable: false, target: nodeTarget("folders", ADD_KEY) },
             ...roots.map((r) => ({ key: r.path, label: r.name, icon: "folder", expandable: false, target: nodeTarget("folders", r.path) })),
           ],
         };
