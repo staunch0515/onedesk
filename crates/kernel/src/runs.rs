@@ -103,10 +103,25 @@ fn check_event_params(m: serde_json::Map<String, Value>) -> KResult<BTreeMap<Str
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ActionOut {
-    output: Value,
+    /// D435: may be left out with `failed` (then the last `runs.partial`, if any, is kept).
+    #[serde(default)]
+    output: Option<Value>,
     #[serde(default)]
     summary: Option<SummaryIn>,
+    /// D435: the run failed, but its output and summary are kept.
+    #[serde(default)]
+    failed: Option<FailedIn>,
 }
+
+/// D435: `{ failed: { message } }` of an action's answer.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FailedIn {
+    message: String,
+}
+
+/// D435: the longest `failed.message` kept (characters); longer ones are cut.
+pub const MAX_FAILED_MESSAGE: usize = 2000;
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -473,9 +488,9 @@ impl Inner {
         tokio::spawn(async move {
             let timeout = me.cfg.action_timeout;
             let res = me.call_version(runner, "actions", &aid, "", args, info, Some(token), Some(timeout)).await;
-            let (stopped, secrets, handed) = match me.runs_active.lock().unwrap().remove(&run_id) {
-                Some(a) => (a.stopped, a.secrets, a.handed),
-                None => (None, vec![], vec![]),
+            let (stopped, secrets, handed, partial) = match me.runs_active.lock().unwrap().remove(&run_id) {
+                Some(a) => (a.stopped, a.secrets, a.handed, a.partial),
+                None => (None, vec![], vec![], None),
             };
             let plugin = me.registry.plugin(&pid);
             let ms = started.elapsed().as_millis() as i64;
@@ -483,12 +498,17 @@ impl Inner {
                 (Some("pluginDisabled"), _) => ("error", None, Some(run_error("pluginDisabled", "", None)), None),
                 (Some(_), _) | (None, Err(SandboxError::Cancelled)) => ("cancelled", None, None, None),
                 (None, Ok(v)) => match me.output_from_file(runner, &run_id, v).await.and_then(|v| serde_json::from_value::<ActionOut>(v).map_err(|e| e.to_string())).and_then(|o| {
-                    let out = check_output(declared, o.output)?;
-                    Ok((out, o.summary))
+                    let out = match (o.output, &o.failed) {
+                        (Some(out), _) => Some(check_output(declared, out)?),
+                        // D435: failed without an output keeps what was last shown.
+                        (None, Some(_)) => partial,
+                        (None, None) => return Err("missing field `output`".to_string()),
+                    };
+                    Ok((out, o.summary, o.failed))
                 }) {
-                    Ok((out, s)) => {
+                    Ok((out, s, failed)) => {
                         let rows = match &out {
-                            RunOutput::Table { total, .. } => Some(*total),
+                            Some(RunOutput::Table { total, .. }) => Some(*total),
                             _ => None,
                         };
                         let summary = RunSummary {
@@ -496,7 +516,15 @@ impl Inner {
                             message: s.and_then(|s| s.message),
                             duration_ms: Some(ms),
                         };
-                        ("success", Some(json!(summary)), None, Some(json!(out)))
+                        let output = out.map(|o| json!(o));
+                        match failed {
+                            // D435: an error, like a thrown one, with the output kept (scrubbed below).
+                            Some(f) => {
+                                let message: String = f.message.chars().take(MAX_FAILED_MESSAGE).collect();
+                                ("error", Some(json!(summary)), Some(run_error("pluginError", message, None)), output)
+                            }
+                            None => ("success", Some(json!(summary)), None, output),
+                        }
                     }
                     Err(e) => ("error", None, Some(run_error("badOutput", "", Some(e))), None),
                 },

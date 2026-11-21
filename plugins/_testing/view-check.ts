@@ -5,7 +5,7 @@ const FIELD_KEYS = new Set(["name", "label", "kind", "bind", "param", "options",
 const KINDS = new Set(["text", "longtext", "code", "number", "boolean", "date", "datetime", "enum", "secret", "time", "ref"]);
 const NODE_KEYS: Record<string, string[]> = {
   form: ["type", "id", "layout", "label", "fields"],
-  text: ["type", "id", "text", "mono", "language", "tone", "format"],
+  text: ["type", "id", "text", "mono", "language", "tone", "format", "lineTones", "appearance"],
   table: ["type", "id", "columns", "rows", "rowTargets", "rowKeys", "rowActions"],
   link: ["type", "id", "label", "target"],
 };
@@ -36,6 +36,8 @@ export function checkView(view: unknown): string[] {
     if (n.type === "text" && typeof n.text !== "string") errs.push("text node needs a string");
     if (n.type === "text" && n.format !== undefined && !["plain", "markdown"].includes(String(n.format))) errs.push("bad format");
     if (n.type === "text" && n.tone !== undefined && !["default", "muted", "danger"].includes(String(n.tone))) errs.push("bad tone");
+    if (n.type === "text" && n.appearance !== undefined && !["plain", "terminal"].includes(String(n.appearance))) errs.push("bad appearance");
+    if (n.type === "text" && n.lineTones !== undefined && (!Array.isArray(n.lineTones) || n.lineTones.some((t) => t !== null && !["default", "muted", "success", "warning", "danger", "stderr"].includes(String(t))))) errs.push("bad lineTones");
   }
   return errs;
 }
@@ -81,12 +83,12 @@ export const RENDER_KEYS = ["view", "values", "basis", "title", "icon", "breadcr
 export const CRUMB_KEYS = ["label", "key"];
 export const SAVE_KEYS = ["basis"];
 export const TREE_PAGE_KEYS = ["nodes", "next"];
-export const TREE_NODE_KEYS = ["key", "label", "icon", "expandable", "target", "badge"];
+export const TREE_NODE_KEYS = ["key", "label", "icon", "expandable", "target", "badge", "menu", "draggable", "accepts"];
 
 /** Mirrors the action result validation in crates/kernel (round 3): output is a RunOutput without `truncated`. */
 export const ACTION_RESULT_KEYS = ["output", "summary"];
 export const SUMMARY_KEYS = ["rows", "message"];
-export const OUTPUT_KEYS: Record<string, string[]> = { table: ["type", "columns", "rows", "total", "file", "header"], text: ["type", "text", "file"], link: ["type", "label", "target", "params"], none: ["type"] };
+export const OUTPUT_KEYS: Record<string, string[]> = { table: ["type", "columns", "rows", "total", "file", "header", "appearance", "toneColumn", "lineColumn"], text: ["type", "text", "file", "lineTones", "appearance"], link: ["type", "label", "target", "params"], none: ["type"] };
 export const EVENT_RESULT_KEYS = ["changes", "params", "message"];
 
 export function checkActionResult(res: Record<string, any>): string[] {
