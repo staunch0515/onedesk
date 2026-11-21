@@ -59,6 +59,18 @@ export class FakeTools {
     }
   }
 
+  /**
+   * For ssh `exec` mode: a `docker` on the "remote" PATH that drops `exec <container>` and runs the rest here, so
+   * `ssh host "docker exec c pg_dump …"` reaches the temp PostgreSQL (never a real docker).
+   */
+  remoteDockerShim() {
+    const d = path.join(this.dir, "remote-bin");
+    mkdirSync(d, { recursive: true });
+    const f = path.join(d, "docker");
+    writeFileSync(f, '#!/bin/sh\nshift 2\nexec "$@"\n');
+    chmodSync(f, 0o755);
+  }
+
   /** Add a rule for a tool; rules are tried in the order they were added. */
   rule(tool: FakeTool, r: Rule): this {
     const i = (this.n[tool] = (this.n[tool] ?? 0) + 1);

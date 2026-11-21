@@ -66,7 +66,7 @@ case "$mode" in
     shift # the host
     [ "$1" = "--" ] && shift
     cd "$STATE/remote-home" || exit 255
-    PATH="$pgpath:/usr/bin:/bin" sh -c "$*"
+    PATH="$STATE/remote-bin:$pgpath:/usr/bin:/bin" sh -c "$*"
     st=$?
     run_steps
     exit "$st"
@@ -110,6 +110,14 @@ case "$mode" in
     done
     shift # the container name
     cd "$STATE/container-fs" || exit 255
+    # paths the plugin keeps inside the container (/tmp/onedesk-*) live in container-fs
+    n=$#
+    while [ "$n" -gt 0 ]; do
+      a=$1; shift
+      case "$a" in /tmp/onedesk-*) a="$STATE/container-fs$a" ;; esac
+      set -- "$@" "$a"
+      n=$((n - 1))
+    done
     PATH="$pgpath:/usr/bin:/bin" "$@"
     st=$?
     run_steps
