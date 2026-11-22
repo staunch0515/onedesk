@@ -23,6 +23,13 @@
 - **未验证**：`new:`（未保存）SQL 直接运行时的“实际发出的 SQL”（需要真 PostgreSQL，留给 r20-parity）。
 - e2e 提示（r20-tests）：运行失败横幅不再以错误码开头；资源树工具栏的“新建 X”按钮现在在“新建”菜单里（`round2.spec.ts:56` 用的是“新建分组”，仍在外面）。
 
+## 第二轮（协调会话回复后）
+
+- 已合并 `claude/onedesk-r20`（快进）。
+- **假数据树已去掉**：`mixed-client.ts` 的 `listTrees` 连真内核时只返回内核的树；因此“Demo resources”“Data sources（生产/测试）”不再出现，状态栏“部分为演示数据”只在纯 mock 模式或打开了假页面时出现（树这一项恒为否）。单元测试改为“只列内核的树”。**受影响的 e2e**：没有找到（`workbench.spec.ts:338` 点 “Data sources” 的用例跑在纯 mock 外壳上，不连内核，不受影响；连内核的用例没有引用假树）。请 r20-tests 跑一遍确认。
+- **插件堆栈行**：不是插件加的——内置插件的 `main.js` 里没有 `.stack`，是内核沙箱把插件抛出的异常（message + stack，`sandbox.rs:65`）原样放进了运行错误的 `detail`。**需要内核派发**：detail 里只留 message。
+- A2（psql NULL/空串）按指示等 r20-parity，没动。
+
 ## 范围外
 
 见 `post-1.0.md` 末尾“逐页检查新增”四条。
