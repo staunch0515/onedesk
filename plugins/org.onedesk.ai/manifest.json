@@ -1,0 +1,220 @@
+{
+  "id": "org.onedesk.ai",
+  "version": "0.1.0",
+  "apiVersion": "2",
+  "name": "plugin.name",
+  "description": "plugin.description",
+  "icon": "sparkles",
+  "main": "main.js",
+  "author": "OneDesk",
+  "license": "MIT",
+  "homepage": "https://onedesk.example.com/plugins/ai",
+  "requires": {
+    "files": true
+  },
+  "uses": [
+    "onedesk.ai.chat/1"
+  ],
+  "exports": {
+    "actions": [
+      "analyze",
+      "generate"
+    ]
+  },
+  "contributes": {
+    "kinds": [
+      {
+        "id": "analysis",
+        "label": "kind.analysis",
+        "icon": "sparkles",
+        "tree": "resources",
+        "page": "analysis",
+        "newName": "analysis.new",
+        "defaults": {
+          "request": "",
+          "docs": "[]",
+          "runId": "",
+          "answer": "",
+          "model": "",
+          "usage": "",
+          "connection": "",
+          "sent": "",
+          "use0": "true",
+          "use1": "true",
+          "use2": "true",
+          "use3": "true",
+          "use4": "true",
+          "use5": "true",
+          "use6": "true",
+          "use7": "true"
+        },
+        "draggable": false,
+        "accepts": []
+      },
+      {
+        "id": "doc",
+        "label": "kind.doc",
+        "icon": "file-text",
+        "tree": "resources",
+        "page": "doc",
+        "newName": "doc.new",
+        "defaults": {
+          "path": "",
+          "text": ""
+        },
+        "draggable": false,
+        "accepts": []
+      }
+    ],
+    "actions": [
+      {
+        "id": "analyze",
+        "label": "action.analyze",
+        "icon": "sparkles",
+        "output": "link",
+        "saveFirst": false,
+        "confirm": null
+      },
+      {
+        "id": "send",
+        "label": "action.send",
+        "icon": "send",
+        "kinds": [
+          "analysis"
+        ],
+        "output": "text",
+        "saveFirst": true,
+        "confirm": null
+      },
+      {
+        "id": "generate",
+        "label": "action.generate",
+        "icon": "wand-sparkles",
+        "output": "text",
+        "saveFirst": false,
+        "confirm": null
+      },
+      {
+        "id": "syncDocs",
+        "label": "action.syncDocs",
+        "icon": "refresh-cw",
+        "output": "text",
+        "saveFirst": false,
+        "confirm": null
+      }
+    ],
+    "resultActions": [
+      {
+        "id": "analyze",
+        "label": "action.analyze",
+        "icon": "sparkles",
+        "outputTypes": [
+          "table",
+          "text"
+        ],
+        "action": "analyze"
+      }
+    ],
+    "pages": [
+      {
+        "id": "analysis",
+        "recompute": true,
+        "usesEnv": true,
+        "actions": [
+          {
+            "id": "send",
+            "role": "run",
+            "action": "send",
+            "label": "action.send",
+            "icon": "send",
+            "primary": true,
+            "shortcut": [
+              "Mod",
+              "Enter"
+            ]
+          },
+          {
+            "id": "save",
+            "role": "save",
+            "label": "action.save",
+            "icon": "save",
+            "shortcut": [
+              "Mod",
+              "S"
+            ]
+          },
+          {
+            "id": "keep",
+            "role": "event",
+            "label": "action.keep",
+            "icon": "bookmark"
+          }
+        ],
+        "resultTabs": [
+          {
+            "id": "result",
+            "type": "output",
+            "label": "tab.answer",
+            "icon": "sparkles"
+          },
+          {
+            "id": "history",
+            "type": "history",
+            "label": "tab.history",
+            "icon": "history"
+          }
+        ]
+      },
+      {
+        "id": "doc"
+      }
+    ],
+    "settings": [
+      {
+        "name": "connection",
+        "label": "setting.connection",
+        "type": "text",
+        "default": "",
+        "hint": "setting.connection.hint"
+      },
+      {
+        "name": "sensitiveColumns",
+        "label": "setting.sensitiveColumns",
+        "type": "text",
+        "default": "",
+        "hint": "setting.sensitiveColumns.hint"
+      },
+      {
+        "name": "maxRows",
+        "label": "setting.maxRows",
+        "type": "number",
+        "default": "20"
+      },
+      {
+        "name": "maxCell",
+        "label": "setting.maxCell",
+        "type": "number",
+        "default": "200"
+      },
+      {
+        "name": "docFolder",
+        "label": "setting.docFolder",
+        "type": "text",
+        "default": "",
+        "hint": "setting.docFolder.hint"
+      },
+      {
+        "name": "docBudget",
+        "label": "setting.docBudget",
+        "type": "number",
+        "default": "3000",
+        "hint": "setting.docBudget.hint"
+      }
+    ],
+    "locales": {
+      "en-US": "locales/en-US.json",
+      "zh-CN": "locales/zh-CN.json",
+      "ja-JP": "locales/ja-JP.json"
+    }
+  }
+}

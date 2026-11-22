@@ -16,6 +16,11 @@
     {
       "id": "org.onedesk.datasource",
       "version": ">=0.1.0, <1.0.0"
+    },
+    {
+      "id": "org.onedesk.ai",
+      "version": ">=0.1.0, <1.0.0",
+      "optional": true
     }
   ],
   "exports": {
@@ -74,6 +79,28 @@
         "output": "link",
         "saveFirst": false,
         "confirm": null
+      },
+      {
+        "id": "aiWrite",
+        "label": "action.aiWrite",
+        "icon": "sparkles",
+        "kinds": [
+          "query"
+        ],
+        "output": "text",
+        "saveFirst": false,
+        "confirm": null
+      },
+      {
+        "id": "aiSend",
+        "label": "action.aiSend",
+        "icon": "send",
+        "kinds": [
+          "query"
+        ],
+        "output": "text",
+        "saveFirst": false,
+        "confirm": null
       }
     ],
     "pages": [
@@ -116,6 +143,32 @@
             "role": "event",
             "label": "action.copy",
             "icon": "copy"
+          },
+          {
+            "id": "aiWrite",
+            "role": "run",
+            "action": "aiWrite",
+            "label": "action.aiWrite",
+            "icon": "sparkles"
+          },
+          {
+            "id": "aiSend",
+            "role": "run",
+            "action": "aiSend",
+            "label": "action.aiSend",
+            "icon": "send"
+          },
+          {
+            "id": "aiAccept",
+            "role": "event",
+            "label": "action.aiAccept",
+            "icon": "check"
+          },
+          {
+            "id": "aiDiscard",
+            "role": "event",
+            "label": "action.aiDiscard",
+            "icon": "x"
           }
         ],
         "resultTabs": [

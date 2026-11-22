@@ -1,0 +1,32 @@
+# 第十八轮 r18-workbench 完成记录
+
+范围：`plugins/org.onedesk.ai`（新）、`plugins/org.onedesk.sql`（“用 AI 写”）。全部对着 `round18-protocol.md` 写，用假 host 测试；内核未合并前不能在真内核上跑。验证命令：`pnpm vitest run plugins`（28 个文件 703 个测试）、`pnpm typecheck`、`pnpm lint`、各 JSON 过 `python3 -m json.tool`。
+
+| # | 结论 | 怎么验证 |
+|---|---|---|
+| K1 分析 | 通过（待内核 X5 实测） | 清单 `contributes.resultActions`（table/text → `analyze`）；`analyze` 用 `host.runs.read(runId)` 取结果，建一个 `analysis` 资源（草稿）并返回 link 打开；测试“analyze reads the run's result…”，确认此时不调服务商 |
+| K3 预览 | 通过 | `analysis` 页：连接/模型/token 估算、可编辑 `body.request`、每个参考文档一个勾选框、完整发送文本；取消勾选和编辑立即改变全文与估算；只有“发送”动作（`send`）才调 `interfaces.call`；策略 off 时红字提示 |
+| K4 脱敏 | 通过 | 敏感列名（password/token/secret/email/phone/api_key… 按词和驼峰，设置里可加）整列 `***`；邮箱→`[email]`；≥9 位数字串→`[number]`；前 20 行；单元格 200 字；行数/字数可在设置里改；请求里写明截了什么、遮了哪些列。测试“masking (K4)” |
+| K2 资料索引 | 通过（搜索待内核 X6 实测） | `syncDocs` 把授权文件夹里的 .md/.txt 同步成 `doc` 资源（`upsertByKey`，只在 files.roots 内）；分析时用语句里 FROM/JOIN 的表名+结果列名调 `resources.search({mode:"any",rank:"relevance",kinds:["org.onedesk.ai:doc"],limit:8})`，按 `docBudget` token 预算取，最后一篇可截断 |
+| K6 保存分析 | 按新需求改了/部分 | “保存分析”事件调 `ctx.host.runs.saveArtifact(runId, {...})`；**协议文档没有定 run_artifacts 的宿主接口名**，这是我的猜测；没有该函数时退回写插件自己的存储（并提示“保存在本插件里”）。需要协调会话定名或补接口 |
+| K7–K9 生成 SQL | 通过 | 导出动作 `generate`（输入 §8；返回 `{text, model, usage, check}`，出错 `{error:{code,message}}`），只带说明、表名/列名、相关文档，**不带数据**；K8 检查 `checkSql`：单条 SELECT/WITH，去掉注释和字符串后看，多条/写入/`INTO` 都拒绝。SQL 插件：“用 AI 写”输入框 + 动作 `aiWrite`/`aiSend`，提议显示在编辑器下面，**接受前不改编辑器**；“接受”事件返回 `changes: {"body.sql": …}`（未保存修改），检查不过不能接受。测试 “sql: write with AI” |
+| K10 设置 | 按新需求改了/部分 | 清单 `settings`：默认连接（文字，编号或名称）、更多敏感列名、行数、字数、文档文件夹、文档预算。环境参数 `ai.connection` 优先于设置；**设置项类型目前没有“资源引用”**，所以默认连接是文字框，待内核支持清单里的 `kinds: {implements}` 后换成选择器 |
+| `ai.policy` | 通过 | 环境参数 `ai.policy`：`off`（analyze/send/generate 都拒绝）、`preview`（默认；`generate` 第一次只返回 `{needsPreview, request, tokens…}`，调用方显示后带 `confirm:true` 再发）、`allow`（`generate` 直接发）。无效值按 preview |
+| 审计 | 通过（部分） | 每次发送记 `{at, kind, connection, model, chars, usage}`，不含内容，最近 200 条存在插件存储；内核对 `interfaces.call` 自己有审计 |
+
+## 对协议的假设（内核合并时核对）
+
+- `ctx.host.runs.read(runId)` 返回 `{output, meta:{plugin,kind,resource?,at}}`；分析动作的 `runId` 取 `input.runId`，没有再取 `ctx.args.runId`。
+- `ctx.host.interfaces.call("onedesk.ai.chat/1","chat",input,{resource})`；`invalid/noImplementation`、`invalid/wrongInterface` 当作“这不是 AI 连接”。
+- 连接资源的 `body.model`（字符串）若有，用来在预览里显示模型；没有就显示“连接里设的默认模型”。
+- 清单新字段：`uses`、`contributes.resultActions`、`depends[].optional`（SQL 对 AI 是可选依赖）。内核当前清单严格校验，所以现在内核上装不上；等 X5/X15 合并。
+- `generate` 作为被 `actions.call` 调用的导出动作，返回值原样交给调用方（不走 `ActionOut` 的严格字段）；我查了 `calls.rs`，现状是这样。
+- 预览页用普通资源（种类 `analysis`）而不是独立页面：已有的“动作返回 link → 打开资源”路径最稳；代价是每点一次“分析”多一个草稿资源，用户可自己删。
+
+## 范围外 / 需要别人决定
+
+1. `run_artifacts` 的宿主接口名与形状（见 K6）。
+2. 清单“资源引用参数”及 `{implements}` 的设置项类型（见 K10）；外壳的灰按钮提示：`ai.policy` 是插件的环境参数，内核不认识，所以现在只能在点击时报错，不能把“分析”按钮提前灰掉。
+3. 文档文件夹授权用文字设置 + 已授权的 `files.roots`，没有“选择文件夹”的专用界面。
+4. 中日文案由我写，没经母语审校。
+5. 事件处理函数里不能 `network.request`（D336）：所以“发送”和“用 AI 写”都是动作（run），不是页面事件。
