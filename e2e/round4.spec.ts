@@ -422,7 +422,7 @@ test("network.allow in the workspace configuration narrows the allowed hosts; th
 test("a secret typed into an unsaved new request page and sent straight away never reaches the database files", async ({ page }) => {
   const LEAK = "leak-check-value-4b2c7d9e";
   await openKernel(page, host);
-  await page.getByRole("button", { name: "New", exact: true }).click();
+  await page.getByRole("button", { name: "New", exact: true }).first().click();
   await page.getByRole("menuitem", { name: "HTTP request" }).click();
   await page.getByRole("textbox", { name: "Address", exact: true }).fill(urlA("/ok"));
   await page.getByLabel("Token (secret)").fill(LEAK);

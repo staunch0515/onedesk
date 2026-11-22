@@ -57,7 +57,7 @@ const resultTable = (page: Page) => page.getByRole("table", { name: "Result" });
 
 test("new sample query from the New menu; typing :name adds a parameter field", async ({ page }) => {
   await openKernel(page, host);
-  await page.getByRole("button", { name: "New", exact: true }).click();
+  await page.getByRole("button", { name: "New", exact: true }).first().click();
   await page.getByRole("menuitem", { name: "Sample query" }).click();
   await expect(editor(page)).toBeVisible();
   await expect(page.getByRole("button", { name: "Save & run" })).toBeVisible();
@@ -287,7 +287,7 @@ test("command palette lists a kernel command and a plugin item and runs them", a
 
 test("running directly on an unsaved new page works", async ({ page }) => {
   await openKernel(page, host);
-  await page.getByRole("button", { name: "New", exact: true }).click();
+  await page.getByRole("button", { name: "New", exact: true }).first().click();
   await page.getByRole("menuitem", { name: "Sample query" }).click();
   await editor(page).fill("select :n_id");
   await page.getByRole("textbox", { name: "n_id", exact: true }).fill("5");
@@ -301,7 +301,7 @@ test("running directly on an unsaved new page works", async ({ page }) => {
 
 test("running on an unsaved new page shows the result table", async ({ page }) => {
   await openKernel(page, host);
-  await page.getByRole("button", { name: "New", exact: true }).click();
+  await page.getByRole("button", { name: "New", exact: true }).first().click();
   await page.getByRole("menuitem", { name: "Sample query" }).click();
   await editor(page).fill("select 1");
   await run(page).click();

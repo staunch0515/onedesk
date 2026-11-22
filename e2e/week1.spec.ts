@@ -66,14 +66,14 @@ for (const theme of ["light", "dark"] as const) {
       await shot(page, theme, "empty");
 
       // new group
-      await page.getByRole("button", { name: "New", exact: true }).click();
+      await page.getByRole("button", { name: "New", exact: true }).first().click();
       await ui.menuItem(page, "New group").click();
       await page.getByRole("textbox", { name: "New name" }).fill(`Work-${theme}`);
       await page.keyboard.press("Enter");
       await expect(ui.node(page, `Work-${theme}`)).toBeVisible();
 
       // new note, type, save
-      await page.getByRole("button", { name: "New", exact: true }).click();
+      await page.getByRole("button", { name: "New", exact: true }).first().click();
       await ui.menuItem(page, "Note").click();
       const editor = ui.editor(page);
       await editor.fill(`hello from ${theme}`);
@@ -135,8 +135,7 @@ for (const theme of ["light", "dark"] as const) {
       await expect(ui.nodeKey(page, granted)).toBeVisible();
       // Expand with the chevron (it has no accessible name): clicking the row itself activates it, and a click that lands
       // before the freshly granted folder's node is fully loaded can open a page tab for it (reported, see round20-tests-done.md).
-      // K1 (clicking a folder row opens no page tab) is NOT asserted here any more: the click opens a tab "docs" in about 1 of 5
-      // runs and the tab stays (a shell defect, written up in round20-tests-done.md), so asserting it made this test a coin flip.
+      // (K1, clicking a folder row opens no page tab, is the separate test.fixme below.)
       await expect(async () => {
         if ((await ui.nodeKey(page, path.join(granted, "sub")).count()) === 0) await ui.nodeKey(page, granted).locator(".od-tree__twist").click();
         await expect(ui.nodeKey(page, path.join(granted, "sub"))).toBeVisible({ timeout: 2_000 });
@@ -179,6 +178,19 @@ for (const theme of ["light", "dark"] as const) {
   });
 }
 
+// DEFECT (shell/files plugin, see round20-tests-done.md): clicking the folder row sometimes (~1 in 5 runs) opens a page tab "docs"
+// that never closes. Re-enable when fixed.
+test.fixme("files: clicking a granted folder row opens no page tab (K1)", async ({ page }) => {
+  await openKernel(page, host);
+  await ui.activity(page, "Files").click();
+  await rpc(page, host, "plugin.grantFolder", { plugin: "org.onedesk.files", path: granted });
+  await expect(ui.nodeKey(page, granted)).toBeVisible();
+  await ui.nodeKey(page, granted).locator(".od-tree__twist").click();
+  await expect(ui.nodeKey(page, path.join(granted, "sub"))).toBeVisible();
+  await ui.nodeKey(page, granted).click();
+  await expect(ui.tab(page, "docs")).toHaveCount(0);
+});
+
 test("files: saving a text file writes it to disk and clears the unsaved mark", async ({ page }) => {
   await openKernel(page, host);
   await ui.activity(page, "Files").click();
@@ -202,7 +214,7 @@ test("kill the worker: the UI recovers and data is intact", async ({ page }) => 
   execFileSync("pkill", ["-9", "-f", `onedesk-worker.*${dataDir}`]); // throws when no worker matched
   // a connection-lost banner may flash; the tree must come back on its own
   await expect(ui.node(page, "Work-light")).toBeVisible({ timeout: 30_000 });
-  await page.getByRole("button", { name: "New", exact: true }).click();
+  await page.getByRole("button", { name: "New", exact: true }).first().click();
   await ui.menuItem(page, "New group").click();
   await page.getByRole("textbox", { name: "New name" }).fill("After-kill");
   await page.keyboard.press("Enter");

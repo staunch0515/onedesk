@@ -40,3 +40,10 @@
 
 - 端口：Playwright vite 用 1441；devhost 端口随机。
 - 磁盘：每次运行后清理 `test-results`，`git checkout -- docs/screenshots`。外置盘没用（稳定性按本机盘判定）。
+
+## 审查后补充
+
+- `e2e/parity/**` 不再进 `pnpm e2e`（`playwright.config.ts` 的 `testIgnore`，除非 `ONEDESK_E2E_PARITY=1`）；独立命令 `pnpm e2e:parity`。`support.ts` 的临时目录改为 `ONEDESK_PARITY_TMP`（默认短路径 `/tmp/od-parity`，套接字路径有长度限制）。
+- week1 的 K1 断言恢复为 `test.fixme("files: clicking a granted folder row opens no page tab (K1)")`，不再靠删断言变绿。
+- 缺陷记录（外壳/files 插件）：复现——启动 devhost，授权一个含子目录的文件夹给 files 插件，在 Files 树里展开它，点击该文件夹行（不是展开箭头）；约 1/5 次会开出标题为文件夹名（如 “docs”）的页签且不会自己关闭，预期是文件夹没有页面。疑似归属：files 插件给文件夹/根节点都带了 `target`（`plugins/org.onedesk.files/main.js` 约 299、355 行），外壳 `side-panel.tsx` 的 `activate` 对有 `target` 的节点直接 `actions.open`，页面解析为“无页面”后没有收回页签的路径偶发不触发。
+- 合并 r20 后外壳多出第二个 “New” 按钮（欢迎页），`round3/round4/workbench/week1` 里 `getByRole("button",{name:"New",exact:true}).click()` 触发严格模式冲突，已改 `.first()`。
