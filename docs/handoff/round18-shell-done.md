@@ -31,3 +31,9 @@
 - 禁用原因码改为 `pluginDisabled`/`readonly`/`noExport`（新键 `result.action.disabled.readonly/pluginDisabled`，去掉 `policy`）。
 - mock：`result.actions` 返回 `org.onedesk.ai:analyze`；`run.start` 带 `resultRun` 时检查该运行已成功，`org.onedesk.ai:analyze` 与 `generate` 一样流出 Markdown 部分输出。
 - 仍待：内核生成类型到位后换 `ResultAction`/`RunStartParams`。
+
+## 合并 claude/onedesk-r18 后
+- `ResultAction` 换成生成类型（`protocol/types.ts` 只再导出）；`RunStartParams.resultRun` 与外壳 `RunRequest.resultRun` 一致；mock 形状与生成类型相符（typecheck 通过）。
+- `@implements:…` 的 ref 字段：内核在页面里已把它展开成 `options`，外壳只按 `options` 画下拉、从不读 `kinds`，无需改动；补了测试。
+- 新内核原因码文字（英语）：`notUsed`、`notInResultAction`、`noImplementation`、`wrongInterface`、`notResultAction`、`badResultRun`（`kernel-texts.test` 要求）。
+- 新键中日译文待 tests 会话补：`result.elapsedFor`、`result.action.disabled.*`、`kernel.error.reason.*`（上面 6 条）。

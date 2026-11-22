@@ -126,3 +126,12 @@ describe("the demo client streams partial text and ends with the full text", () 
     }
   });
 });
+
+describe("a ref field whose kinds say @implements:… (X15)", () => {
+  it("is drawn from the options the kernel filled in; the shell never reads kinds", async () => {
+    const { FieldControl } = await import("../pages/view-page");
+    const field = { name: "conn", label: "Connection", kind: "ref", kinds: ["@implements:onedesk.ai.chat/1"], options: [{ value: "c1", label: "Work key" }] } as never;
+    renderInShell(base(), <FieldControl field={field} value="c1" onChange={() => undefined} id="f" size="md" readOnly={false} />);
+    expect(screen.getByRole("combobox", { name: "Connection" }).textContent).toContain("Work key");
+  });
+});

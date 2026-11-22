@@ -88,6 +88,7 @@ export type {
   PageKind,
   PluginGrants,
   ProtocolError,
+  ResultAction,
   ResultTabDecl,
   ToastTone,
   Tone,
@@ -205,10 +206,3 @@ export interface RunRequest {
  * `config` (workspace configuration changed), `audit`, `connection` (re-subscribe and refresh).
  */
 export type EventHandler = (topic: string, payload?: unknown) => void;
-
-/**
- * Round 18 (X5, round18-protocol §1): a button on a run's result, offered by a plugin (`contributes.resultActions`).
- * `label` is already in the plugin's language; `action` is the full action name for `run.start`; `disabledReason` is a code (`pluginDisabled`, `readonly`, `noExport`), never text.
- * Written from the protocol document; replace with the generated type once the kernel provides it.
- */
-export type ResultAction = { plugin: string; id: string; action: string; label: string; icon?: string; enabled: boolean; disabledReason?: string };
