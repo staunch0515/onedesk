@@ -71,5 +71,11 @@
   "ai.openReview": "Open the request to review and send it",
   "ai.notSentYet": "Not sent yet. Open the request, read it and press Send there; then get the answer here.",
   "ai.check.sideEffects": "Not acceptable: it calls a function with side effects (PostgreSQL only is checked).",
-  "ai.preview": "Not sent yet. Connection: {connection} · Model: {model} · about {tokens} tokens. Nothing leaves until you press Send in the AI workbench. No data is included."
+  "ai.preview": "Not sent yet. Connection: {connection} · Model: {model} · about {tokens} tokens. Nothing leaves until you press Send in the AI workbench. No data is included.",
+  "action.aiParams": "Parameters for AI clients",
+  "ai.runDesc": "Runs the saved SQL statement read-only on its data source and returns the rows.",
+  "ai.format.date": "Format YYYY-MM-DD.",
+  "ai.format.datetime": "Format YYYY-MM-DDTHH:MM (UTC).",
+  "ai.format.time": "Format HH:MM or HH:MM:SS.",
+  "ai.format.max": "At most {max} characters."
 }

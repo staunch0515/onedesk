@@ -315,6 +315,119 @@ export async function sentOf(ctx, runId) {
   }
 }
 
+/* ---------------------------------------------------------------- for AI clients (MCP, round 19) */
+
+export const AI_SQL_MAX = 20000;
+export const AI_TIMEOUT_MS = 15000;
+export const AI_DEFAULT_ROWS = 200;
+const IDENT_CHAR = /[A-Za-z0-9_$\u0080-\uffff]/;
+const DOLLAR_TAG = /^\$([A-Za-z_\u0080-\uffff][A-Za-z0-9_\u0080-\uffff]*)?\$/;
+
+// Reads the text the way PostgreSQL does (strings, quoted names, dollar quotes, nested comments) and tells how
+// many statements it holds, whether it has a psql backslash command, and its first word. The data source plugin
+// reads it the same way (its own check runs again there); this is the free query's stricter front gate.
+export function scanSql(sql) {
+  const s = String(sql);
+  let i = 0;
+  let statements = 0;
+  let open = false;
+  let backslash = false;
+  let first = "";
+  const begin = () => {
+    if (!open) {
+      open = true;
+      statements++;
+    }
+  };
+  while (i < s.length) {
+    const c = s[i];
+    const n = s[i + 1];
+    if (c === "-" && n === "-") {
+      while (i < s.length && s[i] !== "\n") i++;
+    } else if (c === "/" && n === "*") {
+      let depth = 1;
+      i += 2;
+      while (i < s.length && depth > 0) {
+        if (s[i] === "/" && s[i + 1] === "*") (depth++, (i += 2));
+        else if (s[i] === "*" && s[i + 1] === "/") (depth--, (i += 2));
+        else i++;
+      }
+    } else if (c === "'") {
+      begin();
+      const escapes = i > 0 && /[eE]/.test(s[i - 1]) && !(i > 1 && IDENT_CHAR.test(s[i - 2]));
+      i++;
+      while (i < s.length) {
+        if (escapes && s[i] === "\\") i += 2;
+        else if (s[i] === "'") {
+          if (s[i + 1] === "'") i += 2;
+          else break;
+        } else i++;
+      }
+      i++;
+    } else if (c === '"') {
+      begin();
+      i++;
+      while (i < s.length) {
+        if (s[i] === '"') {
+          if (s[i + 1] === '"') i += 2;
+          else break;
+        } else i++;
+      }
+      i++;
+    } else if (c === "$" && !(i > 0 && IDENT_CHAR.test(s[i - 1])) && DOLLAR_TAG.test(s.slice(i, i + 140))) {
+      begin();
+      const tag = DOLLAR_TAG.exec(s.slice(i, i + 140))[0];
+      const end = s.indexOf(tag, i + tag.length);
+      i = end < 0 ? s.length : end + tag.length;
+    } else if (c === ";") {
+      open = false;
+      i++;
+    } else if (c === "\\") {
+      backslash = true;
+      i++;
+    } else if (/\s/.test(c)) {
+      i++;
+    } else {
+      begin();
+      if (statements === 1 && first === "" && c !== "(") {
+        const m = /^[A-Za-z]+/.exec(s.slice(i, i + 32));
+        first = m ? m[0].toUpperCase() : "?";
+      }
+      i++;
+    }
+  }
+  return { statements, backslash, first };
+}
+
+// null when the free query may run, else the reason key: one statement, starting with SELECT or WITH (a
+// leading parenthesis is skipped), no backslash command. Anything that writes is stopped again by the data
+// source's read-only transaction.
+export function freeQueryProblem(sql) {
+  const text = String(sql || "");
+  if (!text.trim()) return "empty";
+  if (text.length > AI_SQL_MAX) return "tooLong";
+  const r = scanSql(text);
+  if (r.backslash) return "backslash";
+  if (r.statements !== 1) return "severalStatements";
+  if (r.first !== "SELECT" && r.first !== "WITH") return "notSelect";
+  return null;
+}
+
+// Tables and columns of the mapping, one row per column (a table without columns: one row).
+export function tableRows(mapping, filter) {
+  const wanted = String(filter || "").trim().toLowerCase();
+  const rows = [];
+  for (const name of Object.keys(mapping.entities).sort()) {
+    const e = mapping.entities[name];
+    if (wanted && !name.toLowerCase().includes(wanted) && !String(e.table).toLowerCase().includes(wanted)) continue;
+    const kind = e.versioned ? "versioned" : "plain";
+    const fields = Object.keys(e.columns);
+    if (fields.length === 0) rows.push([name, e.table, "", "", e.description || "", kind]);
+    for (const f of fields) rows.push([name, e.table, f, e.columns[f].column, e.columns[f].description || e.description || "", kind]);
+  }
+  return rows;
+}
+
 /* ---------------------------------------------------------------- host (inside runs) */
 
 export async function readMapping(ctx) {
@@ -558,6 +671,29 @@ export default {
         if (!raw) return [{ type: "text", id: "none", text: tr(ctx, "sent.none"), tone: "muted" }];
         return [{ type: "text", id: "sent", text: raw, mono: true, language: "sql" }];
       },
+    });
+
+    // aiTools `list_tables` (read-only): the tables of the mapping with their columns. Reads the mapping only; no data source.
+    host.actions.handle("aiListTables", async (ctx, input) => {
+      const mapping = await readMapping(ctx);
+      const rows = tableRows(mapping, input && input.filter);
+      const columns = ["entity", "table", "field", "column", "description", "kind"].map((k) => ({ key: k, label: tr(ctx, `ai.col.${k}`) }));
+      return { output: { type: "table", columns, rows, total: rows.length }, summary: { message: tr(ctx, "ai.tablesListed", { count: rows.length }) } };
+    });
+
+    // aiTools `run_sql` (free query, off until the workspace allows it; the kernel checks that): one SELECT/WITH,
+    // run by the data source in a read-only transaction with a timeout and a row limit.
+    host.actions.handle("aiRunSql", async (ctx, input) => {
+      const sql = String((input && input.sql) || "");
+      const problem = freeQueryProblem(sql);
+      if (problem) throw new Error(tr(ctx, `ai.sql.${problem}`));
+      const source = await sourceId(ctx);
+      if (!source) throw new Error(tr(ctx, "error.noSource"));
+      const limit = Number.isInteger(input && input.limit) && input.limit > 0 ? Math.min(input.limit, 2000) : AI_DEFAULT_ROWS;
+      await rememberSent(ctx, ctx.runId, sql);
+      ctx.progress(undefined, tr(ctx, "step.running"));
+      const res = await query(ctx, sql, source, { inline: true, maxRows: limit, timeoutMs: AI_TIMEOUT_MS });
+      return { output: res.output, summary: res.summary };
     });
 
     for (const action of Object.keys(QUERIES)) {

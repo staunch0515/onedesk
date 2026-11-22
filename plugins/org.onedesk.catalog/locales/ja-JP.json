@@ -80,5 +80,11 @@
   "action.queriesHere": "このデータソースを使うカタログのクエリ",
   "col.id": "id",
   "col.name": "名前",
-  "message.queriesHere": "{count} 件のカタログのクエリが {source} を使います"
+  "message.queriesHere": "{count} 件のカタログのクエリが {source} を使います",
+  "action.aiParams": "AI クライアント用のパラメーター",
+  "ai.runDesc": "このカタログクエリをデータソース上で読み取り専用で実行し、行を返します。",
+  "ai.format.date": "形式 YYYY-MM-DD。",
+  "ai.format.datetime": "形式 YYYY-MM-DDTHH:MM（UTC）。",
+  "ai.format.time": "形式 HH:MM または HH:MM:SS。",
+  "ai.format.max": "最大 {max} 文字。"
 }

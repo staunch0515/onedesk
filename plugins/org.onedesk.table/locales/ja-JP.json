@@ -55,5 +55,21 @@
   "warn.sourceFailed": "データベースを読めなかったため、欠落の表示はありません：{error}",
   "error.snapshotTooLarge": "マッピングが大きすぎて保存できません",
   "action.tablesHere": "このデータベースのテーブルを読む",
-  "error.noRows": "データソースが行を返しませんでした（結果を直接返す機能が必要です）"
+  "error.noRows": "データソースが行を返しませんでした（結果を直接返す機能が必要です）",
+  "action.aiListTables": "テーブル一覧（AI）",
+  "action.aiRunSql": "自由クエリ（AI）",
+  "ai.tool.listTables": "マッピング済みのテーブルとその列（エンティティ、テーブル、フィールド、列、説明）を一覧します。",
+  "ai.tool.runSql": "AI 用の環境のデータベースで、SELECT または WITH の 1 文を読み取り専用で実行します。テーブル名と列名は list_tables のものを使ってください。",
+  "ai.tablesListed": "{count} 列を一覧しました",
+  "ai.col.entity": "エンティティ",
+  "ai.col.table": "テーブル",
+  "ai.col.field": "フィールド",
+  "ai.col.column": "列",
+  "ai.col.description": "説明",
+  "ai.col.kind": "種類",
+  "ai.sql.empty": "文が空です。",
+  "ai.sql.tooLong": "文が長すぎます。",
+  "ai.sql.backslash": "バックスラッシュコマンドは使えません。",
+  "ai.sql.severalStatements": "1 文のみ使えます。",
+  "ai.sql.notSelect": "SELECT または WITH の文のみ使えます。"
 }

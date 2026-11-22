@@ -127,7 +127,7 @@ describe("sql: page", () => {
   it("registers what the manifest declares", () => {
     const r = registry(plugin);
     expect(Object.keys(r.pages)).toEqual(["editor"]);
-    expect(Object.keys(r.actions).sort()).toEqual(["aiFetch", "aiWrite", "create", "newHere", "run"]);
+    expect(Object.keys(r.actions).sort()).toEqual(["aiFetch", "aiParams", "aiWrite", "create", "newHere", "run"]);
   });
 
   it("render: data source picker (empty = environment/default), then the code editor; no strip without parameters", async () => {
@@ -333,7 +333,7 @@ describe("sql: manifest", () => {
     expect(m.uses).toEqual(["onedesk.ai.generate/1"]);
   });
   it("every action it handles is declared, and the run page ends with the sent SQL tab", () => {
-    expect(m.contributes.actions.map((a: any) => a.id).sort()).toEqual(["aiFetch", "aiWrite", "create", "newHere", "run"]);
+    expect(m.contributes.actions.map((a: any) => a.id).sort()).toEqual(["aiFetch", "aiParams", "aiWrite", "create", "newHere", "run"]);
     expect(m.contributes.pages[0].resultTabs.map((x: any) => x.id)).toEqual(["result", "sent", "history"]);
   });
 });
@@ -451,5 +451,65 @@ describe("sql: write with AI (K7–K9)", () => {
     const out = await pages.editor.render(aiCtx(host));
     expect(out.view.find((n: any) => n.id === "aiNote").text).toContain("side effects");
     expect((await pages.editor.onEvent(aiCtx(host), "aiAccept")).changes).toBeUndefined();
+  });
+});
+
+describe("sql: for AI clients (round 19)", () => {
+  const manifest = JSON.parse(readFileSync(new URL("./manifest.json", import.meta.url), "utf8"));
+  const act = (id: string) => manifest.contributes.actions.find((a: any) => a.id === id);
+  const SQL = `-- @param n type=number required -- how many
+-- @param kind values=a|b
+-- @param day type=date
+SELECT :n, :kind, :day, :free`;
+
+  it("only the run action is AI-usable, read-only, and its describe action is not itself AI-usable or bound to a confirm", () => {
+    for (const a of manifest.contributes.actions) {
+      if (a.id === "run") expect(a.ai).toEqual({ readOnly: true, description: "ai.runDesc", describe: "aiParams" });
+      else expect(a.ai, a.id).toBeUndefined(); // create, newHere, aiWrite and aiFetch write or reach a model
+    }
+    expect(act("run").confirm).toBeNull();
+    expect(act("aiParams")).toMatchObject({ output: "none", confirm: null });
+    expect(act("aiParams").kinds).toBeUndefined();
+    expect(EN["ai.runDesc"] && ZH["ai.runDesc"] && JA["ai.runDesc"]).toBeTruthy();
+  });
+
+  it("describes the parameters: name, type, required, description, choices", async () => {
+    const res = await registry(plugin).actions.aiParams(ctxOf(fakeHost(), { resource: { id: "r1", body: { sql: SQL } } }), {});
+    expect(res.output).toEqual({ type: "none" });
+    expect(res.params).toEqual([
+      { name: "n", type: "number", required: true, description: "how many" },
+      { name: "kind", type: "enum", required: false, options: ["a", "b"] },
+      { name: "day", type: "text", required: false, description: "Format YYYY-MM-DD." },
+      { name: "free", type: "text", required: false },
+    ]);
+    const zh = await registry(plugin).actions.aiParams(ctxOf(fakeHost(), { locale: "zh-CN", resource: { id: "r1", body: { sql: SQL } } }), {});
+    expect(zh.params[2].description).toBe("格式 YYYY-MM-DD。");
+    const none = await registry(plugin).actions.aiParams(ctxOf(fakeHost(), { resource: { id: "r1", body: {} } }), {});
+    expect(none.params).toEqual([]);
+  });
+
+  it("an AI run (empty input) runs the saved text on the saved data source, through the read-only query action", async () => {
+    const host = fakeHost();
+    await registry(plugin).actions.run(ctxOf(host, { runId: "x1", params: { n: "3", kind: "a", day: "2026-01-02" }, resource: { id: "r1", body: { sql: SQL, source: "s2" } } }), {});
+    const [id, input, target] = host.actions.call.mock.calls[0];
+    expect(id).toBe("org.onedesk.datasource:query");
+    expect(input.sql).toContain("SELECT '3', 'a', '2026-01-02', NULL");
+    expect(target).toEqual({ resource: "s2" });
+  });
+
+  it("an AI run still checks values against the declarations", async () => {
+    const host = fakeHost();
+    const ctx = ctxOf(host, { runId: "x2", params: { n: "abc" }, resource: { id: "r1", body: { sql: SQL } } });
+    await expect(registry(plugin).actions.run(ctx, {})).rejects.toThrow();
+    const missing = ctxOf(host, { runId: "x3", params: {}, resource: { id: "r1", body: { sql: SQL } } });
+    await expect(registry(plugin).actions.run(missing, {})).rejects.toThrow();
+    expect(host.actions.call).not.toHaveBeenCalled();
+  });
+
+  it("has the new texts in every language", () => {
+    for (const k of Object.keys(EN).filter((k) => k.startsWith("ai.") || k === "action.aiParams")) {
+      expect(ZH[k], k).toBeTruthy();
+      expect(JA[k], k).toBeTruthy();
+    }
   });
 });
