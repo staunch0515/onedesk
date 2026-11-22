@@ -584,3 +584,4 @@
 - **D438** 流式部分输出不新增协议字段（第十八轮）：服务商在 `network.request({ stream: true, onChunk })` 里解析 SSE/NDJSON，每次用已有的 `runs.partial({ type: "text", text: 目前全文 })` 推全文；通过 `interfaces.call` 调用时，被调用方的部分输出算作使用方这次运行的部分输出。
 - **D439** 结果区动作的数据访问（第十八轮）：目标插件只在“被点击的那一次动作”期间才能用 `runs.read(runId)` 读那一个运行的结果；平时读不到别的插件的运行结果（`denied/notInResultAction`）。
 - **D440** 第十八轮测试一律不连真的 Anthropic 或 Ollama：用本机假 SSE/NDJSON 服务（`plugins/_testing` 夹具），连接资源写明 `127.0.0.1:<端口>`（D308）；服务商插件的地址在测试里可替换（连接资源的 `baseUrl` 字段，Anthropic 默认 `https://api.anthropic.com`，测试里指向假服务）。验收也如此，不花用户的钱。
+- **D441** 动作返回值加可选字段 `data`（第十八轮，2026-11-22，协调会话按规则 10 定）：任意 JSON，≤1MB。作为运行的动作时内核只检查和保存 `output`，忽略 `data`；经 `interfaces.call`/`actions.call` 被调用时，`data` 原样交给调用方。AI 服务商的 `chat`/`models`/`test` 与工作台的 `generate` 用它回结构化结果，不把 JSON 塞进文字输出里。
