@@ -81,10 +81,9 @@
   "message.noRun": "The run this analysis came from is not known.",
   "kind.settings": "AI workbench settings",
   "settings.new": "AI workbench settings",
-  "field.defaultConnection": "Default AI connection",
-  "field.defaultConnection.hint": "Used when neither the page nor the environment's ai.connection names one.",
   "error.connectionMissingSettings": "The AI connection “{connection}” (from the AI workbench settings) was not found.",
   "error.connectionMissingPage": "The AI connection “{connection}” was not found.",
-  "settings.note": "Other AI features (like “Write with AI” in SQL) use this default connection. Keep one of these.",
-  "connection.none": "None"
+  "settings.note": "Nothing to set here. This item only lets other plugins (like SQL's “Write with AI”) call the AI workbench. Choose the default connection in the plugin settings.",
+  "setting.connection": "Default AI connection",
+  "setting.connection.hint": "Used when neither the page nor the environment's ai.connection names one. Any connection of a provider plugin."
 }

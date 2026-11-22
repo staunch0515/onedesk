@@ -38,3 +38,8 @@
 - `interfaces.call` 必须带一个实现方类型的资源，所以工作台加了资源类型 `settings`（“AI 工作台设置”，页面里用 `ref` 字段 `@implements:onedesk.ai.chat/1` 选默认连接，存在 `body.connection`）。SQL 用 `interfaces.list` 取实现方的 kind，再 `resources.search({kinds:[kind],limit:1})` 找到设置资源，带着它调 `generate`。
 - 没有实现方 → SQL 页面不显示“用 AI 写”输入框，改显示一行说明；没有设置资源 → 点“用 AI 写”时提示先新建“AI 工作台设置”。**用户需要手动新建一份**（新建菜单里有）；若希望自动建，需要内核/协调会话定（例如激活时创建）。
 - 默认连接读取顺序：页面所选 → `params.get("ai.connection")` → `params.config("ai.connection.default")` → 设置资源里选的。选错类型时 `interfaces.call` 给 `wrongInterface`，界面报“不是 AI 连接”。
+
+## 默认连接的最终做法（设置项）
+
+- 清单 `contributes.settings` 有 `connection`：`type:"resource"`、`kinds:["@implements:onedesk.ai.chat/1"]`、`default:""`（内核 §9.8）。读取顺序：页面所选 → `params.get("ai.connection")` → `params.config("ai.connection")` → `settings.get("connection")`。
+- `settings` 资源类型保留，只作为 `interfaces.call(generate)` 的调用锚点：工作区打开时自动建一份（用户不需要操作），页面只有一行说明，不在“新建”菜单里，里面不存任何东西。内核若以后允许不带资源的接口调用，可以删掉它。

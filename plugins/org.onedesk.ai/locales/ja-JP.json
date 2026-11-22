@@ -81,10 +81,9 @@
   "message.noRun": "この分析の元になった実行が不明です。",
   "kind.settings": "AI ワークベンチ設定",
   "settings.new": "AI ワークベンチ設定",
-  "field.defaultConnection": "既定の AI 接続",
-  "field.defaultConnection.hint": "ページにも環境の ai.connection にも指定がないときに使います。",
   "error.connectionMissingSettings": "AI 接続「{connection}」（AI ワークベンチ設定から）が見つかりません。",
   "error.connectionMissingPage": "AI 接続「{connection}」が見つかりません。",
-  "settings.note": "他の AI 機能（SQL の「AI で書く」など）はこの既定の接続を使います。1 つだけ用意してください。",
-  "connection.none": "なし"
+  "settings.note": "ここで設定することはありません。この項目は、他のプラグイン（SQL の「AI で書く」など）が AI ワークベンチを呼び出すためのものです。既定の接続はプラグイン設定で選んでください。",
+  "setting.connection": "既定の AI 接続",
+  "setting.connection.hint": "ページにも環境の ai.connection にも指定がないときに使います。任意のプロバイダープラグインの接続を選べます。"
 }
