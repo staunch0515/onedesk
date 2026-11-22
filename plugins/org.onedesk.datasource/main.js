@@ -625,8 +625,10 @@ export default {
             id: "backup",
             layout: "strip",
             fields: [
-              bf("backupName", { placeholder: suggestDbName(database), maxLength: 63, hint: tr(ctx, "field.backupName.hint"), ...(ctx.run ? {} : { required: true }) }),
-              bf("backupContainer", { placeholder: ctx.t("field.backupContainer.placeholder"), ...(ctx.run ? {} : { required: true }) }),
+              // Not `required`: the shell checks required fields for every run on the page (Test connection too);
+              // backupToLocal checks these itself.
+              bf("backupName", { placeholder: suggestDbName(database), maxLength: 63, hint: tr(ctx, "field.backupName.hint") }),
+              bf("backupContainer", { placeholder: ctx.t("field.backupContainer.placeholder") }),
               bf("backupPort", { placeholder: "5432", maxLength: 5 }),
               bf("backupUser", { placeholder: "postgres" }),
             ],

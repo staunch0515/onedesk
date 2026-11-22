@@ -350,7 +350,7 @@ test("shell: a note's reading view renders Markdown safely; [[ref]] opens the ot
   const editor = page.getByRole("textbox", { name: "Content", exact: true });
   await expect(editor).toBeVisible({ timeout: 15_000 });
   await editor.fill(MD + "\n\nUNSAVED TAIL");
-  await expect(page.getByText("Unsaved").first()).toBeVisible();
+  await expect(page.getByText("Unsaved", { exact: true }).first()).toBeVisible();
 
   await pageAction(page, /Read \/ Edit/);
   await expect(page.getByRole("heading", { name: "Heading One" })).toBeVisible({ timeout: 15_000 });
@@ -380,7 +380,7 @@ test("shell: a note's reading view renders Markdown safely; [[ref]] opens the ot
   await expect(editor).toBeVisible();
   expect(await editor.inputValue()).toContain("UNSAVED TAIL");
   await page.keyboard.press("Meta+s");
-  await expect(page.getByText("Unsaved")).toHaveCount(0, { timeout: 15_000 });
+  await expect(page.getByText("Unsaved", { exact: true })).toHaveCount(0, { timeout: 15_000 });
   await pageAction(page, /Read \/ Edit/);
   const ref = page.getByRole("link", { name: "Other note" }).or(page.getByRole("button", { name: "Other note" }));
   await expect(ref.first()).toBeVisible({ timeout: 15_000 });
