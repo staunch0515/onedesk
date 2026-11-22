@@ -47,6 +47,7 @@
 
 - D441 `data`：`runs.rs` 的 `ActionOut` 接受并忽略；`calls.rs` 的 `invoke_callee`（`interfaces.call`/`actions.call` 共用）原样交给调用方，>1MB 拒绝。测试 `data_goes_to_the_caller_and_a_run_ignores_it`。
 - D442 `run_artifacts`：迁移 `0013_run_artifacts.sql`（触发器随运行删除；`IF NOT EXISTS`，有升级测试 `migration_0013_…`）；`pipeline.rs` 新命令 `ArtifactSave`/`ArtifactDelete`（事务里写、审计）；`round18.rs` `host_artifacts`；沙箱 `runs.saveArtifact/listArtifacts/getArtifact/deleteArtifact`。测试 `artifacts_are_kept_for_the_clicked_run_and_only_by_their_owner`（点击/页面事件/非点击、只能操作自己的、大小、非法参数、审计无内容、只读）、`artifacts_go_with_their_run_however_it_goes`（删除保留的运行、200 次清理）。
+- 设置项 `type: "resource"`（`manifest.rs` `SettingType::Resource`、`runs.rs` `set_setting`/`plugin_detail`；测试 `a_resource_setting_names_a_connection_of_an_implementer`、清单检查在 manifests 测试里）。
 - 回答协调会话的两个问题见 `round18-protocol.md` §9.8（`depends.optional` 没有；环境 ref 参数没有清单声明，建议的做法）。
 - 一处改动现有测试：`migration_0012_…` 的最后一句版本号断言改为 `MIGRATIONS.len()`（新增迁移后不再是 12）。
 

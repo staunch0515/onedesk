@@ -436,7 +436,8 @@ fn user_manifest(result_actions: Value) -> Value {
                         a("analyze", "text"), a("plain", "text"), a("search", "text"), a("ops", "text"), a("viacall", "text")],
             "commands": [{ "id": "probe", "label": "p" }],
             "locales": { "en-US": "locales/en-US.json", "ja-JP": "locales/ja-JP.json" },
-            "resultActions": result_actions
+            "resultActions": result_actions,
+            "settings": [{ "name": "conn", "label": "ra.analyze", "type": "resource", "default": "", "kinds": ["@implements:t.chat/1"] }]
         }
     })
 }
@@ -517,8 +518,8 @@ async fn manifests_with_bad_result_actions_or_interfaces_are_rejected() {
             "exports": { "actions": ["chat"] }
         });
         for (k, v) in extra.as_object().unwrap().iter().chain(impl_.as_object().unwrap()) {
-            if k == "resultActions" {
-                e["contributes"]["resultActions"] = v.clone();
+            if k == "resultActions" || k == "settings" {
+                e["contributes"][k] = v.clone();
             } else {
                 e[k] = v.clone();
             }
@@ -562,6 +563,27 @@ async fn manifests_with_bad_result_actions_or_interfaces_are_rejected() {
     ] {
         assert_eq!(im(bad.clone()), "badImplements", "{bad}");
     }
+    // `resource` settings: kinds required, none otherwise; `@implements:` only of an interface it uses.
+    let st = |v: Value, uses: Value| reason(json!({ "settings": [v] }), json!({ "uses": uses }));
+    let mk = |extra: Value| {
+        let mut o = json!({ "name": "c", "label": "x", "type": "resource", "default": "" });
+        for (k, v) in extra.as_object().unwrap() {
+            o[k] = v.clone();
+        }
+        o
+    };
+    assert_eq!(st(mk(json!({ "kinds": ["@implements:t.chat/1", "conn", "t.p:k"] })), json!(["t.chat/1"])), "ok");
+    for bad in [
+        json!({}),
+        json!({ "kinds": [] }),
+        json!({ "kinds": ["@implements:t.chat/1"] }),
+        json!({ "kinds": ["nope"] }),
+        json!({ "kinds": ["conn"], "default": "x" }),
+        json!({ "kinds": ["conn"], "options": [{ "value": "a", "label": "a" }] }),
+    ] {
+        assert_eq!(st(mk(bad.clone()), json!([])), "badSetting", "{bad}");
+    }
+    assert_eq!(st(json!({ "name": "c", "label": "x", "type": "text", "default": "", "kinds": ["conn"] }), json!([])), "badSetting");
     let us = |v: Value| reason(json!({}), json!({ "uses": v }));
     assert_eq!(us(json!(["t.chat/1", "t.other/2"])), "ok");
     for bad in [json!("t.chat/1"), json!(["t.chat"]), json!(["t.chat/1", "t.chat/1"]), json!([1])] {
@@ -956,4 +978,25 @@ async fn artifacts_go_with_their_run_however_it_goes() {
     }
     assert!(c.call("run.get", json!({ "id": first["id"] })).await.map(|v| v.is_null()).unwrap_or(true), "the first run is gone");
     assert_eq!(artifact_count(&env), 0, "and its artifact with it");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_resource_setting_names_a_connection_of_an_implementer() {
+    let (_env, c) = world18(analyze_decl()).await;
+    let conn = make(&c, "t.prov:conn", "c1", None).await;
+    let plain = make(&c, "t.prov:plain", "p1", None).await;
+    let detail = c.ok("plugin.get", json!({ "plugin": "t.user" })).await;
+    let s = &detail["settings"][0];
+    assert_eq!((s["kind"].as_str(), s["value"].as_str()), (Some("ref"), Some("")), "{s}");
+    assert_eq!(s["options"], json!([{ "value": conn, "label": "c1" }]), "only the implementers' connections");
+    let set = |v: &str| c.call("plugin.setSetting", json!({ "plugin": "t.user", "name": "conn", "value": v }));
+    set(&conn).await.unwrap();
+    let r = c.probe("t.user", "settings.get", json!(["conn"])).await;
+    assert_eq!(r["ok"], conn.as_str(), "{r}");
+    for bad in [plain.as_str(), "nope"] {
+        let e = set(bad).await.unwrap_err();
+        assert_eq!(code(&e), "invalid/badValue", "{bad}");
+    }
+    set("").await.unwrap();
+    assert_eq!(c.probe("t.user", "settings.get", json!(["conn"])).await["ok"], "");
 }
