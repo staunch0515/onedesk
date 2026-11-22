@@ -30,3 +30,6 @@
 
 ## 范围外
 - 无内核改动需求。`Terminated` 的 shell 提示会在 smoke 输出里出现一行（无害）。
+
+## 补：欢迎页间距（协调会话转 r20-polish 的发现）
+欢迎页四个“新建 …”链接每项一个 `link` 节点，外壳把每个 `link` 画在 `Pane pad="md"` 里，所以纵向间距大。改为 `pad="sm"`（`src/workbench/parts/view-nodes.tsx`，一行，只用设计 token）。注意这是 `link` 节点的通用画法，ai/datasource/sql/link 插件里的 link 列表也同样变紧。未重新截图确认；`.app` 需重打才含此改动。

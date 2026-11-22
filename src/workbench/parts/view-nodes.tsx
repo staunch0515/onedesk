@@ -111,7 +111,7 @@ export function ViewNodes({ nodes, onRowAction }: { nodes: ViewNode[]; onRowActi
           }
           case "link":
             return (
-              <Pane key={node.id} pad="md" align="start">
+              <Pane key={node.id} pad="sm" align="start">
                 <Button variant="ghost" icon="arrow-up-right" onClick={() => actions.open(node.target)}>
                   {tx(node.label)}
                 </Button>
