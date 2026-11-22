@@ -399,9 +399,86 @@ export function scanSql(sql) {
   return { statements, backslash, first };
 }
 
-// null when the free query may run, else the reason key: one statement, starting with SELECT or WITH (a
-// leading parenthesis is skipped), no backslash command. Anything that writes is stopped again by the data
-// source's read-only transaction.
+// Names (as words of the text, whatever schema prefix they carry) a free query may not use: functions that act on
+// the server or the file system, run text as SQL, or lock things. The read-only transaction stops writes; these are
+// what it does not stop. Compared in lower case, exact, by prefix, or by a part where a family is meant.
+const FORBIDDEN_WORDS = new Set([
+  "copy", "pg_sleep", "pg_reload_conf", "pg_rotate_logfile", "pg_stat_file", "pg_logdir_ls", "set_config",
+  "pg_terminate_backend", "pg_cancel_backend", "pg_backup_start", "pg_backup_stop", "pg_switch_wal", "pg_create_restore_point",
+  "query_to_xml", "cursor_to_xml", "txid_current", "pg_notify", "pg_export_snapshot",
+]);
+const FORBIDDEN_PREFIXES = ["dblink", "pg_read_", "pg_ls_", "lo_", "pg_advisory_", "pg_replication_", "pg_logical_", "pg_drop_", "pg_promote", "pg_wal_replay_", "pg_stat_reset", "pg_file_", "postgres_fdw"];
+const FORBIDDEN_PARTS = ["_to_xml"];
+
+// The words of the statement outside strings and comments: plain names and the content of "quoted names".
+// `unicodeEscape`: a U&"…" name can spell a name another way, so it is refused as such.
+export function sqlWords(sql) {
+  const s = String(sql);
+  const words = [];
+  let unicodeEscape = false;
+  let i = 0;
+  while (i < s.length) {
+    const c = s[i];
+    const n = s[i + 1];
+    if (c === "-" && n === "-") {
+      while (i < s.length && s[i] !== "\n") i++;
+    } else if (c === "/" && n === "*") {
+      let depth = 1;
+      i += 2;
+      while (i < s.length && depth > 0) {
+        if (s[i] === "/" && s[i + 1] === "*") (depth++, (i += 2));
+        else if (s[i] === "*" && s[i + 1] === "/") (depth--, (i += 2));
+        else i++;
+      }
+    } else if (c === "'") {
+      const escapes = i > 0 && /[eE]/.test(s[i - 1]) && !(i > 1 && IDENT_CHAR.test(s[i - 2]));
+      i++;
+      while (i < s.length) {
+        if (escapes && s[i] === "\\") i += 2;
+        else if (s[i] === "'") {
+          if (s[i + 1] === "'") i += 2;
+          else break;
+        } else i++;
+      }
+      i++;
+    } else if (c === '"') {
+      if (i >= 2 && s[i - 1] === "&" && /[uU]/.test(s[i - 2])) unicodeEscape = true;
+      let name = "";
+      i++;
+      while (i < s.length) {
+        if (s[i] === '"') {
+          if (s[i + 1] === '"') (name += '"', (i += 2));
+          else break;
+        } else name += s[i++];
+      }
+      i++;
+      words.push(name);
+    } else if (c === "$" && !(i > 0 && IDENT_CHAR.test(s[i - 1])) && DOLLAR_TAG.test(s.slice(i, i + 140))) {
+      const tag = DOLLAR_TAG.exec(s.slice(i, i + 140))[0];
+      const end = s.indexOf(tag, i + tag.length);
+      i = end < 0 ? s.length : end + tag.length;
+    } else if (IDENT_CHAR.test(c)) {
+      let j = i;
+      while (j < s.length && IDENT_CHAR.test(s[j])) j++;
+      words.push(s.slice(i, j));
+      i = j;
+    } else i++;
+  }
+  return { words, unicodeEscape };
+}
+
+// The first forbidden name in the text, or "".
+export function forbiddenName(sql) {
+  for (const w of sqlWords(sql).words) {
+    const l = w.toLowerCase();
+    if (FORBIDDEN_WORDS.has(l) || FORBIDDEN_PREFIXES.some((p) => l.startsWith(p)) || FORBIDDEN_PARTS.some((p) => l.includes(p))) return w;
+  }
+  return "";
+}
+
+// null when the free query may run, else the reason key: one statement, starting with SELECT or WITH (a leading
+// parenthesis is skipped), no backslash command, no forbidden name. Anything that writes is stopped again by the
+// data source's read-only transaction; the database role of the data source should be read-only as well.
 export function freeQueryProblem(sql) {
   const text = String(sql || "");
   if (!text.trim()) return "empty";
@@ -410,6 +487,8 @@ export function freeQueryProblem(sql) {
   if (r.backslash) return "backslash";
   if (r.statements !== 1) return "severalStatements";
   if (r.first !== "SELECT" && r.first !== "WITH") return "notSelect";
+  if (sqlWords(text).unicodeEscape) return "unicodeEscape";
+  if (forbiddenName(text)) return "forbiddenFunction";
   return null;
 }
 
@@ -686,7 +765,7 @@ export default {
     host.actions.handle("aiRunSql", async (ctx, input) => {
       const sql = String((input && input.sql) || "");
       const problem = freeQueryProblem(sql);
-      if (problem) throw new Error(tr(ctx, `ai.sql.${problem}`));
+      if (problem) throw new Error(tr(ctx, `ai.sql.${problem}`, { name: problem === "forbiddenFunction" ? forbiddenName(sql) : "" }));
       const source = await sourceId(ctx);
       if (!source) throw new Error(tr(ctx, "error.noSource"));
       const limit = Number.isInteger(input && input.limit) && input.limit > 0 ? Math.min(input.limit, 2000) : AI_DEFAULT_ROWS;

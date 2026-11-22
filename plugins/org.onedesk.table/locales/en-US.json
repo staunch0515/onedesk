@@ -59,7 +59,7 @@
   "action.aiListTables": "List tables (AI)",
   "action.aiRunSql": "Free query (AI)",
   "ai.tool.listTables": "Lists the mapped tables and their columns (entity, table, field, column, description).",
-  "ai.tool.runSql": "Runs one read-only SELECT or WITH statement on the database of the AI environment. Use the table and column names from list_tables.",
+  "ai.tool.runSql": "Runs one read-only SELECT or WITH statement on the database of the AI environment. Use the table and column names from list_tables. Use a read-only database role for the data source of free queries.",
   "ai.tablesListed": "{count} columns listed",
   "ai.col.entity": "Entity",
   "ai.col.table": "Table",
@@ -71,5 +71,7 @@
   "ai.sql.tooLong": "The statement is too long.",
   "ai.sql.backslash": "Backslash commands are not allowed.",
   "ai.sql.severalStatements": "Only one statement is allowed.",
-  "ai.sql.notSelect": "Only SELECT or WITH statements are allowed."
+  "ai.sql.notSelect": "Only SELECT or WITH statements are allowed.",
+  "ai.sql.forbiddenFunction": "“{name}” is not allowed in a free query (it acts on the server or reads files).",
+  "ai.sql.unicodeEscape": "Names written as U&\"…\" are not allowed in a free query."
 }
