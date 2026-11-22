@@ -6,9 +6,9 @@
 
 | 结果 | 行数 |
 |---|---|
-| 通过 | 75 |
+| 通过 | 77 |
 | 按新需求改了（写明改成了什么） | 5 |
-| 不通过 | 2 |
+| 不通过 | 0 |
 | 未验证（写明原因） | 8 |
 
 **没有 sqlpool 可对照。** `sqlpool-parity.md` 里的 sqlpool 路径（`/Users/zhongpingxue/quizbuks/sqlpool`）在这台机器上不存在，查询目录插件 README 也说明了这一点。所以“同一份查询目录、同一个 PostgreSQL，两边结果行相同”这一条用 **psql 直接查同一个库、手写等价 SQL 作为对照**：A6、A7、A10、C4、D8、E1、F3、H4、H5、K11 的结果行都与 psql 逐行相同。其余行按 §3 的需求文字验。
@@ -16,6 +16,8 @@
 **“通过”的含义**：在真运行的内核（`onedesk-devhost`，真工作进程）、真 PostgreSQL 17（临时 `initdb`）、浏览器里的外壳（Playwright chromium）里把这一行的事做了一遍；不是看单元测试。
 
 ## 2. 缺陷（交协调会话派发；本会话没有修）
+
+**复验（`c771eaf`，r20-polish 的修复，在临时工作树上重跑 `e2e/parity`）**：缺陷 1（K11）已修——`pg_catalog.pg_user` 现在被拒，7 种越权写法仍全拒；缺陷 2（G2）已修——界面拖放生效（`G2-env-drag-c771eaf.png`）；缺陷 4 外壳侧已改（配置页显示数据源名 Shop、不再显示原始 id，`recheck-config-page-c771eaf.png`；r20-polish 说内核 `pages.rs:197` 把引用压成文本是根因，仍待协调会话派内核）；缺陷 5 复验时整套 E–H 没有再出现，r20-polish 也没能复现（48 次正常）；缺陷 3（内核）未修，仍待派。下表的“实际”是修复前的现象，K11、G2 两行已按复验结果更新为通过。
 
 | # | 行 | 复现 | 预期 | 实际 | 疑似归属 | 严重度 |
 |---|---|---|---|---|---|---|
@@ -104,7 +106,7 @@ python3 e2e/parity/make-report.py   # 由 results.json 生成 docs/handoff/_pari
 | F6 | 从旧的连接串导入 | **通过** | 连接串 postgres://… 拆进主机/端口/库/用户；连接串里的密码不取（提示 without the password）；之后手填密码可连（F6-import.png） |  |
 | F7 | 钥匙串一次运行只读一次，不反复弹授权 | **未验证** | 需要观察真钥匙串的授权弹窗次数；测试内核用内存钥匙串（不许碰真钥匙串），无法验证“一次运行只读一次”。只确认到：同一次运行里多次用同一数据源不报错 |  |
 | G1 | 环境树：父子、继承、覆盖、说明 | **通过** | 父子环境：孙环境继承根的值；中间层覆盖后取覆盖值；取消覆盖回到继承值 |  |
-| G2 | 拖动改变父子关系 | **不通过** | 界面里把 Team A 拖到 Team B 上没有生效（G2-drag-failed.png；Team B 节点：{"accepts":["core:env"],"draggable":true,"expandable":false,"icon":"globe","key":"f2f2030af1a95eafd515f86a85373996","kind":"core:env","label":"Team B","menu":[{"icon":"external-link","id":"node.open","label":"node.open"},{"icon":"plus","id":"env.newChild","label":"env.newChild"},{"icon":"pencil","id":"node.rename","label":"node.rename"},{"icon":"star","id":"node.favorite","label":"node.favorite"},{"danger":true,"icon":"trash-2","id":"node.delete","label":"nod | G2-fail.png |
+| G2 | 拖动改变父子关系 | **通过** | 复验 c771eaf：界面里把 Team A 拖到没有子环境的 Team B 下生效，孙环境改为继承 Team B 的值（asia）（G2-env-drag-c771eaf.png）。修复前（6197af8）拖放不生效，为缺陷 2 | G2-env-drag-c771eaf.png |
 | G3 | 环境可以指定数据源，子环境继承 | **通过** | 环境（Team B）指定数据源 Other；其下的子环境运行取到 Other 库（other），参数显示数据源名称而非 id |  |
 | G4 | 参数表标明每个值来自哪一层；新行自动出现 | **通过** | 解析结果带来源层名（region 取自 “Team B”）；环境页（G4-env-page.png）文字：Welcome Team B Default Team B Team B Environment 1 child environment(s) Default INFO Name Location Top level / Default Kind Environment Description Tags Modified 11/22/2026, 23:53 · user Created 11/22 |  |
 | G5 | 悬停显示该参数在整棵树里的所有取值 | **按新需求改了** | sqlpool 是悬停显示该参数在整棵树里的所有取值；OneDesk 改成：继承来的参数名旁有“层级”图标，点开气泡显示它在各级父环境里的取值（region in the parent environments 1 Default eu 2 Team B inherited from here asia 3 Team A），只含祖先链，不含兄弟分支，且是点击不是悬停（G5-layers-popover.png） |  |
@@ -138,7 +140,7 @@ python3 e2e/parity/make-report.py   # 由 results.json 生成 docs/handoff/_pari
 | K8 | 生成的结果先检查（SQL 必须是单条 SELECT；命令里的危险词给警告），是“提议”不是直接执行 | **未验证** | SQL：写语句、两条语句、WITH 里写、SELECT INTO 都不能接受，字符串里的 DROP 字样可以；orders 仍 4 行。服务器命令/本机脚本生成时“危险词给警告”的那一半没有在界面逐条验证（只验了 SQL） |  |
 | K9 | “接受”把文字放进编辑器，作为未保存的修改 | **通过** | “接受”返回对编辑器的修改（body.sql = 提议），已保存的资源不变（即未保存的修改）；“放弃”不改编辑器 |  |
 | K10 | 模型选择、密钥的保存与移除 | **按新需求改了** | sqlpool 在 AI 设置页保存/移除 API 密钥、选模型；OneDesk：密钥填在每个连接的表单里（存钥匙串，K5），移除在“密钥”页点删除；模型在连接上可“列出模型”（3 个）并在分析页选连接。删除密钥后发送失败且没有请求发出（提示：The AI service could not be reached. The request failed (denied/unknownSecret)）。密钥页的删除我走的是 secrets.delete 协议调用，没有在界面上点按钮 |  |
-| K11 | MCP 服务：独立的命令行程序，供 Claude Desktop 用；只读；五个工具（搜索查询、查看查询、运行查询、列出表、对映射过的表运行单条 SELECT 并有词法检查）；自己的索引和历史；应用没开也能用 | **不通过** | 自由查询工具不限于映射过的表：应用没开（只有独立的 onedesk-mcp 命令行程序 + 无界面工作进程）时 tools/list = search、describe、run、get_run、org_onedesk_table__list_tables。search/describe/run 保存的查询：行与 psql 直查相同。list_tables 列出映射里的表 orders。未映射的表 ord_line：被拒；系统目录 pg_catalog.pg_user：放行了（返回行）。自由查询（打开 allow_free_query 后）单条 SELECT 成功；7 种越权写法全部被拒：拒:DELETE FROM orders；拒:SELECT 1; DELETE FROM orders；拒:SELECT * INTO x FROM orders；拒:SELECT pg_sleep(1)；拒:COPY orders TO '/tmp/x'；拒:/* x */ DROP TABLE orders；拒:SELECT 1 -- ; ; DELETE FROM or；orders 仍 4 行。每次调用进审计，操作者 ai:<客户端名 |  |
+| K11 | MCP 服务：独立的命令行程序，供 Claude Desktop 用；只读；五个工具（搜索查询、查看查询、运行查询、列出表、对映射过的表运行单条 SELECT 并有词法检查）；自己的索引和历史；应用没开也能用 | **通过** | 复验 c771eaf：系统目录 pg_catalog.pg_user 现在被拒，未映射的 ord_line 被拒，7 种越权写法全部被拒，orders 仍 4 行；其余（应用没开时的 onedesk-mcp：tools/list、search/describe/run 行与 psql 相同、list_tables、审计）原来就通过。未验证的只有 Claude Desktop 本身、应用开着时的 mcp.sock 路径、带密码的数据源（无界面进程看不到内存钥匙串）。修复前（6197af8 时）系统目录放行，为缺陷 1 |  |
 | L1 | 活动栏、侧边树、标签页、底部面板的布局 | **通过** | 活动栏（左）、侧边树、标签页条、编辑区、底部结果面板都在（L1-layout.png） |  |
 | L2 | 树：展开全部、折叠全部，折叠状态记住；悬停只改背景 | **通过** | 全部展开/全部折叠两个按钮有效；单独折叠 Folder two 后刷新仍是折叠；悬停只改背景色（位置、字体、颜色、边框、内边距不变） |  |
 | L3 | 标签前有类型图标 | **通过** | 每个标签页标题前都有图标（Welcome、Inside query；2 种图形） |  |
