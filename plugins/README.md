@@ -169,11 +169,11 @@ export function tr(ctx, key, vars) {
 | `files` | `roots`, `list`, `stat`, `readText`, `writeText`, `mkdir`, `remove`, `trash`, `open`, `reveal`, `find`, `addRoot`, `removeRoot`, `replaceRoot` | `requires.files` + an authorised folder |
 | `network` | `request({ url, method, headers, body, stream, onChunk, timeoutMs, … })` | `requires.network` |
 | `process` | `run`, `ready` | `requires.programs` |
-| `transfer` | `capture` (stream a program's output into a file) | programs |
+| `transfer` | `download` (address → file, `to`), `upload` (file `from` → address), `capture` (stream a program's output into a file), `progress`, `stop`; only inside a run (an action's execution) | `download`/`upload`: `requires.network` + `requires.files` (authorised folder); `capture`: `requires.programs` |
 | `secrets` | placeholders only: write `{{secret:name}}` (optionally `{{secret:name\|url}}`) in addresses, headers and program env | `requires.secrets` |
 | `settings` | `get(name)` | declared `settings` |
 | `params` | `get(name)` — a parameter from the current environment chain; `config(name)` — from the workspace configuration | — |
-| `storage` | `get`, `set`, `remove` — the plugin's own key/value store | — |
+| `storage` | `get`, `set`, `remove`, `keys` — the plugin's own key/value store (`keys` lists stored keys; `readFrom(version, key)` reads an older version's value inside `migrate`) | — |
 | `runs` | `partial` (push partial output while running), `read` (only inside a result action), `saveArtifact`, `listArtifacts`, `getArtifact`, `deleteArtifact` | — |
 | `actions` | `call` — another plugin's *exported* action | `depends` + `exports.actions` |
 | `interfaces` | `call`, `list`, `resources` | `uses` |
