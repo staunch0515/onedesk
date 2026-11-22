@@ -48,6 +48,9 @@ const PLAIN_METHODS: &[&str] = &[method::HELLO, method::WORKSPACE_INFO, method19
 /// refusal of the same kind was last written (D450③).
 #[derive(Default)]
 pub struct McpState {
+    /// Taken to admit a call, and to write a call's audit row and release it: so a call is counted
+    /// once — as running, or as audited — never in neither or both.
+    gate: tokio::sync::Mutex<()>,
     inflight: Mutex<HashMap<String, u32>>,
     quiet: Mutex<HashMap<(String, String), (Instant, u64)>>,
 }
@@ -522,7 +525,10 @@ impl Inner {
     /// Admits one more call, or refuses: the calls of ALL AI clients of the workspace in the last
     /// minute that the audit holds (so a restart does not clear them, and a new client name buys no
     /// new window — D451) plus those still running.
-    fn rate_admit(&self, client: &str, limit: u32) -> KResult<()> {
+    async fn rate_admit(&self, client: &str, limit: u32) -> KResult<()> {
+        let _gate = self.mcp.gate.lock().await;
+        // Under the gate: count what the audit holds, add what is running, register this call.
+        let mut m = self.mcp.inflight.lock().unwrap();
         let cutoff = now_ms() - WINDOW.as_millis() as i64;
         let (done, oldest): (i64, Option<i64>) = self.read(|c| {
             c.query_row(
@@ -532,7 +538,6 @@ impl Inner {
                 |r| Ok((r.get(0)?, r.get(1)?)),
             )
         })?;
-        let mut m = self.mcp.inflight.lock().unwrap();
         let running: u32 = m.values().sum();
         if done + i64::from(running) >= i64::from(limit) {
             let wait = oldest.map(|t| (t + WINDOW.as_millis() as i64 - now_ms()).clamp(1, WINDOW.as_millis() as i64)).unwrap_or(1000);
@@ -557,6 +562,8 @@ impl Inner {
         let mut admitted = false;
         let res = self.mcp_call_inner(client, &p, &args, &mut info, &mut admitted).await;
         info["ms"] = json!(t0.elapsed().as_millis() as u64);
+        // The row and the release together, under the gate (see `McpState::gate`).
+        let _gate = if admitted { Some(self.mcp.gate.lock().await) } else { None };
         match &res {
             Ok(r) => {
                 info["ok"] = json!(true);
@@ -576,7 +583,7 @@ impl Inner {
         if !policy.enabled {
             return Err(denied("aiOff"));
         }
-        self.rate_admit(client, policy.rate)?;
+        self.rate_admit(client, policy.rate).await?;
         *admitted = true;
         let target = self.resolve_tool(&policy, &p.name).ok_or_else(|| not_found("tool"))?;
         if let Target::Plugin(_, t) = &target {

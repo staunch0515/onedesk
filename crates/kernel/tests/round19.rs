@@ -1004,3 +1004,26 @@ async fn what_the_plugin_answers_about_its_parameters_is_cut_to_the_format() {
     assert_eq!(p["description"].as_str().unwrap().chars().count(), 400);
     assert!(p.get("junk").is_none(), "{p}");
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+async fn many_quick_calls_at_once_never_pass_more_than_the_limit_allows() {
+    // Quick calls end (and are audited, and released) while the later ones are still being admitted.
+    for round in 0..5 {
+        let (_env, c) = world(&[ON, ("mcp.rate_per_minute", "4")]).await;
+        call_ok(&c, "search", json!({ "query": "a" })).await; // one used: three left
+        let c = Arc::new(c);
+        let tasks: Vec<_> = (0..24)
+            .map(|i| {
+                let c = c.clone();
+                tokio::spawn(async move {
+                    c.call_ai(&format!("client-{}", i % 3), "mcp.call", json!({ "name": "search", "arguments": { "query": "a" } })).await.is_ok()
+                })
+            })
+            .collect();
+        let mut ok = 0;
+        for t in tasks {
+            ok += usize::from(t.await.unwrap());
+        }
+        assert_eq!(ok, 3, "round {round}");
+    }
+}

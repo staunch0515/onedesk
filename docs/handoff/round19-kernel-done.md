@@ -42,3 +42,7 @@
 
 - AI 运行里 `transfer.capture`（相对路径、无 url）、`transfer.progress/stop` 放行，其余 `transfer.*` 仍拒；Rust 测试在 `inside_an_ais_run_…`（upload/download/绝对路径/`..` 拒绝，相对路径过闸）。真 PG 的 `e2e/round19-sql.spec.ts` 我没跑（在 r19-tests 分支）。
 - 限流改为全工作区所有 AI 客户端合计；测试 `the_rate_limit_counts_all_ai_clients_together_over_a_minute`。
+
+## 限流并发修复
+
+`rate_admit`（数审计 + 在途数 + 登记）与“写审计行 + 释放在途”都在同一把门（`McpState::gate`）下，一次调用任何时刻恰好算一次：不会漏（旧缺陷：并发 12 个放过 5 个）也不会算两次。测试 `many_quick_calls_at_once_never_pass_more_than_the_limit_allows`（24 并发、3 个客户端名、重复 5 轮，恰好放过余量个数）。已知小缺口：未知工具的拒绝因每秒合并而没写审计行，不占限流额度（它们不执行任何东西）。
