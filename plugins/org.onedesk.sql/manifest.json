@@ -54,7 +54,12 @@
           "Enter"
         ],
         "saveFirst": false,
-        "confirm": null
+        "confirm": null,
+        "ai": {
+          "readOnly": true,
+          "description": "ai.runDesc",
+          "describe": "aiParams"
+        }
       },
       {
         "id": "create",
@@ -94,6 +99,14 @@
           "query"
         ],
         "output": "text",
+        "saveFirst": false,
+        "confirm": null
+      },
+      {
+        "id": "aiParams",
+        "label": "action.aiParams",
+        "icon": "list",
+        "output": "none",
         "saveFirst": false,
         "confirm": null
       }

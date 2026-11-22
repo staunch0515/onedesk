@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 // @ts-ignore plain JS module, no types
-import plugin, { getChunked, putChunked, rememberSent, sentOf, snapshot, atSql, changesSql, currentSql, deletedSql, existingSet, historySql, isMissing, prefixesOf, rowsSql, selectList, timeLiteral, treeChildren, treePath } from "./main.js";
+import plugin, { freeQueryProblem, tableRows, getChunked, putChunked, rememberSent, sentOf, snapshot, atSql, changesSql, currentSql, deletedSql, existingSet, historySql, isMissing, prefixesOf, rowsSql, selectList, timeLiteral, treeChildren, treePath } from "./main.js";
 import { checkActionResult, checkView, hostError, onlyKeys, registry, RENDER_KEYS, TREE_NODE_KEYS } from "../_testing/view-check";
 
 const load = (f: string) => JSON.parse(readFileSync(new URL(`./locales/${f}.json`, import.meta.url), "utf8")) as Record<string, string>;
@@ -373,5 +373,88 @@ describe("table: page and actions (H4, H5)", () => {
     expect(Object.keys(reg.commands).sort()).toEqual(manifest.contributes.commands.map((c: any) => c.id).sort());
     expect(Object.keys(reg.pages).sort()).toEqual(["overview", "table"]);
     expect(manifest.contributes.pages[0].actions.map((a: any) => a.action)).toEqual(["rows", "current", "history", "at", "changes", "deleted", "refresh"]);
+  });
+});
+
+describe("table: for AI clients (round 19)", () => {
+  const tools = manifest.contributes.aiTools;
+  const actionOf = (id: string) => manifest.contributes.actions.find((a: any) => a.id === id);
+
+  it("declares list_tables and the free query; the free query is the only one behind the policy", () => {
+    expect(tools.map((x: any) => [x.name, x.freeQuery])).toEqual([["list_tables", false], ["run_sql", true]]);
+    for (const tool of tools) {
+      expect(tool.name).toMatch(/^[a-z][a-z0-9_]{0,39}$/);
+      expect(tool.inputSchema.type).toBe("object");
+      const a = actionOf(tool.action);
+      expect(a.kinds).toBeUndefined(); // an aiTools action is not bound to a resource
+      expect(a.confirm).toBeNull();
+      expect(a.ai).toMatchObject({ readOnly: true });
+      expect(EN[tool.description]).toBeTruthy();
+      expect(EN[a.ai.description]).toBeTruthy();
+    }
+    expect(tools[1].inputSchema.required).toEqual(["sql"]);
+  });
+
+  it("lists the mapped tables with their columns, filtered by a text", async () => {
+    const { host } = fakeHost();
+    const res = await registry(plugin).actions.aiListTables(ctxOf(host, { runId: "a1", ai: { client: "c" } }), {});
+    expect(checkActionResult(res)).toEqual([]);
+    expect(res.output.type).toBe("table");
+    expect(res.output.rows.length).toBe(res.output.total);
+    expect(res.output.rows.some((r: string[]) => r[1] === "shop.order_line" && r[2] === "id" && r[3] === "line_id")).toBe(true);
+    expect(host.actions.call).toHaveBeenCalledTimes(1); // only the mapping: no data source is touched
+    const some = await registry(plugin).actions.aiListTables(ctxOf(host, { runId: "a2" }), { filter: "price" });
+    expect(new Set(some.output.rows.map((r: string[]) => r[0]))).toEqual(new Set(["pricing"]));
+    expect(tableRows({ entities: {} }, "")).toEqual([]);
+  });
+
+  it("the free query accepts one SELECT or WITH and nothing else", () => {
+    expect(freeQueryProblem("SELECT 1")).toBeNull();
+    expect(freeQueryProblem("  (select 1) union (select 2);")).toBeNull();
+    expect(freeQueryProblem("-- hi\nWITH a AS (SELECT 1) SELECT * FROM a")).toBeNull();
+    expect(freeQueryProblem("SELECT ';' , $$ ; $$, \"a;b\" FROM t -- ; x")).toBeNull();
+    expect(freeQueryProblem("")).toBe("empty");
+    expect(freeQueryProblem("SELECT 1; SELECT 2")).toBe("severalStatements");
+    expect(freeQueryProblem("SELECT 1; DROP TABLE t")).toBe("severalStatements");
+    expect(freeQueryProblem("DELETE FROM t")).toBe("notSelect");
+    expect(freeQueryProblem("/* x */ UPDATE t SET a = 1")).toBe("notSelect");
+    expect(freeQueryProblem("EXPLAIN SELECT 1")).toBe("notSelect");
+    expect(freeQueryProblem("COPY t TO PROGRAM 'x'")).toBe("notSelect");
+    expect(freeQueryProblem("SELECT 1\n\\! ls")).toBe("backslash");
+    expect(freeQueryProblem("SELECT 1 " + "x".repeat(20001))).toBe("tooLong");
+  });
+
+  it("run_sql sends one statement to the data source with a timeout and a row limit; refused text never reaches it", async () => {
+    const { host } = fakeHost();
+    const res = await registry(plugin).actions.aiRunSql(ctxOf(host, { runId: "q1" }), { sql: "SELECT 1", limit: 5 });
+    expect(checkActionResult(res)).toEqual([]);
+    expect(host.actions.call).toHaveBeenCalledWith("org.onedesk.datasource:query", { sql: "SELECT 1", inline: true, maxRows: 5, timeoutMs: 15000 }, { resource: "s1" });
+    await registry(plugin).actions.aiRunSql(ctxOf(host, { runId: "q2" }), { sql: "SELECT 2", limit: 99999 });
+    expect(host.actions.call.mock.calls.at(-1)[1].maxRows).toBe(2000);
+    await registry(plugin).actions.aiRunSql(ctxOf(host, { runId: "q3" }), { sql: "SELECT 3" });
+    expect(host.actions.call.mock.calls.at(-1)[1].maxRows).toBe(200);
+    const before = host.actions.call.mock.calls.length;
+    for (const sql of ["DROP TABLE t", "SELECT 1; SELECT 2", "SELECT 1\n\\q", ""]) {
+      await expect(registry(plugin).actions.aiRunSql(ctxOf(host, { runId: "q4" }), { sql })).rejects.toThrow();
+    }
+    expect(host.actions.call.mock.calls.length).toBe(before);
+  });
+
+  it("run_sql shows the data source's own refusal and needs a data source", async () => {
+    const { host } = fakeHost();
+    host.actions.call = vi.fn(async () => ({ error: "statement timeout" }));
+    await expect(registry(plugin).actions.aiRunSql(ctxOf(host, { runId: "q5" }), { sql: "SELECT 1" })).rejects.toThrow("statement timeout");
+    const none = fakeHost();
+    none.host.params.get = vi.fn(async () => ({ found: false, value: "" }));
+    await expect(registry(plugin).actions.aiRunSql(ctxOf(none.host, { runId: "q6" }), { sql: "SELECT 1" })).rejects.toThrow(/No data source/);
+  });
+
+  it("has the new texts in every language", () => {
+    const keys = Object.keys(EN).filter((k) => k.startsWith("ai.") || k.startsWith("action.ai"));
+    expect(keys.length).toBeGreaterThan(10);
+    for (const k of keys) {
+      expect(ZH[k], k).toBeTruthy();
+      expect(JA[k], k).toBeTruthy();
+    }
   });
 });

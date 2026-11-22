@@ -166,6 +166,15 @@ pub fn run() {
                             }
                         }
                     });
+                    // Round 19: `onedesk-mcp` finds the app through this socket while it is open. Not being able to
+                    // listen only costs that; the program then starts a worker of its own.
+                    let data_dir = default_data_dir();
+                    match tauri::async_runtime::block_on(async { onedesk_host::mcp_socket::bind(&data_dir) }) {
+                        Ok((listener, _)) => {
+                            tauri::async_runtime::spawn(onedesk_host::mcp_socket::serve(host.clone(), listener));
+                        }
+                        Err(e) => eprintln!("onedesk: MCP socket not available: {e}"),
+                    }
                     HostState { host: Some(host), start_error: None }
                 }
                 Err(e) => {
@@ -189,6 +198,7 @@ pub fn run() {
         if let RunEvent::Exit = event {
             if let Some(state) = handle.try_state::<HostState>() {
                 if let Some(host) = &state.host {
+                    let _ = std::fs::remove_file(onedesk_host::mcp_socket::socket_path(&default_data_dir()));
                     tauri::async_runtime::block_on(host.shutdown());
                 }
             }

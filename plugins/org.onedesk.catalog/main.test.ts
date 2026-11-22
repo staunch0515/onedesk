@@ -753,3 +753,49 @@ describe("catalog: manifest", () => {
     expect(manifest.contributes.trees[0].toolbar).toContain("reindex");
   });
 });
+
+describe("catalog: for AI clients (round 19)", () => {
+  const act = (id: string) => manifest.contributes.actions.find((a: any) => a.id === id);
+  const entryCtx = async (host: Host, extra: Record<string, unknown> = {}) => {
+    await sync(ctxOf(host));
+    const all = await host.resources.list({ kind: "entry" });
+    return ctxOf(host, { resource: all.find((r: any) => r.body.id === "sales.orders.recent"), ...extra });
+  };
+
+  it("only `run` is AI-usable (read-only); saving or re-indexing is not", () => {
+    for (const a of manifest.contributes.actions) {
+      if (a.id === "run") expect(a.ai).toEqual({ readOnly: true, description: "ai.runDesc", describe: "aiParams" });
+      else expect(a.ai, a.id).toBeUndefined();
+    }
+    expect(act("aiParams")).toMatchObject({ output: "none", confirm: null });
+    expect(act("aiParams").kinds).toBeUndefined();
+  });
+
+  it("describes the header's parameters, and as_of for a versioned entity", async () => {
+    const { host } = fakeHost(FILES);
+    const res = await registry().actions.aiParams(await entryCtx(host), {});
+    expect(res.output).toEqual({ type: "none" });
+    const by = Object.fromEntries(res.data.params.map((p: any) => [p.name, p]));
+    expect(Object.keys(by).sort()).toEqual(["as_of", "since", "status"]);
+    expect(by.since.type).toBe("text");
+    expect(by.since.description).toContain("YYYY-MM-DDTHH:MM");
+    expect(by.status.type).toBe("enum");
+    expect(by.status.options.length).toBeGreaterThan(0);
+    expect(by.as_of.type).toBe("text");
+  });
+
+  it("still describes without a readable mapping (a pure call)", async () => {
+    const { host } = fakeHost(FILES);
+    const ctx: Record<string, any> = await entryCtx(host);
+    host.files = { roots: async () => { throw hostError("denied", {}); }, readText: async () => { throw hostError("denied", {}); } };
+    const res = await registry().actions.aiParams({ ...ctx, host: { ...ctx.host, files: host.files } }, {});
+    expect(Array.isArray(res.data.params)).toBe(true);
+  });
+
+  it("has the new texts in every language", () => {
+    for (const k of Object.keys(EN).filter((k) => k.startsWith("ai.") || k === "action.aiParams")) {
+      expect(ZH[k], k).toBeTruthy();
+      expect(JA[k], k).toBeTruthy();
+    }
+  });
+});

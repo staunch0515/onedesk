@@ -1,7 +1,7 @@
 # OneDesk Rust workspace (kernel-design §2.6). Root file owned by the coordinating session.
 [workspace]
 resolver = "2"
-members = ["crates/protocol", "crates/kernel", "crates/worker", "crates/host", "src-tauri"]
+members = ["crates/protocol", "crates/kernel", "crates/worker", "crates/host", "crates/mcp", "src-tauri"]
 exclude = ["spikes"]
 
 [workspace.package]

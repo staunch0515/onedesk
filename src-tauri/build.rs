@@ -17,28 +17,31 @@ fn main() {
     // running `scripts/prepare-bundle.sh`, so a stand-in (git-ignored) is needed — but an EMPTY one would be
     // copied over the real worker. So the stand-in is a copy of the real worker when one is already built,
     // and `scripts/prepare-bundle.sh` still puts the real one there for bundling.
+    // Round 19: `onedesk-mcp` is a sidecar like the worker, handled the same way.
     let target = std::env::var("TARGET").unwrap_or_default();
-    let sidecar = PathBuf::from(format!("binaries/onedesk-worker-{target}"));
-    let real = profile_dir().map(|d| d.join("onedesk-worker")).filter(|p| non_empty(p));
     let _ = std::fs::create_dir_all("binaries");
-    match real {
-        Some(real) => {
-            // Rerun when the worker is linked again, so the stand-in follows it and Tauri's copy never puts an
-            // older worker over a newer one. Tauri does not write the file when the content is identical, so
-            // our own copy does not make this rerun forever. (Setting any rerun-if-changed replaces cargo's
-            // default "any file of the package", so the files that matter are named too.)
-            println!("cargo:rerun-if-changed={}", real.display());
-            println!("cargo:rerun-if-changed=build.rs");
-            println!("cargo:rerun-if-changed=tauri.conf.json");
-            println!("cargo:rerun-if-changed=capabilities");
-            // Keep the stand-in identical to the real worker, so the copy Tauri makes changes nothing.
-            if std::fs::read(&sidecar).ok() != std::fs::read(&real).ok() {
-                let _ = std::fs::copy(&real, &sidecar);
+    println!("cargo:rerun-if-changed=build.rs");
+    println!("cargo:rerun-if-changed=tauri.conf.json");
+    println!("cargo:rerun-if-changed=capabilities");
+    for name in ["onedesk-worker", "onedesk-mcp"] {
+        let sidecar = PathBuf::from(format!("binaries/{name}-{target}"));
+        let real = profile_dir().map(|d| d.join(name)).filter(|p| non_empty(p));
+        match real {
+            Some(real) => {
+                // Rerun when the program is linked again, so the stand-in follows it and Tauri's copy never puts an
+                // older one over a newer one. Tauri does not write the file when the content is identical, so our own
+                // copy does not make this rerun forever. (Setting any rerun-if-changed replaces cargo's default "any
+                // file of the package", so the files that matter are named too.)
+                println!("cargo:rerun-if-changed={}", real.display());
+                // Keep the stand-in identical to the real one, so the copy Tauri makes changes nothing.
+                if std::fs::read(&sidecar).ok() != std::fs::read(&real).ok() {
+                    let _ = std::fs::copy(&real, &sidecar);
+                }
             }
-        }
-        None => {
-            if !sidecar.exists() {
-                let _ = std::fs::write(&sidecar, b"");
+            None => {
+                if !sidecar.exists() {
+                    let _ = std::fs::write(&sidecar, b"");
+                }
             }
         }
     }

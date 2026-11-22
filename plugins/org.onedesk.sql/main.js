@@ -262,6 +262,26 @@ function paramField(ctx, name, decl, now) {
 }
 
 
+/* ---------------------------------------------------------------- for AI clients (MCP, round 19) */
+
+// The parameters of a statement as an AI client sees them (ParamDecl, protocol §2.3): name, type
+// (text|number|boolean|enum), required, a description in the user's language, and the choices of an enum.
+// Dates and times are text with the format said in the description.
+export function aiParamDecls(ctx, sql) {
+  const decls = declarations(sql);
+  return paramNames(sql).map((name) => {
+    const d = declOf(decls, name);
+    const out = { name, type: d.type === "number" ? "number" : d.type === "enum" ? "enum" : "text", required: d.required === true };
+    const parts = [];
+    if (d.description) parts.push(d.description);
+    if (["date", "datetime", "time"].includes(d.type)) parts.push(tr(ctx, `ai.format.${d.type}`));
+    if (d.type === "text" && d.max > 0) parts.push(tr(ctx, "ai.format.max", { max: d.max }));
+    if (parts.length > 0) out.description = parts.join(" · ");
+    if (out.type === "enum") out.options = d.values.slice();
+    return out;
+  });
+}
+
 /* ---------------------------------------------------------------- "Write with AI" (K7–K9) */
 
 const proposalKey = (ctx) => `${PROPOSAL_KEY}:${(ctx.resource && ctx.resource.id) || "-"}`;
@@ -492,8 +512,17 @@ export default {
       return finishGenerate(ctx, res, p.instruction);
     });
 
+    // Called by the kernel for the AI client's `describe` (manifest `ai.describe`): no run, nothing written.
+    host.actions.handle("aiParams", async (ctx) => {
+      const sql = String((ctx.resource && ctx.resource.body && ctx.resource.body.sql) || "");
+      return { output: { type: "none" }, data: { params: aiParamDecls(ctx, sql) } };
+    });
+
     host.actions.handle("run", async (ctx, input) => {
-      const sql = String((input && input["body.sql"]) || "");
+      // An AI client runs the saved statement: its input is empty, so the saved text and data source are used.
+      const saved = (ctx.resource && ctx.resource.body) || {};
+      const given = (key) => (input && typeof input[`body.${key}`] === "string" ? input[`body.${key}`] : typeof saved[key] === "string" ? saved[key] : "");
+      const sql = String(given("sql"));
       if (!sql.trim()) throw new Error(tr(ctx, "error.empty"));
 
       const decls = declarations(sql);
@@ -514,7 +543,7 @@ export default {
       // the statement as sent belongs to this run (not to the resource: a statement not saved yet has none)
       await ctx.host.storage.set(`${SENT_KEY}:${ctx.runId || "-"}`, rendered);
 
-      const sourceId = await pickSource(ctx, String((input && input["body.source"]) || ""));
+      const sourceId = await pickSource(ctx, String(given("source")));
       ctx.progress(undefined, tr(ctx, "step.running"));
       const res = await ctx.host.actions.call(`${DATASOURCE}:query`, { sql: rendered }, { resource: sourceId });
       if (res && typeof res.error === "string") throw new Error(res.error); // the data source's own message

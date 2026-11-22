@@ -55,5 +55,21 @@
   "warn.sourceFailed": "The database could not be read, so nothing is marked missing: {error}",
   "error.snapshotTooLarge": "The mapping is too large to store",
   "action.tablesHere": "Read this database's tables",
-  "error.noRows": "the data source returned no rows (it needs to support inline results)"
+  "error.noRows": "the data source returned no rows (it needs to support inline results)",
+  "action.aiListTables": "List tables (AI)",
+  "action.aiRunSql": "Free query (AI)",
+  "ai.tool.listTables": "Lists the mapped tables and their columns (entity, table, field, column, description).",
+  "ai.tool.runSql": "Runs one read-only SELECT or WITH statement on the database of the AI environment. Use the table and column names from list_tables.",
+  "ai.tablesListed": "{count} columns listed",
+  "ai.col.entity": "Entity",
+  "ai.col.table": "Table",
+  "ai.col.field": "Field",
+  "ai.col.column": "Column",
+  "ai.col.description": "Description",
+  "ai.col.kind": "Kind",
+  "ai.sql.empty": "The statement is empty.",
+  "ai.sql.tooLong": "The statement is too long.",
+  "ai.sql.backslash": "Backslash commands are not allowed.",
+  "ai.sql.severalStatements": "Only one statement is allowed.",
+  "ai.sql.notSelect": "Only SELECT or WITH statements are allowed."
 }

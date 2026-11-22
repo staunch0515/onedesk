@@ -179,3 +179,14 @@
 - 工作区策略的 `mcp.env` 在 `params.known` 里登记为 `ref`；AI 设置页读写用 `workspace.getConfig` / `workspace.setConfig`。
 - `crates/host/src/lib.rs` 里 `Request { … }` 字面量被迫加了 `actor: None`（一行，`r19-mcp` 合并时注意）。
 - lint：`scripts/check-arch.mjs` 的禁用词 `ai` 会拦内核里的操作者 `ai`，需 tests 会话放行（已报协调会话）。
+
+## 9. `app.mcpInfo`（D449，r19-mcp 补）
+
+主进程自己回答（不转给工作进程；窗口和测试连接都能调，操作者 `user`）。常量 `onedesk_protocol::method19::APP_MCP_INFO = "app.mcpInfo"`（不在 `method19::ALL` 里，因为不是内核方法）。
+
+- 请求：无参数。
+- 响应 `McpInfo { path: string, exists: boolean, config: string }`：
+  - `path`：`onedesk-mcp` 程序的绝对路径（发布版是 `.app/Contents/MacOS/onedesk-mcp`；环境变量 `ONEDESK_MCP_BIN` 可覆盖，供开发/测试）。
+  - `exists`：此刻该路径上有没有文件（开发版没打包时为 false，外壳可提示）。
+  - `config`：可直接复制进 Claude Desktop `claude_desktop_config.json` 的 JSON 文本：`{ "mcpServers": { "onedesk": { "command": "<path>" } } }`。要指定工作区，用户在 `command` 旁自己加 `"args": ["--workspace", "<名字或 id>"]`。
+- 外壳 mock 需要同步这一个方法。

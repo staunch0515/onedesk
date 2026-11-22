@@ -80,5 +80,11 @@
   "action.queriesHere": "Catalog queries for this data source",
   "col.id": "id",
   "col.name": "Name",
-  "message.queriesHere": "{count} catalog queries use {source}"
+  "message.queriesHere": "{count} catalog queries use {source}",
+  "action.aiParams": "Parameters for AI clients",
+  "ai.runDesc": "Runs this catalog query read-only on its data source and returns the rows.",
+  "ai.format.date": "Format YYYY-MM-DD.",
+  "ai.format.datetime": "Format YYYY-MM-DDTHH:MM (UTC).",
+  "ai.format.time": "Format HH:MM or HH:MM:SS.",
+  "ai.format.max": "At most {max} characters."
 }

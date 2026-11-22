@@ -80,5 +80,11 @@
   "action.queriesHere": "使用这个数据源的目录查询",
   "col.id": "id",
   "col.name": "名称",
-  "message.queriesHere": "有 {count} 条目录查询使用 {source}"
+  "message.queriesHere": "有 {count} 条目录查询使用 {source}",
+  "action.aiParams": "供 AI 客户端使用的参数",
+  "ai.runDesc": "在数据源上只读运行这条目录查询，返回结果行。",
+  "ai.format.date": "格式 YYYY-MM-DD。",
+  "ai.format.datetime": "格式 YYYY-MM-DDTHH:MM（UTC）。",
+  "ai.format.time": "格式 HH:MM 或 HH:MM:SS。",
+  "ai.format.max": "最多 {max} 个字符。"
 }

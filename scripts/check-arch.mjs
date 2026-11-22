@@ -9,6 +9,7 @@
  *  4. plugins/<id>: no imports outside the package, no browser/sandbox-absent globals.
  */
 import { readFileSync, readdirSync, statSync, existsSync } from "node:fs";
+import { stripAllowedAi } from "./check-arch-ai.mjs";
 import { join, relative, resolve, dirname, sep } from "node:path";
 
 const root = resolve(dirname(new URL(import.meta.url).pathname), "..");
@@ -44,7 +45,7 @@ if (existsSync(pluginsDir)) {
 }
 
 // ---- 1: kernel-side sources know no concrete plugin
-const BANNED_WORDS = ["note", "sql", "postgres", "postgresql", "ssh", "docker", "psql", "video", "ffmpeg", "bash", "pg_dump", "pg_restore", "disk-file", "anthropic", "ollama", "claude", "ai", "sse", "ndjson"]; // round 18: + anthropic, ollama, claude, ai, sse, ndjson (whole words, case-insensitive; `ai` also matches the id segment in org.onedesk.ai). round 17: + bash, pg_dump, pg_restore, disk-file (ssh and docker were already here)
+const BANNED_WORDS = ["note", "sql", "postgres", "postgresql", "ssh", "docker", "psql", "video", "ffmpeg", "bash", "pg_dump", "pg_restore", "disk-file", "anthropic", "ollama", "claude", "ai", "sse", "ndjson", "sqlpool", "list_tables", "run_sql", "search_queries", "describe_query", "run_query"]; // round 19: + sqlpool and its five tool names (the generic tools are search/describe/run/get_run; `mcp` itself stays allowed: it is the kernel's generic command prefix). round 18: + anthropic, ollama, claude, ai, sse, ndjson (whole words, case-insensitive; `ai` also matches the id segment in org.onedesk.ai). round 17: + bash, pg_dump, pg_restore, disk-file (ssh and docker were already here)
 const wordRe = new RegExp(`(?<![A-Za-z0-9_])(${BANNED_WORDS.join("|")})(?![A-Za-z0-9_])`, "i");
 const wordReNoSql = new RegExp(`(?<![A-Za-z0-9_])(${BANNED_WORDS.filter((w) => w !== "sql").join("|")})(?![A-Za-z0-9_])`, "i");
 // Round 15 (D412): the kernel's own SQLite layer makes the word `sql` unusable as a ban there, so what is
@@ -81,7 +82,7 @@ for (const dir of kernelSide) {
     code.split("\n").forEach((rawLine, i) => {
       // Migration file names (`include_str!("migrations/0003_x.sql")`) and the SQLite binding's own names
       // (`rusqlite`, `SQLITE_*`) belong to the kernel's storage layer, not to a database plugin.
-      const line = rawLine.replace(/include_str!\s*\([^)]*\)/g, "").replace(/\brusqlite\b|\bSQLITE_[A-Z0-9_]+/g, "");
+      const line = stripAllowedAi(rawLine, f).replace(/include_str!\s*\([^)]*\)/g, "").replace(/\brusqlite\b|\bSQLITE_[A-Z0-9_]+/g, "");
       const m = re.exec(line);
       if (m) errors_.push(`${rel(f)}:${i + 1}: 出现具体插件相关的词 "${m[1]}"`);
       const k = inKernel ? kernelDbRe.exec(line) : null;

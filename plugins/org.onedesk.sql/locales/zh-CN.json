@@ -71,5 +71,11 @@
   "ai.openReview": "打开请求，检查后在那里发送",
   "ai.notSentYet": "还没有发送。请打开请求，看过后在那里按“发送”；然后回到这里取回答案。",
   "ai.check.sideEffects": "不能接受：里面调用了有副作用的函数（只按 PostgreSQL 检查）。",
-  "ai.preview": "尚未发送。连接：{connection} · 模型：{model} · 约 {tokens} 个 token。在 AI 工作台按“发送”之前不会发出任何内容，内容里没有数据。"
+  "ai.preview": "尚未发送。连接：{connection} · 模型：{model} · 约 {tokens} 个 token。在 AI 工作台按“发送”之前不会发出任何内容，内容里没有数据。",
+  "action.aiParams": "供 AI 客户端使用的参数",
+  "ai.runDesc": "在数据源上只读运行这条保存的 SQL，返回结果行。",
+  "ai.format.date": "格式 YYYY-MM-DD。",
+  "ai.format.datetime": "格式 YYYY-MM-DDTHH:MM（UTC）。",
+  "ai.format.time": "格式 HH:MM 或 HH:MM:SS。",
+  "ai.format.max": "最多 {max} 个字符。"
 }
