@@ -351,6 +351,7 @@ export const PERMISSIONS: Table = {
   "programs": "kernel.permission.programs",
   "plugins": "kernel.permission.plugins",
   "pages": "kernel.permission.pages",
+  "uses": "kernel.permission.uses",
 };
 
 /** Run failure codes the kernel reports (`Run.error.code`); other codes keep the message they came with. */

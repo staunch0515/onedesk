@@ -898,6 +898,7 @@ export const enUS = {
   "kernel.permission.programs": "Run programs",
   "kernel.permission.plugins": "Request other plugins",
   "kernel.permission.resourcesAll": "Read the name, type and location (not the content) of everything in this workspace",
+  "kernel.permission.uses": "Use other plugins' interfaces",
   "kernel.permission.pages": "Show its content with other plugins' pages",
   "kernel.run.pluginDisabled": "The plugin is disabled. Enable it to run.",
   "kernel.run.interrupted": "The run was interrupted because the workspace service restarted.",
