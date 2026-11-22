@@ -16,7 +16,7 @@
 
 ## 怎么验证
 
-- `cargo test --workspace` 全绿；新增 `crates/kernel/tests/round19.rs`（28 个）、`crates/worker/tests/worker.rs` 里 1 个真进程测试、`mcp.rs` 内 4 个单元测试、迁移 0014 升级测试。覆盖：每条拒绝（白名单外方法逐个、管线层逐个命令、`aiOnly`、信封非法、`notAiAction`、`aiFreeQuery`、`noExport`、`readonly`、`aiEnvMissing`、`needAction`、`badArguments`）、限流（含各客户端独立、夹取范围）、行/格/文字截断与分页、`ai_visible=0` 搜不到/描述不到/运行不了、密钥值（插件取过的密钥）不在结果、审计、运行记录、数据库任何表里。清单拒绝 20 余种写法。
+- `cargo test --workspace` 全绿；新增 `crates/kernel/tests/round19.rs`（28 个）、`crates/worker/tests/worker.rs` 里 1 个真进程测试、`mcp.rs` 内 4 个单元测试、迁移 0014 升级测试。覆盖：每条拒绝（白名单外方法逐个、管线层逐个命令、`aiOnly`、信封非法、`notAiAction`、自由查询关着时 `notFound/tool`、`noExport`、`readonly`、`aiEnvMissing`、`needAction`、`badArguments`）、限流（含各客户端独立、夹取范围）、行/格/文字截断与分页、`ai_visible=0` 搜不到/描述不到/运行不了、密钥值（插件取过的密钥）不在结果、审计、运行记录、数据库任何表里。清单拒绝 20 余种写法。
 - `cargo clippy --workspace --all-targets -- -D warnings` 干净；`pnpm typecheck` 通过；`pnpm gen:types` 已重新生成并提交。
 - **`pnpm lint` 目前不过**：`scripts/check-arch.mjs` 的禁用词 `ai` 拦内核里的操作者 `ai`（42 处，全是 D448 要求的概念）。该脚本只许 tests 会话改，已报协调会话，建议从 `BANNED_WORDS` 去掉 `ai`（插件 id 那条检查仍查 `org.onedesk.ai`）。`check-ui` 通过。
 - `pnpm test`（vitest）有 2 个 shell 文字检查失败，**属于 r19-shell**：`src/workbench/i18n` 需要给新审计操作 `resource.aiVisible`、`mcp.call`、`mcp.refused` 配文字，以及新错误原因 `aiOff`、`aiRateLimit`、`aiNotAllowed`、`aiReadOnly`、`aiOnly`、`notAiAction`、`aiFreeQuery`、`needAction`、`badArguments`、`aiEnvMissing`、`readonly`/`noExport`（已有）。
