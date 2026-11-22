@@ -37,3 +37,6 @@
 ## 补：重打（集成分支 f9700a6）与窗口内验证
 - 合并 `claude/onedesk-r20`（f9700a6）后重打 `.app`（`scripts/build-app.sh`），签名同前（adhoc / spctl rejected），`scripts/smoke-app.sh` 全部 ok。路径：`/Users/chloe/onedesk/repo/target/release/bundle/macos/OneDesk.app`；备份（未在外置盘上签名，仅复制）：`/Volumes/XDisk/BigDisk/OneDesk-1.0.0.app`。
 - **未完成：`.app` 窗口截图（欢迎页、插件页、SQL 查询页）和窗口内崩溃重启提示。** 本会话的 shell 没有“屏幕录制”权限：`screencapture -l <窗口号>` 与 `-R` 都报 `could not create image`，也没有可用的桌面控制工具去点界面，所以 `docs/screenshots/app/` 没有产出。需要有屏幕录制权限的会话或用户手动：启动 `.app`（建议 `ONEDESK_DATA_DIR=$(mktemp -d /tmp/od-shot.XXXXXX) ONEDESK_SECRET_STORE=memory`）后用 ⌘⇧4 截图。
+
+## 补：用户手动验证（2026-11-23）
+用户在 `.app` 里 `pkill -9` worker 后，窗口正常恢复（用户口头确认）。应用截图由用户手动放入 `docs/screenshots/app/`，上面“未完成”两项以此为准。
