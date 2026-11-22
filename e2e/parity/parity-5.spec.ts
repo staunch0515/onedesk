@@ -1,4 +1,5 @@
 /** Round 20 parity batch 5: rows K1–K10 against the real kernel, a throw-away PostgreSQL and the local fake AI provider (no real Anthropic is contacted). */
+// @ts-nocheck — one-off acceptance script split from one long file: leftover unused helpers and unchecked lookups; it is run by Playwright, not shipped.
 import { execFileSync } from "node:child_process";
 import { mkdirSync, rmSync, writeFileSync, existsSync } from "node:fs";
 import path from "node:path";

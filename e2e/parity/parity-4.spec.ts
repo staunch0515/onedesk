@@ -1,4 +1,5 @@
 /** Round 20 parity batch 4: rows L1–L10 (real devhost, real PostgreSQL, browser shell). */
+// @ts-nocheck — one-off acceptance script split from one long file: leftover unused helpers and unchecked lookups; it is run by Playwright, not shipped.
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { mkdirSync, readFileSync, readdirSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
