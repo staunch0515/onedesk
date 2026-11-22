@@ -358,7 +358,7 @@ export default { activate(host) {
     const read = input.try ? await tryIt(() => ctx.host.runs.read(input.try)) : undefined;
     return { echo: input.msg, resource: ctx.resource && ctx.resource.id, caller: ctx.caller, run: !!ctx.runId, read };
   });
-  host.actions.handle("models", async () => ({ models: ["m1"] }));
+  host.actions.handle("models", async (ctx, input) => ({ output: { type: "text", text: "m" }, data: { s: input.big ? "x".repeat(1100000) : "ok", n: [1, 2] } }));
   host.actions.handle("test", async () => ({ ok: true }));
   host.actions.handle("secret", async () => ({}));
   host.actions.handle("readit", async (ctx, input) => ({ read: await tryIt(() => ctx.host.runs.read(input.id)) }));
@@ -366,7 +366,20 @@ export default { activate(host) {
 "#;
 
 const USER_MAIN: &str = r#"
+// `ops`: [{ m, a }] on ctx.host.runs, "$runId" and "$last" standing for the input's runId and the last answer's id.
+async function doOps(ctx, input) {
+  const out = []; let last = null;
+  for (const op of input.ops || []) {
+    const a = JSON.parse(JSON.stringify(op.a).replace(/"\$runId"/g, JSON.stringify(input.runId)).replace(/"\$last"/g, JSON.stringify(last)));
+    const r = await tryIt(() => ctx.host.runs[op.m](...a));
+    if (r.ok && r.ok.id) last = r.ok.id;
+    out.push(r);
+  }
+  return out;
+}
 export default { activate(host) {
+  host.actions.handle("ops", async (ctx, input) => text(await doOps(ctx, input)));
+  host.actions.handle("viacall", async (ctx, input) => text(await tryIt(() => ctx.host.actions.call("t.prov:models", input.input || {}))));
   host.commands.handle("probe", probe);
   host.actions.handle("ask", async (ctx, input) => {
     const r = await tryIt(() => ctx.host.interfaces.call(input.iface || "t.chat/1", input.action || "chat", input.input || {}, input.opts));
@@ -382,13 +395,16 @@ export default { activate(host) {
     const other = await tryIt(() => ctx.host.runs.read(input.otherRun || "nonexistent"));
     const viaCall = input.callee ? await tryIt(() => ctx.host.actions.call("t.prov:readit", { id: input.runId })) : undefined;
     const viaIface = input.callee ? await tryIt(() => ctx.host.interfaces.call("t.chat/1", "chat", { try: input.runId }, { resource: input.callee })) : undefined;
-    return text({ input, own, other, viaCall, viaIface });
+    return text({ input, own, other, viaCall, viaIface, ops: await doOps(ctx, input) });
   });
   host.actions.handle("plain", async (ctx, input) => text({ input, read: await tryIt(() => ctx.host.runs.read(input.id)) }));
   host.actions.handle("search", async (ctx, input) => text(await tryIt(() => ctx.host.resources.search(input.opts))));
-  host.pages.handle("p", { async render(ctx) { return { view: [{ type: "form", id: "f", layout: "stack", fields: [
-    { name: "conn", label: "Connection", kind: "ref", kinds: input_kinds }
-  ] }] }; } });
+  host.pages.handle("p", {
+    async render(ctx) { return { view: [{ type: "form", id: "f", layout: "stack", fields: [
+      { name: "conn", label: "Connection", kind: "ref", kinds: input_kinds }
+    ] }] }; },
+    async onEvent(ctx, e) { return { message: JSON.stringify(await doOps(ctx, JSON.parse(e))) }; },
+  });
 } };
 const input_kinds = ["@implements:t.chat/1"];
 "#;
@@ -417,7 +433,7 @@ fn user_manifest(result_actions: Value) -> Value {
             "kinds": [{ "id": "note", "label": "Note", "icon": "box", "tree": "resources", "newName": "n" }],
             "pages": [{ "id": "p" }],
             "actions": [a("ask", "text"), a("list", "text"), a("emit", "table"), a("emit-text", "text"), a("emit-link", "link"), a("fail", "text"),
-                        a("analyze", "text"), a("plain", "text"), a("search", "text")],
+                        a("analyze", "text"), a("plain", "text"), a("search", "text"), a("ops", "text"), a("viacall", "text")],
             "commands": [{ "id": "probe", "label": "p" }],
             "locales": { "en-US": "locales/en-US.json", "ja-JP": "locales/ja-JP.json" },
             "resultActions": result_actions
@@ -808,4 +824,136 @@ async fn ranked_search_any_word_relevance_and_kinds() {
     let many = (0..17).map(|i| format!("w{i}x")).collect::<Vec<_>>().join(" ");
     let s = out(&run(&c, "t.user:search", json!({ "opts": { "query": many, "mode": "any" } })).await);
     assert_eq!(s["error"], "invalidParams", "{s}");
+}
+
+/* ------------------------------------------------------------------ D441, D442 */
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn data_goes_to_the_caller_and_a_run_ignores_it() {
+    let (_env, c) = world18(analyze_decl()).await;
+    let conn = make(&c, "t.prov:conn", "c1", None).await;
+    // As an action of its own: the run succeeds, `data` is not kept.
+    let r = run(&c, "t.prov:models", json!({})).await;
+    assert_eq!((r["status"].as_str(), r["output"]["text"].as_str()), (Some("success"), Some("m")), "{r}");
+    assert!(r.get("data").is_none() && !r.to_string().contains("\"n\":[1,2]"), "{r}");
+    // Through the interface and `actions.call`: the whole answer, `data` as it is.
+    let o = out(&run(&c, "t.user:ask", json!({ "action": "models", "opts": { "resource": conn } })).await);
+    assert_eq!(o["ok"]["data"], json!({ "s": "ok", "n": [1, 2] }), "{o}");
+    assert_eq!(o["ok"]["output"]["text"], "m");
+    let o = out(&run(&c, "t.user:viacall", json!({})).await);
+    assert_eq!(o["ok"]["data"], json!({ "s": "ok", "n": [1, 2] }), "{o}");
+    // Over 1 MB: refused.
+    let o = out(&run(&c, "t.user:ask", json!({ "action": "models", "input": { "big": true }, "opts": { "resource": conn } })).await);
+    assert_eq!(o["error"], "pluginError", "{o}");
+    let o = out(&run(&c, "t.user:viacall", json!({ "input": { "big": true } })).await);
+    assert_eq!(o["error"], "pluginError", "{o}");
+}
+
+fn artifact_count(env: &Env) -> i64 {
+    let conn = rusqlite::Connection::open(env.kernel.db_path()).unwrap();
+    conn.query_row("SELECT count(*) FROM run_artifacts", [], |r| r.get(0)).unwrap()
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn artifacts_are_kept_for_the_clicked_run_and_only_by_their_owner() {
+    let (env, c) = world18(analyze_decl()).await;
+    let source = run(&c, "t.user:emit", json!({})).await;
+    let sid = source["id"].as_str().unwrap();
+    let save = |name: &str, data: Value| json!({ "m": "saveArtifact", "a": ["$runId", { "name": name, "kind": "analysis", "data": data }] });
+    let ops = json!([
+        save("first", json!({ "q": "why", "answer": "because" })),
+        save("second", json!([1, 2])),
+        { "m": "listArtifacts", "a": ["$runId"] },
+        { "m": "getArtifact", "a": ["$last"] },
+        { "m": "saveArtifact", "a": ["$runId", { "name": "", "kind": "analysis", "data": 1 }] },
+        { "m": "saveArtifact", "a": ["$runId", { "name": "n", "kind": "bad kind", "data": 1 }] },
+        { "m": "saveArtifact", "a": ["$runId", { "name": "n", "kind": "k", "data": 1, "x": 1 }] },
+        { "m": "saveArtifact", "a": ["$runId", { "name": "n", "kind": "k", "data": "x".repeat(1_100_000) }] },
+        { "m": "saveArtifact", "a": ["other-run", { "name": "n", "kind": "k", "data": 1 }] },
+    ]);
+    let r = click(&c, "t.user:analyze", sid, json!({ "ops": ops })).await;
+    assert_eq!(r["status"], "success", "{r}");
+    let o = out(&r)["ops"].clone();
+    let (first, second) = (o[0]["ok"]["id"].as_str().unwrap().to_string(), o[1]["ok"]["id"].as_str().unwrap().to_string());
+    let listed = o[2]["ok"].as_array().unwrap();
+    assert_eq!(listed.len(), 2, "{o}");
+    assert_eq!((listed[0]["name"].as_str(), listed[0]["kind"].as_str(), listed[0]["createdAt"].is_number()), (Some("first"), Some("analysis"), true));
+    assert!(listed[0].get("data").is_none(), "the list has no data");
+    let got = &o[3]["ok"];
+    assert_eq!((got["id"].as_str(), got["runId"].as_str(), got["data"].clone()), (Some(second.as_str()), Some(sid), json!([1, 2])), "{o}");
+    for i in 4..7 {
+        assert_eq!(o[i]["error"], "invalidParams", "{i}: {o}");
+    }
+    assert_eq!(o[7]["params"]["reason"], "tooLarge", "{o}");
+    assert_eq!(o[8]["params"]["reason"], "notInResultAction", "a run that was not clicked: {o}");
+    assert_eq!(artifact_count(&env), 2);
+    // Not a click: no saving (reading and deleting its own are fine from any run).
+    let r = run(&c, "t.user:ops", json!({ "runId": sid, "ops": [
+        save("sneaky", json!(1)),
+        { "m": "listArtifacts", "a": ["$runId"] },
+        { "m": "getArtifact", "a": [first.clone()] },
+    ] })).await;
+    let o = out(&r);
+    assert_eq!(o[0]["params"]["reason"], "notInResultAction", "{o}");
+    assert_eq!((o[1]["ok"].as_array().map(Vec::len), o[2]["ok"]["name"].as_str()), (Some(2), Some("first")), "{o}");
+    // A page handler (the user saving) may add to a run it already keeps things for, not to another.
+    let ev = c.ok("page.event", json!({ "target": "page:t.user/p", "event": json!({ "runId": sid, "ops": [save("later", json!("d"))] }).to_string() })).await;
+    let o: Value = serde_json::from_str(ev["message"].as_str().unwrap()).unwrap();
+    assert!(o[0]["ok"]["id"].is_string(), "{ev}");
+    let other = run(&c, "t.user:emit-text", json!({})).await;
+    let ev = c.ok("page.event", json!({ "target": "page:t.user/p", "event": json!({ "runId": other["id"], "ops": [save("later", json!("d"))] }).to_string() })).await;
+    let o: Value = serde_json::from_str(ev["message"].as_str().unwrap()).unwrap();
+    assert_eq!(o[0]["params"]["reason"], "notInResultAction", "{ev}");
+    assert_eq!(artifact_count(&env), 3);
+    // Another plugin sees and removes nothing of it.
+    let r = c.probe("t.other", "runs.getArtifact", json!([first])).await;
+    assert_eq!(r["error"], "notFound", "{r}");
+    let r = c.probe("t.other", "runs.listArtifacts", json!([sid])).await;
+    assert_eq!(r["ok"], json!([]), "{r}");
+    let r = c.probe("t.other", "runs.deleteArtifact", json!([first])).await;
+    assert_eq!(r["error"], "notFound", "{r}");
+    let r = c.probe("t.other", "runs.saveArtifact", json!([sid, { "name": "n", "kind": "k", "data": 1 }])).await;
+    assert_eq!(r["params"]["reason"], "notInResultAction", "{r}");
+    // Its own delete works; audits carry no content.
+    let r = c.probe("t.user", "runs.deleteArtifact", json!([first])).await;
+    assert_eq!(r["ok"], Value::Null, "{r}");
+    assert_eq!(artifact_count(&env), 2);
+    let all = audit(&env, "runs.saveArtifact");
+    assert!(all.iter().any(|x| x.3 == "failed:denied"), "refusals are audited too");
+    let a: Vec<_> = all.iter().filter(|x| x.3 == "ok").collect();
+    assert_eq!(a.len(), 3, "{all:?}");
+    assert!(a.iter().all(|x| x.2.contains("bytes")) && all.iter().all(|x| !x.2.contains("because") && !x.2.contains("first")), "{all:?}");
+    assert_eq!(audit(&env, "runs.deleteArtifact").iter().filter(|x| x.3 == "ok").count(), 1);
+    // The environment's read-only rule: no saving, no deleting; reading stays.
+    let ws = c.ok("tree.children", json!({ "tree": "config" })).await["nodes"][0]["key"].as_str().unwrap().to_string();
+    c.ok("params.set", json!({ "node": ws, "name": "protection.readonly", "value": "true", "type": "boolean" })).await;
+    let r = c.probe("t.user", "runs.deleteArtifact", json!([second])).await;
+    assert_eq!(r["params"]["reason"], "readonly", "{r}");
+    let r = c.probe("t.user", "runs.getArtifact", json!([second])).await;
+    assert_eq!(r["ok"]["data"], json!([1, 2]), "{r}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn artifacts_go_with_their_run_however_it_goes() {
+    let (env, c) = world18(analyze_decl()).await;
+    let ops = |n: &str| json!([{ "m": "saveArtifact", "a": ["$runId", { "name": n, "kind": "k", "data": 1 }] }]);
+    // Deleting a kept run.
+    let a = run(&c, "t.user:emit-text", json!({})).await;
+    let r = click(&c, "t.user:analyze", a["id"].as_str().unwrap(), json!({ "ops": ops("a") })).await;
+    assert!(out(&r)["ops"][0]["ok"]["id"].is_string(), "{r}");
+    assert_eq!(artifact_count(&env), 1);
+    c.ok("run.setKept", json!({ "id": a["id"], "kept": true })).await;
+    let t = format!("run:{}", a["id"].as_str().unwrap());
+    c.ok("command.execute", json!({ "id": "run.delete", "context": { "target": t, "args": { "confirmed": true } } })).await;
+    assert_eq!(artifact_count(&env), 0);
+    // The retention of 200 per action: the oldest run goes, and what it kept.
+    let first = run(&c, "t.user:emit", json!({})).await;
+    let r = click(&c, "t.user:analyze", first["id"].as_str().unwrap(), json!({ "ops": ops("b") })).await;
+    assert!(out(&r)["ops"][0]["ok"]["id"].is_string(), "{r}");
+    assert_eq!(artifact_count(&env), 1);
+    for _ in 0..200 {
+        run(&c, "t.user:emit", json!({})).await;
+    }
+    assert!(c.call("run.get", json!({ "id": first["id"] })).await.map(|v| v.is_null()).unwrap_or(true), "the first run is gone");
+    assert_eq!(artifact_count(&env), 0, "and its artifact with it");
 }

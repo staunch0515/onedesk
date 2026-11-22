@@ -134,6 +134,12 @@ impl Inner {
         }
         let ms = started.elapsed().as_millis() as u64;
         let res = match res {
+            // D441: `data` goes to the caller as it is, at most 1 MB.
+            Ok(v) if v.get("data").is_some_and(|d| crate::runs::json_size(d) > crate::round18::ARTIFACT_MAX_BYTES) => {
+                let mut e = err_p(ErrorCode::PluginError, &[("reason", "badOutput")]);
+                e.detail = Some("data is over 1 MB".into());
+                Err(e)
+            }
             Ok(v) => self.hand_over_file(callee, p, Some(&run), v).await,
             Err(SandboxError::Host(e)) => Err(e),
             Err(SandboxError::Cancelled) => Err(err_p(ErrorCode::Invalid, &[("reason", "cancelled")])),

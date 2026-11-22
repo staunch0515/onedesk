@@ -43,6 +43,13 @@
 - 错误码：`denied/notInResultAction`、`denied/notUsed`、`invalid/noImplementation`、`invalid/wrongInterface`、`invalid/notResultAction`、`invalid/badResultRun`、`notFound/run`（`result.actions`）；安装拒绝 `badImplements`、`badResultActions`。
 - 内部：`network.output`/`network.stop`（`onChunk` 的泵，沿用 `process.output` 的流机制；插件不直接用）。
 
+## 追加：D441、D442
+
+- D441 `data`：`runs.rs` 的 `ActionOut` 接受并忽略；`calls.rs` 的 `invoke_callee`（`interfaces.call`/`actions.call` 共用）原样交给调用方，>1MB 拒绝。测试 `data_goes_to_the_caller_and_a_run_ignores_it`。
+- D442 `run_artifacts`：迁移 `0013_run_artifacts.sql`（触发器随运行删除；`IF NOT EXISTS`，有升级测试 `migration_0013_…`）；`pipeline.rs` 新命令 `ArtifactSave`/`ArtifactDelete`（事务里写、审计）；`round18.rs` `host_artifacts`；沙箱 `runs.saveArtifact/listArtifacts/getArtifact/deleteArtifact`。测试 `artifacts_are_kept_for_the_clicked_run_and_only_by_their_owner`（点击/页面事件/非点击、只能操作自己的、大小、非法参数、审计无内容、只读）、`artifacts_go_with_their_run_however_it_goes`（删除保留的运行、200 次清理）。
+- 回答协调会话的两个问题见 `round18-protocol.md` §9.8（`depends.optional` 没有；环境 ref 参数没有清单声明，建议的做法）。
+- 一处改动现有测试：`migration_0012_…` 的最后一句版本号断言改为 `MIGRATIONS.len()`（新增迁移后不再是 12）。
+
 ## 与任务书/上文的差别（已在 §9 写明并通知协调会话）
 
 - 点击用 `run.start` + `resultRun`（没有 `action.call`）；`result.actions` 多返回 `action`（完整名）。

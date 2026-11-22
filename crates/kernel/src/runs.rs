@@ -114,6 +114,10 @@ struct ActionOut {
     /// D435: the run failed, but its output and summary are kept.
     #[serde(default)]
     failed: Option<FailedIn>,
+    /// Round 18 (D441): for whoever called the action (`interfaces.call`, `actions.call`); a run ignores it.
+    #[serde(default)]
+    #[allow(dead_code)]
+    data: Option<Value>,
 }
 
 /// D435: `{ failed: { message } }` of an action's answer.

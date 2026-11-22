@@ -184,3 +184,31 @@ type ResultAction = {
 | 安装拒绝 `badImplements`、`badResultActions` | 清单 |
 
 （`denied/readonly`、`denied/noExport`、`denied/notInRun`、`denied/cancelled`、`denied/callDepth`、`invalid/timeout`、`notFound/resource` 是已有的码。）
+
+### 9.6 动作返回值的 `data`（D441）
+
+- 动作的返回值可多一个可选键 `data`（任意 JSON，序列化后 ≤ 1 MB）。
+- 作为运行的动作时：内核只检查和保存 `output`/`summary`/`failed`，**忽略 `data`**（不存、不检查内容，运行里看不到）。
+- 经 `ctx.host.interfaces.call` 或 `ctx.host.actions.call` 被调用时：调用返回的就是被调用方的整个返回值，`ret.data` 原样（`output`、`summary` 也在）。`data` 超过 1 MB → 调用抛 `pluginError`（`reason: "calleeFailed"` 之外的 `badOutput`，`detail` 说明）。
+- 数据文件（`output.file`）的交接规则不变。
+
+### 9.7 运行附属内容 `run_artifacts`（D442）
+
+迁移 `0013_run_artifacts`（表 `run_artifacts`：id、run_id、plugin、name、kind、data、created_at；触发器：运行被删——删除、永久清除、每资源/每动作 200 次的清理——附属内容连带删除；有升级测试）。注意：不是“保留”的运行（`kept`）超过 200 次会被清理，附属内容跟着没了；要长期留请让用户保留该运行。
+
+`ctx.host.runs.*`（只在插件自己的沙箱里，只操作自己插件创建的）：
+
+| 方法 | 返回 | 说明 |
+|---|---|---|
+| `saveArtifact(runId, { name, kind, data })` | `{ id }` | `name` 1–200 字符；`kind` 形如程序名（`[A-Za-z0-9._-]{1,64}`）；`data` 任意 JSON，序列化 ≤ 1 MB（超 → `invalid/tooLarge`）；多余的键、名字或 kind 不合规 → `invalidParams`。同一运行同一插件最多 100 条（超 → `conflict/tooMany`）；运行不存在 → `notFound/run`。**什么时候能存**：① 在被点击的结果区动作里，`runId` 就是被点击的那个运行；② 在页面事件处理函数（`onEvent`，用户明确操作）里，`runId` 是本插件已经有附属内容的运行。其余 `denied/notInResultAction`。受 `protection.readonly` 约束（`denied/readonly`，含环境链）。数据里这次运行读过的密钥值抹除（`***`）。 |
+| `listArtifacts(runId)` | `[{ id, name, kind, createdAt }]` | 本插件在该运行下的，按保存先后；无 `data`。任何上下文都可（不在 `migrate` 里）。 |
+| `getArtifact(id)` | `{ id, runId, name, kind, data, createdAt }` | 不是本插件的或不存在 → `notFound/artifact`。 |
+| `deleteArtifact(id)` | `null` | 同上；受 `protection.readonly` 约束。 |
+
+- 审计：`runs.saveArtifact`（object＝运行 id，摘要 `{ kind, bytes }`）、`runs.deleteArtifact`（object＝附属内容 id，摘要 `{}`），都不含名字和内容；被拒的记 `failed:denied`。
+- 删除运行（用户确认的 `run.delete`）、永久清除资源、200 次清理：附属内容一并删。
+
+### 9.8 回答：默认连接参数、`depends[].optional`
+
+- **`depends[].optional`：内核没有**，清单里写 `optional` 会被拒（`badDepends`）。要“可选依赖”就别写 `depends`，改用 `uses`（X15）+ `interfaces.call`，服务商不在时得到 `invalid/noImplementation`。
+- **“按环境覆盖的资源引用参数”：内核没有清单声明**（环境参数是自由命名的，类型 `ref`，由用户在环境/配置页设置；`ctx.host.params.get(name)` 按环境链取值、`params.config(name)` 取工作区配置；`datasource.default` 只是 SQL 插件约定的名字）。环境页的资源选择器**不按类型过滤**，也不认 `@implements:`。建议 AI 工作台这样做：参数名约定 `ai.connection`（类型 `ref`，用户在环境里设置即按环境覆盖）；读取顺序 `params.get("ai.connection")` → 找不到再 `params.config("ai.connection")` → 再用工作台自己设置页里选的默认连接（设置页用 `kind: "ref"`、`kinds: ["@implements:onedesk.ai.chat/1"]` 的字段，内核已支持，存在插件自己的存储或资源里）。选到的资源若不是任何实现者的连接，`interfaces.call` 会给 `invalid/wrongInterface`，插件据此提示。内核没有为此新增声明；若协调会话要“环境页按类型过滤”，那是新的清单字段 + 外壳工作，请另定。

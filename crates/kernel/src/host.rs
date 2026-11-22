@@ -162,6 +162,7 @@ impl Inner {
                 self.run_partial(run, arg(&args, 0))?;
                 Ok(Value::Null)
             }
+            "runs" if matches!(op, "saveArtifact" | "listArtifacts" | "getArtifact" | "deleteArtifact") => self.host_artifacts(plugin, info, op, &args).await,
             "runs" if op == "read" => self.host_runs_read(plugin, info, &args).await,
             "runs" if op == "progress" => {
                 if let Some(run) = &info.run_id {

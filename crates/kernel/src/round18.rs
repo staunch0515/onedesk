@@ -16,6 +16,9 @@ use crate::util::*;
 /// Most words one ranked search looks at, and most candidates it ranks.
 pub const SEARCH_MAX_WORDS: usize = 16;
 pub const SEARCH_MAX_CANDIDATES: usize = 2000;
+/// D442: the longest artifact name (characters) and data (bytes of JSON).
+pub const ARTIFACT_NAME_MAX: usize = 200;
+pub const ARTIFACT_MAX_BYTES: usize = 1024 * 1024;
 /// Characters of text kept on each side of a hit in a snippet.
 const SNIPPET_SIDE: usize = 40;
 
@@ -127,6 +130,89 @@ impl Inner {
         };
         let _ = self.pipeline.execute(p.actor(), Command::Audit { op: "runs.read".into(), object: id.into(), summary }).await;
         Ok(json!({ "output": output, "meta": meta }))
+    }
+
+    /* ---------------------------------------------------------------- D442 */
+
+    /// `ctx.host.runs.saveArtifact / listArtifacts / getArtifact / deleteArtifact`: what a plugin
+    /// keeps beside a run. Only its own; they go with the run.
+    pub(crate) async fn host_artifacts(&self, p: &'static Plugin, info: &CallInfo, op: &str, args: &Value) -> KResult<Value> {
+        let text = |i: usize, what: &str| -> KResult<String> {
+            args.get(i).and_then(Value::as_str).map(String::from).ok_or_else(|| invalid_params(format!("{what} must be a string")))
+        };
+        match op {
+            "saveArtifact" | "deleteArtifact" => {
+                self.read(|c| Ok(crate::policy::check(c, crate::policy::READONLY, info.env_id.as_deref())))??;
+            }
+            _ => {}
+        }
+        match op {
+            "saveArtifact" => {
+                let run = text(0, "runId")?;
+                let o = args.get(1).and_then(Value::as_object).ok_or_else(|| invalid_params("artifact must be an object"))?;
+                if let Some(k) = o.keys().find(|k| !matches!(k.as_str(), "name" | "kind" | "data")) {
+                    return Err(invalid_params(format!("unknown field {k}")));
+                }
+                let name = o.get("name").and_then(Value::as_str).filter(|n| !n.is_empty() && n.chars().count() <= ARTIFACT_NAME_MAX);
+                let kind = o.get("kind").and_then(Value::as_str).filter(|k| crate::manifest::valid_program_name(k));
+                let (Some(name), Some(kind)) = (name, kind) else { return Err(invalid_params("name or kind")) };
+                // The clicked result's run, or (a page handler: the user saving) a run it already keeps things for.
+                let clicked = info.run_id.as_deref().is_some_and(|r| {
+                    self.runs_active.lock().unwrap().get(r).is_some_and(|a| a.plugin == p.id && a.read_run.as_deref() == Some(run.as_str()))
+                });
+                let has_own = || {
+                    self.read(|c| {
+                        c.query_row("SELECT EXISTS(SELECT 1 FROM run_artifacts WHERE run_id = ?1 AND plugin = ?2)", [&run, &p.id], |r| r.get::<_, bool>(0))
+                    })
+                    .unwrap_or(false)
+                };
+                if !(clicked || (info.page_event && has_own())) {
+                    return Err(denied("notInResultAction"));
+                }
+                let mut data = o.get("data").cloned().unwrap_or(Value::Null);
+                let secrets = info.run_id.as_deref().and_then(|r| self.runs_active.lock().unwrap().get(r).map(|a| a.secrets.clone())).unwrap_or_default();
+                crate::secrets::scrub(&mut data, &secrets);
+                let data = data.to_string();
+                if data.len() > ARTIFACT_MAX_BYTES {
+                    return Err(invalid("tooLarge"));
+                }
+                let id = new_id();
+                self.pipeline
+                    .execute(p.actor(), Command::ArtifactSave { id: id.clone(), run, plugin: p.id.clone(), name: name.into(), kind: kind.into(), data })
+                    .await?;
+                Ok(json!({ "id": id }))
+            }
+            "listArtifacts" => {
+                let run = text(0, "runId")?;
+                let rows: Vec<Value> = self.read(|c| {
+                    let mut st = c.prepare("SELECT id, name, kind, created_at FROM run_artifacts WHERE run_id = ?1 AND plugin = ?2 ORDER BY rowid")?;
+                    let r = st.query_map([&run, &p.id], |r| {
+                        Ok(json!({ "id": r.get::<_, String>(0)?, "name": r.get::<_, String>(1)?, "kind": r.get::<_, String>(2)?, "createdAt": r.get::<_, i64>(3)? }))
+                    })?;
+                    r.collect()
+                })?;
+                Ok(Value::Array(rows))
+            }
+            "getArtifact" => {
+                let id = text(0, "id")?;
+                let row = self.read(|c| {
+                    rusqlite::OptionalExtension::optional(c.query_row(
+                        "SELECT run_id, name, kind, data, created_at FROM run_artifacts WHERE id = ?1 AND plugin = ?2",
+                        [&id, &p.id],
+                        |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?, r.get::<_, String>(3)?, r.get::<_, i64>(4)?)),
+                    ))
+                })?;
+                let (run, name, kind, data, at) = row.ok_or_else(|| not_found("artifact"))?;
+                let data: Value = serde_json::from_str(&data).map_err(internal)?;
+                Ok(json!({ "id": id, "runId": run, "name": name, "kind": kind, "data": data, "createdAt": at }))
+            }
+            "deleteArtifact" => {
+                let id = text(0, "id")?;
+                self.pipeline.execute(p.actor(), Command::ArtifactDelete { id, plugin: p.id.clone() }).await?;
+                Ok(Value::Null)
+            }
+            _ => Err(err_p(ErrorCode::UnknownMethod, &[("method", &format!("runs.{op}"))])),
+        }
     }
 
     /* ---------------------------------------------------------------- X15 */
