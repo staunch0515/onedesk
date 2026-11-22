@@ -1,0 +1,286 @@
+// Ollama connection: one kind ("connection") = an address (the only host the connection may reach; a local address
+// is allowed because it is written here, D308), a model, num_ctx, keep_alive and an optional authentication header
+// whose value is a secret field (keychain only, written here as {{secret:name}}). Implements onedesk.ai.chat/1.
+// Sandbox rules: no console, timers or fetch; the network is ctx.host.network.
+
+export const DEFAULT_BASE = "http://127.0.0.1:11434";
+export const DEFAULT_KEEP = "5m";
+const HEADER_NAME = /^[A-Za-z0-9!#$%&'*+.^_`|~-]+$/;
+
+export function tr(ctx, key, vars) {
+  const label = ctx.t(key);
+  let text = typeof label === "string" ? label : label[ctx.locale] || label["en-US"] || key;
+  for (const k of Object.keys(vars || {})) text = text.split(`{${k}}`).join(String(vars[k]));
+  return text;
+}
+
+export function bodyOf(ctx) {
+  const b = { ...((ctx.resource && ctx.resource.body) || {}) };
+  const draft = ctx.draft || {};
+  for (const k of Object.keys(draft)) if (k.startsWith("body.") && typeof draft[k] === "string") b[k.slice(5)] = draft[k];
+  return b;
+}
+
+export function baseUrl(body) {
+  const b = String(body.baseUrl || DEFAULT_BASE).trim().replace(/\/+$/, "");
+  return /^https?:\/\//i.test(b) ? b : null;
+}
+
+export function secretName(body) {
+  const ref = body && body.secret;
+  return ref && typeof ref.secret === "string" && ref.secret ? ref.secret : "";
+}
+
+// The optional authentication header (for an Ollama behind a reverse proxy). The secret is the whole header value.
+export function authHeaders(body) {
+  const ref = secretName(body);
+  if (!ref) return {};
+  const name = String(body.authHeader || "Authorization").trim();
+  if (!HEADER_NAME.test(name)) return null;
+  return { [name]: `{{secret:${ref}}}` };
+}
+
+export function buildChat(body, input) {
+  const i = input || {};
+  const messages = [];
+  let system = typeof i.system === "string" ? i.system : "";
+  if (i.format === "json") system = `${system ? `${system}\n\n` : ""}Respond with a single valid JSON value and nothing else.`;
+  if (system) messages.push({ role: "system", content: system });
+  for (const m of Array.isArray(i.messages) ? i.messages : []) {
+    if (m && (m.role === "user" || m.role === "assistant") && typeof m.text === "string") messages.push({ role: m.role, content: m.text });
+  }
+  const options = {};
+  const ctxLen = Math.floor(Number(body.numCtx));
+  if (Number.isFinite(ctxLen) && ctxLen > 0) options.num_ctx = ctxLen;
+  const maxTokens = Math.floor(Number(i.maxTokens));
+  if (Number.isFinite(maxTokens) && maxTokens > 0) options.num_predict = maxTokens;
+  const req = { model: String(body.model || "").trim(), messages, stream: true, keep_alive: String(body.keepAlive || DEFAULT_KEEP).trim() || DEFAULT_KEEP };
+  if (Object.keys(options).length > 0) req.options = options;
+  if (i.format === "json") req.format = "json";
+  return req;
+}
+
+// Incremental NDJSON reader: feed() takes decoded text in any split; calls onLine(object) per complete JSON line.
+export function ndjsonParser(onLine) {
+  let buf = "";
+  const one = (line) => {
+    const s = line.trim();
+    if (!s) return;
+    try {
+      onLine(JSON.parse(s));
+    } catch {
+      /* a broken line is skipped */
+    }
+  };
+  return {
+    feed(text) {
+      buf += text;
+      let at;
+      while ((at = buf.indexOf("\n")) >= 0) {
+        one(buf.slice(0, at));
+        buf = buf.slice(at + 1);
+      }
+    },
+    end() {
+      one(buf);
+      buf = "";
+    },
+  };
+}
+
+export function headerOf(headers, name) {
+  const h = headers || {};
+  for (const k of Object.keys(h)) if (k.toLowerCase() === name) return Array.isArray(h[k]) ? h[k][0] : h[k];
+  return undefined;
+}
+
+function errMessage(text) {
+  try {
+    const j = JSON.parse(text);
+    return typeof j.error === "string" ? j.error : (j && j.error && j.error.message) || "";
+  } catch {
+    return "";
+  }
+}
+
+export function mapHttpError(status, text, headers) {
+  const message = errMessage(text);
+  if (status === 401 || status === 403) return { code: "auth", message };
+  if (status === 429) {
+    const secs = Number(headerOf(headers, "retry-after"));
+    return { code: "rateLimit", message, ...(Number.isFinite(secs) && secs >= 0 ? { retryAfter: secs } : {}) };
+  }
+  if (status === 503) return { code: "overloaded", message };
+  if (status === 408 || status === 504) return { code: "timeout", message };
+  if (status === 404 && /not found/i.test(message)) return { code: "other", message, notFound: true };
+  return { code: "other", message: message || `HTTP ${status}` };
+}
+
+export function mapStop(reason) {
+  if (reason === "stop") return "end";
+  if (reason === "length") return "maxTokens";
+  return reason ? "other" : "end";
+}
+
+function finish(result) {
+  return { output: { type: "text", text: JSON.stringify(result) } };
+}
+const failure = (error) => finish({ error });
+
+function netError(ctx, err) {
+  if (err && err.code === "denied" && err.params && err.params.reason === "cancelled") throw err;
+  const reason = err && err.params && err.params.reason;
+  if (reason === "timeout") return { code: "timeout", message: tr(ctx, "error.timeout") };
+  return { code: "network", message: `${tr(ctx, "error.network")} (${(err && err.code) || "error"}${reason ? `/${reason}` : ""})` };
+}
+
+function preflight(ctx, body) {
+  const base = baseUrl(body);
+  if (!base) return { error: { code: "other", message: tr(ctx, "error.badUrl") } };
+  const auth = authHeaders(body);
+  if (auth === null) return { error: { code: "other", message: tr(ctx, "error.headerName") } };
+  return { base, auth };
+}
+
+async function runChat(ctx, input) {
+  const body = bodyOf(ctx);
+  const pre = preflight(ctx, body);
+  if (pre.error) return failure(pre.error);
+  const request = buildChat(body, input);
+  if (!request.model) return failure({ code: "other", message: tr(ctx, "error.noModel") });
+  const progress = typeof ctx.progress === "function" ? ctx.progress : null;
+  const partial = ctx.host.runs && typeof ctx.host.runs.partial === "function" ? ctx.host.runs.partial : null;
+
+  let text = "";
+  let raw = "";
+  let model = request.model;
+  let doneLine = null;
+  let lineError = null;
+  let started = false;
+  const parser = ndjsonParser((o) => {
+    if (typeof o.error === "string") lineError = { code: "other", message: o.error };
+    if (o.model) model = o.model;
+    if (o.message && typeof o.message.content === "string") text += o.message.content;
+    if (o.done === true) doneLine = o;
+  });
+
+  // The model may have to be loaded into memory first (seconds to minutes): say so until the first answer line.
+  if (progress) progress(undefined, tr(ctx, "step.loading"));
+  let res;
+  try {
+    res = await ctx.host.network.request({
+      method: "POST",
+      url: `${pre.base}/api/chat`,
+      headers: { ...pre.auth, "content-type": "application/json" },
+      body: JSON.stringify(request),
+      stream: true,
+      timeoutMs: 600000,
+      idleTimeoutMs: 120000,
+      onChunk: (chunk) => {
+        if (raw.length < 8192) raw += chunk;
+        const before = text.length;
+        parser.feed(chunk);
+        if (text.length === before) return;
+        if (!started) {
+          started = true;
+          if (progress) progress(undefined, tr(ctx, "step.generating"));
+        }
+        if (partial) Promise.resolve(partial({ type: "text", text })).catch(() => {});
+      },
+    });
+  } catch (err) {
+    return failure(netError(ctx, err));
+  }
+  if (res.status < 200 || res.status >= 300) {
+    const e = mapHttpError(res.status, raw || res.text || "", res.headers);
+    if (e.notFound) return failure({ code: e.code, message: tr(ctx, "error.pull", { model: request.model }) });
+    return failure(e);
+  }
+  parser.end();
+  if (lineError) return failure(lineError);
+  if (!doneLine) return failure({ code: "network", message: tr(ctx, "error.cutOff") });
+  const hasUsage = typeof doneLine.prompt_eval_count === "number" || typeof doneLine.eval_count === "number";
+  const usage = hasUsage ? { input: doneLine.prompt_eval_count || 0, output: doneLine.eval_count || 0 } : undefined;
+  return finish({ text, model, ...(usage ? { usage } : {}), stop: mapStop(doneLine.done_reason) });
+}
+
+async function getJson(ctx, body, path) {
+  const pre = preflight(ctx, body);
+  if (pre.error) return { error: pre.error };
+  let res;
+  try {
+    res = await ctx.host.network.request({ method: "GET", url: `${pre.base}${path}`, headers: pre.auth, timeoutMs: 30000 });
+  } catch (err) {
+    return { error: netError(ctx, err) };
+  }
+  const text = String(res.text !== undefined ? res.text : res.body || "");
+  if (res.status < 200 || res.status >= 300) return { error: mapHttpError(res.status, text, res.headers) };
+  try {
+    return { json: JSON.parse(text) };
+  } catch {
+    return { error: { code: "other", message: tr(ctx, "error.badAnswer") } };
+  }
+}
+
+export function modelList(json) {
+  const list = json && Array.isArray(json.models) ? json.models : [];
+  return list.filter((m) => m && typeof (m.name || m.model) === "string").map((m) => ({ id: m.name || m.model, label: m.name || m.model }));
+}
+
+async function runModels(ctx) {
+  const got = await getJson(ctx, bodyOf(ctx), "/api/tags");
+  if (got.error) return failure(got.error);
+  return finish({ models: modelList(got.json) });
+}
+
+export function errorText(ctx, e) {
+  const key = { auth: "error.auth", rateLimit: "error.rateLimit", overloaded: "error.overloaded", timeout: "error.timeout", network: "error.network" }[e.code];
+  const base = key ? tr(ctx, key) : tr(ctx, "error.other");
+  return e.message && key !== "error.network" ? `${base}: ${e.message}` : e.message ? e.message : base;
+}
+
+async function runTest(ctx) {
+  const body = bodyOf(ctx);
+  const ver = await getJson(ctx, body, "/api/version");
+  if (ver.error) throw new Error(errorText(ctx, ver.error));
+  const tags = await getJson(ctx, body, "/api/tags");
+  if (tags.error) throw new Error(errorText(ctx, tags.error));
+  const version = String((ver.json && ver.json.version) || "?");
+  const names = modelList(tags.json).map((m) => m.id);
+  if (names.length === 0) {
+    const model = String(body.model || "").trim() || "<model>";
+    const message = tr(ctx, "test.noModels", { version, model });
+    return { output: { type: "text", text: message }, summary: { message: tr(ctx, "summary.test", { version, count: 0 }) } };
+  }
+  const message = tr(ctx, "test.ok", { version, count: names.length, models: names.join(", ") });
+  return { output: { type: "text", text: message }, summary: { message: tr(ctx, "summary.test", { version, count: names.length }) } };
+}
+
+export default {
+  activate(host) {
+    host.pages.handle("editor", {
+      async render(ctx) {
+        const b = bodyOf(ctx);
+        const ro = ctx.run ? { readOnly: true } : {};
+        const f = (name, kind, extra) => ({ name, label: ctx.t(`field.${name}`), kind, bind: `body.${name}`, ...ro, ...(extra || {}) });
+        const base = baseUrl(b) || DEFAULT_BASE;
+        const view = [
+          { type: "form", id: "address", layout: "strip", fields: [f("baseUrl", "text", { placeholder: DEFAULT_BASE, fill: true })] },
+          {
+            type: "form",
+            id: "model",
+            layout: "strip",
+            fields: [f("model", "text", { placeholder: "llama3.1", hint: ctx.t("field.model.hint"), ...(ctx.run ? {} : { required: true }) }), f("numCtx", "number", { hint: ctx.t("field.numCtx.hint") }), f("keepAlive", "text", { placeholder: DEFAULT_KEEP, hint: ctx.t("field.keepAlive.hint") })],
+          },
+          { type: "form", id: "auth", layout: "strip", fields: [f("authHeader", "text", { placeholder: "Authorization", hint: ctx.t("field.authHeader.hint") }), f("secret", "secret", { hint: ctx.t("field.secret.hint") })] },
+          { type: "text", id: "note", text: tr(ctx, "note.host", { host: base.replace(/^https?:\/\//i, "") }), tone: "muted" },
+        ];
+        return { view };
+      },
+    });
+
+    host.actions.handle("chat", (ctx, input) => runChat(ctx, input));
+    host.actions.handle("models", (ctx) => runModels(ctx));
+    host.actions.handle("test", (ctx) => runTest(ctx));
+  },
+};

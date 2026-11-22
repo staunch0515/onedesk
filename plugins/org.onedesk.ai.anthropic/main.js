@@ -1,0 +1,316 @@
+// Anthropic connection: one kind ("connection") = an address (default https://api.anthropic.com), the API key (a
+// secret field: it only lives in the keychain and is written here as {{secret:name}}, so it never reaches this
+// code), a model and a few knobs. Implements the AI chat interface onedesk.ai.chat/1: chat, models, test.
+// Sandbox rules: no console, timers or fetch; the network is ctx.host.network. Only the connection's own host is
+// reachable (the address field grants it).
+
+export const VERSION = "2026-10-21";
+export const FALLBACK_BETA = "server-side-fallback-2026-07-01";
+export const DEFAULT_BASE = "https://api.anthropic.com";
+export const DEFAULT_MODEL = "claude-haiku-5-5";
+export const EFFORTS = ["low", "medium", "high"];
+const DEFAULT_MAX = 16000;
+const MAX_TOKENS_CAP = 32000;
+
+export function tr(ctx, key, vars) {
+  const label = ctx.t(key);
+  let text = typeof label === "string" ? label : label[ctx.locale] || label["en-US"] || key;
+  for (const k of Object.keys(vars || {})) text = text.split(`{${k}}`).join(String(vars[k]));
+  return text;
+}
+
+export function bodyOf(ctx) {
+  const b = { ...((ctx.resource && ctx.resource.body) || {}) };
+  const draft = ctx.draft || {};
+  for (const k of Object.keys(draft)) if (k.startsWith("body.") && typeof draft[k] === "string") b[k.slice(5)] = draft[k];
+  return b;
+}
+
+export function baseUrl(body) {
+  const b = String(body.baseUrl || DEFAULT_BASE).trim().replace(/\/+$/, "");
+  return /^https?:\/\//i.test(b) ? b : null;
+}
+
+export function secretName(body) {
+  const ref = body && body.secret;
+  return ref && typeof ref.secret === "string" && ref.secret ? ref.secret : "";
+}
+
+// Only Sonnet and Opus have a server-side fallback; Haiku does not.
+export function supportsFallback(model) {
+  return /sonnet|opus/i.test(String(model || ""));
+}
+
+export function headersFor(body, withJson) {
+  const h = { "x-api-key": `{{secret:${secretName(body)}}}`, "anthropic-version": VERSION };
+  if (withJson) h["content-type"] = "application/json";
+  return h;
+}
+
+// The request body for POST /v1/messages. No `thinking`, no temperature or other sampling fields.
+export function buildChat(body, input) {
+  const i = input || {};
+  const model = String(body.model || DEFAULT_MODEL).trim() || DEFAULT_MODEL;
+  const wanted = Number(i.maxTokens) || Number(body.maxTokens) || DEFAULT_MAX;
+  const maxTokens = Math.max(1, Math.min(MAX_TOKENS_CAP, Math.floor(wanted)));
+  const effort = EFFORTS.includes(i.effort) ? i.effort : EFFORTS.includes(body.effort) ? body.effort : "medium";
+  const messages = (Array.isArray(i.messages) ? i.messages : [])
+    .filter((m) => m && (m.role === "user" || m.role === "assistant") && typeof m.text === "string")
+    .map((m) => ({ role: m.role, content: m.text }));
+  let system = typeof i.system === "string" ? i.system : "";
+  if (i.format === "json") system = `${system ? `${system}\n\n` : ""}Respond with a single valid JSON value and nothing else.`;
+  const req = { model, max_tokens: maxTokens, stream: true, messages, output_config: { effort } };
+  if (system) req.system = system;
+  const fallback = body.fallback !== "false" && body.fallback !== false && supportsFallback(model);
+  if (fallback) req.fallbacks = "default";
+  return { request: req, fallback };
+}
+
+// Incremental SSE reader: feed() takes decoded text in any split; calls onEvent({event, data}) per complete event.
+export function sseParser(onEvent) {
+  let buf = "";
+  const flush = (block) => {
+    let event = "message";
+    const data = [];
+    for (const line of block.split("\n")) {
+      if (line === "" || line.startsWith(":")) continue;
+      const i = line.indexOf(":");
+      const field = i < 0 ? line : line.slice(0, i);
+      let value = i < 0 ? "" : line.slice(i + 1);
+      if (value.startsWith(" ")) value = value.slice(1);
+      if (field === "event") event = value;
+      else if (field === "data") data.push(value);
+    }
+    if (data.length > 0) onEvent({ event, data: data.join("\n") });
+  };
+  return {
+    feed(text) {
+      // a "\r" at the end of a chunk may be half of "\r\n": keep it until the next chunk shows
+      buf += text;
+      const keep = buf.endsWith("\r") ? "\r" : "";
+      if (keep) buf = buf.slice(0, -1);
+      buf = buf.replace(/\r\n?/g, "\n") + keep;
+      let at;
+      while ((at = buf.indexOf("\n\n")) >= 0) {
+        flush(buf.slice(0, at));
+        buf = buf.slice(at + 2);
+      }
+    },
+    end() {
+      buf = buf.replace(/\r\n?/g, "\n");
+      if (buf.trim()) flush(buf);
+      buf = "";
+    },
+  };
+}
+
+export function headerOf(headers, name) {
+  const h = headers || {};
+  for (const k of Object.keys(h)) if (k.toLowerCase() === name) return Array.isArray(h[k]) ? h[k][0] : h[k];
+  return undefined;
+}
+
+function errMessage(text) {
+  try {
+    const j = JSON.parse(text);
+    return (j && j.error && (j.error.message || j.error.type)) || "";
+  } catch {
+    return "";
+  }
+}
+
+const TOO_LONG = /too long|too large|context|maximum.*tokens|exceed/i;
+
+// HTTP status (+ body text, + headers) → the interface's error object. Never includes the request or the key.
+export function mapHttpError(status, text, headers) {
+  const message = errMessage(text);
+  if (status === 401 || status === 403) return { code: "auth", message };
+  if (status === 429) {
+    const secs = Number(headerOf(headers, "retry-after"));
+    return { code: "rateLimit", message, ...(Number.isFinite(secs) && secs >= 0 ? { retryAfter: secs } : {}) };
+  }
+  if (status === 529 || status === 503) return { code: "overloaded", message };
+  if (status === 413 || (status === 400 && TOO_LONG.test(message))) return { code: "tooLong", message };
+  if (status === 408 || status === 504) return { code: "timeout", message };
+  return { code: "other", message: message || `HTTP ${status}` };
+}
+
+export function mapStreamError(type, message) {
+  const t = String(type || "");
+  if (t === "overloaded_error") return { code: "overloaded", message };
+  if (t === "rate_limit_error") return { code: "rateLimit", message };
+  if (t === "authentication_error" || t === "permission_error") return { code: "auth", message };
+  if (t === "request_too_large" || (t === "invalid_request_error" && TOO_LONG.test(message || ""))) return { code: "tooLong", message };
+  return { code: "other", message: message || t };
+}
+
+export function mapStop(reason) {
+  if (reason === "end_turn" || reason === "stop_sequence") return "end";
+  if (reason === "max_tokens") return "maxTokens";
+  if (reason === "refusal") return "refusal";
+  return "other";
+}
+
+// The action's return value. The interface result is carried as JSON text (like the connection plugin's `inline`).
+function finish(result) {
+  return { output: { type: "text", text: JSON.stringify(result) } };
+}
+const failure = (error) => finish({ error });
+
+function netError(ctx, err) {
+  if (err && err.code === "denied" && err.params && err.params.reason === "cancelled") throw err;
+  const reason = err && err.params && err.params.reason;
+  if (reason === "timeout") return { code: "timeout", message: tr(ctx, "error.timeout") };
+  return { code: "network", message: `${tr(ctx, "error.network")} (${(err && err.code) || "error"}${reason ? `/${reason}` : ""})` };
+}
+
+function preflight(ctx, body) {
+  const base = baseUrl(body);
+  if (!base) return { error: { code: "other", message: tr(ctx, "error.badUrl") } };
+  if (!secretName(body)) return { error: { code: "auth", message: tr(ctx, "error.noKey") } };
+  return { base };
+}
+
+async function runChat(ctx, input) {
+  const body = bodyOf(ctx);
+  const pre = preflight(ctx, body);
+  if (pre.error) return failure(pre.error);
+  const { request, fallback } = buildChat(body, input);
+  const headers = headersFor(body, true);
+  if (fallback) headers["anthropic-beta"] = FALLBACK_BETA;
+
+  let text = "";
+  let model = request.model;
+  let inputTokens;
+  let outputTokens;
+  let stop = "";
+  let streamError = null;
+  let raw = ""; // body of a non-2xx answer
+  const partial = ctx.host.runs && typeof ctx.host.runs.partial === "function" ? ctx.host.runs.partial : null;
+
+  const parser = sseParser(({ event, data }) => {
+    let d;
+    try {
+      d = JSON.parse(data);
+    } catch {
+      return;
+    }
+    const type = (d && d.type) || event;
+    if (type === "message_start" && d.message) {
+      if (d.message.model) model = d.message.model;
+      if (d.message.usage && d.message.usage.input_tokens !== undefined) inputTokens = d.message.usage.input_tokens;
+    } else if (type === "content_block_delta" && d.delta && d.delta.type === "text_delta" && typeof d.delta.text === "string") {
+      text += d.delta.text;
+    } else if (type === "message_delta") {
+      if (d.delta && d.delta.stop_reason) stop = d.delta.stop_reason;
+      if (d.usage) {
+        if (d.usage.output_tokens !== undefined) outputTokens = d.usage.output_tokens;
+        if (d.usage.input_tokens !== undefined) inputTokens = d.usage.input_tokens;
+      }
+    } else if (type === "error") {
+      streamError = mapStreamError(d.error && d.error.type, (d.error && d.error.message) || "");
+    }
+  });
+
+  let res;
+  try {
+    res = await ctx.host.network.request({
+      method: "POST",
+      url: `${pre.base}/v1/messages`,
+      headers,
+      body: JSON.stringify(request),
+      stream: true,
+      timeoutMs: 600000,
+      idleTimeoutMs: 120000,
+      onChunk: (chunk) => {
+        // the status is not known yet: keep the start of the body (an error answer is JSON) and read it as SSE too
+        if (raw.length < 8192) raw += chunk;
+        const before = text.length;
+        parser.feed(chunk);
+        if (partial && text.length !== before) Promise.resolve(partial({ type: "text", text })).catch(() => {});
+      },
+    });
+  } catch (err) {
+    return failure(netError(ctx, err));
+  }
+  if (res.status < 200 || res.status >= 300) return failure(mapHttpError(res.status, raw || res.text || "", res.headers));
+  parser.end();
+  if (streamError) return failure(streamError);
+  if (!stop && text === "") return failure({ code: "network", message: tr(ctx, "error.cutOff") });
+  const usage = inputTokens !== undefined || outputTokens !== undefined ? { input: inputTokens || 0, output: outputTokens || 0 } : undefined;
+  return finish({ text, model, ...(usage ? { usage } : {}), stop: stop ? mapStop(stop) : "other" });
+}
+
+async function getJson(ctx, body, path) {
+  const pre = preflight(ctx, body);
+  if (pre.error) return { error: pre.error };
+  let res;
+  try {
+    res = await ctx.host.network.request({ method: "GET", url: `${pre.base}${path}`, headers: headersFor(body, false), timeoutMs: 30000 });
+  } catch (err) {
+    return { error: netError(ctx, err) };
+  }
+  const text = String(res.text !== undefined ? res.text : res.body || "");
+  if (res.status < 200 || res.status >= 300) return { error: mapHttpError(res.status, text, res.headers) };
+  try {
+    return { json: JSON.parse(text) };
+  } catch {
+    return { error: { code: "other", message: tr(ctx, "error.badAnswer") } };
+  }
+}
+
+export function modelList(json) {
+  const data = json && Array.isArray(json.data) ? json.data : [];
+  return data.filter((m) => m && typeof m.id === "string").map((m) => ({ id: m.id, label: m.display_name || m.id }));
+}
+
+async function runModels(ctx) {
+  const got = await getJson(ctx, bodyOf(ctx), "/v1/models");
+  if (got.error) return failure(got.error);
+  return finish({ models: modelList(got.json) });
+}
+
+export function errorText(ctx, e) {
+  const key = { auth: "error.auth", rateLimit: "error.rateLimit", overloaded: "error.overloaded", timeout: "error.timeout", tooLong: "error.tooLong", refusal: "error.refusal", network: "error.network" }[e.code];
+  const base = key ? tr(ctx, key) : tr(ctx, "error.other");
+  return e.message && key !== "error.network" ? `${base}: ${e.message}` : e.message ? e.message : base;
+}
+
+async function runTest(ctx) {
+  const got = await getJson(ctx, bodyOf(ctx), "/v1/models");
+  if (got.error) throw new Error(errorText(ctx, got.error));
+  const count = modelList(got.json).length;
+  return { output: { type: "text", text: tr(ctx, "test.ok", { count }) }, summary: { message: tr(ctx, "summary.test", { count }) } };
+}
+
+export default {
+  activate(host) {
+    host.pages.handle("editor", {
+      async render(ctx) {
+        const b = bodyOf(ctx);
+        const ro = ctx.run ? { readOnly: true } : {};
+        const f = (name, kind, extra) => ({ name, label: ctx.t(`field.${name}`), kind, bind: `body.${name}`, ...ro, ...(extra || {}) });
+        const view = [
+          { type: "form", id: "address", layout: "strip", fields: [f("baseUrl", "text", { placeholder: DEFAULT_BASE, fill: true }), f("secret", "secret", { hint: ctx.t("field.secret.hint"), ...(ctx.run ? {} : { required: true }) })] },
+          {
+            type: "form",
+            id: "model",
+            layout: "strip",
+            fields: [
+              f("model", "text", { placeholder: DEFAULT_MODEL, hint: ctx.t("field.model.hint") }),
+              f("effort", "enum", { options: EFFORTS.map((e) => ({ value: e, label: ctx.t(`effort.${e}`) })) }),
+              f("maxTokens", "number", { hint: ctx.t("field.maxTokens.hint") }),
+            ],
+          },
+          { type: "form", id: "fallback", layout: "stack", fields: [f("fallback", "boolean", { hint: ctx.t("field.fallback.hint") })] },
+          { type: "text", id: "note", text: tr(ctx, "note.host", { host: (baseUrl(b) || DEFAULT_BASE).replace(/^https?:\/\//i, "") }), tone: "muted" },
+        ];
+        return { view };
+      },
+    });
+
+    host.actions.handle("chat", (ctx, input) => runChat(ctx, input));
+    host.actions.handle("models", (ctx) => runModels(ctx));
+    host.actions.handle("test", (ctx) => runTest(ctx));
+  },
+};
