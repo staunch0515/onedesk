@@ -309,7 +309,8 @@ async function callGenerate(ctx, instruction, sourceId, sql, confirm) {
   if (sourceId) input.resource = sourceId;
   if (confirm) input.confirm = true;
   try {
-    return await ctx.host.actions.call(`${AI}:generate`, input, {});
+    const ret = await ctx.host.actions.call(`${AI}:generate`, input, {});
+    return ret && ret.data ? ret.data : ret; // D441
   } catch (e) {
     if (e && e.params && e.params.reason === "notExported") throw new Error(tr(ctx, "ai.missing"));
     throw e;

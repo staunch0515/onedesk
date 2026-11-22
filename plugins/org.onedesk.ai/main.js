@@ -355,6 +355,7 @@ async function chat(ctx, connection, input) {
     if (e && e.code === "invalid" && e.params && (e.params.reason === "noImplementation" || e.params.reason === "wrongInterface")) throw new Error(tr(ctx, "error.noProvider", { connection: connection.name }));
     throw e;
   }
+  res = res && res.data ? res.data : res; // D441: the structured answer is `data`; `output` is only words
   if (res && res.error) throw new Error(tr(ctx, `error.chat.${CHAT_ERRORS.includes(res.error.code) ? res.error.code : "other"}`, { message: res.error.message || "", seconds: res.error.retryAfter || "" }));
   if (!res || typeof res.text !== "string") throw new Error(tr(ctx, "error.chat.other", { message: "" }));
   if (res.stop === "refusal") throw new Error(tr(ctx, "error.chat.refusal"));
@@ -565,6 +566,13 @@ export default {
     // K7–K9: exported for other plugins. A proposal made from the words and the names of tables and columns —
     // never from data. Returns { text, model, usage, check } (or { error } / { needsPreview }); nothing is changed.
     host.actions.handle("generate", async (ctx, input) => {
+      const data = await generate(ctx, input);
+      // D441: `output` is readable text, `data` the structured result the caller reads.
+      const text = data.error ? data.error.message : data.needsPreview ? data.request : data.text;
+      return { output: { type: "text", text: String(text || "") }, data };
+    });
+
+    async function generate(ctx, input) {
       const i = input || {};
       if (i.kind !== "sql") return { error: { code: "badKind", message: tr(ctx, "error.badKind") } };
       const instruction = String(i.instruction || "").trim();
@@ -597,7 +605,7 @@ export default {
       await audit(ctx, { kind: "generate", connection: connection.id, model: answer.model || "", chars: request.length, usage: answer.usage || null });
       const text = extractSql(answer.text);
       return { text, model: answer.model || "", usage: answer.usage || null, check: checkSql(text) };
-    });
+    }
 
     // K2: folder → document resources.
     host.actions.handle("syncDocs", async (ctx) => {

@@ -20,7 +20,8 @@
 - `ctx.host.interfaces.call("onedesk.ai.chat/1","chat",input,{resource})`；`invalid/noImplementation`、`invalid/wrongInterface` 当作“这不是 AI 连接”。
 - 连接资源的 `body.model`（字符串）若有，用来在预览里显示模型；没有就显示“连接里设的默认模型”。
 - 清单新字段：`uses`、`contributes.resultActions`、`depends[].optional`（SQL 对 AI 是可选依赖）。内核当前清单严格校验，所以现在内核上装不上；等 X5/X15 合并。
-- `generate` 作为被 `actions.call` 调用的导出动作，返回值原样交给调用方（不走 `ActionOut` 的严格字段）；我查了 `calls.rs`，现状是这样。
+- D441：`generate` 返回 `{ output: {type:"text", text}, data: {text,model,usage,check} | {error} | {needsPreview,…} }`；读服务商 `chat` 也读 `ret.data`（没有 data 时退回整个返回值）；SQL 插件读 `ret.data`。
+- 协调会话对齐：搜索入参用 `query`、类型写 `org.onedesk.ai:doc`（已是）；`runs.read` 取 `input.runId`（已是）；预览页的勾选用现有的 boolean 字段，没用按钮节点或结果页签里的 form。
 - 预览页用普通资源（种类 `analysis`）而不是独立页面：已有的“动作返回 link → 打开资源”路径最稳；代价是每点一次“分析”多一个草稿资源，用户可自己删。
 
 ## 范围外 / 需要别人决定

@@ -321,7 +321,17 @@ describe("ai: send (K3, K5, audit)", () => {
 });
 
 describe("ai: generate (K7–K9)", () => {
-  const gen = (host: Host, input: any = { kind: "sql", instruction: "orders per user", context: { tables: ["orders", { name: "users", columns: ["id", "name"] }] } }) => A(host, "generate", input);
+  const genRaw = (host: Host, input: any = { kind: "sql", instruction: "orders per user", context: { tables: ["orders", { name: "users", columns: ["id", "name"] }] } }) => A(host, "generate", input);
+  const gen = async (host: Host, input?: any) => (await genRaw(host, input)).data; // D441: the structured result is `data`
+  it("returns readable text in output and the structured result in data (D441); reads a provider's data too", async () => {
+    const host = fakeHost({}, { env: { "ai.policy": "allow" } });
+    host.interfaces.call = vi.fn(async () => ({ output: { type: "text", text: "words" }, data: { text: "SELECT 1", model: "m", stop: "end" } }));
+    const res = await genRaw(host);
+    expect(res).toEqual({ output: { type: "text", text: "SELECT 1" }, data: { text: "SELECT 1", model: "m", usage: null, check: { ok: true } } });
+    expect(checkActionResult({ output: res.output })).toEqual([]);
+    const off = await genRaw(fakeHost({}, { env: { "ai.policy": "off" } }));
+    expect(off.output.text).toContain("turned off");
+  });
   const allow = { "ai.policy": "allow" };
   it("allow: one chat call from the words and the table names (and relevant documents), no data; returns text, model, usage and the check", async () => {
     const host = fakeHost({}, { env: allow });
