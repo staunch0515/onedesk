@@ -20,6 +20,7 @@ pub struct HeadlessConfig {
     pub workspace: Option<String>,
     pub worker_bin: PathBuf,
     pub idle: Duration,
+    pub builtin_plugins: Option<PathBuf>,
     /// Passed as `--ai-client`: every request on this worker is the AI operator `ai:<name>`.
     pub client_name: String,
 }
@@ -34,6 +35,7 @@ struct Running {
 
 pub struct Headless {
     cfg: HeadlessConfig,
+    client_name: Mutex<String>,
     state: Arc<tokio::sync::Mutex<Option<Running>>>,
     /// Serialises starting.
     starting: tokio::sync::Mutex<()>,
@@ -44,7 +46,11 @@ static SOCKETS: AtomicUsize = AtomicUsize::new(0);
 
 impl Headless {
     pub fn new(cfg: HeadlessConfig) -> Self {
-        Headless { cfg, state: Arc::default(), starting: tokio::sync::Mutex::new(()), watcher_started: Mutex::new(false) }
+        Headless { client_name: Mutex::new(cfg.client_name.clone()), cfg, state: Arc::default(), starting: tokio::sync::Mutex::new(()), watcher_started: Mutex::new(false) }
+    }
+
+    pub fn set_client_name(&self, name: &str) {
+        *self.client_name.lock().unwrap() = name.to_string();
     }
 
     /// The folder to open: the workspace asked for (id, name or folder), else the one the app would open by default.
@@ -66,7 +72,28 @@ impl Headless {
         let folder = self.folder().map_err(BackendError::Protocol)?;
         let workspace = workspaces::scan(&self.cfg.data_dir).into_iter().find(|(f, _)| *f == folder).map(|_| onedesk_host::workspace_path(&self.cfg.data_dir, &folder)).ok_or_else(|| BackendError::Protocol(ProtocolError { code: ErrorCode::NotFound, params: Default::default(), detail: None }))?;
         let socket = socket_path();
-        let mut child = tokio::process::Command::new(&self.cfg.worker_bin)
+        // Like the app: copy the built-in packages and tell the worker which ones are built in (D313), or their
+        // permissions would be asked for and the plugins would not run for the AI client either (D450).
+        let plugin_root = self.cfg.data_dir.join("plugins");
+        let mut builtin = Vec::new();
+        if let Some(src) = &self.cfg.builtin_plugins {
+            let _ = std::fs::create_dir_all(&plugin_root);
+            match onedesk_host::plugins::install_builtin(src, &plugin_root) {
+                Ok(b) => {
+                    builtin = b.present;
+                    if let Err(e) = onedesk_host::index::refresh(&plugin_root, &builtin) {
+                        eprintln!("onedesk-mcp: could not refresh plugins/.index: {e}");
+                        let _ = std::fs::remove_file(plugin_root.join(onedesk_host::index::FILE_NAME));
+                    }
+                }
+                Err(e) => eprintln!("onedesk-mcp: could not copy the built-in plugins: {e}"),
+            }
+        }
+        let mut command = tokio::process::Command::new(&self.cfg.worker_bin);
+        for b in &builtin {
+            command.arg("--builtin").arg(b);
+        }
+        let mut child = command
             .arg("--workspace")
             .arg(&workspace)
             .arg("--plugins")
@@ -74,7 +101,7 @@ impl Headless {
             .arg("--socket")
             .arg(&socket)
             .arg("--ai-client")
-            .arg(&self.cfg.client_name)
+            .arg(self.client_name.lock().unwrap().as_str())
             .stdin(Stdio::null())
             // stdout belongs to the MCP client; the worker's words go to our stderr.
             .stdout(Stdio::null())

@@ -71,6 +71,12 @@ async fn connection(host: Arc<Host>, stream: TcpStream, token: String, anon: u64
             return Err(r);
         }
         if let Some(c) = query_param(&uri, "client").filter(|c| !c.is_empty()) {
+            // The AI namespace belongs to the MCP socket (D450).
+            if c.starts_with(crate::mcp_socket::CLIENT_PREFIX) {
+                let mut r = ErrorResponse::new(Some("reserved client id".to_string()));
+                *r.status_mut() = StatusCode::FORBIDDEN;
+                return Err(r);
+            }
             client = c;
         }
         workspace = query_param(&uri, "workspace").filter(|w| !w.is_empty());

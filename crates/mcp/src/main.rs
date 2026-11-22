@@ -37,7 +37,8 @@ async fn main() {
         data_dir: arg(&args, "--data-dir").map(PathBuf::from).unwrap_or_else(default_data_dir),
         workspace,
         worker_bin: resolve_worker_bin(),
-        client_name: "mcp".into(),
+        client_name: onedesk_mcp::server::session_name(None),
+        builtin_plugins: onedesk_host::plugins::bundled_dir(),
         idle,
         lock_wait: Duration::from_secs(30),
     });

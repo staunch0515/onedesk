@@ -15,6 +15,8 @@ use tauri_plugin_dialog::DialogExt;
 /// Either the running host or the reason it could not start (shown by the interface).
 struct HostState {
     host: Option<Arc<Host>>,
+    /// The MCP socket file this process bound (and so may remove when it exits).
+    mcp_socket: Option<PathBuf>,
     start_error: Option<String>,
 }
 
@@ -145,6 +147,19 @@ pub fn run() {
         })
         .setup(|app| {
             let cfg = HostConfig { data_dir: default_data_dir(), worker_bin: resolve_worker_bin(), builtin_plugins: builtin_plugins_dir(), secrets: None };
+            // Round 19 (D450): listen on the MCP socket BEFORE waiting for the workspace lock. An AI client that arrives
+            // while this process waits for a headless worker of another client to let go then queues here instead of
+            // starting yet another headless worker that would keep the lock from us. Not being able to listen only
+            // costs the socket: `onedesk-mcp` then starts a worker of its own.
+            let data_dir = default_data_dir();
+            let _ = std::fs::create_dir_all(&data_dir);
+            let mcp = match tauri::async_runtime::block_on(async { onedesk_host::mcp_socket::bind(&data_dir) }) {
+                Ok(b) => Some(b),
+                Err(e) => {
+                    eprintln!("onedesk: MCP socket not available: {e}");
+                    None
+                }
+            };
             let state = match tauri::async_runtime::block_on(Host::start(cfg)) {
                 Ok(host) => {
                     let handle = app.handle().clone();
@@ -166,20 +181,18 @@ pub fn run() {
                             }
                         }
                     });
-                    // Round 19: `onedesk-mcp` finds the app through this socket while it is open. Not being able to
-                    // listen only costs that; the program then starts a worker of its own.
-                    let data_dir = default_data_dir();
-                    match tauri::async_runtime::block_on(async { onedesk_host::mcp_socket::bind(&data_dir) }) {
-                        Ok((listener, _)) => {
-                            tauri::async_runtime::spawn(onedesk_host::mcp_socket::serve(host.clone(), listener));
-                        }
-                        Err(e) => eprintln!("onedesk: MCP socket not available: {e}"),
-                    }
-                    HostState { host: Some(host), start_error: None }
+                    let mcp_socket = mcp.map(|(listener, path)| {
+                        tauri::async_runtime::spawn(onedesk_host::mcp_socket::serve(host.clone(), listener));
+                        path
+                    });
+                    HostState { host: Some(host), mcp_socket, start_error: None }
                 }
                 Err(e) => {
                     eprintln!("onedesk: cannot start the workspace worker: {e}");
-                    HostState { host: None, start_error: Some(e.to_string()) }
+                    if let Some((_, path)) = mcp {
+                        let _ = std::fs::remove_file(path);
+                    }
+                    HostState { host: None, mcp_socket: None, start_error: Some(e.to_string()) }
                 }
             };
             // The first window opens where the workspace it shows was last (D403).
@@ -198,7 +211,9 @@ pub fn run() {
         if let RunEvent::Exit = event {
             if let Some(state) = handle.try_state::<HostState>() {
                 if let Some(host) = &state.host {
-                    let _ = std::fs::remove_file(onedesk_host::mcp_socket::socket_path(&default_data_dir()));
+                    if let Some(path) = &state.mcp_socket {
+                        let _ = std::fs::remove_file(path);
+                    }
                     tauri::async_runtime::block_on(host.shutdown());
                 }
             }

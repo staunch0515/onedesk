@@ -37,6 +37,17 @@ pub struct Builtin {
     pub copied: Vec<String>,
 }
 
+/// Where the built-in packages are: `ONEDESK_BUILTIN_PLUGINS`, else `Resources/plugins` of the `.app` the running program is in
+/// (`Contents/MacOS/<exe>` → `Contents/Resources/plugins`).
+pub fn bundled_dir() -> Option<PathBuf> {
+    if let Some(p) = std::env::var_os("ONEDESK_BUILTIN_PLUGINS").filter(|p| !p.is_empty()) {
+        return Some(PathBuf::from(p));
+    }
+    let exe = std::env::current_exe().ok()?;
+    let dir = exe.parent()?.parent()?.join("Resources").join("plugins");
+    dir.is_dir().then_some(dir)
+}
+
 pub fn install_builtin(src_root: &Path, plugin_root: &Path) -> io::Result<Builtin> {
     let mut out = Builtin::default();
     if !src_root.is_dir() {

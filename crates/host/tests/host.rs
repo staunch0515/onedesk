@@ -939,3 +939,65 @@ async fn leaving_and_coming_back_at_once_never_starts_a_second_worker_for_a_fold
     }
     host.shutdown().await;
 }
+
+
+#[tokio::test]
+async fn d450_the_ai_client_namespace_belongs_to_the_mcp_socket() {
+    let tmp = tempfile::tempdir().unwrap();
+    let host = start(tmp.path()).await;
+    // Neither a request that merely names such a client …
+    let e = host.request(Some("ai:sneaky"), "echo", json!({})).await.unwrap_err();
+    assert_eq!(e.code, ErrorCode::Denied);
+    assert_eq!(e.params.get("reason").map(String::as_str), Some("reservedClient"));
+    // … nor a WebSocket that asks for one gets in.
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    tokio::spawn(ws::serve(host.clone(), listener, "tok".into()));
+    let refused = tokio_tungstenite::connect_async(format!("ws://127.0.0.1:{port}/?token=tok&client=ai%3Ax")).await;
+    assert!(refused.is_err());
+    assert!(tokio_tungstenite::connect_async(format!("ws://127.0.0.1:{port}/?token=tok&client=win-1")).await.is_ok());
+    // The vouched-for route works and reaches only the worker (no main-process handling).
+    let ok = host.request_as(Some("ai:mcp-1"), Some("ai:x".into()), "echo", json!({ "a": 1 })).await.unwrap();
+    assert_eq!(ok, json!({ "a": 1 }));
+    let own = host.request_as(Some("ai:mcp-1"), Some("ai:x".into()), "app.workspaces", Value::Null).await.unwrap_err();
+    assert_eq!(own.code, ErrorCode::UnknownMethod);
+    host.shutdown().await;
+}
+
+#[tokio::test]
+async fn d450_an_ai_connection_does_not_become_the_last_opened_workspace() {
+    let tmp = tempfile::tempdir().unwrap();
+    let host = start(tmp.path()).await;
+    let made = host.request(Some("win"), "app.createWorkspace", json!({ "name": "Second" })).await.unwrap();
+    let id = made["id"].as_str().unwrap().to_string();
+    let read = |folder: &str| onedesk_host::workspaces::read_info(&tmp.path().join("data/workspaces").join(folder)).unwrap().last_opened_at;
+    let folder = std::fs::read_dir(tmp.path().join("data/workspaces")).unwrap().filter_map(|e| e.ok()).map(|e| e.file_name().to_string_lossy().into_owned()).find(|f| f != "default").unwrap();
+    let before = read(&folder);
+    host.bind_ai_client("ai:mcp-1", &id).await.unwrap();
+    assert_eq!(read(&folder), before, "AI use must not touch lastOpenedAt");
+    tokio::time::sleep(Duration::from_millis(20)).await;
+    host.bind_client("win-2", &id).await.unwrap();
+    assert!(read(&folder) > before, "a window opening it does");
+    host.shutdown().await;
+}
+
+#[tokio::test]
+async fn d450_waiting_for_a_locked_workspace_does_not_block_other_operations() {
+    let tmp = tempfile::tempdir().unwrap();
+    let host = start(tmp.path()).await;
+    let made = host.request(Some("win"), "app.createWorkspace", json!({ "name": "Second" })).await.unwrap();
+    let id = made["id"].as_str().unwrap().to_string();
+    let folder = std::fs::read_dir(tmp.path().join("data/workspaces")).unwrap().filter_map(|e| e.ok()).map(|e| e.file_name().to_string_lossy().into_owned()).find(|f| f != "default").unwrap();
+    // Another process (a headless worker) holds the second workspace.
+    let held = onedesk_kernel::workspace::lock_workspace(&tmp.path().join("data/workspaces").join(&folder)).unwrap();
+    let h2 = host.clone();
+    let waiting = tokio::spawn(async move { h2.bind_client("win-2", &id).await });
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    // An operation that needs the operations lock still goes through at once.
+    let quick = tokio::time::timeout(Duration::from_secs(3), host.request(Some("win"), "app.createWorkspace", json!({ "name": "Third" }))).await;
+    assert!(quick.expect("not blocked by the waiting bind").is_ok());
+    assert!(!waiting.is_finished());
+    drop(held);
+    assert!(tokio::time::timeout(Duration::from_secs(10), waiting).await.expect("bind finishes once the lock is free").unwrap().is_ok());
+    host.shutdown().await;
+}
