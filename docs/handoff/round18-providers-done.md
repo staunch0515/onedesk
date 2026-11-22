@@ -10,7 +10,7 @@
 `npx vitest run plugins/org.onedesk.ai.anthropic plugins/org.onedesk.ai.ollama plugins/_testing/locale-check.test.ts`（99 通过）；`pnpm lint`、`pnpm typecheck` 通过。测试里 fake host 的 `network.request` 用 `fetch` 真的连假服务、按块调 `onChunk`，覆盖：增量全文、头与占位符、错误映射、流内错误、中途断开、取消（rethrow `denied/cancelled`）、拒答、models/test。没有调用真 Anthropic/Ollama，没有任何真实密钥。
 
 ## 需要协调会话/其他会话注意（接口约定）
-1. **动作返回值的形状**：`chat`/`models` 的结果（`{text,model,usage,stop}` / `{models:[{id,label}]}` / `{error:{code,message,retryAfter?}}`）现在是 **JSON 文本放在 `{ output: { type: "text", text } }` 里**（同 connection 插件的 `inline`），因为已有动作校验不允许额外字段。`interfaces.call` 的调用方（`org.onedesk.ai`）要 `JSON.parse(返回.output.text)`。若内核给接口调用另一种返回形状，只需改两个插件里的 `finish()`（各一处）。
+1. **动作返回值的形状（D441）**：`chat`/`models`/`test` 返回 `{ output:{type:"text",text:<可读文字>}, data:<结构化结果或 {error:{code,message,retryAfter?}}> }`；`data` 经 `interfaces.call` 原样交给调用方。`data` 需要内核先支持（否则动作结果校验会拒绝多余字段）；只改 `finish()`。
 2. 流式响应状态码在 `onChunk` 时还不知道，所以插件总是同时把块喂给解析器并保留前 8KB 原文；非 2xx 时用原文（或返回的 `text`）解析错误。若内核另给“状态码先到”的钩子可简化。
 3. `network.request` 返回的非流式响应正文，已有插件读 `res.body`，协议写 `text`；两个插件两者都认。
 4. 清单里额外声明的 `chat`/`models` 放进了 `contributes.actions`（带 label/icon）和 `exports.actions`；若内核要求接口动作不必出现在 `contributes`，可去掉。字段 `presets`、`number`、`boolean` 字段类型照 `view-check.ts` 用；`boolean` 的存储是字符串 `"true"/"false"`（假设，页面里没验证）。

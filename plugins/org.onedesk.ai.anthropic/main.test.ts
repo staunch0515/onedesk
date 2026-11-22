@@ -48,7 +48,9 @@ function hostFor(_fake: FakeAi, cancelAt?: number) {
 }
 const conn = (fake: FakeAi, body: Record<string, unknown> = {}) => ({ id: "c1", body: { baseUrl: fake.url, model: "claude-haiku-5-5", effort: "medium", maxTokens: "16000", fallback: "true", secret: { secret: SECRET }, ...body } });
 const ctxOf = (host: unknown, resource: unknown) => ({ target: "resource:c1", locale: "en-US", host, t, params: {}, resource });
-const result = (r: any) => JSON.parse(r.output.text);
+const result = (r: any) => r.data;
+// the shell's validator knows no `data` yet (D441): check the rest of the result
+const plain = (r: any) => ({ output: r.output, ...(r.summary ? { summary: r.summary } : {}) });
 
 let fake: FakeAi;
 beforeAll(async () => void (fake = await startFakeAi()));
@@ -108,7 +110,7 @@ describe("anthropic: chat against the fake server", () => {
     fake.set({ kind: "ok", pieces: ["A", "B", "C"], inputTokens: 21, outputTokens: 3 });
     const { host, partials, calls } = hostFor(fake);
     const res = await actions().chat(ctxOf(host, conn(fake)), { messages: [{ role: "user", text: "hi" }] });
-    expect(checkActionResult(res)).toEqual([]);
+    expect(checkActionResult(plain(res))).toEqual([]);
     expect(result(res)).toEqual({ text: "ABC", model: "claude-haiku-5-5", usage: { input: 21, output: 3 }, stop: "end" });
     const texts = partials.map((p) => p.text);
     expect(texts.at(-1)).toBe("ABC");
@@ -178,7 +180,7 @@ describe("anthropic: models and test", () => {
     const { host } = hostFor(fake);
     expect(result(await actions().models(ctxOf(host, conn(fake)), {})).models.map((m: any) => m.id)).toEqual(["claude-haiku-5-5", "claude-opus-5-5"]);
     const res = await actions().test(ctxOf(host, conn(fake)), {});
-    expect(checkActionResult(res)).toEqual([]);
+    expect(checkActionResult(plain(res))).toEqual([]);
     expect(res.output.text).toBe("Connected: 2 models available");
     expect(fake.requests.at(-1)!.path).toBe("/v1/models");
   });
@@ -186,6 +188,24 @@ describe("anthropic: models and test", () => {
     reset();
     fake.set({ kind: "error", status: 401 });
     await expect(actions().test(ctxOf(hostFor(fake).host, conn(fake)), {})).rejects.toThrow(/API key was not accepted/);
+  });
+});
+
+
+describe("anthropic: return shape (D441)", () => {
+  it("readable text in output, the structured result in data; an error is readable too", async () => {
+    reset();
+    fake.set({ kind: "ok", pieces: ["Hi", "!"] });
+    const res = await actions().chat(ctxOf(hostFor(fake).host, conn(fake)), { messages: [] });
+    expect(res.output).toEqual({ type: "text", text: "Hi!" });
+    expect(res.data).toMatchObject({ text: "Hi!", stop: "end" });
+    fake.set({ kind: "error", status: 401 });
+    const bad = await actions().chat(ctxOf(hostFor(fake).host, conn(fake)), { messages: [] });
+    expect(bad.data.error.code).toBe("auth");
+    expect(bad.output.text).toMatch(/not accepted/);
+    const list = await actions().models(ctxOf(hostFor(fake).host, conn(fake)), {});
+    expect(list.output.type).toBe("text");
+    expect(Array.isArray(list.data.models) || list.data.error).toBeTruthy();
   });
 });
 

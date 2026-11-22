@@ -151,11 +151,15 @@ export function mapStop(reason) {
   return "other";
 }
 
-// The action's return value. The interface result is carried as JSON text (like the connection plugin's `inline`).
-function finish(result) {
-  return { output: { type: "text", text: JSON.stringify(result) } };
+// The action's return value (D441): readable text for the run, the structured interface result in `data`.
+function finish(ctx, result) {
+  let text;
+  if (result.error) text = errorText(ctx, result.error);
+  else if (Array.isArray(result.models)) text = result.models.map((m) => m.id).join("\n");
+  else text = result.text;
+  return { output: { type: "text", text }, data: result };
 }
-const failure = (error) => finish({ error });
+const failure = (ctx, error) => finish(ctx, { error });
 
 function netError(ctx, err) {
   if (err && err.code === "denied" && err.params && err.params.reason === "cancelled") throw err;
@@ -174,7 +178,7 @@ function preflight(ctx, body) {
 async function runChat(ctx, input) {
   const body = bodyOf(ctx);
   const pre = preflight(ctx, body);
-  if (pre.error) return failure(pre.error);
+  if (pre.error) return failure(ctx, pre.error);
   const { request, fallback } = buildChat(body, input);
   const headers = headersFor(body, true);
   if (fallback) headers["anthropic-beta"] = FALLBACK_BETA;
@@ -231,14 +235,14 @@ async function runChat(ctx, input) {
       },
     });
   } catch (err) {
-    return failure(netError(ctx, err));
+    return failure(ctx, netError(ctx, err));
   }
-  if (res.status < 200 || res.status >= 300) return failure(mapHttpError(res.status, raw || res.text || "", res.headers));
+  if (res.status < 200 || res.status >= 300) return failure(ctx, mapHttpError(res.status, raw || res.text || "", res.headers));
   parser.end();
-  if (streamError) return failure(streamError);
-  if (!stop && text === "") return failure({ code: "network", message: tr(ctx, "error.cutOff") });
+  if (streamError) return failure(ctx, streamError);
+  if (!stop && text === "") return failure(ctx, { code: "network", message: tr(ctx, "error.cutOff") });
   const usage = inputTokens !== undefined || outputTokens !== undefined ? { input: inputTokens || 0, output: outputTokens || 0 } : undefined;
-  return finish({ text, model, ...(usage ? { usage } : {}), stop: stop ? mapStop(stop) : "other" });
+  return finish(ctx, { text, model, ...(usage ? { usage } : {}), stop: stop ? mapStop(stop) : "other" });
 }
 
 async function getJson(ctx, body, path) {
@@ -266,8 +270,8 @@ export function modelList(json) {
 
 async function runModels(ctx) {
   const got = await getJson(ctx, bodyOf(ctx), "/v1/models");
-  if (got.error) return failure(got.error);
-  return finish({ models: modelList(got.json) });
+  if (got.error) return failure(ctx, got.error);
+  return finish(ctx, { models: modelList(got.json) });
 }
 
 export function errorText(ctx, e) {
@@ -280,7 +284,7 @@ async function runTest(ctx) {
   const got = await getJson(ctx, bodyOf(ctx), "/v1/models");
   if (got.error) throw new Error(errorText(ctx, got.error));
   const count = modelList(got.json).length;
-  return { output: { type: "text", text: tr(ctx, "test.ok", { count }) }, summary: { message: tr(ctx, "summary.test", { count }) } };
+  return { output: { type: "text", text: tr(ctx, "test.ok", { count }) }, data: { ok: true, models: count }, summary: { message: tr(ctx, "summary.test", { count }) } };
 }
 
 export default {

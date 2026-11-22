@@ -122,10 +122,15 @@ export function mapStop(reason) {
   return reason ? "other" : "end";
 }
 
-function finish(result) {
-  return { output: { type: "text", text: JSON.stringify(result) } };
+// The action's return value (D441): readable text for the run, the structured interface result in `data`.
+function finish(ctx, result) {
+  let text;
+  if (result.error) text = errorText(ctx, result.error);
+  else if (Array.isArray(result.models)) text = result.models.map((m) => m.id).join("\n");
+  else text = result.text;
+  return { output: { type: "text", text }, data: result };
 }
-const failure = (error) => finish({ error });
+const failure = (ctx, error) => finish(ctx, { error });
 
 function netError(ctx, err) {
   if (err && err.code === "denied" && err.params && err.params.reason === "cancelled") throw err;
@@ -145,9 +150,9 @@ function preflight(ctx, body) {
 async function runChat(ctx, input) {
   const body = bodyOf(ctx);
   const pre = preflight(ctx, body);
-  if (pre.error) return failure(pre.error);
+  if (pre.error) return failure(ctx, pre.error);
   const request = buildChat(body, input);
-  if (!request.model) return failure({ code: "other", message: tr(ctx, "error.noModel") });
+  if (!request.model) return failure(ctx, { code: "other", message: tr(ctx, "error.noModel") });
   const progress = typeof ctx.progress === "function" ? ctx.progress : null;
   const partial = ctx.host.runs && typeof ctx.host.runs.partial === "function" ? ctx.host.runs.partial : null;
 
@@ -189,19 +194,19 @@ async function runChat(ctx, input) {
       },
     });
   } catch (err) {
-    return failure(netError(ctx, err));
+    return failure(ctx, netError(ctx, err));
   }
   if (res.status < 200 || res.status >= 300) {
     const e = mapHttpError(res.status, raw || res.text || "", res.headers);
-    if (e.notFound) return failure({ code: e.code, message: tr(ctx, "error.pull", { model: request.model }) });
-    return failure(e);
+    if (e.notFound) return failure(ctx, { code: e.code, message: tr(ctx, "error.pull", { model: request.model }) });
+    return failure(ctx, e);
   }
   parser.end();
-  if (lineError) return failure(lineError);
-  if (!doneLine) return failure({ code: "network", message: tr(ctx, "error.cutOff") });
+  if (lineError) return failure(ctx, lineError);
+  if (!doneLine) return failure(ctx, { code: "network", message: tr(ctx, "error.cutOff") });
   const hasUsage = typeof doneLine.prompt_eval_count === "number" || typeof doneLine.eval_count === "number";
   const usage = hasUsage ? { input: doneLine.prompt_eval_count || 0, output: doneLine.eval_count || 0 } : undefined;
-  return finish({ text, model, ...(usage ? { usage } : {}), stop: mapStop(doneLine.done_reason) });
+  return finish(ctx, { text, model, ...(usage ? { usage } : {}), stop: mapStop(doneLine.done_reason) });
 }
 
 async function getJson(ctx, body, path) {
@@ -229,8 +234,8 @@ export function modelList(json) {
 
 async function runModels(ctx) {
   const got = await getJson(ctx, bodyOf(ctx), "/api/tags");
-  if (got.error) return failure(got.error);
-  return finish({ models: modelList(got.json) });
+  if (got.error) return failure(ctx, got.error);
+  return finish(ctx, { models: modelList(got.json) });
 }
 
 export function errorText(ctx, e) {
@@ -250,10 +255,10 @@ async function runTest(ctx) {
   if (names.length === 0) {
     const model = String(body.model || "").trim() || "<model>";
     const message = tr(ctx, "test.noModels", { version, model });
-    return { output: { type: "text", text: message }, summary: { message: tr(ctx, "summary.test", { version, count: 0 }) } };
+    return { output: { type: "text", text: message }, data: { ok: true, version, models: 0 }, summary: { message: tr(ctx, "summary.test", { version, count: 0 }) } };
   }
   const message = tr(ctx, "test.ok", { version, count: names.length, models: names.join(", ") });
-  return { output: { type: "text", text: message }, summary: { message: tr(ctx, "summary.test", { version, count: names.length }) } };
+  return { output: { type: "text", text: message }, data: { ok: true, version, models: names.length }, summary: { message: tr(ctx, "summary.test", { version, count: names.length }) } };
 }
 
 export default {

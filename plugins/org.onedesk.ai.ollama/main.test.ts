@@ -51,7 +51,9 @@ function hostFor(cancelAt?: number) {
 let fake: FakeAi;
 const conn = (body: Record<string, unknown> = {}) => ({ id: "c1", body: { baseUrl: fake.url, model: "llama3.1", numCtx: "", keepAlive: "5m", authHeader: "Authorization", ...body } });
 const ctxOf = (host: unknown, resource: unknown, progress?: string[]) => ({ target: "resource:c1", locale: "en-US", host, t, params: {}, resource, progress: (_f: unknown, m: string) => progress?.push(m) });
-const result = (r: any) => JSON.parse(r.output.text);
+const result = (r: any) => r.data;
+// the shell's validator knows no `data` yet (D441): check the rest of the result
+const plain = (r: any) => ({ output: r.output, ...(r.summary ? { summary: r.summary } : {}) });
 const actions = () => registry(plugin as any).actions;
 const reset = () => (fake.requests.length = 0, fake.set({ kind: "ok" }), fake.setModels(["llama3.1"]));
 
@@ -94,7 +96,7 @@ describe("ollama: chat against the fake server", () => {
     const { host, partials, calls } = hostFor();
     const progress: string[] = [];
     const res = await actions().chat(ctxOf(host, conn(), progress), { messages: [{ role: "user", text: "hi" }] });
-    expect(checkActionResult(res)).toEqual([]);
+    expect(checkActionResult(plain(res))).toEqual([]);
     expect(result(res)).toEqual({ text: "Hello!", model: "llama3.1", usage: { input: 7, output: 3 }, stop: "end" });
     const texts = partials.map((p) => p.text);
     expect(texts.at(-1)).toBe("Hello!");
@@ -158,7 +160,7 @@ describe("ollama: models and test", () => {
     reset();
     fake.setModels(["a:1"]);
     const ok = await actions().test(ctxOf(hostFor().host, conn()), {});
-    expect(checkActionResult(ok)).toEqual([]);
+    expect(checkActionResult(plain(ok))).toEqual([]);
     expect(ok.output.text).toBe("Connected: Ollama 0.99.0-fake, 1 models downloaded (a:1)");
     expect(fake.requests.map((r) => r.path)).toEqual(["/api/version", "/api/tags"]);
     fake.setModels([]);
@@ -171,6 +173,24 @@ describe("ollama: models and test", () => {
       throw Object.assign(new Error("invalid"), { code: "invalid", params: { reason: "network" } });
     });
     await expect(actions().test(ctxOf(host, conn()), {})).rejects.toThrow(/request failed/);
+  });
+});
+
+
+describe("ollama: return shape (D441)", () => {
+  it("readable text in output, the structured result in data; an error is readable too", async () => {
+    reset();
+    fake.set({ kind: "ok", pieces: ["Hi", "!"] });
+    const res = await actions().chat(ctxOf(hostFor().host, conn()), { messages: [] });
+    expect(res.output).toEqual({ type: "text", text: "Hi!" });
+    expect(res.data).toMatchObject({ text: "Hi!", stop: "end" });
+    fake.set({ kind: "error", status: 401 });
+    const bad = await actions().chat(ctxOf(hostFor().host, conn()), { messages: [] });
+    expect(bad.data.error.code).toBe("auth");
+    expect(bad.output.text).toMatch(/did not accept/);
+    const list = await actions().models(ctxOf(hostFor().host, conn()), {});
+    expect(list.output.type).toBe("text");
+    expect(Array.isArray(list.data.models) || list.data.error).toBeTruthy();
   });
 });
 
