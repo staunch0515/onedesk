@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 // @ts-ignore plain JS module, no types
-import plugin, { audit, buildRequest, checkSql, composeRequest, estimateTokens, extractSql, isSensitiveColumn, markdownTable, maskText, parseExtra, pickConnection, pickDocs, policyOf, redactTable, searchTerms, syncDocs, tableNamesIn } from "./main.js";
+import plugin, { audit, buildRequest, checkSql, composeRequest, cleanContext, dropDrafts, estimateTokens, extractSql, isSensitiveColumn, markdownTable, maskText, parseExtra, pickConnection, pickDocs, policyOf, redactTable, searchTerms, syncDocs } from "./main.js";
 import { checkActionResult, checkView, hostError, onlyKeys, registry, RENDER_KEYS } from "../_testing/view-check";
 
 const load = (f: string) => JSON.parse(readFileSync(new URL(`./locales/${f}.json`, import.meta.url), "utf8")) as Record<string, string>;
@@ -37,9 +37,11 @@ function fakeHost(over: Host = {}, opts: { env?: Record<string, string>; setting
     storage: { get: vi.fn(async (k: string) => store.get(k) ?? null), set: vi.fn(async (k: string, v: string) => void store.set(k, v)), remove: vi.fn(async (k: string) => void store.delete(k)) },
     runs: { read: vi.fn(async () => ({ output: table, meta: { plugin: "org.onedesk.sql", kind: "query", resource: "q1", at: 1 } })) },
     resources: {
-      get: vi.fn(async (id: string) => bodies.get(id) ?? (id === "c1" ? { id: "c1", name: "Local AI", body: { model: "llama3" } } : id === "q1" ? { id: "q1", name: "Q", body: { sql: "SELECT * FROM public.orders o JOIN users u ON 1=1" } } : id === "d1" ? { id: "d1", body: { text: "Orders hold one row per order." } } : null)),
+      // another plugin's resource is not readable (the connections come from interfaces.resources)
+      get: vi.fn(async (id: string) => bodies.get(id) ?? (id === "d1" ? { id: "d1", body: { text: "Orders hold one row per order." } } : null)),
       list: vi.fn(async () => []),
-      search: vi.fn(async () => [{ id: "d1", kind: "org.onedesk.ai:doc", name: "orders.md", snippet: "Orders hold", score: 3 }]),
+      search: vi.fn(async (q: any) => (q.ids ? { items: [{ id: q.ids[0], name: "Orders report" }], total: 1 } : [{ id: "d1", kind: "org.onedesk.ai:doc", name: "orders.md", snippet: "Orders hold", score: 3 }])),
+      remove: vi.fn(async () => undefined),
       create: vi.fn(async (r: any) => {
         bodies.set("a1", { id: "a1", name: r.name, body: r.body });
         return { id: "a1", name: r.name };
@@ -47,7 +49,7 @@ function fakeHost(over: Host = {}, opts: { env?: Record<string, string>; setting
       update: vi.fn(async () => undefined),
       upsertByKey: vi.fn(async () => ({ ids: {} })),
     },
-    interfaces: { call: vi.fn(async () => reply), list: vi.fn(async () => [{ plugin: "org.onedesk.ai.x", kind: "connection", label: "X" }]) },
+    interfaces: { call: vi.fn(async () => reply), list: vi.fn(async () => [{ plugin: "org.onedesk.ai.x", kind: "org.onedesk.ai.x:connection", label: "X" }]), resources: vi.fn(async () => [{ id: "c1", name: "Local AI", kind: "org.onedesk.ai.x:connection", fields: { model: "llama3" } }]) },
     files: { roots: vi.fn(async () => [{ path: "/docs" }]), list: vi.fn(async () => ({ entries: [] })), readText: vi.fn(async () => ({ text: "x" })) },
     ...over,
   };
@@ -58,17 +60,20 @@ const draftBody = (over: Record<string, string> = {}) => ({ request: "# Analysis
 const analysisCtx = (host: Host, body = draftBody(), extra: Record<string, unknown> = {}) => ctxOf(host, { resource: { id: "a1", name: "Analysis", body }, ...extra });
 
 describe("ai: masking (K4)", () => {
-  it("masks whole columns by name: password, token, email, phone … as words, camelCase and parts; the user's own names too", () => {
-    for (const n of ["password", "user_password", "apiKey", "API_KEY", "Email", "contactEmail", "phone_number", "secret", "auth-token", "card_number"]) expect(isSensitiveColumn(n, []), n).toBe(true);
-    for (const n of ["id", "hotel", "telemetry", "name", "tokens_per_day_x"]) expect(isSensitiveColumn(n, []), n).toBe(n === "tokens_per_day_x" ? false : false);
-    expect(isSensitiveColumn("salary", [])).toBe(false);
-    expect(isSensitiveColumn("salary", parseExtra("Salary, bank_x"))).toBe(true);
+  it("masks whole columns by name: a lower-cased substring of the label or the key; Chinese and Japanese words too; the user's own names", () => {
+    for (const n of ["password", "passwordhash", "accessToken", "emailaddress", "Email", "contactEmail", "phone_number", "mobile", "api_key", "secret", "密码", "用户邮箱", "手机号", "身份证号", "银行卡", "電話番号", "パスワード"]) expect(isSensitiveColumn(n, []), n).toBe(true);
+    expect(isSensitiveColumn(["c3", "PasswordHash"], [])).toBe(true); // the key counts as well as the label
+    expect(isSensitiveColumn(["id", "c0"], [])).toBe(false);
+    for (const n of ["id", "name", "created_at", "total", "city", "salary"]) expect(isSensitiveColumn(n, []), n).toBe(false);
+    expect(isSensitiveColumn("Salary", parseExtra("Salary, bank_x"))).toBe(true);
     expect(parseExtra(" a, B ;c\n")).toEqual(["a", "b", "c"]);
   });
-  it("masks emails and long digit strings in any cell and cuts cells", () => {
+  it("masks emails and numbers with any separators (cards, phone numbers) in any cell, keeps dates, and cuts cells", () => {
     expect(maskText("write to a.b@c.co now", 200)).toBe("write to [email] now");
     expect(maskText("card 4111 1111 1111 1111!", 200)).toBe("card [number]!");
-    expect(maskText("order 12345678", 200)).toBe("order 12345678"); // 8 digits is not long
+    for (const ph of ["+81 90-1234-5678", "(415) 555-2671", "138 0013 8000", "+44 (0)20 7946 0958", "13800138000", "010.1234.5678"]) expect(maskText(`call ${ph} now`, 200), ph).toBe("call [number] now");
+    expect(maskText("order 1234567", 200)).toBe("order 1234567"); // 7 digits is not long
+    expect(maskText("on 2026-11-22 at 10", 200)).toBe("on 2026-11-22 at 10");
     expect(maskText("x".repeat(30), 10)).toBe(`${"x".repeat(10)}…`);
     expect(maskText(null, 10)).toBe("");
   });
@@ -102,8 +107,7 @@ describe("ai: masking (K4)", () => {
 });
 
 describe("ai: reference documents (K2)", () => {
-  it("terms: table names from FROM/JOIN, then column labels, no blanks, at most 20", () => {
-    expect(tableNamesIn("select * from public.orders o join \"users\" u on 1 where x in (select 1 from items)")).toEqual(["orders", "users", "items"]);
+  it("terms: names first, then column labels, no blanks or duplicates, at most 20", () => {
     expect(searchTerms(["orders"], ["id", "a b", "x", "orders"])).toEqual(["orders", "id"]);
     expect(searchTerms(Array.from({ length: 30 }, (_, i) => `t${i}`), [])).toHaveLength(20);
   });
@@ -146,43 +150,27 @@ describe("ai: policy and connection (K10)", () => {
     for (const p of ["off", "preview", "allow"]) expect(await policyOf(ctxOf(fakeHost({}, { env: { "ai.policy": p } })))).toBe(p);
     expect(await policyOf(ctxOf(fakeHost({}, { env: { "ai.policy": "yolo" } })))).toBe("preview");
   });
-  it("the connection: the environment's ai.connection, else the workspace setting; says where a stale one came from", async () => {
+  it("the connection: page, then the environment's ai.connection, then the workspace config, then the setting; says where a stale one came from", async () => {
     expect(await pickConnection(ctxOf(fakeHost()))).toEqual({ id: "c1", name: "Local AI", model: "llama3" });
-    const def = fakeHost({}, { env: { "ai.connection": "" }, cfg: { "ai.connection": "c1" } });
-    expect((await pickConnection(ctxOf(def))).id).toBe("c1");
+    expect(await pickConnection(ctxOf(fakeHost({}, { env: { "ai.connection": "" } })), "c1")).toMatchObject({ id: "c1" }); // the page's own choice
+    const cfg = fakeHost({}, { env: { "ai.connection": "" }, cfg: { "ai.connection": "c1" }, settings: { connection: "ghost" } });
+    expect((await pickConnection(ctxOf(cfg))).id).toBe("c1");
+    expect(cfg.params.config).toHaveBeenCalledWith("ai.connection");
+    expect((await pickConnection(ctxOf(fakeHost({}, { env: { "ai.connection": "" }, settings: { connection: "c1" } })))).id).toBe("c1");
     await expect(pickConnection(ctxOf(fakeHost({}, { env: { "ai.connection": "" } })))).rejects.toThrow("No AI connection");
     await expect(pickConnection(ctxOf(fakeHost({}, { env: { "ai.connection": "ghost" } })))).rejects.toThrow("(from the environment) was not found");
-    await expect(pickConnection(ctxOf(fakeHost({}, { env: { "ai.connection": "" }, cfg: { "ai.connection": "ghost" } })))).rejects.toThrow("(the workspace default) was not found");
+    await expect(pickConnection(ctxOf(fakeHost({}, { env: { "ai.connection": "" }, cfg: { "ai.connection": "ghost2" } })))).rejects.toThrow("(the workspace default) was not found");
+    await expect(pickConnection(ctxOf(fakeHost({}, { env: { "ai.connection": "" }, settings: { connection: "ghost3" } })))).rejects.toThrow("(from the AI workbench settings) was not found");
   });
-  it("a connection can be found by name too", async () => {
+  it("connections come only from interfaces.resources (never resources.get/list of another plugin); a name works too; none when the host cannot say", async () => {
     const host = fakeHost({}, { env: { "ai.connection": "My AI" } });
-    host.resources.list = vi.fn(async () => [{ id: "c9", name: "My AI" }]);
-    expect(await pickConnection(ctxOf(fakeHost()), "c1")).toMatchObject({ id: "c1" }); // the page's own choice wins
+    host.interfaces.resources = vi.fn(async () => [{ id: "c9", name: "My AI", kind: "x:connection", fields: {} }]);
     expect((await pickConnection(ctxOf(host))).id).toBe("c9");
-  });
-});
-
-describe("ai: the settings resource is kept ready", () => {
-  it("is created when the workspace opens, once; an existing one is kept", async () => {
-    let handler: any;
-    const events = { on: (n: string, h: unknown) => void (n === "workspace.opened" && (handler = h)) };
-    (plugin as any).activate({ pages: { handle() {} }, actions: { handle() {} }, kinds: { handle() {} }, events });
-    expect(manifest.activation).toEqual(["workspace.opened"]);
-    const host = fakeHost();
-    await handler(ctxOf(host));
-    expect(host.resources.create).toHaveBeenCalledWith({ kind: "settings", name: "AI workbench settings", body: { anchor: "" } });
-    const had = fakeHost();
-    had.resources.list = vi.fn(async () => [{ id: "set1" }]);
-    await handler(ctxOf(had));
-    expect(had.resources.create).not.toHaveBeenCalled();
-    const broken = fakeHost();
-    broken.resources.list = vi.fn(async () => { throw hostError("denied"); });
-    await expect(handler(ctxOf(broken))).resolves.toBeUndefined();
-  });
-  it("Analyze makes one again if the user deleted it", async () => {
-    const host = fakeHost();
-    await A(host, "analyze", { runId: "run1" });
-    expect(host.resources.create.mock.calls.map((c: any) => c[0].kind)).toEqual(["settings", "analysis"]);
+    expect(host.interfaces.resources).toHaveBeenCalledWith("onedesk.ai.chat/1");
+    expect(host.resources.list).not.toHaveBeenCalled();
+    expect((await pickConnection(ctxOf(host))).model).toBe("");
+    host.interfaces.resources = vi.fn(async () => { throw hostError("denied"); });
+    await expect(pickConnection(ctxOf(host))).rejects.toThrow("was not found");
   });
 });
 
@@ -198,10 +186,22 @@ describe("ai: analyze (K1) and the preview page (K3)", () => {
     expect(body.request).toContain("Masked columns: Email, apiKey");
     expect(body.request).not.toMatch(/a@b\.com|4111/);
     expect(body.runId).toBe("run1");
-    // documents by the statement's table names and the result's columns
-    expect(host.resources.search.mock.calls[0][0]).toMatchObject({ mode: "any", rank: "relevance" });
-    expect(host.resources.search.mock.calls[0][0].query.split(" ").slice(0, 2)).toEqual(["orders", "users"]);
+    expect(body.answer).toBeUndefined();
+    // documents by the producer's name (not another plugin's body) and the result's columns
+    expect(host.resources.get).not.toHaveBeenCalledWith("q1");
+    expect(host.resources.search.mock.calls[0][0]).toEqual({ ids: ["q1"], limit: 1 });
+    const docSearch = host.resources.search.mock.calls[1][0];
+    expect(docSearch).toMatchObject({ mode: "any", rank: "relevance", kinds: ["org.onedesk.ai:doc"] });
+    expect(docSearch.query.split(" ").slice(0, 2)).toEqual(["Orders", "report"]);
     expect(JSON.parse(body.docs)[0]).toMatchObject({ id: "d1", name: "orders.md" });
+  });
+  it("the click stores a draft with the run first (a page event may save only where the plugin already has something)", async () => {
+    const host = fakeHost({ runs: { read: vi.fn(async () => ({ output: table, meta: { plugin: "p", kind: "query", resource: "q1", at: 1 } })), saveArtifact: vi.fn(async () => ({ id: "dr1" })) } });
+    await A(host, "analyze", { runId: "run1" });
+    expect(host.runs.saveArtifact).toHaveBeenCalledWith("run1", { name: "Analysis draft", kind: "analysis-draft", data: { analysis: "a1", request: expect.stringContaining("Analysis request") } });
+    // without the host call the draft still opens
+    const plain = fakeHost();
+    await expect(A(plain, "analyze", { runId: "run1" })).resolves.toBeTruthy();
   });
   it("uses the settings for rows, cell length and the user's sensitive columns", async () => {
     const host = fakeHost({}, { settings: { maxRows: "1", maxCell: "5", sensitiveColumns: "note" } });
@@ -211,7 +211,10 @@ describe("ai: analyze (K1) and the preview page (K3)", () => {
     expect(req).toContain("Masked columns: Email, note, apiKey");
   });
   it("is refused when the environment says off; without a run there is nothing to analyze", async () => {
-    await expect(A(fakeHost({}, { env: { "ai.policy": "off" } }), "analyze", { runId: "r" })).rejects.toThrow("turned off");
+    await expect(A(fakeHost({}, { env: { "ai.policy": "off" } }), "analyze", { runId: "r" })).rejects.toThrow("(ai.policy = off), so nothing was read or sent");
+    const off = fakeHost({}, { env: { "ai.policy": "off" } });
+    await expect(A(off, "analyze", { runId: "r" })).rejects.toThrow();
+    expect(off.runs.read).not.toHaveBeenCalled();
     await expect(A(fakeHost(), "analyze", {})).rejects.toThrow("no result");
     const none = fakeHost();
     none.runs.read = vi.fn(async () => { throw hostError("denied", { reason: "notInResultAction" }); });
@@ -223,14 +226,16 @@ describe("ai: analyze (K1) and the preview page (K3)", () => {
     const out = await pages.analysis.render(analysisCtx(host));
     expect(checkView(out.view)).toEqual([]);
     expect(onlyKeys(out, RENDER_KEYS)).toEqual([]);
-    expect(out.view.map((n: any) => n.id)).toEqual(["info", "connection", "request", "docs", "full"]);
+    expect(out.view.map((n: any) => n.id)).toEqual(["info", "connection", "system", "request", "docs", "full"]);
     expect(out.view[1].fields[0]).toMatchObject({ kind: "ref", kinds: ["@implements:onedesk.ai.chat/1"], bind: "body.connectionId" });
-    expect(host.resources.list).toHaveBeenCalledWith({ kind: "org.onedesk.ai.x:connection" });
+    expect(out.view[1].fields[0].options).toBeUndefined(); // the host fills the list
+    expect(out.view[2].text).toContain("System prompt");
+    expect(out.view[2].text).toContain("data analyst");
     expect(out.view[0].text).toContain("Connection: Local AI · Model: llama3");
     expect(out.view[0].text).toMatch(/About \d+ tokens/);
-    expect(out.view[2].fields[0]).toMatchObject({ kind: "longtext", bind: "body.request" });
-    expect(out.view[3].fields[0]).toMatchObject({ kind: "boolean", bind: "body.use0", label: "orders.md" });
-    expect(out.view[4].text).toContain("### orders.md");
+    expect(out.view[3].fields[0]).toMatchObject({ kind: "longtext", bind: "body.request" });
+    expect(out.view[4].fields[0]).toMatchObject({ kind: "boolean", bind: "body.use0", label: "orders.md" });
+    expect(out.view[5].text).toContain("### orders.md");
     expect(host.interfaces.call).not.toHaveBeenCalled();
   });
   it("unticking a document and editing the request change the full text and the estimate at once (the draft counts)", async () => {
@@ -254,13 +259,15 @@ describe("ai: analyze (K1) and the preview page (K3)", () => {
   });
   it("a run page of an analysis is read only; an answer is shown as Markdown with the model and usage, and the name field only when editable", async () => {
     const { pages } = registry(plugin);
-    const body = draftBody({ answer: "**ok**", model: "m", usage: "1 / 2" });
-    const live = await pages.analysis.render(analysisCtx(fakeHost(), body));
+    const body = draftBody();
+    const hostA = fakeHost();
+    await hostA.storage.set("last:a1", JSON.stringify({ answer: "**ok**", model: "m", usage: "1 / 2", connection: "Local AI", sent: "S" }));
+    const live = await pages.analysis.render(analysisCtx(hostA, body));
     expect(live.view.find((n: any) => n.id === "answer")).toMatchObject({ format: "markdown", text: "**ok**" });
     expect(live.view.find((n: any) => n.id === "keep").fields[0]).toMatchObject({ name: "name", param: true });
-    const ro = await pages.analysis.render(analysisCtx(fakeHost(), body, { run: { id: "x", resourceId: "a1", input: {}, params: {} } }));
+    const ro = await pages.analysis.render(analysisCtx(hostA, body, { run: { id: "x", resourceId: "a1", input: {}, params: {} } }));
     expect(ro.view.find((n: any) => n.id === "keep")).toBeUndefined();
-    expect(ro.view[2].fields[0].readOnly).toBe(true);
+    expect(ro.view[3].fields[0].readOnly).toBe(true);
     expect(checkView(live.view)).toEqual([]);
   });
   it("the doc page shows the file's text", async () => {
@@ -282,7 +289,9 @@ describe("ai: send (K3, K5, audit)", () => {
     expect(input.system).toContain("data analyst");
     expect(checkActionResult(res)).toEqual([]);
     expect(res.output).toEqual({ type: "text", text: "It looks fine." });
-    expect(host.resources.update).toHaveBeenCalledWith("a1", expect.objectContaining({ "body.answer": "It looks fine.", "body.model": "claude-haiku-5-5", "body.usage": "100 / 20", "body.connection": "Local AI" }));
+    // the answer is NOT written into the resource (the index reads bodies): it waits in the plugin's storage
+    expect(host.resources.update).not.toHaveBeenCalled();
+    expect(JSON.parse((await host.storage.get("last:a1"))!)).toMatchObject({ answer: "It looks fine.", model: "claude-haiku-5-5", usage: "100 / 20", connection: "Local AI" });
     const log = JSON.parse((await host.storage.get("audit"))!);
     expect(log).toHaveLength(1);
     expect(log[0]).toMatchObject({ kind: "analyze", connection: "c1", model: "claude-haiku-5-5", usage: { input: 100, output: 20 } });
@@ -320,20 +329,25 @@ describe("ai: send (K3, K5, audit)", () => {
     await expect(send(null, hostError("invalid", { reason: "wrongInterface" }))).rejects.toThrow("“Local AI” is not an AI connection");
     await expect(send(null, hostError("denied", { reason: "cancelled" }))).rejects.toMatchObject({ code: "denied" });
   });
-  it("keep (K6): saves the analysis with the run it came from (D442); without the host call it is an error, not a silent copy", async () => {
+  it("keep (K6): saves the analysis with the run it came from (D442), drops the draft, and only then forgets the stored answer; without the host call it is an error", async () => {
     const { pages } = registry(plugin);
-    const body = draftBody({ answer: "A", model: "m", usage: "1 / 2", connection: "Local AI", sent: "S" });
-    const host = fakeHost({ runs: { saveArtifact: vi.fn(async () => ({ id: "art1" })) } });
-    const res = await pages.analysis.onEvent(analysisCtx(host, body, { params: { name: "Q3 look" } }), "keep");
-    expect(host.runs.saveArtifact).toHaveBeenCalledWith("run1", { name: "Q3 look", kind: "analysis", data: { request: "S", answer: "A", connection: "Local AI", model: "m", usage: "1 / 2" } });
+    const host = fakeHost({ runs: { saveArtifact: vi.fn(async () => ({ id: "art1" })), listArtifacts: vi.fn(async () => [{ id: "dr1", kind: "analysis-draft" }, { id: "x", kind: "analysis" }]), deleteArtifact: vi.fn(async () => null) } });
+    await host.storage.set("last:a1", JSON.stringify({ answer: "A", model: "m", usage: "1 / 2", connection: "Local AI", sent: "S" }));
+    const res = await pages.analysis.onEvent(analysisCtx(host, draftBody(), { params: { name: "Q3 look" } }), "keep");
+    expect(host.runs.saveArtifact).toHaveBeenCalledWith("run1", { name: "Q3 look", kind: "analysis", data: { system: expect.stringContaining("data analyst"), request: "S", answer: "A", connection: "Local AI", model: "m", usage: "1 / 2" } });
+    expect(host.runs.deleteArtifact).toHaveBeenCalledTimes(1);
+    expect(host.runs.deleteArtifact).toHaveBeenCalledWith("dr1");
+    expect(await host.storage.get("last:a1")).toBeNull();
     expect(onlyKeys(res, ["changes", "params", "message"])).toEqual([]);
     expect(res.message).toContain("with the run");
     const plain = fakeHost();
-    await expect(pages.analysis.onEvent(analysisCtx(plain, body, { params: { name: "N" } }), "keep")).rejects.toThrow("cannot attach");
-    expect(plain.storage.set).not.toHaveBeenCalled();
-    expect((await pages.analysis.onEvent(analysisCtx(plain), "keep")).message).toContain("no answer");
-    expect((await pages.analysis.onEvent(analysisCtx(plain, draftBody({ answer: "A", runId: "" })), "keep")).message).toContain("not known");
+    await plain.storage.set("last:a1", JSON.stringify({ answer: "A" }));
+    await expect(pages.analysis.onEvent(analysisCtx(plain, draftBody(), { params: { name: "N" } }), "keep")).rejects.toThrow("cannot attach");
+    expect(await plain.storage.get("last:a1")).not.toBeNull(); // nothing is lost when saving fails
+    expect((await pages.analysis.onEvent(analysisCtx(fakeHost()), "keep")).message).toContain("no answer");
+    expect((await pages.analysis.onEvent(analysisCtx(plain, draftBody({ runId: "" })), "keep")).message).toContain("not known");
     await expect(pages.analysis.onEvent(analysisCtx(plain), "nope")).rejects.toThrow();
+    await expect(dropDrafts(ctxOf(fakeHost()), "r")).resolves.toBeUndefined();
   });
   it("the audit keeps the last 200 only and never fails the answer", async () => {
     const host = fakeHost();
@@ -376,22 +390,55 @@ describe("ai: generate (K7–K9)", () => {
     expect(host.runs.read).not.toHaveBeenCalled();
     expect(JSON.parse((await host.storage.get("audit"))!)[0]).toMatchObject({ kind: "generate", connection: "c1" });
   });
-  it("preview (the default): the first call sends nothing and returns the request; with confirm it sends", async () => {
+  it("preview (the default): the workbench makes the draft and its own page shows it; nothing is sent; the caller cannot send it (confirm is ignored)", async () => {
     const host = fakeHost();
     const first = await gen(host);
-    expect(first).toMatchObject({ needsPreview: true, connection: "Local AI", model: "llama3" });
+    expect(first).toMatchObject({ needsPreview: true, draft: "a1", connection: "Local AI", model: "llama3" });
     expect(first.request).toContain("orders per user");
+    expect(first.system).toContain("single SELECT or WITH");
     expect(first.tokens).toBeGreaterThan(0);
     expect(host.interfaces.call).not.toHaveBeenCalled();
-    const bad = await gen(host, { kind: "sql", instruction: "x", confirm: "yes" });
-    expect(bad.needsPreview).toBe(true); // only the boolean true confirms
-    host.interfaces.call = vi.fn(async () => ({ text: "SELECT 1", model: "m", stop: "end" }));
-    const sent = await gen(host, { kind: "sql", instruction: "x", confirm: true });
-    expect(sent).toMatchObject({ text: "SELECT 1", check: { ok: true } });
+    const draft = host.resources.create.mock.calls[0][0];
+    expect(draft).toMatchObject({ kind: "analysis", body: { mode: "sql", request: first.request, system: first.system } });
+    for (const confirm of [true, "yes", first.draft]) {
+      const again = await gen(host, { kind: "sql", instruction: "x", confirm });
+      expect(again.needsPreview).toBe(true);
+    }
+    expect(host.interfaces.call).not.toHaveBeenCalled();
+  });
+  it("the user sends the draft on the workbench page: exactly the stored text and system go out (edits and input are ignored); the proposal waits for fetch", async () => {
+    const host = fakeHost();
+    const first = await gen(host);
+    const body = host.resources.create.mock.calls[0][0].body;
+    host.interfaces.call = vi.fn(async () => ({ data: { text: "```sql\nSELECT 1\n```", model: "m", usage: { input: 1, output: 2 }, stop: "end" } }));
+    const res = await A(host, "send", { "body.request": "SMUGGLED rows: a@b.com" }, { resource: { id: first.draft, body } });
+    const sent = host.interfaces.call.mock.calls[0][2];
+    expect(sent.messages[0].text).toBe(body.request);
+    expect(sent.system).toBe(body.system);
+    expect(sent.format).toBe("text");
+    expect(res.output.text).toBe("SELECT 1");
+    expect(host.resources.update).not.toHaveBeenCalled();
+    // not asked for yet → fetch says it is pending for another draft; then gives the proposal once and removes the draft
+    expect(await gen(host, { fetch: "other" })).toEqual({ pending: true });
+    expect(await gen(host, { fetch: first.draft })).toEqual({ text: "SELECT 1", model: "m", usage: { input: 1, output: 2 }, check: { ok: true } });
+    expect(host.resources.remove).toHaveBeenCalledWith(first.draft);
+    expect(await gen(host, { fetch: first.draft })).toEqual({ pending: true });
+    // the draft page is read only
+    const page = await registry(plugin).pages.analysis.render(ctxOf(host, { resource: { id: first.draft, body } }));
+    expect(page.view.find((n: any) => n.id === "request").fields[0].readOnly).toBe(true);
+    expect(page.view.find((n: any) => n.id === "system").text).toContain("single SELECT or WITH");
+  });
+  it("only names go out: a long instruction is cut and masked, tables and columns must look like names", () => {
+    const c = cleanContext({ instruction: `mail a@b.com ${"x".repeat(2000)}`, context: { tables: ["orders", "1; DROP TABLE x", { name: "users", columns: ["id", "a b", "name"] }, { name: "x y" }] } });
+    expect(c.instruction.startsWith("mail [email] ")).toBe(true);
+    expect(c.instruction.length).toBeLessThanOrEqual(1001);
+    expect(c.tables).toEqual([{ name: "orders", columns: [] }, { name: "users", columns: ["id", "name"] }]);
+    expect(cleanContext({ instruction: "x", context: { tables: Array.from({ length: 80 }, (_, i) => `t${i}`) } }).tables).toHaveLength(50);
+    expect(cleanContext({ instruction: " " }).instruction).toBe("");
   });
   it("off: refused with an error value; nothing is sent", async () => {
     const host = fakeHost({}, { env: { "ai.policy": "off" } });
-    expect(await gen(host)).toEqual({ error: { code: "policyOff", message: "AI is turned off in this environment." } });
+    expect((await gen(host)).error).toMatchObject({ code: "policyOff", message: expect.stringContaining("turned off") });
     expect(host.interfaces.call).not.toHaveBeenCalled();
   });
   it("bad input and a missing connection come back as error values, provider errors too", async () => {
@@ -407,28 +454,18 @@ describe("ai: generate (K7–K9)", () => {
     host.interfaces.call = vi.fn(async () => ({ text: "DELETE FROM t", model: "m", stop: "end" }));
     expect((await gen(host)).check).toEqual({ ok: false, reason: "notSelect" });
   });
-  it("implements the generate interface with its settings kind (a resource to call through) and uses the chat interface", () => {
-    expect(manifest.implements).toEqual({ "onedesk.ai.generate/1": { actions: ["generate"], kind: "settings" } });
-    expect(manifest.contributes.kinds.map((k: any) => k.id)).toContain("settings");
+  it("implements the generate interface without a kind (no anchor resource, D445) and uses the chat interface; reads other resources only through its own permission", () => {
+    expect(manifest.implements).toEqual({ "onedesk.ai.generate/1": { actions: ["generate"] } });
+    expect(manifest.activation).toBeUndefined();
+    expect(manifest.contributes.kinds.map((k: any) => k.id)).toEqual(["analysis", "doc"]);
+    expect(manifest.requires).toEqual({ files: true, resources: true });
     const g = manifest.contributes.actions.find((a: any) => a.id === "generate");
     expect(g.kinds).toBeUndefined();
     expect(g.confirm).toBeNull();
   });
-  it("the default connection is a resource setting of the plugin, read last (page, environment, workspace config, setting)", async () => {
+  it("the default connection is a resource setting of the plugin that accepts any implementer of the chat interface", () => {
     const st = manifest.contributes.settings.find((x: any) => x.name === "connection");
     expect(st).toMatchObject({ type: "resource", kinds: ["@implements:onedesk.ai.chat/1"], default: "" });
-    const host = fakeHost({}, { env: { "ai.connection": "" }, settings: { connection: "c1" } });
-    expect((await pickConnection(ctxOf(host))).id).toBe("c1");
-    expect(host.params.config).toHaveBeenCalledWith("ai.connection");
-    const cfg = fakeHost({}, { env: { "ai.connection": "" }, cfg: { "ai.connection": "c1" }, settings: { connection: "ghost" } });
-    expect((await pickConnection(ctxOf(cfg))).id).toBe("c1"); // the workspace config comes first
-    await expect(pickConnection(ctxOf(fakeHost({}, { env: { "ai.connection": "" }, settings: { connection: "ghost" } })))).rejects.toThrow("(from the AI workbench settings) was not found");
-    await expect(pickConnection(ctxOf(fakeHost({}, { env: { "ai.connection": "" } })))).rejects.toThrow("No AI connection");
-  });
-  it("the anchor resource page says there is nothing to set, and the kind is not in the New menu", async () => {
-    const out = await registry(plugin).pages.settings.render(ctxOf(fakeHost()));
-    expect(checkView(out.view)).toEqual([]);
-    expect(manifest.contributes.menus).toBeUndefined();
   });
   it("is exported and declared", () => {
     expect(manifest.exports.actions).toEqual(["analyze", "generate"]);
@@ -449,6 +486,11 @@ describe("ai: the check of a statement (K8)", () => {
     for (const s of ["DELETE FROM t", "UPDATE t SET a = 1", "EXPLAIN SELECT 1", "SHOW ALL", "DROP TABLE t"]) expect(checkSql(s), s).toEqual({ ok: false, reason: "notSelect" });
     for (const s of ["WITH d AS (DELETE FROM t RETURNING *) SELECT * FROM d", "SELECT * INTO new_t FROM t", "WITH x AS (INSERT INTO t VALUES (1) RETURNING 1) SELECT 1"]) expect(checkSql(s), s).toEqual({ ok: false, reason: "writes" });
   });
+  it("refuses functions with side effects (PostgreSQL semantics), also when written in capitals or with a schema", () => {
+    for (const s of ["SELECT pg_terminate_backend(1)", "select nextval('s')", "SELECT setval('s', 1)", "SELECT pg_sleep(100)", "SELECT lo_unlink(1)", "SELECT * FROM dblink('x','y') AS t(a int)", "SELECT pg_catalog.set_config('a','b',false)", "SELECT pg_read_file('x')", "SELECT pg_advisory_lock(1)"]) expect(checkSql(s), s).toEqual({ ok: false, reason: "sideEffects" });
+    expect(checkSql("SELECT 'pg_sleep(1)' AS s, count(*) FROM t")).toEqual({ ok: true }); // inside a string it is only text
+    expect(checkSql("SELECT lower(a), now() FROM t")).toEqual({ ok: true });
+  });
   it("extracts the statement from a fenced block, else takes the text", () => {
     expect(extractSql("x\n```sql\nSELECT 1\n```\ny")).toBe("SELECT 1");
     expect(extractSql("```\nSELECT 2\n```")).toBe("SELECT 2");
@@ -461,7 +503,7 @@ describe("ai: manifest and text", () => {
     expect(manifest.uses).toEqual(["onedesk.ai.chat/1"]);
     expect(manifest.contributes.resultActions).toEqual([{ id: "analyze", label: "action.analyze", icon: "sparkles", outputTypes: ["table", "text"], action: "analyze" }]);
     expect(manifest.contributes.settings.map((s: any) => s.name)).toEqual(["connection", "sensitiveColumns", "maxRows", "maxCell", "docFolder", "docBudget"]);
-    expect(manifest.requires).toEqual({ files: true });
+    expect(manifest.requires).toEqual({ files: true, resources: true });
   });
   it("names no provider; the plugin has no CSS or TSX; every key the code and manifest use exists in all languages", () => {
     const src = readFileSync(new URL("./main.js", import.meta.url), "utf8");

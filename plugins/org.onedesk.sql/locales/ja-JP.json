@@ -45,7 +45,6 @@
   "field.ai": "AI で書く",
   "field.ai.placeholder": "欲しいクエリを説明してください",
   "action.aiWrite": "AI で書く",
-  "action.aiSend": "AI に送信",
   "action.aiAccept": "採用",
   "action.aiDiscard": "破棄",
   "ai.step": "AI に問い合わせています…",
@@ -53,8 +52,7 @@
   "ai.noInstruction": "先に欲しいクエリを説明してください。",
   "ai.noPreview": "送信待ちのリクエストがありません。",
   "ai.modelDefault": "接続の既定のモデル",
-  "ai.preview": "まだ送信していません。接続：{connection} · モデル：{model} · 約 {tokens} トークン。「AI に送信」を押すと送信されます。データは含まれません。",
-  "ai.reviewFirst": "リクエストを確認してから送信してください。",
+  "ai.reviewFirst": "AI ワークベンチがリクエストを作りました。そこで確認して送信してください。",
   "ai.proposalFrom": "{model} の提案です。エディターは変わっていません。",
   "ai.checkOk": "確認済み：読み取り専用の 1 文です。「採用」を押すと、未保存の変更としてエディターに入ります。",
   "ai.check.empty": "採用できません：回答が空です。",
@@ -67,6 +65,11 @@
   "ai.cannotAccept": "この提案は採用できません。",
   "ai.accepted": "エディターに入れました。まだ保存されていません。",
   "ai.discarded": "提案を破棄しました。",
-  "ai.noSettings": "AI ワークベンチ設定がまだありません。ワークスペースを開き直すか、任意の結果で「分析」を一度押すと自動で作成されます。",
-  "ai.unavailable": "AI で書けません：AI ワークベンチがインストールされていません。"
+  "ai.unavailable": "AI で書けません：AI ワークベンチがインストールされていません。",
+  "action.aiFetch": "回答を受け取る",
+  "ai.system": "システムプロンプト",
+  "ai.openReview": "リクエストを開いて確認し、そこで送信",
+  "ai.notSentYet": "まだ送信していません。リクエストを開き、確認してそこで「送信」を押してから、ここで回答を受け取ってください。",
+  "ai.check.sideEffects": "採用できません：副作用のある関数を呼んでいます（確認は PostgreSQL のみ）。",
+  "ai.preview": "まだ送信していません。接続：{connection} · モデル：{model} · 約 {tokens} トークン。AI ワークベンチで「送信」を押すまで何も送られません。データは含まれません。"
 }

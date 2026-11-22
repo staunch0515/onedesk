@@ -55,7 +55,7 @@
   "setting.docFolder.hint": "你已为文件授权的文件夹。里面的 Markdown 和文本文件会成为参考文档。",
   "setting.docBudget": "参考资料预算（token）",
   "setting.docBudget.hint": "一次请求最多附上这么多参考文档。",
-  "error.policyOff": "这个环境不允许使用 AI。",
+  "error.policyOff": "这个环境不允许使用 AI（ai.policy = off），所以什么都没读取、没发送。请管理环境的人修改它。",
   "error.noConnection": "还没有设置 AI 连接。请在 AI 工作台设置里选一个。",
   "error.connectionMissingEnv": "找不到 AI 连接“{connection}”（来自环境）。",
   "error.connectionMissingDefault": "找不到 AI 连接“{connection}”（工作区默认）。",
@@ -76,14 +76,13 @@
   "error.chat.other": "AI 服务出错了。{message}",
   "field.connection": "AI 连接",
   "field.connection.hint": "留空：用环境里的，再用工作区默认。",
-  "connection.default": "环境 / 默认",
   "error.noArtifacts": "当前版本不能把分析挂到运行下面。",
   "message.noRun": "不知道这份分析来自哪次运行。",
-  "kind.settings": "AI 工作台设置",
-  "settings.new": "AI 工作台设置",
   "error.connectionMissingSettings": "找不到 AI 连接“{connection}”（来自 AI 工作台设置）。",
-  "error.connectionMissingPage": "找不到 AI 连接“{connection}”。",
-  "settings.note": "这里不需要设置。这一项只是让别的插件（如 SQL 的“用 AI 写”）能调用 AI 工作台。默认连接请在插件设置里选。",
   "setting.connection": "默认 AI 连接",
-  "setting.connection.hint": "页面和环境的 ai.connection 都没指定时用它。可选任何服务商插件的连接。"
+  "setting.connection.hint": "页面和环境的 ai.connection 都没指定时用它。可选任何服务商插件的连接。",
+  "field.system": "系统提示词（随请求一起发送）",
+  "analysis.draftName": "分析草稿",
+  "summary.proposed": "提议已就绪。",
+  "summary.proposedBad": "这个提议没有通过检查。"
 }

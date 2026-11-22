@@ -55,7 +55,7 @@
   "setting.docFolder.hint": "ファイル用に許可したフォルダ。中の Markdown とテキストが参考ドキュメントになります。",
   "setting.docBudget": "参考資料の予算（トークン）",
   "setting.docBudget.hint": "1 回のリクエストに付ける参考ドキュメントの上限です。",
-  "error.policyOff": "この環境では AI は使えません。",
+  "error.policyOff": "この環境では AI は使えません（ai.policy = off）。何も読み取らず、送信もしていません。環境の管理者に変更を依頼してください。",
   "error.noConnection": "AI 接続が設定されていません。AI ワークベンチの設定で選んでください。",
   "error.connectionMissingEnv": "AI 接続「{connection}」（環境から）が見つかりません。",
   "error.connectionMissingDefault": "AI 接続「{connection}」（ワークスペースの既定）が見つかりません。",
@@ -76,14 +76,13 @@
   "error.chat.other": "AI サービスでエラーが起きました。{message}",
   "field.connection": "AI 接続",
   "field.connection.hint": "空欄：環境の接続、次にワークスペースの既定。",
-  "connection.default": "環境 / 既定",
   "error.noArtifacts": "このバージョンでは分析を実行に添付できません。",
   "message.noRun": "この分析の元になった実行が不明です。",
-  "kind.settings": "AI ワークベンチ設定",
-  "settings.new": "AI ワークベンチ設定",
   "error.connectionMissingSettings": "AI 接続「{connection}」（AI ワークベンチ設定から）が見つかりません。",
-  "error.connectionMissingPage": "AI 接続「{connection}」が見つかりません。",
-  "settings.note": "ここで設定することはありません。この項目は、他のプラグイン（SQL の「AI で書く」など）が AI ワークベンチを呼び出すためのものです。既定の接続はプラグイン設定で選んでください。",
   "setting.connection": "既定の AI 接続",
-  "setting.connection.hint": "ページにも環境の ai.connection にも指定がないときに使います。任意のプロバイダープラグインの接続を選べます。"
+  "setting.connection.hint": "ページにも環境の ai.connection にも指定がないときに使います。任意のプロバイダープラグインの接続を選べます。",
+  "field.system": "システムプロンプト（リクエストと一緒に送信）",
+  "analysis.draftName": "分析の下書き",
+  "summary.proposed": "提案ができました。",
+  "summary.proposedBad": "この提案は確認を通りませんでした。"
 }
