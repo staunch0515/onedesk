@@ -15,10 +15,10 @@
 - **给外壳的路径**：主进程方法 `app.mcpInfo`（不转给工作进程，在 `Host::request` 里处理）→ `{ path, exists, config }`，`config` 是可直接粘进 Claude Desktop 配置的 JSON 文本；`ONEDESK_MCP_BIN` 可覆盖路径（测试/开发）。**这是协议新增，需协调会话按规则 10 决定并通知外壳与 mock**（我没动 `crates/protocol`；方法名常量在 `onedesk_host::mcp_socket::APP_MCP_INFO`）。
 - **测试**：`crates/mcp/tests/mcp.rs`（假工作进程 `fake-mcp-worker`）：握手与错误、无界面启动/参数/默认工作区/空闲退出后重起、内核错误→isError 与截断提示、未知工作区、锁等待与等待上限、应用开着走套接字且只放行 `mcp.*`（含 hello 错误、对端写的 client 被忽略）、应用等无界面进程放锁、套接字路径。
 
-## 待接 / 未做（依赖内核提交）
+## 已补（合并 claude/onedesk-r19 后）
 
-1. `Request.actor` 字段还没进我的分支（r19-kernel 未提交协议）：`Conn::send` 里留了 `actor` 参数但还没写进请求；内核提交后合并，在 `crates/host/src/lib.rs` 的 `Conn::send` 把 `actor` 填进 `Request`（一行）。无界面路径已用 `--ai-client`，不依赖它。
-2. 真内核的端到端（假 MCP 客户端连真 worker）等内核合并后补。
+- `Conn::send` 把 `actor`（`ai:<名>`，由 `mark_ai_client` 登记）写进 `Request.actor`；窗口连接永远不带 actor。
+- 真内核测试 `real_kernel_headless_is_the_ai_operator`、`real_kernel_through_the_app_socket_is_the_ai_operator`：总开关默认关 → `aiOff`（不是 `aiOnly`）证明两条路径上都是 AI 操作者；窗口自己调 `mcp.tools` 得 `aiOnly`。需要先 `cargo build --workspace`（要 target 里的 onedesk-worker）。
 
 ## 需要协调会话 / tests 会话处理
 

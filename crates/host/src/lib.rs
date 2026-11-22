@@ -121,7 +121,6 @@ impl Conn {
     }
 
     async fn send(&self, id: u64, method: &str, params: Value, client: Option<String>, actor: Option<String>) -> Result<Response, SendError> {
-        let _ = &actor; // stamped into the request once `Request.actor` exists (round 19 protocol)
         let (tx, rx) = oneshot::channel();
         {
             let mut pending = self.pending.lock().unwrap();
@@ -130,7 +129,7 @@ impl Conn {
             }
             pending.insert(id, tx);
         }
-        let mut line = serde_json::to_string(&Request { id, method: method.to_string(), params, client, actor: None }).expect("request serializes");
+        let mut line = serde_json::to_string(&Request { id, method: method.to_string(), params, client, actor }).expect("request serializes");
         line.push('\n');
         if self.write.lock().await.write_all(line.as_bytes()).await.is_err() {
             self.pending.lock().unwrap().remove(&id);

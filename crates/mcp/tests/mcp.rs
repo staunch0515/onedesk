@@ -233,3 +233,55 @@ async fn socket_path_is_stable_and_short() {
     assert_eq!(mcp_socket::client_name(Some("a/b\u{e9}")), "a_b_");
     assert_eq!(mcp_socket::client_name(Some("")), "unknown");
 }
+
+/// The real worker (built by `cargo build --workspace`, next to the test binaries' `deps` folder).
+fn real_worker() -> Option<PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    let mut dirs: Vec<PathBuf> = exe.ancestors().map(Path::to_path_buf).collect();
+    if let Some(t) = std::env::var_os("CARGO_TARGET_DIR") {
+        dirs.push(PathBuf::from(t).join("debug"));
+    }
+    dirs.iter().map(|d| d.join("onedesk-worker")).find(|p| p.is_file())
+}
+
+fn auto_real(data: &Path, worker: PathBuf) -> Arc<Auto> {
+    Arc::new(Auto::new(AutoConfig { data_dir: data.to_path_buf(), workspace: None, worker_bin: worker, client_name: "e2e".into(), idle: Duration::from_millis(500), lock_wait: Duration::from_secs(5) }))
+}
+
+// With the real kernel the switch is off by default: `aiOff` proves the request was the AI operator's
+// (anyone else gets `aiOnly`), on both routes.
+#[tokio::test]
+async fn real_kernel_headless_is_the_ai_operator() {
+    let Some(worker) = real_worker() else { panic!("onedesk-worker is not built; run cargo build --workspace first") };
+    let tmp = tempfile::tempdir().unwrap();
+    let data = tmp.path().join("data");
+    std::fs::create_dir_all(data.join("plugins")).unwrap();
+    make_workspace(&data, "default", "ws-1", "Default", 1);
+    let mut c = start_server(auto_real(&data, worker));
+    let r = c.call(1, "tools/list", Value::Null).await;
+    assert_eq!(r["error"]["code"], -32000, "{r}");
+    assert!(r["error"]["message"].as_str().unwrap().contains("turned off"));
+    let r = c.call(2, "tools/call", json!({ "name": "search", "arguments": { "query": "x" } })).await;
+    assert_eq!(r["result"]["isError"], true);
+    let e: Value = serde_json::from_str(r["result"]["content"][0]["text"].as_str().unwrap()).unwrap();
+    assert_eq!(e["params"]["reason"], "aiOff");
+}
+
+#[tokio::test]
+async fn real_kernel_through_the_app_socket_is_the_ai_operator() {
+    let Some(worker) = real_worker() else { panic!("onedesk-worker is not built; run cargo build --workspace first") };
+    let tmp = tempfile::tempdir().unwrap();
+    let data = tmp.path().join("data");
+    make_workspace(&data, "default", "ws-1", "Default", 1);
+    let host = Host::start(HostConfig { data_dir: data.clone(), worker_bin: worker.clone(), builtin_plugins: None, secrets: Some(onedesk_kernel::secrets::SecretStoreHandle::memory().0) }).await.unwrap();
+    let (listener, _) = mcp_socket::bind(&data).unwrap();
+    tokio::spawn(mcp_socket::serve(host.clone(), listener));
+    let mut c = start_server(auto_real(&data, worker));
+    let r = c.call(1, "tools/call", json!({ "name": "search", "arguments": { "query": "x" } })).await;
+    let e: Value = serde_json::from_str(r["result"]["content"][0]["text"].as_str().unwrap()).unwrap();
+    assert_eq!(e["params"]["reason"], "aiOff", "{r}");
+    // A window's own request for the same command is not the AI operator.
+    let own = host.request(Some("win"), "mcp.tools", json!({})).await.unwrap_err();
+    assert_eq!(own.params.get("reason").map(String::as_str), Some("aiOnly"));
+    host.shutdown().await;
+}
