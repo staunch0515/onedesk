@@ -38,3 +38,9 @@
 - 新内核原因码文字（英语）：`notUsed`、`notInResultAction`、`noImplementation`、`wrongInterface`、`notResultAction`、`badResultRun`（`kernel-texts.test` 要求）。
 - 新键中日译文待 tests 会话补：`result.elapsedFor`、`result.action.disabled.*`、`kernel.error.reason.*`（上面 6 条）。
 - 权限 id `uses`：英文 "Use other plugins' interfaces"（键 `kernel.permission.uses`，中日待 tests）；接口名由已有的 detail 列显示，不另配。
+
+## e2e 发现的外壳问题（合并 r18 后修）
+1. **点“分析”后落在空白运行页**：现在结果区动作启动后 `followResultRun` 监视该运行：结束时输出是 `link` → 直接打开它的 `target`（带 `params`），不打开运行页；失败/文字/已有 partial → 打开运行页。测试在 `round18-result.test.tsx`。运行页标题仍是内核给的 `Run.title`（裸动作 id）——`Run.title` 文档说“无资源的运行用动作的标签键”，内核/协议该给标签，外壳不猜。
+2. **最终回答等宽纯文字**：**根因不在外壳**。`crates/protocol` 的 `RunOutput::Text` 没有 `format` 字段（只有 `ViewNode::Text` 有），所以插件写的 `format:"markdown"` 到不了外壳。外壳已支持（有则用阅读渲染，partial 与最终一致，有测试）。需要协调会话决定：给 `RunOutput::Text` 加 `format?: TextFormat`（协议只增，内核+插件设置），或让回答走 `view` 页签。外壳不改协议。
+3. **`[i18n] no text for kernel key "orders.md"`**：文件名长得像内核键。现在只有第一段是内核键前缀（`node.`、`env.`…）才警告。
+4. **Answer/Send 重复**：根因在外壳：内核对页面自己的动作也给全名 `org.onedesk.ai:send`，而 `isForeignAction` 把任何带冒号的都当“依赖方的动作”，于是另开 `Send` 页签、回答不进页面声明的 `Answer`。现在按资源类型的插件前缀判断：前缀等于类型所属插件就不是外来的（页面执行与结果区两处）。资源还没读到时回退旧行为。

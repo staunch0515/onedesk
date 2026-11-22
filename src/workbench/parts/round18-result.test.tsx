@@ -5,7 +5,8 @@ import { describe, expect, it, vi } from "vitest";
 import { createMockClient } from "../protocol/mock";
 import type { ResultAction, Run } from "../protocol";
 import { kernelLikeClient, renderInShell } from "../testing/harness";
-import { markdownOf, OutputTab, ResultActions } from "./result-area";
+import { followResultRun, isForeignAction, markdownOf, OutputTab, ResultActions } from "./result-area";
+import { buildI18n } from "../i18n";
 
 const base = () => createMockClient({ fresh: true, quiet: true });
 const analyze: ResultAction = { plugin: "org.onedesk.ai", id: "analyze", action: "org.onedesk.ai:analyze", label: "Analyze with AI", icon: "sparkles", enabled: true };
@@ -133,5 +134,64 @@ describe("a ref field whose kinds say @implements:… (X15)", () => {
     const field = { name: "conn", label: "Connection", kind: "ref", kinds: ["@implements:onedesk.ai.chat/1"], options: [{ value: "c1", label: "Work key" }] } as never;
     renderInShell(base(), <FieldControl field={field} value="c1" onChange={() => undefined} id="f" size="md" readOnly={false} />);
     expect(screen.getByRole("combobox", { name: "Connection" }).textContent).toContain("Work key");
+  });
+});
+
+describe("after a result action starts (K1)", () => {
+  const run = (extra: object) => ({ id: "n1", status: "success", ...extra }) as unknown as Run;
+  function fake(runs: Run[]) {
+    const handlers: Array<() => void> = [];
+    const queue = [...runs];
+    const get = vi.fn(async () => queue.length > 1 ? queue.shift()! : queue[0]!);
+    const client = { run: { get }, events: { subscribe: (_t: string, h: () => void) => { handlers.push(h); return () => undefined; } } } as never;
+    return { client, fire: () => handlers.forEach((h) => h()) };
+  }
+
+  it("opens the page a link output points to (with its params), not the run", async () => {
+    const open = vi.fn();
+    const { client } = fake([run({ output: { type: "link", label: "Preview", target: "resource:a1", params: { x: "1" } } })]);
+    await followResultRun(client, "n1", open);
+    expect(open).toHaveBeenCalledTimes(1);
+    expect(open).toHaveBeenCalledWith("resource:a1", { params: { x: "1" } });
+  });
+
+  it("waits while the run goes and opens the link once it ends", async () => {
+    const open = vi.fn();
+    const { client, fire } = fake([run({ status: "running" }), run({ output: { type: "link", label: "P", target: "resource:a2" } })]);
+    const done = followResultRun(client, "n1", open);
+    await Promise.resolve();
+    expect(open).not.toHaveBeenCalled();
+    fire();
+    await done;
+    expect(open).toHaveBeenCalledWith("resource:a2", undefined);
+  });
+
+  it("opens the run for a failure, a text answer, or output that is already streaming", async () => {
+    for (const r of [run({ status: "error" }), run({ output: { type: "text", text: "a" } }), run({ status: "running", partial: { type: "text", text: "a" } })]) {
+      const open = vi.fn();
+      await followResultRun(fake([r]).client, "n1", open);
+      expect(open).toHaveBeenCalledWith("run:n1", undefined);
+    }
+  });
+});
+
+describe("whose action a run is (a page's own actions are named in full too)", () => {
+  it("is foreign only when another plugin owns the action", () => {
+    expect(isForeignAction("org.onedesk.ai:send", "org.onedesk.ai")).toBe(false);
+    expect(isForeignAction("org.other:run", "org.onedesk.ai")).toBe(true);
+    expect(isForeignAction("send", "org.onedesk.ai")).toBe(false);
+    expect(isForeignAction("org.other:run")).toBe(true);
+  });
+});
+
+describe("a name that merely looks like a kernel key", () => {
+  it("is shown as it is without a console warning", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const words = buildI18n("en-US");
+    expect(words.tx("orders.md")).toBe("orders.md");
+    expect(warn).not.toHaveBeenCalled();
+    words.tx("node.nonexistentthing");
+    expect(warn).toHaveBeenCalledTimes(1);
+    warn.mockRestore();
   });
 });
