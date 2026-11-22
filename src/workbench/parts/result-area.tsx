@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Badge, Banner, BottomPanel, Button, DataGrid, EmptyState, ErrorState, IconButton, LoadingState, Pane, Progress, TerminalText, Text, TextBlock, useToast, type DataGridColumn, type Tone } from "../../design";
-import { useI18n } from "../i18n";
-import type { OutputCell, PageDescriptor, Run, RunStatus } from "../protocol";
+import { Badge, Banner, BottomPanel, Button, DataGrid, EmptyState, ErrorState, IconButton, LoadingState, MarkdownText, Pane, Progress, TerminalText, Text, TextBlock, useToast, type DataGridColumn, type Tone } from "../../design";
+import { useI18n, type MessageKey } from "../i18n";
+import type { OutputCell, PageDescriptor, ResultAction, Run, RunOutput, RunStatus } from "../protocol";
 import { useQuery, useUi, useWorkbench } from "../state/context";
 import type { TabState } from "../state/store";
 import { startRunExport } from "./transfer-dialogs";
@@ -125,6 +125,81 @@ export function useElapsed(since: number | undefined, active: boolean): number |
   return since === undefined ? undefined : Math.max(0, now - since);
 }
 
+/**
+ * The text of a run output that asks to be read as Markdown (`format: "markdown"`, as `ViewNode::Text.format`); null otherwise.
+ * `RunOutput` does not carry `format` in the generated type yet (round 18 §5: "use it if present"), so it is read loosely.
+ */
+export function markdownOf(out: RunOutput | null | undefined): string | null {
+  if (!out || out.type !== "text" || out.appearance === "terminal") return null;
+  return (out as { format?: string }).format === "markdown" ? out.text : null;
+}
+
+/** Markdown text of a run, links opened by the shell. */
+function MarkdownBlock({ source, label }: { source: string; label: string }) {
+  const { actions } = useWorkbench();
+  return (
+    <Pane pad="md">
+      <div role="region" aria-label={label}>
+        <MarkdownText source={source} onLinkClick={(href) => void actions.openExternal(href)} />
+      </div>
+    </Pane>
+  );
+}
+
+/** Where an action's answer points to: `{ page: target }` (or `{ page: { target } }`); null for anything else. */
+export function pageRefOf(result: unknown): string | null {
+  const page = result && typeof result === "object" ? (result as { page?: unknown }).page : undefined;
+  if (typeof page === "string" && page !== "") return page;
+  const target = page && typeof page === "object" ? (page as { target?: unknown }).target : undefined;
+  return typeof target === "string" && target !== "" ? target : null;
+}
+
+const DISABLED_REASONS: Record<string, MessageKey> = {
+  noExport: "result.action.disabled.noExport",
+  policy: "result.action.disabled.policy",
+};
+
+/**
+ * The result-area buttons plugins offer for a finished run (X5, `result.actions`). A disabled one says why next to it (the kernel sends
+ * a code, the shell words it). Clicking calls the action with the run's id; a page it answers with is opened.
+ */
+export function ResultActions({ runId }: { runId: string }) {
+  const { client, actions } = useWorkbench();
+  const { t } = useI18n();
+  const list = useQuery((c) => c.result.actions(runId), [runId], [`run:${runId}`]);
+  const [busy, setBusy] = useState<string | null>(null);
+  const items: ResultAction[] = list.data ?? [];
+  if (items.length === 0) return null;
+  const call = (a: ResultAction) => {
+    const key = `${a.plugin}:${a.id}`;
+    setBusy(key);
+    client.action
+      .call(a.plugin, a.id, { runId })
+      .then((answer) => {
+        const page = pageRefOf(answer);
+        if (page) actions.open(page);
+      })
+      .catch(actions.fail)
+      .finally(() => setBusy((b) => (b === key ? null : b)));
+  };
+  return (
+    <>
+      {items.map((a) => (
+        <Pane key={`${a.plugin}:${a.id}`} direction="row" align="center" gap="xs">
+          <Button size="sm" variant="ghost" icon={a.icon} disabled={!a.enabled || busy !== null} onClick={() => call(a)}>
+            {a.label}
+          </Button>
+          {!a.enabled && a.disabledReason && (
+            <Text size="sm" tone="muted">
+              {t(DISABLED_REASONS[a.disabledReason] ?? "result.action.disabled.other")}
+            </Text>
+          )}
+        </Pane>
+      ))}
+    </>
+  );
+}
+
 /** The result as tab-separated text (header first): what "copy" puts on the clipboard. */
 export function resultText(run: Run, all?: OutputCell[][]): string | null {
   const out = run.output;
@@ -139,20 +214,25 @@ export function OutputTab({ tab, run, widthKey }: { tab: TabState; run: Run | nu
   const { t, runError, duration } = useI18n();
   const live = useLiveLog(run);
   // Round 17 (X17): while the run goes, `Run.partial` is the whole output so far (it replaces the last one).
-  const partialLines = partialLinesOf(run?.partial);
+  const partialMarkdown = markdownOf(run?.partial);
+  const partialLines = partialMarkdown === null ? partialLinesOf(run?.partial) : null;
   const elapsed = useElapsed(run?.startedAt, run?.status === "running");
   if (run === undefined) return <LoadingState layout="inline" label={t("common.loading")} />;
   if (run === null) return <EmptyState layout="inline" icon="play" message={tab.target.startsWith("run:") ? t("result.gone") : t("result.empty")} />;
   if (run.status === "running") {
     return (
-      <Pane grow align={partialLines ? "stretch" : "center"} justify={partialLines ? "start" : "center"} gap="sm" pad="lg">
+      <Pane grow align={partialLines || partialMarkdown !== null ? "stretch" : "center"} justify={partialLines || partialMarkdown !== null ? "start" : "center"} gap="sm" pad="lg">
         <Progress value={typeof run.progress?.fraction === "number" ? run.progress.fraction * 100 : undefined} label={t("result.running")} />
         {elapsed !== undefined && (
-          <Text size="sm" tone="muted" tabular aria-label={t("result.elapsed")}>
-            {duration(Math.floor(elapsed / 100) * 100)}
+          <Text size="sm" tone="muted" tabular>
+            {t("result.elapsedFor", { time: duration(Math.floor(elapsed / 100) * 100) })}
           </Text>
         )}
-        {partialLines ? (
+        {partialMarkdown !== null ? (
+          <Pane grow scroll>
+            <MarkdownBlock source={partialMarkdown} label={t("result.liveOutput")} />
+          </Pane>
+        ) : partialLines ? (
           <Pane grow scroll>
             <TerminalText label={t("result.liveOutput")} lines={partialLines} />
           </Pane>
@@ -200,6 +280,14 @@ export function OutputTab({ tab, run, widthKey }: { tab: TabState; run: Run | nu
     );
   }
   if (run.output?.type === "table") return <OutputTable run={run} widthKey={widthKey} />;
+  const markdown = markdownOf(run.output);
+  if (markdown !== null) {
+    return (
+      <Pane grow scroll>
+        <MarkdownBlock source={markdown} label={t("result.result")} />
+      </Pane>
+    );
+  }
   if (run.output?.type === "text") {
     return (
       <Pane grow scroll pad="md">
@@ -322,6 +410,7 @@ export function ResultArea({ tab, descriptor }: { tab: TabState; descriptor: Pag
       summary={summary}
       trailing={
         <>
+          {r?.status === "success" && <ResultActions runId={r.id} />}
           <IconButton
             icon="download"
             size="sm"

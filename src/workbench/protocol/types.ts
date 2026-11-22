@@ -203,3 +203,13 @@ export interface RunRequest {
  * `config` (workspace configuration changed), `audit`, `connection` (re-subscribe and refresh).
  */
 export type EventHandler = (topic: string, payload?: unknown) => void;
+
+/**
+ * Round 18 (X5, round18-protocol §1): a button on a run's result, offered by a plugin (`contributes.resultActions`).
+ * `label` is already in the plugin's language; `disabledReason` is a code (e.g. `policy`), never text.
+ * Written from the protocol document; replace with the generated type once the kernel provides it.
+ */
+export type ResultAction = { plugin: string; id: string; label: string; icon: string; enabled: boolean; disabledReason?: string };
+
+/** What an action answers: any value; `{ page: target }` asks the shell to open that page (the existing "action opens a page"). */
+export type ActionCallResult = unknown;

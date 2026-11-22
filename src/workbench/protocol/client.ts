@@ -36,6 +36,8 @@ import type {
   PluginDetail,
   PluginGrants,
   ResolvedParam,
+  ResultAction,
+  ActionCallResult,
   Resource,
   Run,
   RunRequest,
@@ -225,6 +227,17 @@ export interface ProtocolClient {
     export(id: string, path: string): Promise<RunExportResult>;
     /** A page of a `paged` table result (D414): `limit` 1–1000. Absent in the demo, whose tables are whole. */
     rows?(id: string, offset: number, limit: number): Promise<{ rows: Array<Array<string | number | null>>; total: number }>;
+  };
+
+  /** Round 18 (X5): buttons a plugin adds to a run's result. */
+  result: {
+    /** What can be done with this run's result now (`result.actions`); the list is empty for runs without a result. */
+    actions(runId: string): Promise<ResultAction[]>;
+  };
+
+  /** Round 18 (X5): calls a plugin action by its own name; `args.runId` hands it the run the user clicked on. */
+  action: {
+    call(plugin: string, action: string, args: Record<string, unknown>): Promise<ActionCallResult>;
   };
 
   search: {

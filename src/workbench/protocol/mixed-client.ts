@@ -202,6 +202,13 @@ export function createMixedClient(kernel: KernelClient, mock: ProtocolClient): P
         await Promise.all([kernel.run.clearFinished(), mock.run.clearFinished()]);
       },
     },
+    result: { actions: (runId) => runSide(runId).result.actions(runId) },
+    action: {
+      async call(plugin, action, args) {
+        const runId = typeof args["runId"] === "string" ? args["runId"] : "";
+        return (demoRuns.has(runId) ? mock : kernel).action.call(plugin, action, args);
+      },
+    },
     command: {
       ...mock.command,
       palette: () => kernel.command.palette(),

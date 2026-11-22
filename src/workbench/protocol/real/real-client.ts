@@ -1,6 +1,6 @@
 import type { ConnectionState, EventMessage, HelloResult, TreePage } from "../generated";
 import type { ProtocolClient } from "../client";
-import type { ExportResult, ImportPreview, ImportResult, KnownParam, RefInfo, RunExportResult, InstallPreview, InstallRequest, PluginVersionParams, SecretInfo, UndoUpgradeResult, UpgradeResult, PageEventResult, PaletteCommand, PluginDetail, Run, ViewNode, TreeMoveResult, AuditFacets, AuditFilter, AuditRow, EnvOption, EnvView, HistoryEntry, ResolvedParam, SearchHit, CommandContext, CommandEffect, NewItem, PageContext, PageDescriptor, PageSaveResult, PluginGrants, Resource, TreeInfo, TreeNode, WorkspaceEntry, WorkspacesResult, WorkspaceInfo, LanguageInfo, ShellTexts } from "../types";
+import type { ExportResult, ImportPreview, ImportResult, KnownParam, RefInfo, RunExportResult, InstallPreview, InstallRequest, PluginVersionParams, SecretInfo, UndoUpgradeResult, UpgradeResult, PageEventResult, PaletteCommand, PluginDetail, Run, ViewNode, TreeMoveResult, AuditFacets, AuditFilter, AuditRow, EnvOption, EnvView, HistoryEntry, ResolvedParam, ResultAction, ActionCallResult, SearchHit, CommandContext, CommandEffect, NewItem, PageContext, PageDescriptor, PageSaveResult, PluginGrants, Resource, TreeInfo, TreeNode, WorkspaceEntry, WorkspacesResult, WorkspaceInfo, LanguageInfo, ShellTexts } from "../types";
 import { EventBus } from "./event-bus";
 import { KernelError } from "../errors";
 import type { Transport } from "./transport";
@@ -21,6 +21,8 @@ export interface KernelClient {
   resource: Pick<ProtocolClient["resource"], "get" | "delete" | "history" | "restore" | "listDeleted" | "undelete" | "purge" | "setFavorite">;
   page: Pick<ProtocolClient["page"], "resolve" | "save" | "event">;
   run: ProtocolClient["run"];
+  result: ProtocolClient["result"];
+  action: ProtocolClient["action"];
   command: ProtocolClient["command"];
   plugin: Pick<ProtocolClient["plugin"], "grants" | "grantFolder" | "revokeFolder" | "replaceFolder" | "get" | "setEnabled" | "setSetting" | "reload" | "activateVersion" | "setPinned" | "undoUpgrade" | "confirmPermissions" | "installRequests" | "answerInstallRequest">;
   app: NonNullable<ProtocolClient["app"]>;
@@ -137,6 +139,12 @@ export async function createKernelClient(transport: Transport, locale?: () => st
       resolve: (target, context) => call<PageDescriptor>("page.resolve", compact({ target, context: pageContext(context, locale?.()) })),
       save: (target, changes, basis, context, overwrite) => call<PageSaveResult>("page.save", compact({ target, changes, basis, overwrite: overwrite && overwrite.length > 0 ? overwrite : undefined, context: pageContext(context, locale?.()) })),
       event: async (target, event, context) => call<PageEventResult>("page.event", compact({ target, event, context: pageContext(context, locale?.()) })),
+    },
+    result: {
+      actions: async (runId) => (await call<ResultAction[] | null>("result.actions", { runId })) ?? [],
+    },
+    action: {
+      call: (plugin, action, args) => call<ActionCallResult>("action.call", { plugin, action, args }),
     },
     run: {
       start: (request) => call<string>("run.start", compact({ locale: locale?.(), action: request.action, resourceId: request.resourceId, target: request.target, tabId: request.tabId, envId: request.envId, input: request.input, params: request.params })),
