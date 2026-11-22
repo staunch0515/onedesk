@@ -6,6 +6,8 @@ const PORT = Number(process.env.E2E_PORT ?? 1421);
 export default defineConfig({
   testDir: "./e2e",
   testMatch: "**/*.spec.ts",
+  // the sqlpool parity run is its own command (`pnpm e2e:parity`): it writes results.json and screenshots that a normal run must not overwrite
+  testIgnore: process.env.ONEDESK_E2E_PARITY === "1" ? [] : ["**/parity/**"],
   fullyParallel: false,
   workers: 1,
   retries: 0,

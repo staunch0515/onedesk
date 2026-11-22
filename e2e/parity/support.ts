@@ -61,7 +61,11 @@ export const shot = async (page: Page, name: string) => {
 };
 
 /** A short base directory (unix socket paths are limited to ~100 bytes). */
-export const mkBase = (tag: string) => realpathSync(mkdtempSync(path.join("/private/tmp/claude-501/t", `${tag}-`)));
+export const mkBase = (tag: string) => {
+  const root = process.env.ONEDESK_PARITY_TMP ?? "/tmp/od-parity"; // short on purpose; override with ONEDESK_PARITY_TMP
+  mkdirSync(root, { recursive: true });
+  return realpathSync(mkdtempSync(path.join(root, `${tag}-`)));
+};
 
 /** Tables of the parity database, the same for every batch: orders (the round-15 data), a versioned item table, a 30-row table. */
 export function seedParity(pg: Pg, db: string) {

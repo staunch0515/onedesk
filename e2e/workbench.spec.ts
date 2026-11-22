@@ -113,7 +113,7 @@ for (const theme of ["light", "dark"] as const) {
       await node(page, "q-export").click();
       await page.getByRole("textbox", { name: "start_date", exact: true }).fill("2026-11-01");
       await page.getByRole("button", { name: "Run", exact: true }).click();
-      await page.getByRole("button", { name: "New", exact: true }).click();
+      await page.getByRole("button", { name: "New", exact: true }).first().click();
       await page.getByRole("menuitem", { name: "Import folder…" }).click();
       await expect(page.getByRole("region", { name: "Tasks" })).toBeVisible();
       await expect(page.getByRole("region", { name: "Tasks" }).getByText(/Imported \d+ \/ 212 files/)).toBeVisible({ timeout: 10_000 });
@@ -319,7 +319,7 @@ test.describe("behaviour", () => {
 
   test("new query is created on first save; note and data source pages; cancel a run; deleted items", async ({ page }) => {
     // New: nothing exists until the first save (§9.1).
-    await page.getByRole("button", { name: "New", exact: true }).click();
+    await page.getByRole("button", { name: "New", exact: true }).first().click();
     await page.getByRole("menuitem", { name: "SQL query" }).click();
     await expect(tab(page, "Untitled query")).toBeVisible();
     await page.getByRole("textbox", { name: "SQL" }).click();
