@@ -187,6 +187,20 @@ pub fn reference_specs(text: &str) -> Vec<Reference> {
 }
 
 /// D433: percent-encoding of everything but RFC 3986's unreserved characters.
+/// Review #13 (round 18): the values to scrub from a response — each secret as it was sent, and
+/// in the encodings a server may echo it in (percent-encoded, base64).
+pub fn with_variants(values: &[String]) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for v in values {
+        for x in [v.clone(), percent(v), base64(v.as_bytes())] {
+            if x.len() >= 3 && !out.contains(&x) {
+                out.push(x);
+            }
+        }
+    }
+    out
+}
+
 pub fn percent(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for b in s.bytes() {

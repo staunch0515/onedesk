@@ -334,7 +334,13 @@ impl Inner {
         Some((plugin, plugin.action(&short)?))
     }
 
-    pub async fn run_start(&self, p: RunStartParams, client: Option<String>) -> KResult<String> {
+    pub async fn run_start(&self, mut p: RunStartParams, client: Option<String>) -> KResult<String> {
+        // Review #11 (D444): a result-area action runs in the environment of the run it was clicked
+        // on, whatever the interface says — so the protections are those of that run's.
+        if let Some(src) = &p.result_run {
+            let row = self.read(|c| store::run_get(c, src))?.ok_or_else(|| not_found("run"))?;
+            p.env_id = row.env_id;
+        }
         // D327: a run writes its record, so read-only refuses the whole run (with the tab's environment).
         if let Err(e) = self.read(|c| Ok(crate::policy::check(c, crate::policy::READONLY, p.env_id.as_deref())))? {
             let _ = self

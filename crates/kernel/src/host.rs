@@ -140,8 +140,8 @@ impl Inner {
             "network" if op == "request" && info.event => Err(denied("notInRun")),
             "network" if op == "request" => self.host_network(plugin, info, &args).await,
             // Round 18 (X16): the pump of `onChunk` (a run only; an event handler has no run).
-            "network" if op == "output" => self.stream_poll(info, &args).await,
-            "network" if op == "stop" => self.stream_stop(info, &args),
+            "network" if op == "output" => self.stream_poll(plugin, info, &args).await,
+            "network" if op == "stop" => self.stream_stop(plugin, info, &args),
             "interfaces" => self.host_interfaces(plugin, info, op, &args).await,
             "process" => self.host_process(plugin, info, op, &args).await,
             "transfer" => self.host_transfer(plugin, info, op, &args).await,

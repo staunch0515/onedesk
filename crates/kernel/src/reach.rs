@@ -166,7 +166,14 @@ impl Inner {
                 }
                 opts.text = Some(q);
                 opts.limit = Some(opts.limit.unwrap_or(20).min(200));
-                let (res, scores) = self.search_core(&opts, true)?;
+                let (res, mut scores) = self.search_core(&opts, true)?;
+                // Review #4 (D444, D389): a snippet is body text; only of what the caller may read.
+                for (i, (_, snippet)) in res.items.iter().zip(scores.iter_mut()) {
+                    let own = self.registry.kind(&i.kind).is_some_and(|(o, _)| o.id == plugin.id);
+                    if !(own || self.export_allows(plugin, &i.kind, true)) {
+                        snippet.clear();
+                    }
+                }
                 let hits: Vec<Value> = res
                     .items
                     .iter()
