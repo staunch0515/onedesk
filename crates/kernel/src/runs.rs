@@ -583,7 +583,7 @@ impl Inner {
                         SandboxError::Timeout => run_error("timeout", "", None),
                         SandboxError::Js(m) => {
                             let first = m.lines().next().unwrap_or_default().trim_start_matches("Error: ").to_string();
-                            run_error("pluginError", first, Some(m))
+                            run_error("pluginError", first, Some(crate::sandbox::without_stack(&m)))
                         }
                         SandboxError::Host(pe) => {
                             let code = serde_json::to_value(pe.code).ok().and_then(|v| v.as_str().map(String::from)).unwrap_or_default();

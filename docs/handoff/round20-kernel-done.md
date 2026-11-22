@@ -16,3 +16,9 @@
 - `config_page_keeps_a_reference_with_named_candidates`
 
 `cargo test --workspace`、`pnpm clippy`、`pnpm lint` 通过。
+
+## 追加三条（D454）
+1. 抛出的错误 `detail` 不含栈：`sandbox.rs` `without_stack`（`Display` 与 `runs.rs`）；测试 `a_thrown_errors_detail_has_no_stack`（修之前失败）。
+2. A1 核实：`RunError.params` 已存在（D360），round8/round9 已有 `program`、`layer`、`layerName` 的测试；未改协议。
+3. A2：`plugins/org.onedesk.datasource/main.js` 的 `runReadonly` 用 `\pset null` 哨兵，`parseCsv(text, nullText)`；`main.test.ts` 新增用例（修之前失败）。`captureReadonly` 不变（文件给内核按 CSV 读，不放哨兵）。
+`pnpm typecheck` 有 `e2e/parity/parity-5.spec.ts(282,83)` 一处错误，来自合入的 claude/onedesk-r20，与本改动无关。

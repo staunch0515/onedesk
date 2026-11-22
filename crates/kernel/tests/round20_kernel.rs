@@ -94,3 +94,30 @@ async fn config_page_keeps_a_reference_with_named_candidates() {
     // A reference that names nothing has no candidates to offer: it stays a text box.
     assert_eq!(f("x.dangling")["kind"], "text");
 }
+
+/// D454: a thrown error's `detail` is its message, not the stack (`at fn (main.js:1:2)`).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_thrown_errors_detail_has_no_stack() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("plugins");
+    pkg(&root, "t.th", json!({ "contributes": { "actions": [{ "id": "boom", "label": "b", "output": "text" }] } }), r#"
+function inner() { throw new Error("it broke\nsecond line"); }
+export default { activate(host) { host.actions.handle("boom", async () => { inner(); }); } };
+"#);
+    let env = open_exact(tmp, &root, config_for(&root));
+    let c = Client::in_proc(env.kernel.clone());
+    c.hello().await;
+    let id = c.ok("run.start", json!({ "action": "t.th:boom", "target": "core:none", "tabId": "t", "input": {} })).await;
+    let mut r = Value::Null;
+    for _ in 0..500 {
+        r = c.ok("run.get", json!({ "id": id })).await;
+        if r["status"] != "running" {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    assert_eq!(r["error"]["code"], "pluginError", "{r}");
+    let detail = r["error"]["detail"].as_str().unwrap();
+    assert!(detail.contains("it broke") && detail.contains("second line"), "{r}");
+    assert!(!detail.contains("main.js") && !detail.contains("    at "), "{r}");
+}

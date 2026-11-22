@@ -71,9 +71,13 @@ export function checkConnection(c) {
 // The script that runs a statement read-only: one transaction, always rolled back. The newline before the
 // statement and after it protects against a `--` comment on either end; `standard_conforming_strings` is forced
 // on because the SQL plugin writes values as '…' literals with only the quote doubled (D416).
-export function readonlyScript(sql, timeoutMs) {
+// `nullText` (A2): psql's `--csv` writes NULL and an empty string alike; with `\pset null` set, NULL is written as
+// this text instead, and `parseCsv(text, nullText)` reads it back as null.
+export const NULL_TEXT = "<OD-NULL-7c1e4f>";
+export function readonlyScript(sql, timeoutMs, nullText) {
   const body = String(sql).trim().replace(/;+\s*$/, "");
-  return `BEGIN READ ONLY;\nSET LOCAL statement_timeout = ${timeoutMs};\nSET LOCAL standard_conforming_strings = on;\n${body}\n;\nROLLBACK;\n`;
+  const pre = nullText ? `\\pset null '${nullText}'\n` : "";
+  return `${pre}BEGIN READ ONLY;\nSET LOCAL statement_timeout = ${timeoutMs};\nSET LOCAL standard_conforming_strings = on;\n${body}\n;\nROLLBACK;\n`;
 }
 
 const IDENT_CHAR = /[A-Za-z0-9_$\u0080-\uffff]/;
@@ -175,7 +179,8 @@ export function positiveInt(v, max) {
 }
 
 // CSV as psql writes it: an unquoted empty field is NULL, "" is an empty string.
-export function parseCsv(text) {
+// With `nullText`, only a field written exactly as that (unquoted) is NULL; an empty field is an empty string.
+export function parseCsv(text, nullText) {
   const records = [];
   let record = [];
   let field = "";
@@ -183,7 +188,8 @@ export function parseCsv(text) {
   let inQuotes = false;
   let pending = false;
   const endField = () => {
-    record.push(!quoted && field === "" ? null : field);
+    const isNull = nullText ? !quoted && field === nullText : !quoted && field === "";
+    record.push(isNull ? null : field);
     field = "";
     quoted = false;
   };
@@ -334,12 +340,12 @@ export async function runReadonly(ctx, c, sql, opts) {
   const started = Date.now();
   let res;
   try {
-    res = await ctx.host.process.run(processSpec(c, readonlyScript(sql, timeoutMs), timeoutMs));
+    res = await ctx.host.process.run(processSpec(c, readonlyScript(sql, timeoutMs, NULL_TEXT), timeoutMs));
   } catch (err) {
     throw runError(ctx, err);
   }
   if (res.code !== 0) throw Object.assign(new Error(errorText(res)), { code: "failed" });
-  const records = parseCsv(String(res.stdout || ""));
+  const records = parseCsv(String(res.stdout || ""), NULL_TEXT);
   const header = (records.shift() || []).map((v) => (v === null ? "" : v));
   const rows = [];
   let more = false;

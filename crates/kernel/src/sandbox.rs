@@ -103,7 +103,7 @@ impl SandboxError {
 impl std::fmt::Display for SandboxError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            SandboxError::Js(m) => write!(f, "plugin error: {m}"),
+            SandboxError::Js(m) => write!(f, "plugin error: {}", without_stack(m)),
             SandboxError::Timeout => write!(f, "plugin timed out"),
             SandboxError::OutOfMemory => write!(f, "plugin out of memory"),
             SandboxError::Cancelled => write!(f, "cancelled"),
@@ -596,6 +596,13 @@ impl Drop for Sandbox {
             t.cancel();
         }
     }
+}
+
+/// A thrown error's text without its stack (`    at name (file:line:col)` lines): what a user
+/// may be shown (D454).
+pub fn without_stack(msg: &str) -> String {
+    let kept: Vec<&str> = msg.lines().take_while(|l| !l.trim_start().starts_with("at ") || !l.starts_with(char::is_whitespace)).collect();
+    kept.join("\n").trim_end().to_string()
 }
 
 fn classify(ctl: &Ctl, msg: String) -> SandboxError {
