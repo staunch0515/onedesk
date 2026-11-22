@@ -185,7 +185,7 @@ fn core_page(target: &str, page: &str) -> PageDescriptor {
 }
 
 /// D276: a configuration node's page is a form the kernel builds from its parameter table.
-fn param_form(r: &Row) -> (Vec<ViewNode>, JsonMap) {
+fn param_form(r: &Row, ref_options: &dyn Fn(&str) -> Option<Vec<FieldOption>>) -> (Vec<ViewNode>, JsonMap) {
     let mut fields = Vec::new();
     let mut values = JsonMap::new();
     for (name, p) in crate::params::params_of(r) {
@@ -194,8 +194,12 @@ fn param_form(r: &Row) -> (Vec<ViewNode>, JsonMap) {
             ParamType::Boolean => FieldKind::Boolean,
             ParamType::List => FieldKind::Longtext,
             ParamType::Secret => FieldKind::Secret,
-            ParamType::Text | ParamType::Ref => FieldKind::Text,
+            ParamType::Text => FieldKind::Text,
+            // D453: a reference stays a reference when its target can be found (the shell shows
+            // names); an empty or dangling one cannot offer candidates and stays text.
+            ParamType::Ref => if ref_options(&p.value).is_some() { FieldKind::Ref } else { FieldKind::Text },
         };
+        let options = if p.ty == ParamType::Ref { ref_options(&p.value) } else { None };
         let bind = format!("params.{name}");
         values.insert(bind.clone(), Value::String(p.value));
         fields.push(ViewField {
@@ -204,7 +208,7 @@ fn param_form(r: &Row) -> (Vec<ViewNode>, JsonMap) {
             kind,
             bind: Some(bind),
             param: None,
-            options: None,
+            options,
             presets: None,
             fill: None,
             language: None,
@@ -310,6 +314,21 @@ impl Inner {
         }
     }
 
+    /// D453: the candidates of a reference parameter: the resources of the kind of the one it
+    /// names now, by name (at most `MAX_REF_OPTIONS`; the current one always included). `None`
+    /// when the value names no live resource.
+    fn ref_param_options(&self, id: &str) -> Option<Vec<FieldOption>> {
+        let cur = self.read(|c| store::get(c, id)).ok().flatten()?;
+        let mut all: Vec<(String, String)> =
+            self.read(|c| store::of_kind(c, &cur.kind)).ok()?.into_iter().map(|r| (r.name, r.id)).collect();
+        all.sort();
+        all.truncate(MAX_REF_OPTIONS);
+        if !all.iter().any(|(_, i)| i == id) {
+            all.push((cur.name, cur.id));
+        }
+        Some(all.into_iter().map(|(name, id)| FieldOption { value: id, label: Label::Text(name) }).collect())
+    }
+
     fn crumbs(&self, r: &Row) -> KResult<Vec<Crumb>> {
         let mut chain = self.read(|c| store::ancestors(c, r))?;
         chain.push(r.clone());
@@ -412,7 +431,7 @@ impl Inner {
             return Ok(d);
         }
         if r.kind == store::KIND_CONFIG {
-            let (view, values) = param_form(r);
+            let (view, values) = param_form(r, &|id| self.ref_param_options(id));
             d.view = view;
             d.values = values;
             d.autosave = true;
@@ -770,6 +789,17 @@ impl Inner {
                     return Err(not_found("resource"));
                 }
                 self.kind_writable(&row.kind)?;
+                // D453: a read-only page takes only the fields it binds (plus name, description,
+                // tags); any other `body.*` key is refused.
+                if p.changes.keys().any(|k| k.starts_with("body.")) {
+                    let cur = self.resolve(&p.target, PageContext { draft: None, ..cx.clone() }, client.clone()).await?;
+                    if cur.read_only {
+                        let bound = binds(&cur.view);
+                        if let Some(k) = p.changes.keys().find(|k| k.starts_with("body.") && !bound.contains(k)) {
+                            return Err(err_p(ErrorCode::Denied, &[("reason", "readOnlyField"), ("field", k)]));
+                        }
+                    }
+                }
                 // D306: secret field values go to the keychain; the resource keeps the name.
                 let mut raw = p.changes.clone();
                 let secret_fields = self.secret_fields(&row.kind, row.plugin_version.as_deref());
