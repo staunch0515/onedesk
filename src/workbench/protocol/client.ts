@@ -13,6 +13,7 @@ import type {
   AuditFacets,
   AuditFilter,
   AuditRow,
+  McpInfo,
   McpStatus,
   SetAiVisibleResult,
   CommandContext,
@@ -76,8 +77,8 @@ export interface ProtocolClient {
      * The files are installed when this resolves; `warning` says the automatic switch to the new version failed. */
     installPlugin(folder: string, id: string, version: string, fingerprint: string): Promise<PluginVersionParams & { warning?: ProtocolError }>;
     removePlugin(plugin: string, version: string): Promise<void>;
-    /** Round 19: where the `onedesk-mcp` program is (inside the application), for the Claude Desktop setup text. `null` when it cannot be found. Absent in a browser. */
-    mcpCommand?(): Promise<string | null>;
+    /** Round 19 (D449): where the `onedesk-mcp` program is and the configuration text to paste into Claude Desktop. Answered by the main process. */
+    mcpInfo?(): Promise<McpInfo>;
   };
 
   /** Secrets live in the system keychain; the interface can only list names and write values. Absent in pure demo mode. */

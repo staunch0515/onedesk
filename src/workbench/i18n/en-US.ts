@@ -78,6 +78,7 @@ export const enUS = {
   "ai.configSnippet": "Configuration",
   "ai.configHint": "Merge this into claude_desktop_config.json.",
   "ai.copyConfig": "Copy configuration",
+  "ai.pathMissing": "The program is not at this location yet; build or reinstall the application.",
   "ai.copiedConfig": "Configuration copied",
   "ai.pathGuess": "The exact location could not be read from this window; this is where the installed application keeps it.",
   "secrets.title": "Secrets",

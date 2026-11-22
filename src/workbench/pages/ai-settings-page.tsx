@@ -62,11 +62,12 @@ export function AiSettingsPage({ tab }: { tab: TabState }) {
     topics,
   );
   const envs = useQuery((c) => c.params.envOptions(), [], ["env", "tree:environments"]);
-  const command = useQuery((c) => (c.app?.mcpCommand ? c.app.mcpCommand() : Promise.resolve(null)), [], []);
+  const info = useQuery((c) => (c.app?.mcpInfo ? c.app.mcpInfo().catch(() => null) : Promise.resolve(null)), [], []);
+  const command = { data: info.data?.path ?? null };
   const descriptor = aiSettingsDescriptor(t("ai.title"));
   const set = (name: string, value: string) => void client.workspace.setConfig(name, value).catch(actions.fail);
 
-  const snippet = claudeDesktopSnippet(command.data ?? FALLBACK_COMMAND);
+  const snippet = info.data?.config ?? claudeDesktopSnippet(FALLBACK_COMMAND);
   const copy = (text: string, done: string) => navigator.clipboard.writeText(text).then(() => toast({ tone: "success", title: done }), actions.fail);
 
   const body = !raw.data || !status.data ? (
@@ -105,7 +106,7 @@ export function AiSettingsPage({ tab }: { tab: TabState }) {
           <Pane direction="row" gap="sm">
             <Button icon="copy" onClick={() => void copy(snippet, t("ai.copiedConfig"))}>{t("ai.copyConfig")}</Button>
           </Pane>
-          {command.data === null && <Text size="sm" tone="muted">{t("ai.pathGuess")}</Text>}
+          {info.data === undefined ? null : info.data === null ? <Text size="sm" tone="muted">{t("ai.pathGuess")}</Text> : !info.data.exists && <Text size="sm" tone="muted">{t("ai.pathMissing")}</Text>}
         </Pane>
       </Section>
     </>

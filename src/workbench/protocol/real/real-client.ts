@@ -1,6 +1,6 @@
 import type { ConnectionState, EventMessage, HelloResult, TreePage } from "../generated";
 import type { ProtocolClient } from "../client";
-import type { ExportResult, ImportPreview, ImportResult, KnownParam, RefInfo, RunExportResult, InstallPreview, InstallRequest, PluginVersionParams, SecretInfo, UndoUpgradeResult, UpgradeResult, PageEventResult, PaletteCommand, PluginDetail, Run, ViewNode, TreeMoveResult, AuditFacets, AuditFilter, McpStatus, AuditRow, EnvOption, EnvView, HistoryEntry, ResolvedParam, ResultAction, SearchHit, CommandContext, CommandEffect, NewItem, PageContext, PageDescriptor, PageSaveResult, PluginGrants, Resource, TreeInfo, TreeNode, WorkspaceEntry, WorkspacesResult, WorkspaceInfo, LanguageInfo, ShellTexts } from "../types";
+import type { ExportResult, ImportPreview, ImportResult, KnownParam, RefInfo, RunExportResult, InstallPreview, InstallRequest, PluginVersionParams, SecretInfo, UndoUpgradeResult, UpgradeResult, PageEventResult, PaletteCommand, PluginDetail, Run, ViewNode, TreeMoveResult, AuditFacets, AuditFilter, McpInfo, McpStatus, AuditRow, EnvOption, EnvView, HistoryEntry, ResolvedParam, ResultAction, SearchHit, CommandContext, CommandEffect, NewItem, PageContext, PageDescriptor, PageSaveResult, PluginGrants, Resource, TreeInfo, TreeNode, WorkspaceEntry, WorkspacesResult, WorkspaceInfo, LanguageInfo, ShellTexts } from "../types";
 import { EventBus } from "./event-bus";
 import { KernelError } from "../errors";
 import type { Transport } from "./transport";
@@ -103,6 +103,7 @@ export async function createKernelClient(transport: Transport, locale?: () => st
       inspectPlugin: (folder) => call<InstallPreview>("app.inspectPlugin", { folder }),
       installPlugin: (folder, id, version, fingerprint) => call<PluginVersionParams>("app.installPlugin", { folder, id, version, fingerprint }),
       removePlugin: async (plugin, version) => void (await call("app.removePlugin", { plugin, version })),
+      mcpInfo: () => call<McpInfo>("app.mcpInfo", {}),
     },
     secrets: {
       list: () => call<SecretInfo[]>("secrets.list"),
