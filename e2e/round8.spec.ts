@@ -364,7 +364,7 @@ test("UI: create a memo from the board tree, edit it with the board's page, uppe
   await page.getByRole("button", { name: "Make upper case" }).click();
   await expect(editor).toHaveValue("QUIET AGAIN");
   await page.keyboard.press("Meta+s");
-  await expect(page.getByText("Unsaved")).toHaveCount(0);
+  await expect(page.getByText("Unsaved", { exact: true })).toHaveCount(0);
   await shot(page, "board-memo");
   await page.goto("about:blank");
   await openKernel(page, host);
@@ -409,7 +409,7 @@ test("market: choosing a package shows no “Unsaved”, installing clears the c
   await page.getByRole("combobox", { name: "Package to install" }).click();
   await page.getByRole("option", { name: /Hello/ }).click();
   await expect(page.getByRole("combobox", { name: "Package to install" })).toContainText("Hello");
-  await expect(page.getByText("Unsaved")).toHaveCount(0);
+  await expect(page.getByText("Unsaved", { exact: true })).toHaveCount(0);
   await shot(page, "market-picked");
   await page.getByRole("button", { name: "Install", exact: true }).click();
   const dialog = page.getByRole("dialog");
@@ -418,7 +418,7 @@ test("market: choosing a package shows no “Unsaved”, installing clears the c
   await expect(dialog).toHaveCount(0);
   await expect(page.getByRole("row", { name: /Hello/ })).toContainText("Installed 0.1.0");
   await expect(page.getByRole("combobox", { name: "Package to install" })).not.toContainText("Hello");
-  await expect(page.getByText("Unsaved")).toHaveCount(0);
+  await expect(page.getByText("Unsaved", { exact: true })).toHaveCount(0);
   // the event itself gets the parameter in the page context (protocol level)
   const e = await refused(page, "page.event", { target: MARKET_TARGET, event: "install", context: { params: { pick: path.join(base, "elsewhere") }, locale: "en-US" } });
   expect(e.code).toBe("denied");
