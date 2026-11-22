@@ -317,9 +317,15 @@ test("D1: nothing outside a plain read-only SELECT gets through: psql commands, 
     ["DELETE FROM orders", /Only SELECT, WITH/],
   ];
   for (const [sql, why] of tries) {
-    await sqlBox(page).fill(sql);
-    await runBtn(page).click();
-    await expect(page.getByText(why).first(), sql).toBeVisible({ timeout: 30_000 });
+    // Every statement here is refused, so repeating fill+Run is harmless. One full-suite run saw the refusal text not appear
+    // within 30 s for the COPY line: a Run pressed before the editor's new text reached the page's draft runs the previous
+    // text. Redo the pair with a short deadline instead of one long wait.
+    await expect(async () => {
+      await sqlBox(page).fill(sql);
+      await expect(sqlBox(page)).toHaveValue(sql);
+      await runBtn(page).click();
+      await expect(page.getByText(why).first(), sql).toBeVisible({ timeout: 8_000 });
+    }).toPass({ timeout: 45_000 });
   }
   expect(existsSync(marker), "no local command ran").toBe(false);
   const count = execFileSync(path.join(pg.bin, "psql"), ["-X", "-A", "-t", "-h", path.join(pg.dir, "sock"), "-p", String(pg.port), "-U", "postgres", "-d", DB1, "-c", "SELECT count(*) FROM orders"], { encoding: "utf8" });
