@@ -1039,6 +1039,24 @@ impl Inner {
 
     /* ---------------------------------------------------------------- plugin state, settings */
 
+    /// Round 18: the full kinds a `resource` setting may name (`@implements:` expanded).
+    pub(crate) fn setting_kinds(&self, p: &Plugin, decl: &crate::manifest::SettingDecl) -> Vec<String> {
+        let ks = decl.kinds.clone().unwrap_or_default();
+        self.expand_implements(p, &ks).iter().map(|k| p.kind_ref(k)).collect()
+    }
+
+    fn setting_options(&self, p: &Plugin, decl: &crate::manifest::SettingDecl) -> Vec<FieldOption> {
+        let mut opts: Vec<(String, String)> = Vec::new();
+        for k in self.setting_kinds(p, decl) {
+            for r in self.read(|c| store::of_kind(c, &k)).unwrap_or_default() {
+                opts.push((r.name, r.id));
+            }
+        }
+        opts.sort();
+        opts.truncate(crate::pages::MAX_REF_OPTIONS);
+        opts.into_iter().map(|(name, id)| FieldOption { value: id, label: Label::Text(name) }).collect()
+    }
+
     pub fn setting_value(&self, plugin: &Plugin, name: &str) -> Option<String> {
         let decl = plugin.setting(name)?;
         Some(self.plugin_param(&plugin.id, &format!("settings.{name}")).unwrap_or_else(|| decl.default.clone()))
@@ -1085,6 +1103,14 @@ impl Inner {
         }
         if !decl.accepts(&value) {
             return Err(err_p(ErrorCode::Invalid, &[("reason", "badValue")]));
+        }
+        // Round 18: a `resource` setting names a live resource of one of its kinds.
+        if decl.ty == SettingType::Resource && !value.is_empty() {
+            let kinds = self.setting_kinds(plugin, decl);
+            let ok = self.read(|c| store::get(c, &value))?.is_some_and(|r| r.deleted_at.is_none() && kinds.contains(&r.kind));
+            if !ok {
+                return Err(err_p(ErrorCode::Invalid, &[("reason", "badValue")]));
+            }
         }
         let set = vec![(format!("settings.{}", p.name), Some(value))];
         self.execute(Actor::User, Command::PluginState { plugin: p.plugin.clone(), set }).await?;
@@ -1145,9 +1171,14 @@ impl Inner {
                     SettingType::Number => FieldKind::Number,
                     SettingType::Boolean => FieldKind::Boolean,
                     SettingType::Enum => FieldKind::Enum,
+                    SettingType::Resource => FieldKind::Ref,
                 },
                 value: self.setting_value(p, &s.name).unwrap_or_default(),
-                options: s.options.as_ref().map(|o| o.iter().map(|x| FieldOption { value: x.value.clone(), label: p.label(&x.label) }).collect()),
+                options: match s.ty {
+                    // The resources it may name, by name (the shell shows a picker, as for a `ref` field).
+                    SettingType::Resource => Some(self.setting_options(p, s)),
+                    _ => s.options.as_ref().map(|o| o.iter().map(|x| FieldOption { value: x.value.clone(), label: p.label(&x.label) }).collect()),
+                },
                 hint: s.hint.as_ref().map(|h| p.label(h)),
             })
             .collect();

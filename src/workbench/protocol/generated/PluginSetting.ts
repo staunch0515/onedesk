@@ -5,6 +5,7 @@ import type { Label } from "./Label";
 
 export type PluginSetting = { name: string, label: Label, 
 /**
- * `text`, `number`, `boolean` or `enum`.
+ * `text`, `number`, `boolean`, `enum`, or (round 18) `ref`: a `resource` setting, whose
+ * `options` are the resources it may name (value = id) and whose `value` is an id or empty.
  */
 kind: FieldKind, value: string, options?: Array<FieldOption>, hint?: Label, };

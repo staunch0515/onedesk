@@ -1599,7 +1599,8 @@ pub struct PluginVersion {
 pub struct PluginSetting {
     pub name: String,
     pub label: Label,
-    /// `text`, `number`, `boolean` or `enum`.
+    /// `text`, `number`, `boolean`, `enum`, or (round 18) `ref`: a `resource` setting, whose
+    /// `options` are the resources it may name (value = id) and whose `value` is an id or empty.
     pub kind: FieldKind,
     pub value: String,
     pub options: Option<Vec<FieldOption>>,

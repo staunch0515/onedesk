@@ -347,6 +347,8 @@ pub enum SettingType {
     Number,
     Boolean,
     Enum,
+    /// Round 18: the id of a resource of one of `kinds` (`""` = none).
+    Resource,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -366,6 +368,10 @@ pub struct SettingDecl {
     pub default: String,
     #[serde(default)]
     pub options: Option<Vec<SettingOption>>,
+    /// Round 18: for `resource`: the kinds it may name (own short names, full `<plugin>:<kind>`,
+    /// or `@implements:<interface>` of an interface the plugin `uses`).
+    #[serde(default)]
+    pub kinds: Option<Vec<String>>,
     #[serde(default)]
     pub hint: Option<String>,
 }
@@ -378,6 +384,8 @@ impl SettingDecl {
             SettingType::Number => v.trim().parse::<f64>().is_ok_and(f64::is_finite),
             SettingType::Boolean => v == "true" || v == "false",
             SettingType::Enum => self.options.as_ref().is_some_and(|o| o.iter().any(|x| x.value == v)),
+            // Whether the resource exists and is of the right kind is for the kernel to check.
+            SettingType::Resource => v.len() <= 128,
         }
     }
 }
@@ -1001,7 +1009,20 @@ pub fn parse_package(dir: &Path, bytes: &[u8], check_folder: bool) -> Result<Plu
             SettingType::Enum => st.options.as_ref().is_some_and(|o| !o.is_empty()),
             _ => st.options.is_none(),
         };
-        if !options_ok || !st.accepts(&st.default) {
+        let uses = |i: &str| m.uses_raw.as_ref().and_then(serde_json::Value::as_array).is_some_and(|u| u.iter().any(|x| x.as_str() == Some(i)));
+        let kinds_ok = match (st.ty, &st.kinds) {
+            (SettingType::Resource, Some(ks)) => {
+                st.default.is_empty()
+                    && !ks.is_empty()
+                    && ks.iter().all(|k| match k.strip_prefix("@implements:") {
+                        Some(i) => valid_interface(i) && uses(i),
+                        None => Registry::split(k).is_some_and(|(pid, short)| valid_id(pid) && valid_short(short)) || (valid_short(k) && has_kind(k)),
+                    })
+            }
+            (SettingType::Resource, None) => false,
+            (_, k) => k.is_none(),
+        };
+        if !options_ok || !kinds_ok || !st.accepts(&st.default) {
             return Err(reject(dir, "badSetting", st.name.clone()));
         }
     }
