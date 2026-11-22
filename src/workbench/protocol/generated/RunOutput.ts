@@ -2,6 +2,7 @@
 import type { LineTone } from "./LineTone";
 import type { OutputColumn } from "./OutputColumn";
 import type { TextAppearance } from "./TextAppearance";
+import type { TextFormat } from "./TextFormat";
 import type { JsonValue } from "./serde_json/JsonValue";
 
 /**
@@ -39,7 +40,12 @@ lineTones?: Array<LineTone | null>,
 /**
  * Round 17 (X10): absent = `plain`.
  */
-appearance?: TextAppearance, } | { "type": "link", label: string, target: string, 
+appearance?: TextAppearance, 
+/**
+ * D446: as `ViewNode::Text.format`; kept as given (the kernel only checks the value);
+ * absent = `plain`. For the final output and for `runs.partial` alike.
+ */
+format?: TextFormat, } | { "type": "link", label: string, target: string, 
 /**
  * Round 16 (D423): initial page state for the tab the link opens, as
  * `CommandEffect::Open.params` (§9.1, D292); kept only in the window's memory (D419).

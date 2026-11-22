@@ -78,3 +78,12 @@
 - 内核禁用词并入 `scripts/check-arch.mjs` 由 `r18-tests` 做；注意 `sse` 要按单词边界匹配（`assert`、`processed` 等含有这三个字母）。
 - `onChunk` 的块是一批一批地交给回调、回调按序 `await`；若插件回调很慢而服务器很快，块在内存队列里排着（上限 `maxBytes`，最大 64MB）。没有做背压（暂停读取）。
 - `runs.read` 返回的 `paged` 表只有头 200 行（运行记录里只存这些）；AI 工作台只用前 20 行，够用。
+
+## D446（文字输出 format、运行标题、流中途断开）
+
+| 项 | 做了什么 | 测试（`round18.rs`） |
+|---|---|---|
+| ① | `RunOutput::Text.format: Option<TextFormat>`；最终输出与 `runs.partial` 都接受，非法值拒绝，原样保存交回；`RunOutput.ts` 已生成 | `text_output_keeps_its_format_and_a_run_is_titled_by_its_action_label` |
+| ② | 无资源的运行，`title` = 动作 label 在 `locale` 下的文字，查不到才用动作名 | 同上（`Analyze` / `分析` / `plainfmt`） |
+| ③ | 复现：连接在响应头前关闭时，`network.request` 提前返回错误但流队列没人关，插件取块循环挂到动作超时（假 AI 服务的 `drop` 会在写入后立刻 `destroy`，头还没发出）。修复：流队列在 `host_network` 开头就绑定并在任何结束方式下关闭（`network.rs`） | `a_connection_closed_before_the_answer_ends_a_stream_at_once`（修复前 20 秒超时）、`a_cut_stream_ends_at_once_as_a_network_error`（chunked 中途断开，也立刻结束） |
+
