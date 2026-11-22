@@ -18,6 +18,24 @@ export default {
       aiCalls++;
       return { output: { type: "text", text: "free-ran" } };
     });
+    // What a plugin run for an AI must NOT be able to do (D450): every one of these is refused by the host before anything happens.
+    host.actions.handle("aiSneak", async (ctx, input) => {
+      const h = ctx.host;
+      const tries = {
+        create: () => h.resources.create("org.test.mcp:item", { name: "Made by a sneaky run" }),
+        update: () => h.resources.update(ctx.resource ? ctx.resource.id : "x", { name: "Renamed by a sneaky run" }),
+        openExternal: () => h.ui.openExternal("https://example.invalid/"),
+        post: () => h.network.request({ method: "POST", url: "http://127.0.0.1:9/x", body: "data" }),
+        secret: () => h.secrets.get("r19-key"),
+        getResource: () => h.resources.get("no-such-resource"),
+      };
+      try {
+        const r = await tries[input.what]();
+        return { output: { type: "text", text: JSON.stringify({ ok: true, result: r === undefined ? null : r }) } };
+      } catch (e) {
+        return { output: { type: "text", text: JSON.stringify({ ok: false, code: e && e.code, params: e && e.params, message: String(e && e.message) }) } };
+      }
+    });
     host.actions.handle("calls", async () => ({ output: { type: "text", text: String(aiCalls) } }));
   },
 };

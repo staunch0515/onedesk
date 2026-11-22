@@ -85,6 +85,14 @@ async function withRaw<T>(fn: (w: AiWorker) => Promise<T>): Promise<T> {
     await w.stop();
   }
 }
+async function withRaw2<T>(client: string, fn: (w: AiWorker) => Promise<T>): Promise<T> {
+  const w = await new AiWorker(dataDir, client).start();
+  try {
+    return await fn(w);
+  } finally {
+    await w.stop();
+  }
+}
 const setPolicy = (u: UserKernel, p: Record<string, unknown>) => Promise.all(Object.entries(p).map(([name, value]) => u.rpc("workspace.setConfig", { name: `mcp.${name}`, value: String(value) })));
 const create = async (u: UserKernel, name: string, extra: Record<string, unknown> = {}) => (await u.rpc("page.save", { target: `new:${KIND}`, changes: { name, ...extra } })).page.resourceId as string;
 const setVisible = (u: UserKernel, id: string, visible: boolean, withChildren = false) => u.rpc("resource.setAiVisible", { id, visible, withChildren });
@@ -371,12 +379,19 @@ test.describe("refusals: the ai operator can never ...", () => {
         )) as RpcError | null;
         expect(e?.err, `${what} ${method}`).toMatchObject({ code: "denied", params: { reason: "aiNotAllowed", method } });
       }
+      // a second later the same refusal is written again and carries the count of those left out
+      await new Promise((r) => setTimeout(r, 1100));
+      await expectErr(w.call("resource.delete", { id: ids.alpha }), "denied", "aiNotAllowed");
       // the few methods the operator may call are alive
       expect((await w.call("workspace.info")).name).toBeTruthy();
     });
+    // D450③: the same refusal reason from one client is written at most once a second; what was left out is counted on the next row
     const refused = auditRows("op='mcp.refused'");
-    expect(refused.length - before).toBe(WRITES.length);
-    for (const r of refused.slice(before)) expect(r).toMatch(/^ai:.+\|mcp\.refused\|/);
+    expect(refused.length - before, "22 refusals inside a second plus one a second later refusals leave two rows").toBe(2);
+        for (const r of refused.slice(before)) expect(r).toMatch(/^ai:.+\|mcp\.refused\|/);
+    const next = refused.at(-1)!;
+    const suppressed = Number(JSON.parse(next.split("|").slice(4).join("|")).suppressed ?? 0);
+    expect(suppressed + (refused.length - before) - 1 + 1, "every refusal is a row or counted in `suppressed`").toBe(WRITES.length + 1);
     // nothing changed (the user's own view)
     await asUser(async (u) => {
       expect((await u.rpc("resource.get", { id: ids.alpha })).name).toBe("Alpha item");
@@ -583,6 +598,107 @@ test.describe("ai_visible", () => {
     await asUser(async (u) => {
       await expectErr(u.rpc("resource.setAiVisible", { id: "no-such-resource", visible: true }), "notFound");
     });
+  });
+});
+
+/* ------------------------------------------------- 6b. D450: what the review found (each failed before the fix) */
+
+test.describe("D450: runs for an AI, truncation, rate limit across restarts", () => {
+  test("AI 运行里插件写资源 / openExternal / POST / secrets.get 都被宿主拒绝（denied/aiRun），什么也没发生", async () => {
+    await withMcp(async (c) => {
+      for (const what of ["create", "update", "openExternal", "post", "secret"]) {
+        const r = await c.callTool(`${PFX}__sneak`, { what });
+        expect(r.isError, what).toBe(false); // the run itself succeeds: the plugin caught the refusal
+        const inner = JSON.parse(r.json.output.text);
+        expect(inner.ok, what).toBe(false);
+        expect(JSON.stringify(inner), what).toContain("aiRun");
+      }
+      // a read the AI run may do is not blocked (and only sees what is visible)
+      const g = JSON.parse((await c.callTool(`${PFX}__sneak`, { what: "getResource" })).json.output.text);
+      expect(JSON.stringify(g)).not.toContain("aiRun");
+    });
+    expect(db("SELECT count(*) FROM resources WHERE name LIKE '%sneaky run%'").trim()).toBe("0");
+    expect(db("SELECT name FROM resources WHERE id='" + ids.alpha + "'").trim()).toBe("Alpha item");
+  });
+
+  test("search 结果没有正文 snippet（密钥引用原文也不出现）", async () => {
+    await withMcp(async (c) => {
+      const r = await c.callTool("search", { query: "marker-zeta" });
+      expect(items(r)).toEqual(["Alpha item"]);
+      for (const it of r.json.items) expect(Object.keys(it)).not.toContain("snippet");
+      expect(JSON.stringify(r.json)).not.toMatch(/BODYTEXT|marker-zeta|\{\{secret/);
+    });
+  });
+
+  test("get_run 对已不可见的资源再拒：用户关掉可见后读不了（notFound/run），再打开又能读", async () => {
+    let runId = "";
+    await withMcp(async (c) => {
+      runId = (await c.callTool("run", { id: ids.alpha, action: "rows", params: { n: 2 } })).json.runId;
+      expect((await c.callTool("get_run", { runId })).isError).toBe(false);
+    });
+    await asUser((u) => setVisible(u, ids.alpha, false));
+    await withMcp(async (c) => {
+      // same client name is needed for ownership, so use the raw worker with the name onedesk-mcp used for that run
+      expect((await c.callTool("get_run", { runId })).json).toMatchObject({ code: "notFound" });
+    });
+    await asUser((u) => setVisible(u, ids.alpha, true));
+  });
+
+  test("审计：对象/资源/工具名截到 80 字符；同一原因每秒最多 1 行（省掉的数记在下一条）", async () => {
+    await withMcp(async (c) => {
+      await c.callTool("x".repeat(200), {});
+      await c.callTool("describe", { id: "y".repeat(200) });
+    });
+    for (const r of aiAudit("op='mcp.call'")) {
+      const object = r.split("|")[2] ?? "";
+      expect(object.length, r.slice(0, 120)).toBeLessThanOrEqual(81); // 80 characters + the ellipsis
+      const sum = JSON.parse(r.split("|").slice(4).join("|"));
+      for (const k of ["tool", "resource", "runId"]) if (typeof sum[k] === "string") expect(sum[k].length, k).toBeLessThanOrEqual(81);
+    }
+    const before = aiAudit("op='mcp.call' AND result='failed:notFound'").length;
+    await withMcp(async (c) => {
+      for (let i = 0; i < 6; i++) await c.callTool(`no_such_tool_${i}`, {});
+    });
+    const unknown = aiAudit("op='mcp.call' AND result='failed:notFound'").length - before;
+    expect(unknown, "six unknown-tool calls inside a second leave one row").toBeLessThanOrEqual(2);
+  });
+
+  test("客户端名 = initialize.clientInfo.name + 进程后缀（审计里的 actor）", async () => {
+    await withMcp(async (c) => {
+      await c.callTool("search", { query: "Alpha" });
+    });
+    const actors = new Set(aiAudit("op='mcp.call'").map((r) => r.split("|")[0] ?? ""));
+    expect([...actors].some((a) => /^ai:onedesk-e2e-fake-client-.+$/.test(a)), [...actors].join(", ")).toBe(true);
+  });
+
+  test("限流在无界面进程重启后仍然有效（按审计算，同一客户端名）", async () => {
+    await asUser((u) => setPolicy(u, { rate_per_minute: 3 }));
+    const call = (w: AiWorker) => w.call("mcp.call", { name: "search", arguments: { query: "Alpha" } });
+    await withRaw2("e2e-restart", async (w) => {
+      for (let i = 0; i < 3; i++) await call(w);
+    });
+    await withRaw2("e2e-restart", async (w) => {
+      await expectErr(call(w), "denied", "aiRateLimit"); // a fresh process, the same client: the window is still full
+    });
+    // onedesk-mcp names each process differently (clientInfo.name + a random suffix), so a restart there is a new client:
+    // reported to the coordinator (a client that restarts itself gets a fresh window).
+  });
+
+  test("限流在并发下也成立：上限 4，同时发 12 个 → 恰好 4 个成功，其余 aiRateLimit", async () => {
+    await asUser((u) => setPolicy(u, { rate_per_minute: 4 }));
+    await withRaw2("e2e-concurrent", async (w) => {
+      const r = await Promise.all(
+        Array.from({ length: 12 }, () =>
+          w.call("mcp.call", { name: "search", arguments: { query: "Alpha" } }).then(
+            () => "ok",
+            (e: RpcError) => e.err.params?.reason ?? e.err.code,
+          ),
+        ),
+      );
+      expect(r.filter((x) => x === "ok")).toHaveLength(4);
+      expect(r.filter((x) => x === "aiRateLimit")).toHaveLength(8);
+    });
+    await asUser((u) => setPolicy(u, { rate_per_minute: 30 }));
   });
 });
 

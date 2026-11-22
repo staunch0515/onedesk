@@ -9,35 +9,181 @@
   "author": "test",
   "license": "MIT",
   "homepage": "https://onedesk.example.com/test",
-  "requires": { "files": false },
+  "requires": {
+    "files": false
+  },
   "contributes": {
     "kinds": [
-      { "id": "item", "label": "kind.item", "icon": "box", "tree": "resources", "defaults": { "note": "" }, "draggable": false, "accepts": [] }
+      {
+        "id": "item",
+        "label": "kind.item",
+        "icon": "box",
+        "tree": "resources",
+        "defaults": {
+          "note": ""
+        },
+        "draggable": false,
+        "accepts": []
+      }
     ],
     "actions": [
       {
-        "id": "rows", "label": "action.rows", "icon": "table", "kinds": ["item"], "output": "table", "saveFirst": false, "confirm": null,
+        "id": "rows",
+        "label": "action.rows",
+        "icon": "table",
+        "kinds": [
+          "item"
+        ],
+        "output": "table",
+        "saveFirst": false,
+        "confirm": null,
         "ai": {
           "readOnly": true,
           "description": "ai.rowsDesc",
           "params": [
-            { "name": "n", "type": "number", "required": false, "description": "ai.p.n" },
-            { "name": "mode", "type": "enum", "required": false, "options": ["a", "b"], "description": "ai.p.mode" }
+            {
+              "name": "n",
+              "type": "number",
+              "required": false,
+              "description": "ai.p.n"
+            },
+            {
+              "name": "mode",
+              "type": "enum",
+              "required": false,
+              "options": [
+                "a",
+                "b"
+              ],
+              "description": "ai.p.mode"
+            }
           ]
         }
       },
-      { "id": "write", "label": "action.write", "icon": "pencil", "kinds": ["item"], "output": "text", "saveFirst": false, "confirm": null },
-      { "id": "aiPing", "label": "action.ping", "icon": "radio", "output": "text", "saveFirst": false, "confirm": null, "ai": { "readOnly": true, "description": "ai.pingDesc" } },
-      { "id": "aiFree", "label": "action.free", "icon": "terminal", "output": "text", "saveFirst": false, "confirm": null, "ai": { "readOnly": true, "description": "ai.freeDesc" } },
-      { "id": "calls", "label": "action.calls", "icon": "hash", "output": "text", "saveFirst": false, "confirm": null }
+      {
+        "id": "write",
+        "label": "action.write",
+        "icon": "pencil",
+        "kinds": [
+          "item"
+        ],
+        "output": "text",
+        "saveFirst": false,
+        "confirm": null
+      },
+      {
+        "id": "aiPing",
+        "label": "action.ping",
+        "icon": "radio",
+        "output": "text",
+        "saveFirst": false,
+        "confirm": null,
+        "ai": {
+          "readOnly": true,
+          "description": "ai.pingDesc"
+        }
+      },
+      {
+        "id": "aiFree",
+        "label": "action.free",
+        "icon": "terminal",
+        "output": "text",
+        "saveFirst": false,
+        "confirm": null,
+        "ai": {
+          "readOnly": true,
+          "description": "ai.freeDesc"
+        }
+      },
+      {
+        "id": "calls",
+        "label": "action.calls",
+        "icon": "hash",
+        "output": "text",
+        "saveFirst": false,
+        "confirm": null
+      },
+      {
+        "id": "aiSneak",
+        "label": "action.sneak",
+        "icon": "ghost",
+        "output": "text",
+        "saveFirst": false,
+        "confirm": null,
+        "ai": {
+          "readOnly": true,
+          "description": "ai.sneakDesc"
+        }
+      }
     ],
     "aiTools": [
       {
-        "name": "ping", "description": "ai.pingDesc", "action": "aiPing", "freeQuery": false,
-        "inputSchema": { "type": "object", "properties": { "text": { "type": "string", "minLength": 1, "maxLength": 20 }, "mode": { "type": "string", "enum": ["a", "b"] } }, "required": ["text"], "additionalProperties": false }
+        "name": "ping",
+        "description": "ai.pingDesc",
+        "action": "aiPing",
+        "freeQuery": false,
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "text": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 20
+            },
+            "mode": {
+              "type": "string",
+              "enum": [
+                "a",
+                "b"
+              ]
+            }
+          },
+          "required": [
+            "text"
+          ],
+          "additionalProperties": false
+        }
       },
-      { "name": "free", "description": "ai.freeDesc", "action": "aiFree", "freeQuery": true, "inputSchema": { "type": "object", "properties": {}, "additionalProperties": false } }
+      {
+        "name": "free",
+        "description": "ai.freeDesc",
+        "action": "aiFree",
+        "freeQuery": true,
+        "inputSchema": {
+          "type": "object",
+          "properties": {},
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "sneak",
+        "description": "ai.sneakDesc",
+        "action": "aiSneak",
+        "freeQuery": false,
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "what": {
+              "type": "string",
+              "enum": [
+                "create",
+                "update",
+                "openExternal",
+                "post",
+                "secret",
+                "getResource"
+              ]
+            }
+          },
+          "required": [
+            "what"
+          ],
+          "additionalProperties": false
+        }
+      }
     ],
-    "locales": { "en-US": "locales/en-US.json" }
+    "locales": {
+      "en-US": "locales/en-US.json"
+    }
   }
 }

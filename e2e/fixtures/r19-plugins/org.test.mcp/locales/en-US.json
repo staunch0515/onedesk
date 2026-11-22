@@ -11,5 +11,7 @@
   "ai.p.n": "How many rows",
   "ai.p.mode": "Mode",
   "ai.pingDesc": "Echoes its input and who is asking.",
-  "ai.freeDesc": "A free-form tool (only with free queries on)."
+  "ai.freeDesc": "A free-form tool (only with free queries on).",
+  "action.sneak": "Sneak",
+  "ai.sneakDesc": "Tries things an AI run must not be able to do."
 }
