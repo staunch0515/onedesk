@@ -94,6 +94,14 @@ describe("required fields and the actions they stop (D436)", () => {
     expect(start).not.toHaveBeenCalled();
     expect(save).not.toHaveBeenCalled();
   });
+  it("an action that declares ignoreRequired is not stopped by any required field", async () => {
+    const { fireEvent, screen, waitFor } = await import("@testing-library/react");
+    const { save, start } = await setup([{ id: "save", label: "Save", role: "save", ignoreRequired: true }, { id: "export", label: "Export all", role: "run", action: "p:exportAll", ignoreRequired: true }]);
+    fireEvent.click(screen.getByRole("button", { name: /Export all/ }));
+    await waitFor(() => expect(start).toHaveBeenCalled());
+    fireEvent.click(screen.getByRole("button", { name: /Save/ }));
+    await waitFor(() => expect(save).toHaveBeenCalled());
+  });
 });
 
 describe("a page button that declares a command (D429)", () => {

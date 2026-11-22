@@ -258,7 +258,8 @@ export function ViewPage({ tab, descriptor: initial }: { tab: TabState; descript
     }
     const now = latest.current;
     // A required field left empty stops a save or a run (D414, narrowed by D436); the value may come from the environment or a saved value.
-    if (action.role === "save" || action.role === "save-run" || action.role === "run") {
+    // D436: an action that declares `ignoreRequired` checks no required field.
+    if (!action.ignoreRequired && (action.role === "save" || action.role === "save-run" || action.role === "run")) {
       const missing = now.descriptor.view.flatMap((n) => (n.type === "form" ? n.fields : [])).filter((f) => {
         if (!f.required) return false;
         // D436: a page parameter only matters to a run; saving the page does not use it.
