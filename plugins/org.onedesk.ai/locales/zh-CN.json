@@ -58,6 +58,7 @@
   "error.policyOff": "这个环境不允许使用 AI（ai.policy = off），所以什么都没读取、没发送。请管理环境的人修改它。",
   "error.noConnection": "还没有设置 AI 连接。请在 AI 工作台设置里选一个。",
   "error.connectionMissingEnv": "找不到 AI 连接“{connection}”（来自环境）。",
+  "error.connectionMissingPage": "找不到 AI 连接“{connection}”（来自本页选择）。",
   "error.connectionMissingDefault": "找不到 AI 连接“{connection}”（工作区默认）。",
   "error.noProvider": "“{connection}”不是可以对话的 AI 连接。",
   "error.noRun": "没有可分析的结果。",

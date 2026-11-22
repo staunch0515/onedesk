@@ -58,6 +58,7 @@
   "error.policyOff": "AI is turned off in this environment (ai.policy = off), so nothing was read or sent. Ask whoever manages the environment to change it.",
   "error.noConnection": "No AI connection is set. Choose one in the AI workbench settings.",
   "error.connectionMissingEnv": "The AI connection “{connection}” (from the environment) was not found.",
+  "error.connectionMissingPage": "The AI connection “{connection}” (chosen on this page) was not found.",
   "error.connectionMissingDefault": "The AI connection “{connection}” (the workspace default) was not found.",
   "error.noProvider": "“{connection}” is not an AI connection that can chat.",
   "error.noRun": "There is no result to analyze.",

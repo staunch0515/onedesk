@@ -58,6 +58,7 @@
   "error.policyOff": "この環境では AI は使えません（ai.policy = off）。何も読み取らず、送信もしていません。環境の管理者に変更を依頼してください。",
   "error.noConnection": "AI 接続が設定されていません。AI ワークベンチの設定で選んでください。",
   "error.connectionMissingEnv": "AI 接続「{connection}」（環境から）が見つかりません。",
+  "error.connectionMissingPage": "AI 接続「{connection}」（このページで選択）が見つかりません。",
   "error.connectionMissingDefault": "AI 接続「{connection}」（ワークスペースの既定）が見つかりません。",
   "error.noProvider": "「{connection}」は対話できる AI 接続ではありません。",
   "error.noRun": "分析する結果がありません。",
