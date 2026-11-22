@@ -900,5 +900,6 @@
   "kernel.error.reason.noImplementation": "没有已启用的插件提供这个接口。",
   "kernel.error.reason.wrongInterface": "这个资源的类型不提供该接口。",
   "kernel.error.reason.notResultAction": "该动作不是结果区动作。",
-  "kernel.error.reason.badResultRun": "该运行没有这个动作可以处理的结果。"
+  "kernel.error.reason.badResultRun": "该运行没有这个动作可以处理的结果。",
+  "kernel.permission.uses": "使用其他插件的接口"
 }

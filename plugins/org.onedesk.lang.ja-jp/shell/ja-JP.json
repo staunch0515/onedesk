@@ -900,5 +900,6 @@
   "kernel.error.reason.noImplementation": "このインターフェースを提供する有効なプラグインがありません。",
   "kernel.error.reason.wrongInterface": "このリソースの種類はそのインターフェースを提供していません。",
   "kernel.error.reason.notResultAction": "そのアクションは結果エリアのアクションではありません。",
-  "kernel.error.reason.badResultRun": "その実行には、このアクションが処理できる結果がありません。"
+  "kernel.error.reason.badResultRun": "その実行には、このアクションが処理できる結果がありません。",
+  "kernel.permission.uses": "他のプラグインのインターフェースの利用"
 }
