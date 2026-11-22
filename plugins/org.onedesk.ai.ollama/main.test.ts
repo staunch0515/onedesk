@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 // @ts-ignore plain JS module, no types
-import plugin, { buildChat, mapHttpError, mapStop, ndjsonParser } from "./main.js";
+import plugin, { checkBase, buildChat, mapHttpError, mapStop, ndjsonParser } from "./main.js";
 import { checkActionResult, checkView, registry } from "../_testing/view-check";
 import { startFakeAi, type FakeAi } from "../_testing/fake-ai/server";
 
@@ -191,6 +191,37 @@ describe("ollama: return shape (D441)", () => {
     const list = await actions().models(ctxOf(hostFor().host, conn()), {});
     expect(list.output.type).toBe("text");
     expect(Array.isArray(list.data.models) || list.data.error).toBeTruthy();
+  });
+});
+
+describe("ollama: address rules", () => {
+  it("remote http, user info and odd hosts are refused; https and this machine are fine", () => {
+    expect(checkBase("https://api.example.com/", "x")).toEqual({ base: "https://api.example.com", host: "api.example.com" });
+    expect(checkBase("http://127.0.0.1:11434", "x")).toEqual({ base: "http://127.0.0.1:11434", host: "127.0.0.1:11434" });
+    expect(checkBase("http://localhost:8080", "x").error).toBeUndefined();
+    expect(checkBase("http://[::1]:9", "x").host).toBe("[::1]:9");
+    expect(checkBase("", "https://d.example").host).toBe("d.example");
+    expect(checkBase("http://api.example.com", "x").error).toBe("insecure");
+    expect(checkBase("http://127.0.0.1.evil.example", "x").error).toBe("insecure");
+    expect(checkBase("https://api.anthropic.com@evil.com", "x").error).toBe("userInfo");
+    expect(checkBase("http://user:pw@127.0.0.1", "x").error).toBe("userInfo");
+    expect(checkBase("https://evil.com\\@api.anthropic.com", "x").error).toBe("badUrl");
+    expect(checkBase("ftp://x", "x").error).toBe("badUrl");
+    expect(checkBase("https://a b.example", "x").error).toBe("badUrl");
+    expect(checkBase("https://", "x").error).toBe("badUrl");
+  });
+  it("chat and test refuse such an address before any request; the page note shows the real host or the reason", async () => {
+    const host = hostFor().host;
+    for (const u of ["http://api.example.com", "https://api.example.com@evil.example"]) {
+      expect(result(await actions().chat(ctxOf(host, conn({ baseUrl: u })), { messages: [], })).error.code).toBe("other");
+      await expect(actions().test(ctxOf(host, conn({ baseUrl: u })), {})).rejects.toThrow();
+    }
+    expect(host.network.request).not.toHaveBeenCalled();
+    const page = registry(plugin as any).pages.editor;
+    const note = (u: string) => page.render(ctxOf({}, { id: "c1", body: { baseUrl: u, model: "m", secret: undefined } })).then((r: any) => r.view.find((n: any) => n.id === "note"));
+    expect(await note("https://api.example.com:8443/v1")).toMatchObject({ text: expect.stringContaining("api.example.com:8443"), tone: "muted" });
+    expect(await note("https://api.example.com@evil.example")).toMatchObject({ tone: "danger" });
+    expect(await note("http://api.example.com")).toMatchObject({ tone: "danger" });
   });
 });
 

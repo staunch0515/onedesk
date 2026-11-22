@@ -38,5 +38,7 @@
   "error.badAnswer": "The answer could not be read.",
   "test.ok": "Connected: Ollama {version}, {count} models downloaded ({models})",
   "test.noModels": "Connected: Ollama {version}, but no model is downloaded. Run: ollama pull {model}",
-  "summary.test": "Ollama {version} · {count} models"
+  "summary.test": "Ollama {version} · {count} models",
+  "error.userInfo": "The address must not contain a user name or password (user@host).",
+  "error.insecure": "A remote address must use https://. Plain http:// is only allowed for this machine (127.0.0.1, localhost, [::1])."
 }

@@ -37,5 +37,7 @@
   "error.cutOff": "回答被中途截断。",
   "error.badAnswer": "无法读取返回的内容。",
   "test.ok": "已连接：可用模型 {count} 个",
-  "summary.test": "{count} 个模型"
+  "summary.test": "{count} 个模型",
+  "error.userInfo": "地址里不能带用户名或密码（user@host）。",
+  "error.insecure": "远程地址必须用 https://。只有本机（127.0.0.1、localhost、[::1]）才允许 http://。"
 }

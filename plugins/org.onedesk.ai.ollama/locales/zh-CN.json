@@ -38,5 +38,7 @@
   "error.badAnswer": "无法读取返回的内容。",
   "test.ok": "已连接：Ollama {version}，已下载 {count} 个模型（{models}）",
   "test.noModels": "已连接：Ollama {version}，但没有下载任何模型。请运行：ollama pull {model}",
-  "summary.test": "Ollama {version} · {count} 个模型"
+  "summary.test": "Ollama {version} · {count} 个模型",
+  "error.userInfo": "地址里不能带用户名或密码（user@host）。",
+  "error.insecure": "远程地址必须用 https://。只有本机（127.0.0.1、localhost、[::1]）才允许 http://。"
 }

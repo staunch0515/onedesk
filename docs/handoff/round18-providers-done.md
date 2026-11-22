@@ -19,3 +19,6 @@
 ## 范围外
 - 未在真内核里加载过这两个插件（内核 X15/X16 在另一会话）；清单里的 `implements`、`stream`、`onChunk`、`idleTimeoutMs`、`timeoutMs: 600000` 照 `round18-protocol.md` 写，合并后需要跑一次真加载。
 - 外壳的“资源选择器按 implements 列出”由别的会话做。
+
+## 审查修改 #10（地址规则）
+两个插件的地址（Anthropic `baseUrl`、Ollama 地址）统一用 `checkBase`（手写解析，沙箱里没有 URL）：非本机（`127.0.0.1`/`localhost`/`[::1]`）必须 `https://`，否则 `error.insecure`；地址含用户信息（`https://api.anthropic.com@evil.com`，包括 `user:pw@`）一律拒绝 `error.userInfo`；空白、反斜杠、控制字符、空主机 `error.badUrl`。`chat`/`models`/`test` 在发请求前检查；`test` 抛出可读错误；编辑页下方说明行显示真实解析出的主机（含端口），地址不合规时改成红色原因。Ollama 的认证头只会发往通过检查的地址（远程必须 https）。新增 locale 键 `error.userInfo`、`error.insecure`（英中日）。注意：连接“保存”时没有插件可挂的校验钩子，所以现在是在编辑页即时显示红色原因、测试和使用时报错；若要保存时就拒绝需要内核提供校验入口。
