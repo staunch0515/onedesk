@@ -1,6 +1,6 @@
 import type { ConnectionState, EventMessage, HelloResult, TreePage } from "../generated";
 import type { ProtocolClient } from "../client";
-import type { ExportResult, ImportPreview, ImportResult, KnownParam, RefInfo, RunExportResult, InstallPreview, InstallRequest, PluginVersionParams, SecretInfo, UndoUpgradeResult, UpgradeResult, PageEventResult, PaletteCommand, PluginDetail, Run, ViewNode, TreeMoveResult, AuditFacets, AuditFilter, AuditRow, EnvOption, EnvView, HistoryEntry, ResolvedParam, ResultAction, SearchHit, CommandContext, CommandEffect, NewItem, PageContext, PageDescriptor, PageSaveResult, PluginGrants, Resource, TreeInfo, TreeNode, WorkspaceEntry, WorkspacesResult, WorkspaceInfo, LanguageInfo, ShellTexts } from "../types";
+import type { ExportResult, ImportPreview, ImportResult, KnownParam, RefInfo, RunExportResult, InstallPreview, InstallRequest, PluginVersionParams, SecretInfo, UndoUpgradeResult, UpgradeResult, PageEventResult, PaletteCommand, PluginDetail, Run, ViewNode, TreeMoveResult, AuditFacets, AuditFilter, McpStatus, AuditRow, EnvOption, EnvView, HistoryEntry, ResolvedParam, ResultAction, SearchHit, CommandContext, CommandEffect, NewItem, PageContext, PageDescriptor, PageSaveResult, PluginGrants, Resource, TreeInfo, TreeNode, WorkspaceEntry, WorkspacesResult, WorkspaceInfo, LanguageInfo, ShellTexts } from "../types";
 import { EventBus } from "./event-bus";
 import { KernelError } from "../errors";
 import type { Transport } from "./transport";
@@ -17,8 +17,9 @@ export interface KernelClient {
   refs: ProtocolClient["refs"];
   search: ProtocolClient["search"];
   audit: ProtocolClient["audit"];
+  mcp: ProtocolClient["mcp"];
   tree: Pick<ProtocolClient["tree"], "list" | "children" | "path" | "move" | "createGroup" | "rename">;
-  resource: Pick<ProtocolClient["resource"], "get" | "delete" | "history" | "restore" | "listDeleted" | "undelete" | "purge" | "setFavorite">;
+  resource: Pick<ProtocolClient["resource"], "get" | "delete" | "history" | "restore" | "listDeleted" | "undelete" | "purge" | "setFavorite" | "setAiVisible">;
   page: Pick<ProtocolClient["page"], "resolve" | "save" | "event">;
   run: ProtocolClient["run"];
   result: ProtocolClient["result"];
@@ -109,6 +110,7 @@ export async function createKernelClient(transport: Transport, locale?: () => st
       delete: async (name) => void (await call("secrets.delete", { name })),
     },
     search: { query: (text, limit) => call<SearchHit[]>("search.query", compact({ text, limit })) },
+    mcp: { status: () => call<McpStatus>("mcp.status", {}) },
     audit: {
       list: (filter: AuditFilter) => call<AuditRow[]>("audit.list", compact(filter)),
       facets: () => call<AuditFacets>("audit.facets"),
@@ -133,6 +135,7 @@ export async function createKernelClient(transport: Transport, locale?: () => st
       undelete: async (id) => void (await call("resource.undelete", { id })),
       purge: async (id) => void (await call("resource.purge", { id })),
       setFavorite: async (id, favorite) => void (await call("resource.setFavorite", { id, favorite })),
+      setAiVisible: (id, visible, withChildren) => call("resource.setAiVisible", compact({ id, visible, withChildren })),
     },
     page: {
       resolve: (target, context) => call<PageDescriptor>("page.resolve", compact({ target, context: pageContext(context, locale?.()) })),

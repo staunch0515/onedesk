@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Button, DropdownMenu, IconButton, SearchBox, TopBar, useToast, type MenuEntry, type OptionListItem } from "../../design";
 import { useI18n } from "../i18n";
+import { AI_SETTINGS_TARGET } from "../pages/ai-settings-page";
 import { SECRETS_TARGET } from "../pages/secrets-page";
 import { startExport, startImport } from "./transfer-dialogs";
 import type { SearchHit } from "../protocol";
@@ -116,6 +117,7 @@ export function TopBarPart({ onSettings }: { onSettings: () => void }) {
                 { key: "settings", label: t("topbar.settings"), icon: "settings", shortcut: ["⌘", ","], onSelect: onSettings },
                 // Connected to a kernel: settings has more than one page (D298 §6: the secrets page lives under settings).
                 ...(client.secrets ? [{ key: "secrets", label: t("secrets.title"), icon: "key-round", onSelect: () => actions.open(SECRETS_TARGET) }] : []),
+                { key: "ai-settings", label: t("ai.title"), icon: "bot", onSelect: () => actions.open(AI_SETTINGS_TARGET) },
                 { type: "separator", key: "sep-transfer" } as MenuEntry,
                 { key: "export", label: t("transfer.export"), icon: "folder-output", onSelect: () => void startExport(client, store, actions, (resources, folder) => toast({ tone: "success", title: t("transfer.exportDone", { resources, folder }) })) },
                 { key: "import", label: t("transfer.import"), icon: "folder-input", onSelect: () => void startImport(client, store, actions) },

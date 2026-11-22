@@ -5,6 +5,7 @@ import { AuditPage } from "../pages/audit-page";
 import { DeletedPage } from "../pages/deleted-page";
 import { EnvPage } from "../pages/env-page";
 import { PluginPage } from "../pages/plugin-page";
+import { AI_SETTINGS_TARGET, AiSettingsPage } from "../pages/ai-settings-page";
 import { SECRETS_TARGET, SecretsPage } from "../pages/secrets-page";
 import { ViewPage } from "../pages/view-page";
 import type { PageDescriptor } from "../protocol";
@@ -59,6 +60,7 @@ function usePluginTopics(tab: TabState, d: PageDescriptor | undefined, reload: (
 /** Resolves the tab's target into a page (§9.1) and draws it. Only the active tab is mounted. */
 export function PageHost({ tab }: { tab: TabState }) {
   if (tab.target === SECRETS_TARGET) return <ShellSecrets tab={tab} />;
+  if (tab.target === AI_SETTINGS_TARGET) return <ShellAi tab={tab} />;
   return <ResolvedPage tab={tab} />;
 }
 
@@ -68,6 +70,14 @@ function ShellSecrets({ tab }: { tab: TabState }) {
   const { t } = useI18n();
   useEffect(() => actions.updateTab(tab.id, { title: t("secrets.title"), icon: "key-round" }), [tab.id, actions, t]);
   return <SecretsPage tab={tab} />;
+}
+
+/** The AI settings page (round 19) belongs to the shell too. */
+function ShellAi({ tab }: { tab: TabState }) {
+  const { actions } = useWorkbench();
+  const { t } = useI18n();
+  useEffect(() => actions.updateTab(tab.id, { title: t("ai.title"), icon: "bot" }), [tab.id, actions, t]);
+  return <AiSettingsPage tab={tab} />;
 }
 
 function ResolvedPage({ tab }: { tab: TabState }) {

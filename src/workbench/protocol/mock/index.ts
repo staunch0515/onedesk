@@ -370,6 +370,8 @@ export function createMockClient(options: MockOptions = {}): ProtocolClient {
   }
 
   const stored = options.fresh ? null : (read(DB_KEY) as Db | null);
+  /** Round 19: the workspace's `mcp.policy` parameters (the real kernel keeps them in the config node). */
+  const mcpConfig: Record<string, string> = { "mcp.enabled": "false", "mcp.rate_per_minute": "30", "mcp.max_rows": "200", "mcp.allow_free_query": "false", "mcp.env": "" };
   const db: Db = stored && stored.rows && stored.runs ? stored : seed();
   // Runs that were in progress when the page closed cannot continue (§8).
   for (const run of db.runs) {
@@ -506,6 +508,7 @@ export function createMockClient(options: MockOptions = {}): ProtocolClient {
       originRef: row.originRef,
       location: ancestors(row).map((a) => a.name),
       favorite: db.favorites.includes(row.id),
+      aiVisible: Boolean(row.aiVisible),
       deleted: Boolean(row.deletedAt),
       readOnly: state !== "ok",
       rev: row.rev,
@@ -1659,11 +1662,16 @@ export function createMockClient(options: MockOptions = {}): ProtocolClient {
       async getConfig(name) {
         await wait(2);
         for (const r of Object.values(db.rows)) if (r.kind === "core:config" && live(r) && paramsOf(r)[name]) return paramsOf(r)[name]!.value;
-        return null;
+        return name in mcpConfig ? mcpConfig[name]! : null;
       },
       async setConfig(name, value) {
         await wait(2);
         const row = Object.values(db.rows).find((r) => r.kind === "core:config" && paramsOf(r)[name]);
+        if (!row && name in mcpConfig) {
+          mcpConfig[name] = value;
+          audit("workspace.setConfig", name, value);
+          emit("config", "mcp");
+        }
         if (row) applyPatch(row, { [`param:${name}`]: value });
       },
       async export(folder) {
@@ -1790,6 +1798,24 @@ export function createMockClient(options: MockOptions = {}): ProtocolClient {
         db.favorites = favorite ? [...new Set([...db.favorites, id])] : db.favorites.filter((f) => f !== id);
         persist();
         emit("tree:favorites", `tree:${row.tree}`, `resource:${id}`);
+      },
+      async setAiVisible(id, visible, withChildren) {
+        await wait();
+        const row = db.rows[id];
+        if (!row || !live(row)) throw new KernelError("notFound", { what: "resource" });
+        const all = [row];
+        if (withChildren) for (let i = 0; i < all.length; i++) all.push(...Object.values(db.rows).filter((r) => r.parentId === all[i]!.id && live(r)));
+        let changed = 0;
+        for (const r of all) {
+          if (Boolean(r.aiVisible) !== visible) {
+            r.aiVisible = visible;
+            changed++;
+          }
+        }
+        audit("resource.aiVisible", row.name, JSON.stringify({ visible, count: changed }));
+        persist();
+        emit(`tree:${row.tree}`, ...all.map((r) => `resource:${r.id}`));
+        return { changed };
       },
       async history(id) {
         await wait();
@@ -2108,6 +2134,22 @@ export function createMockClient(options: MockOptions = {}): ProtocolClient {
       },
     },
 
+    mcp: {
+      async status() {
+        await wait(2);
+        const env = mcpConfig["mcp.env"] ? db.rows[mcpConfig["mcp.env"]] : undefined;
+        return {
+          enabled: mcpConfig["mcp.enabled"] === "true",
+          ratePerMinute: Number(mcpConfig["mcp.rate_per_minute"]),
+          maxRows: Number(mcpConfig["mcp.max_rows"]),
+          allowFreeQuery: mcpConfig["mcp.allow_free_query"] === "true",
+          envId: env?.id,
+          envName: env?.name,
+          tools: 4,
+        };
+      },
+    },
+
     audit: {
       async list(filter) {
         await wait(20);
@@ -2118,6 +2160,7 @@ export function createMockClient(options: MockOptions = {}): ProtocolClient {
             (a) =>
               a.at >= since &&
               (!filter.actor || a.actor === filter.actor) &&
+              (!filter.source || a.actor === filter.source || a.actor.startsWith(`${filter.source}:`)) &&
               (!filter.operation || a.operation === filter.operation) &&
               (!filter.result || a.result === filter.result) &&
               (!text || `${a.target} ${a.detail} ${a.actor}`.toLowerCase().includes(text)),

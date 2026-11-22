@@ -28,6 +28,8 @@ export type {
   AuditFilter,
   AuditResult,
   AuditRow,
+  McpStatus,
+  SetAiVisibleResult,
   ConfigGetParams,
   ConfigSetParams,
   EnvLayer,

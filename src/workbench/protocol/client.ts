@@ -13,6 +13,8 @@ import type {
   AuditFacets,
   AuditFilter,
   AuditRow,
+  McpStatus,
+  SetAiVisibleResult,
   CommandContext,
   CommandEffect,
   DropPosition,
@@ -74,6 +76,8 @@ export interface ProtocolClient {
      * The files are installed when this resolves; `warning` says the automatic switch to the new version failed. */
     installPlugin(folder: string, id: string, version: string, fingerprint: string): Promise<PluginVersionParams & { warning?: ProtocolError }>;
     removePlugin(plugin: string, version: string): Promise<void>;
+    /** Round 19: where the `onedesk-mcp` program is (inside the application), for the Claude Desktop setup text. `null` when it cannot be found. Absent in a browser. */
+    mcpCommand?(): Promise<string | null>;
   };
 
   /** Secrets live in the system keychain; the interface can only list names and write values. Absent in pure demo mode. */
@@ -142,6 +146,8 @@ export interface ProtocolClient {
     get(id: string): Promise<Resource | null>;
     /** Favorite flag (local data, no history). */
     setFavorite(id: string, favorite: boolean): Promise<void>;
+    /** Round 19: lets AI clients (MCP) see the resource; for a group `withChildren` covers everything below it. Says how many changed. */
+    setAiVisible(id: string, visible: boolean, withChildren?: boolean): Promise<SetAiVisibleResult>;
     /** Marks the resource (a group with its descendants) deleted (§3.4). */
     delete(id: string): Promise<void>;
     history(id: string): Promise<HistoryEntry[]>;
@@ -236,6 +242,11 @@ export interface ProtocolClient {
 
   search: {
     query(text: string, limit?: number): Promise<SearchHit[]>;
+  };
+
+  /** Round 19: the workspace's `mcp.policy` as the kernel reads it (the settings are `workspace.getConfig` / `setConfig`). */
+  mcp: {
+    status(): Promise<McpStatus>;
   };
 
   audit: {

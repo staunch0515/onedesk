@@ -10,6 +10,26 @@ const ALL = "__all__";
 const HOUR = 3_600_000;
 const RESULT_TONE: Record<AuditResult, Tone> = { ok: "success", denied: "warning", error: "danger", cancelled: "neutral", timeout: "warning" };
 
+/** Round 19: what an AI tool call recorded (`mcp.call` rows keep a JSON summary as their detail). */
+interface AiCall {
+  tool?: string;
+  args?: unknown;
+  rows?: number;
+  ms?: number;
+  ok?: boolean;
+  code?: string | null;
+}
+
+function aiCall(row: AuditRow): AiCall | null {
+  if (row.operation !== "mcp.call") return null;
+  try {
+    const parsed: unknown = JSON.parse(row.detail);
+    return parsed && typeof parsed === "object" ? (parsed as AiCall) : null;
+  } catch {
+    return null;
+  }
+}
+
 /** Audit log (I.13): table with filters by time, actor, operation, result and text. */
 export function AuditPage({ tab, descriptor }: { tab: TabState; descriptor: PageDescriptor }) {
   const { store } = useWorkbench();
@@ -20,10 +40,11 @@ export function AuditPage({ tab, descriptor }: { tab: TabState; descriptor: Page
   const [operation, setOperation] = useState(ALL);
   const [result, setResult] = useState(ALL);
   const [text, setText] = useState("");
+  const [onlyAi, setOnlyAi] = useState(ALL);
   const facets = useQuery((c) => c.audit.facets(), [], ["audit"]);
   const rows = useQuery(
-    (c) => c.audit.list({ sinceMs: range === ALL ? undefined : Number(range) * HOUR, actor: actor === ALL ? undefined : actor, operation: operation === ALL ? undefined : operation, result: result === ALL ? undefined : (result as AuditResult), text: text.trim() || undefined }),
-    [range, actor, operation, result, text],
+    (c) => c.audit.list({ sinceMs: range === ALL ? undefined : Number(range) * HOUR, actor: actor === ALL ? undefined : actor, source: onlyAi === ALL ? undefined : onlyAi, operation: operation === ALL ? undefined : operation, result: result === ALL ? undefined : (result as AuditResult), text: text.trim() || undefined }),
+    [range, actor, onlyAi, operation, result, text],
     ["audit"],
   );
   const widths = useUi((s) => s.gridWidths.audit);
@@ -37,7 +58,21 @@ export function AuditPage({ tab, descriptor }: { tab: TabState; descriptor: Page
     { key: "operation", header: t("audit.operation"), width: 184, value: (a) => opName(a.operation) },
     { key: "target", header: t("audit.target"), width: 240, value: (a) => a.target },
     { key: "result", header: t("audit.result"), width: 104, value: (a) => a.result, render: (a) => <Badge tone={RESULT_TONE[a.result]} dot>{resultName[a.result]}</Badge> },
-    { key: "detail", header: t("audit.detail"), width: 480, mono: true, value: (a) => (a.count && a.count > 1 ? `${a.detail} ×${a.count}` : a.detail) },
+    { key: "tool", header: t("audit.tool"), width: 200, mono: true, value: (a) => aiCall(a)?.tool ?? "" },
+    { key: "args", header: t("audit.args"), width: 280, mono: true, value: (a) => { const c = aiCall(a); return c?.args === undefined ? "" : JSON.stringify(c.args); } },
+    { key: "rows", header: t("audit.rows"), width: 80, numeric: true, value: (a) => aiCall(a)?.rows ?? null, render: (a) => { const n = aiCall(a)?.rows; return n === undefined ? "" : number(n); } },
+    { key: "ms", header: t("audit.duration"), width: 100, numeric: true, value: (a) => aiCall(a)?.ms ?? null, render: (a) => { const n = aiCall(a)?.ms; return n === undefined ? "" : number(n); } },
+    {
+      key: "detail",
+      header: t("audit.detail"),
+      width: 480,
+      mono: true,
+      value: (a) => {
+        const c = aiCall(a);
+        if (c) return c.ok === false && c.code ? t("audit.failedWith", { code: c.code }) : "";
+        return a.count && a.count > 1 ? `${a.detail} ×${a.count}` : a.detail;
+      },
+    },
   ];
 
   const items: ActionBarItem[] = [{ key: "export", label: t("audit.export"), icon: "download", onSelect: () => toast({ tone: "success", title: t("audit.exported", { count: rows.data?.length ?? 0 }) }) }];
@@ -62,6 +97,9 @@ export function AuditPage({ tab, descriptor }: { tab: TabState; descriptor: Page
         </StripField>
         <StripField label={t("audit.actor")}>
           <Select size="sm" aria-label={t("audit.actor")} value={actor} onValueChange={setActor} options={[any, ...(facets.data?.actors ?? []).map((a) => ({ value: a, label: a }))]} />
+        </StripField>
+        <StripField label={t("audit.by")}>
+          <Select size="sm" aria-label={t("audit.by")} value={onlyAi} onValueChange={setOnlyAi} options={[{ value: ALL, label: t("audit.byAny") }, { value: "ai", label: t("audit.byAi") }]} />
         </StripField>
         <StripField label={t("audit.operation")} wide>
           <Select size="sm" aria-label={t("audit.operation")} value={operation} onValueChange={setOperation} options={[any, ...(facets.data?.operations ?? []).map((o) => ({ value: o, label: opName(o) }))]} />

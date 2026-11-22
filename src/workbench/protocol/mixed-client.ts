@@ -131,6 +131,7 @@ export function createMixedClient(kernel: KernelClient, mock: ProtocolClient): P
     secrets: kernel.secrets,
     search: kernel.search,
     audit: kernel.audit,
+    mcp: kernel.mcp,
     tree: {
       list: listTrees,
       children: (tree, parent, offset, locale) => (isDemoTree(tree) ? mock.tree.children(toMock({ tree }).tree, parent, offset, locale).then(fromMock) : kernel.tree.children(tree, parent, offset, locale)),
@@ -148,6 +149,9 @@ export function createMixedClient(kernel: KernelClient, mock: ProtocolClient): P
       },
       async setFavorite(id, favorite) {
         return (await ownerOf(id)) === "kernel" ? kernel.resource.setFavorite(id, favorite) : mock.resource.setFavorite(id, favorite);
+      },
+      async setAiVisible(id, visible, withChildren) {
+        return (await ownerOf(id)) === "kernel" ? kernel.resource.setAiVisible(id, visible, withChildren) : mock.resource.setAiVisible(id, visible, withChildren);
       },
       undelete: (id) => kernel.resource.undelete(id),
       purge: (id) => kernel.resource.purge(id),

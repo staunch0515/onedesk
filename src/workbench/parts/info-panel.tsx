@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Badge, Button, IconButton, InfoField, InfoPanel, Input, LoadingState, Pane, Text, Textarea, Tooltip, useToast } from "../../design";
+import { Badge, Button, IconButton, InfoField, InfoPanel, Input, LoadingState, Pane, Switch, Text, Textarea, Tooltip, useToast } from "../../design";
 import type { HistoryEntry, RefInfo } from "../protocol";
 import { useI18n } from "../i18n";
 import { useQuery, useWorkbench } from "../state/context";
@@ -120,6 +120,26 @@ function RefsSection({ resourceId }: { resourceId: string }) {
   );
 }
 
+/** Round 19: whether AI clients (MCP) may see this resource. Off by default; on a group the switch covers everything below it. */
+function AiVisibleSection({ id, visible, group, disabled }: { id: string; visible: boolean; group: boolean; disabled: boolean }) {
+  const { client, actions } = useWorkbench();
+  const { t } = useI18n();
+  const { toast } = useToast();
+  return (
+    <InfoField label={t("info.ai")}>
+      <Switch
+        checked={visible}
+        disabled={disabled}
+        label={group ? t("info.aiVisibleGroup") : t("info.aiVisible")}
+        description={group ? t("info.aiHintGroup") : t("info.aiHint")}
+        onCheckedChange={(next) =>
+          client.resource.setAiVisible(id, next, group || undefined).then((r) => group && toast({ tone: "success", title: t("info.aiChanged", { count: r.changed }) }), actions.fail)
+        }
+      />
+    </InfoField>
+  );
+}
+
 /** Frame-owned info about a resource (§9.3): name, location, description, tags, created / modified. */
 export function InfoPanelPart({ resourceId }: { resourceId: string }) {
   const { client, store, actions } = useWorkbench();
@@ -197,6 +217,7 @@ export function InfoPanelPart({ resourceId }: { resourceId: string }) {
           )}
         </Pane>
       </InfoField>
+      {res.kind !== "core:env" && res.kind !== "core:config" && <AiVisibleSection id={resourceId} visible={Boolean(res.aiVisible)} group={res.kind === "core:group"} disabled={res.readOnly || res.deleted} />}
       {res.origin !== "original" && (
         <InfoField label={t("info.origin")}>
           <Text size="sm">{res.origin === "subscribed" ? t("info.subscribedFrom", { source: res.originRef ?? "" }) : t("info.copied")}</Text>

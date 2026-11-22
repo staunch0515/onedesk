@@ -34,6 +34,8 @@ export interface Row {
   updatedAt: number;
   updatedBy: string;
   deletedAt?: number;
+  /** Round 19: visible to AI clients (off by default). */
+  aiVisible?: boolean;
 }
 
 export interface ParamValue {
@@ -868,6 +870,8 @@ export const OPERATIONS: Record<string, Label> = {
   "policy.deny": { "en-US": "Blocked by policy", "zh-CN": "被策略拒绝" },
   "secrets.read": { "en-US": "Read secret", "zh-CN": "读取密钥" },
   "data.export": { "en-US": "Export data", "zh-CN": "导出数据" },
+  "resource.aiVisible": { "en-US": "Change AI visibility", "zh-CN": "修改 AI 可见" },
+  "mcp.call": { "en-US": "AI tool call", "zh-CN": "AI 工具调用" },
 };
 
 /** Demo audit rows carry their own label; the interface words operations by id (`i18n/kernel-texts.ts`). */
@@ -909,5 +913,24 @@ export function seedAudit(now: number): MockAuditRow[] {
                 : "",
     });
   }
+  const aiCalls: Array<[string, Record<string, unknown>, number, number, boolean, string | null]> = [
+    ["search", { query: "orders" }, 3, 41, true, null],
+    ["describe", { id: "q-orders-today" }, 0, 12, true, null],
+    ["run", { id: "q-orders-today", params: "[2 items]" }, 200, 830, true, null],
+    ["org_onedesk_sql__run_sql", { sql: "SELECT * FROM orders" }, 0, 3, false, "aiFreeQuery"],
+  ];
+  aiCalls.forEach(([tool, args, count, ms, ok, code], i) => {
+    rows.unshift({
+      id: `a-ai-${i}`,
+      at: now - (i + 1) * 4 * MINUTE,
+      actor: "ai:Claude Desktop",
+      source: "ai",
+      operation: "mcp.call",
+      operationLabel: OPERATIONS["mcp.call"]!,
+      target: tool,
+      result: ok ? "ok" : "denied",
+      detail: JSON.stringify({ tool, args, rows: count, ms, ok, code, reason: null }),
+    });
+  });
   return rows;
 }

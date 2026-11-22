@@ -17,6 +17,7 @@ function fakeKernel(): KernelClient {
     app: { inspectPlugin: async () => ({ valid: true }) as never, installPlugin: async () => ({ plugin: "p", version: "1" }), removePlugin: async () => undefined },
     secrets: { list: async () => [{ name: "token", updatedAt: 1, usedBy: [] }], set: async () => undefined, delete: async () => undefined },
     search: { query: async () => [{ target: "resource:k1", title: "kernel hit", icon: "file", subtitle: "", state: "ok" }] },
+    mcp: { status: async () => ({ enabled: false, ratePerMinute: 30, maxRows: 200, allowFreeQuery: false, tools: 4 }) },
     audit: { list: async () => [], facets: async () => ({ actors: [], operations: [] }) },
     tree: {
       list: async () => trees,
@@ -37,6 +38,7 @@ function fakeKernel(): KernelClient {
       undelete: async () => undefined,
       purge: async () => undefined,
       setFavorite: async () => undefined,
+      setAiVisible: async () => ({ changed: 1 }),
     },
     page: {
       event: async () => ({ message: "kernel event" }),
