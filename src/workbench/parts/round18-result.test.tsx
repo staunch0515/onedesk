@@ -5,15 +5,16 @@ import { describe, expect, it, vi } from "vitest";
 import { createMockClient } from "../protocol/mock";
 import type { ResultAction, Run } from "../protocol";
 import { kernelLikeClient, renderInShell } from "../testing/harness";
-import { markdownOf, OutputTab, pageRefOf, ResultActions } from "./result-area";
+import { markdownOf, OutputTab, ResultActions } from "./result-area";
 
 const base = () => createMockClient({ fresh: true, quiet: true });
-const analyze: ResultAction = { plugin: "org.onedesk.ai", id: "analyze", label: "Analyze with AI", icon: "sparkles", enabled: true };
+const analyze: ResultAction = { plugin: "org.onedesk.ai", id: "analyze", action: "org.onedesk.ai:analyze", label: "Analyze with AI", icon: "sparkles", enabled: true };
 
-function withActions(list: ResultAction[], call = vi.fn(async (): Promise<unknown> => ({ page: "core:audit" }))) {
+function withActions(list: ResultAction[]) {
   const mock = base();
   const actions = vi.fn(async (_runId: string) => list);
-  return { call, actions, client: kernelLikeClient(mock, { result: { actions }, action: { call } }) };
+  const call = vi.fn(async (_request: unknown) => "run-99");
+  return { call, actions, client: kernelLikeClient(mock, { result: { actions }, run: { ...mock.run, start: call } }) };
 }
 
 describe("result-area actions (X5)", () => {
@@ -41,29 +42,12 @@ describe("result-area actions (X5)", () => {
     expect(screen.getByText("Not available")).toBeTruthy();
   });
 
-  it("calls the action with the run id and opens the page it answers with", async () => {
-    const { client, call } = withActions([analyze]);
-    const { store } = renderInShell(client, <ResultActions runId="r7" />);
+  it("starts the action as a run with resultRun and opens that run", async () => {
+    const { client, call } = withActions([{ ...analyze }]);
+    const { store } = renderInShell(client, <ResultActions runId="r7" envId="e1" />);
     fireEvent.click(await screen.findByRole("button", { name: "Analyze with AI" }));
-    await waitFor(() => expect(call).toHaveBeenCalledWith("org.onedesk.ai", "analyze", { runId: "r7" }));
-    await waitFor(() => expect(store.get().tabs.some((t) => t.target === "core:audit")).toBe(true));
-  });
-
-  it("opens nothing when the action answers without a page", async () => {
-    const { client, call } = withActions([analyze], vi.fn(async () => ({ text: "done" })));
-    const { store } = renderInShell(client, <ResultActions runId="r7" />);
-    const before = store.get().tabs.length;
-    fireEvent.click(await screen.findByRole("button", { name: "Analyze with AI" }));
-    await waitFor(() => expect(call).toHaveBeenCalled());
-    expect(store.get().tabs.length).toBe(before);
-  });
-
-  it("reads a page reference as a string or { target }", () => {
-    expect(pageRefOf({ page: "a:b" })).toBe("a:b");
-    expect(pageRefOf({ page: { target: "a:c" } })).toBe("a:c");
-    expect(pageRefOf({ page: "" })).toBeNull();
-    expect(pageRefOf(null)).toBeNull();
-    expect(pageRefOf("x")).toBeNull();
+    await waitFor(() => expect(call).toHaveBeenCalledWith(expect.objectContaining({ action: "org.onedesk.ai:analyze", resultRun: "r7", envId: "e1", target: "run:r7" })));
+    await waitFor(() => expect(store.get().tabs.some((t) => t.target === "run:run-99")).toBe(true));
   });
 
   it("the demo client offers Analyze for a finished table run and none while it runs", async () => {

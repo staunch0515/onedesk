@@ -146,24 +146,17 @@ function MarkdownBlock({ source, label }: { source: string; label: string }) {
   );
 }
 
-/** Where an action's answer points to: `{ page: target }` (or `{ page: { target } }`); null for anything else. */
-export function pageRefOf(result: unknown): string | null {
-  const page = result && typeof result === "object" ? (result as { page?: unknown }).page : undefined;
-  if (typeof page === "string" && page !== "") return page;
-  const target = page && typeof page === "object" ? (page as { target?: unknown }).target : undefined;
-  return typeof target === "string" && target !== "" ? target : null;
-}
-
 const DISABLED_REASONS: Record<string, MessageKey> = {
   noExport: "result.action.disabled.noExport",
-  policy: "result.action.disabled.policy",
+  readonly: "result.action.disabled.readonly",
+  pluginDisabled: "result.action.disabled.pluginDisabled",
 };
 
 /**
  * The result-area buttons plugins offer for a finished run (X5, `result.actions`). A disabled one says why next to it (the kernel sends
- * a code, the shell words it). Clicking calls the action with the run's id; a page it answers with is opened.
+ * a code, the shell words it). Clicking starts the action as a run (`run.start` with `resultRun`) and opens that run to show its progress and output.
  */
-export function ResultActions({ runId }: { runId: string }) {
+export function ResultActions({ runId, envId }: { runId: string; envId?: string | null }) {
   const { client, actions } = useWorkbench();
   const { t } = useI18n();
   const list = useQuery((c) => c.result.actions(runId), [runId], [`run:${runId}`]);
@@ -173,12 +166,9 @@ export function ResultActions({ runId }: { runId: string }) {
   const call = (a: ResultAction) => {
     const key = `${a.plugin}:${a.id}`;
     setBusy(key);
-    client.action
-      .call(a.plugin, a.id, { runId })
-      .then((answer) => {
-        const page = pageRefOf(answer);
-        if (page) actions.open(page);
-      })
+    client.run
+      .start({ action: a.action, target: `run:${runId}`, tabId: "", envId: envId ?? null, input: {}, params: {}, resultRun: runId })
+      .then((id) => actions.open(`run:${id}`))
       .catch(actions.fail)
       .finally(() => setBusy((b) => (b === key ? null : b)));
   };
@@ -410,7 +400,7 @@ export function ResultArea({ tab, descriptor }: { tab: TabState; descriptor: Pag
       summary={summary}
       trailing={
         <>
-          {r?.status === "success" && <ResultActions runId={r.id} />}
+          {r?.status === "success" && <ResultActions runId={r.id} envId={r.envId} />}
           <IconButton
             icon="download"
             size="sm"

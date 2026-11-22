@@ -1127,7 +1127,7 @@ export function createMockClient(options: MockOptions = {}): ProtocolClient {
       return run.id;
     }
 
-    if (req.action === "generate") {
+    if (req.action === "generate" || req.action === "org.onedesk.ai:analyze") {
       // Round 18 (X17): an AI-style run whose text arrives piece by piece as `Run.partial` (the whole text so far each time).
       const full = "## Summary\n\nOrders grew **12%** week over week.\n\n- Most growth came from repeat customers\n- Refunds stayed flat\n\n```sql\nSELECT 1;\n```";
       animate(
@@ -1996,23 +1996,14 @@ export function createMockClient(options: MockOptions = {}): ProtocolClient {
         const run = db.runs.find((r) => r.id === runId);
         if (!run || run.status !== "success" || (run.out?.kind !== "table" && run.out?.kind !== "text")) return [];
         const blocked = protections().includes("noExport");
-        return [{ plugin: "org.onedesk.ai", id: "analyze", label: "Analyze with AI", icon: "sparkles", enabled: !blocked, ...(blocked ? { disabledReason: "noExport" } : {}) }];
-      },
-    },
-    action: {
-      async call(plugin, action, args) {
-        await wait(40);
-        guardWrite();
-        const run = db.runs.find((r) => r.id === args["runId"]);
-        if (!run) throw new KernelError("notFound", { reason: "run" });
-        audit("action.call", `${plugin}:${action}`, run.title);
-        return { page: "core:audit" };
+        return [{ plugin: "org.onedesk.ai", id: "analyze", action: "org.onedesk.ai:analyze", label: "Analyze with AI", icon: "sparkles", enabled: !blocked, ...(blocked ? { disabledReason: "noExport" } : {}) }];
       },
     },
     run: {
       async start(request) {
         await wait(15);
         guardWrite();
+        if (request.resultRun && !db.runs.some((r) => r.id === request.resultRun && r.status === "success")) throw new KernelError("invalid", { reason: "badResultRun" });
         return startRun(request);
       },
       async export(id, path) {

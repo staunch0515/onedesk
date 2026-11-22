@@ -44,7 +44,6 @@ function fakeKernel(): KernelClient {
       save: async (target) => ({ page: { target, title: "saved by kernel" } as never }),
     },
     result: { actions: async () => [] },
-    action: { call: async () => null },
     run: {
       start: async () => "kernel-run",
       get: async (id) => ({ id, status: "running" }) as never,

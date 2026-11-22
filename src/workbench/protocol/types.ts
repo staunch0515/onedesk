@@ -192,6 +192,8 @@ export interface RunRequest {
   /** Bound content as on screen (unsaved included). */
   input: Record<string, unknown>;
   params: Record<string, string>;
+  /** Round 18 (X5): set when the action is a result-area action; the id of the run the user clicked on (the kernel hands it to the action as `input.runId`). */
+  resultRun?: string;
 }
 
 /* ------------------------------------------------------------------ search, audit, commands */
@@ -206,10 +208,7 @@ export type EventHandler = (topic: string, payload?: unknown) => void;
 
 /**
  * Round 18 (X5, round18-protocol §1): a button on a run's result, offered by a plugin (`contributes.resultActions`).
- * `label` is already in the plugin's language; `disabledReason` is a code (e.g. `policy`), never text.
+ * `label` is already in the plugin's language; `action` is the full action name for `run.start`; `disabledReason` is a code (`pluginDisabled`, `readonly`, `noExport`), never text.
  * Written from the protocol document; replace with the generated type once the kernel provides it.
  */
-export type ResultAction = { plugin: string; id: string; label: string; icon: string; enabled: boolean; disabledReason?: string };
-
-/** What an action answers: any value; `{ page: target }` asks the shell to open that page (the existing "action opens a page"). */
-export type ActionCallResult = unknown;
+export type ResultAction = { plugin: string; id: string; action: string; label: string; icon?: string; enabled: boolean; disabledReason?: string };

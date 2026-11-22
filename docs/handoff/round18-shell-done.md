@@ -24,3 +24,10 @@
 - 新文字键只有英语：`result.elapsedFor`、`result.action.disabled.noExport/policy/other`（中日待 tests 会话补）。旧键 `result.elapsed` 现在无人使用（未删，避免动语言文件）。
 - 禁用原因码目前只有 `noExport`、`policy` 两条专门文字；内核最终的原因码集合定下后补。
 - `action.call` 的真实请求名/入参是我按任务书猜的（仓库里目前没有这个外壳请求，只有宿主接口 `actions.call`）；内核定好后若不同，只需改 `real-client.ts` 两行。
+
+## 对齐更新（按 round18-protocol §9.1，r18-kernel 分支文档）
+- 没有 `action.call`：点击结果区动作 = `run.start`，`action` = `ResultAction.action`（完整名），`resultRun` = 被点击的运行 id，`target` = `run:<id>`，`envId` 用该运行的环境；成功后打开新运行的标签页。`ProtocolClient.action`、`ActionCallResult`、`pageRefOf` 已删。
+- `RunRequest.resultRun?` 新增，真客户端透传。`ResultAction` 多 `action`，`icon` 可选，仍是手写类型（内核生成类型提交后再换）。
+- 禁用原因码改为 `pluginDisabled`/`readonly`/`noExport`（新键 `result.action.disabled.readonly/pluginDisabled`，去掉 `policy`）。
+- mock：`result.actions` 返回 `org.onedesk.ai:analyze`；`run.start` 带 `resultRun` 时检查该运行已成功，`org.onedesk.ai:analyze` 与 `generate` 一样流出 Markdown 部分输出。
+- 仍待：内核生成类型到位后换 `ResultAction`/`RunStartParams`。
