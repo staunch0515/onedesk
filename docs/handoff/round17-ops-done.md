@@ -84,3 +84,12 @@
 - 测试：`command/main.test.ts`（连发几行后静默时补发；input 优先、否则 body；空串用默认）、`script/main.test.ts`（同上）。
 - 真内核验证（集成分支合并 D435 后，`target/debug/onedesk-devhost`，临时数据目录，`ONEDESK_SECRET_STORE=memory`，只用本机 bash）：本机脚本 `echo before; echo oops >&2; exit 3` → `status: "error"`，`error = { code: "pluginError", message: "The program exited with code 3." }`，输出是终端样式的表，`run.rows` 为 `[stdout, before]`、`[stderr, oops]`，`run.listFor` 里有这次运行；同样的 `exit 0` 脚本仍为 `success`。
 - 注意（测试会话的文件）：`e2e/round17.spec.ts` 的 “I4 … a non-zero exit of the command is not a failure” 按旧行为写，期望 `exit 3` 为 `success`；按 D435 现在是 `error`（输出保留），这条需要改成期望 `error`。
+
+## 8. 集成 e2e 回归：数据源经 ssh（fake-tools、round15 F3）与 F6
+
+- 原因（插件，5dea204 引入）：
+  1. 备份字段“新的本机库名”“本机容器”标了 `required`。外壳（`view-page.tsx` D414）对页面上**任一** run/save 动作都检查全部 required 字段，所以 ssh 数据源点“测试连接”被吐司“Fill in: New local database, Local container”拦下，运行根本没开始，结果区一直是“运行后在这里看结果”。内核和 ssh 都没问题。修法：备份字段不再标 `required`，`backupToLocal` 自己用 `checkBackup` 检查（本来就有）。
+  2. 页面动作加了第五个“备份到本机”，操作栏只显示前 4 个，“导入连接串”被挤进“更多操作”，F6 找不到按钮。修法：备份排到导入之后（进“更多操作”）。
+- vitest：ssh 页面上没有备份字段是必填；页面动作前 4 个是 test/save/save-test/import。
+- 验证：单独跑 `e2e/fake-tools.spec.ts` + `e2e/round15.spec.ts`，21 条全过。
+- 外壳缺口（不在插件里绕）：`required` 是整页的，不能只对某个动作生效。脚本插件里标了 `required` 的 `@param` 为空时，也会拦住同页的“全部导出”和“保存”（导出和保存都不用参数）。建议：required 只拦 `action` 用到这些字段的动作，或者参数字段（`param: true`）不拦 save。
