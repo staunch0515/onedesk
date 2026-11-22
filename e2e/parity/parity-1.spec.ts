@@ -1,13 +1,12 @@
 /** Round 20 parity batch 1: sqlpool-parity.md §3 rows A1–A10, B1–B7, C1–C6, D1–D8 (real devhost, real PostgreSQL, browser shell). */
 // @ts-nocheck — one-off acceptance script split from one long file: leftover unused helpers and unchecked lookups; it is run by Playwright, not shipped.
 import { createHash } from "node:crypto";
-import { execFileSync } from "node:child_process";
 import { mkdirSync, readFileSync, readdirSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { expect, test, type Page } from "@playwright/test";
 import { DEVHOST, openKernel, rpc, startHost, stopHost, type Host } from "../kernel-host";
 import { DB1, PG_PASSWORD, PG_USER, startPg, type Pg } from "../pg-fixture";
-import { Outcome, changed, mkBase, oracle, pass, row, seedParity, shot, unverified } from "./support";
+import { changed, mkBase, oracle, row, seedParity, shot, unverified } from "./support";
 import { existsSync } from "node:fs";
 
 test.use({ viewport: { width: 1280, height: 800 }, locale: "en-US" });
@@ -80,7 +79,6 @@ test.beforeAll(async () => {
   writeFileSync(path.join(catalog, "plain.sql"), "SELECT 1\n");
   writeFileSync(path.join(catalog, "broken.sql"), "/* ---\nid: [oops\n--- */\nSELECT 1\n");
   writeFileSync(path.join(catalog, "mapping.yaml"), MAPPING);
-  catalogHash0 = hashDir(catalog);
   host = await startHost(path.join(base, "data"));
 });
 test.afterAll(async () => {
@@ -106,10 +104,10 @@ const waitRun = async (page: Page, id: string): Promise<RunInfo> => {
 };
 const startRun = async (page: Page, action: string, target: string, params: Record<string, string> = {}, extra: Record<string, unknown> = {}) => waitRun(page, await call<string>(page, "run.start", { action, target, tabId: "p-tab", input: {}, params, locale: "en-US", ...extra }));
 const rowsOf = async (page: Page, run: RunInfo, limit = 1000) => (await call<{ rows: string[][]; total: number }>(page, "run.rows", { id: run.id, offset: 0, limit })).rows;
-const sentSql = async (page: Page, run: RunInfo) => JSON.stringify(await call(page, "run.render", { id: run.id, tabId: "sent", locale: "en-US" }).catch(() => null));
+const sentSql = async (page: Page, run: { id: string }) => JSON.stringify(await call(page, "run.render", { id: run.id, tabId: "sent", locale: "en-US" }).catch(() => null));
 const CAT = "org.onedesk.catalog:catalog";
 const treeCmd = (page: Page, id: string, tree: string) => call(page, "command.execute", { id, context: { tree } });
-const ids: Record<string, string> = {};
+const ids = {} as Record<"deletedGroupTrash"|"groupDeleteNote"|"items"|"lines"|"q1"|"recent"|"savedSql"|"shop"|"top"|"warn", string>;
 const sqlText = (s: string) => JSON.parse(s) as string;
 void sqlText;
 
