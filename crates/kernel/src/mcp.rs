@@ -530,11 +530,14 @@ impl Inner {
         // Under the gate: count what the audit holds, add what is running, register this call.
         let mut m = self.mcp.inflight.lock().unwrap();
         let cutoff = now_ms() - WINDOW.as_millis() as i64;
+        // Every AI client's rows: the operator type alone, or `<type>:<client>`.
+        let kind = "ai";
+        let like = format!("{kind}:%");
         let (done, oldest): (i64, Option<i64>) = self.read(|c| {
             c.query_row(
-                "SELECT count(*), min(at) FROM audit WHERE op = 'mcp.call' AND (actor = 'ai' OR actor LIKE 'ai:%') AND at > ?1
+                "SELECT count(*), min(at) FROM audit WHERE op = 'mcp.call' AND (actor = ?2 OR actor LIKE ?3) AND at > ?1
                    AND COALESCE(json_extract(summary, '$.reason'), '') NOT IN ('aiRateLimit', 'aiOff')",
-                rusqlite::params![cutoff],
+                rusqlite::params![cutoff, kind, like],
                 |r| Ok((r.get(0)?, r.get(1)?)),
             )
         })?;
