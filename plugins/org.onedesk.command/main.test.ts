@@ -432,6 +432,9 @@ describe("command: manifest", () => {
     expect(m.contributes.actions.map((a: any) => `${a.id}:${a.output}`)).toEqual(["run:table"]);
     expect(m.contributes.kinds[0]).toMatchObject({ id: "command", tree: "resources", draggable: true });
   });
+  it("D436: no page action skips the required check (run and save & run use the parameters; copy is an event)", () => {
+    expect(m.contributes.pages.flatMap((p: any) => p.actions).some((a: any) => "ignoreRequired" in a)).toBe(false);
+  });
   it("every label key the manifest uses exists in English", () => {
     const keys = JSON.stringify(m.contributes).match(/"(?:kind|action|tab)\.[A-Za-z.]+"/g) ?? [];
     for (const k of keys) expect(EN[JSON.parse(k)], k).toBeDefined();
