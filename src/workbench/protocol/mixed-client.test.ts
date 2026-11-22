@@ -67,16 +67,15 @@ function fakeKernel(): KernelClient {
 }
 
 describe("mixed client", () => {
-  it("lists kernel trees first, renames the demo resource tree and drops the demo file tree", async () => {
+  it("lists only the kernel's trees: no demo tree (fake resources, fake data sources) is shown next to real data", async () => {
     const client = createMixedClient(fakeKernel(), createMockClient({ fresh: true, quiet: true }));
     const trees = await client.tree.list();
     expect(trees[0]?.id).toBe("resources");
     const ids = trees.map((t) => t.id);
-    expect(ids).toContain("demo:resources");
+    expect(ids).not.toContain("demo:resources");
     expect(ids).not.toContain("files");
     expect(ids.filter((id) => id === "resources")).toHaveLength(1);
-    expect(client.demo?.tree("demo:resources")).toBe(true);
-    expect(client.demo?.tree("resources")).toBe(false);
+    expect(ids.every((id) => client.demo?.tree(id) === false)).toBe(true);
   });
 
   it("sends kernel resources to the kernel and demo resources to the demo", async () => {
