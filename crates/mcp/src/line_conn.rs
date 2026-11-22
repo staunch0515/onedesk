@@ -65,7 +65,8 @@ impl LineConn {
             self.pending.lock().unwrap().remove(&id);
             return Err(BackendError::Gone);
         }
-        let resp = rx.await.map_err(|_| BackendError::Gone)?;
+        // Written, then the connection ended: the other side may have run it.
+        let resp = rx.await.map_err(|_| BackendError::Lost)?;
         match resp.error {
             Some(e) => Err(BackendError::Protocol(e)),
             None => Ok(resp.result.unwrap_or(Value::Null)),

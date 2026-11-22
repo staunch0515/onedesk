@@ -189,6 +189,20 @@ const LOCK_WAIT: Duration = Duration::from_secs(30);
 /// The `HostError` text of a worker that exited with 3 (workspace locked).
 pub const LOCKED_MESSAGE: &str = "workspace is locked by another worker (exit 3)";
 
+/// Waits (up to `LOCK_WAIT`) until no other process holds the workspace lock. Only a courtesy to callers that would
+/// otherwise wait while holding the operations lock: whoever starts the worker still retries on exit code 3.
+async fn wait_unlocked(workspace: &Path) {
+    use onedesk_kernel::workspace::{lock_workspace, LockError};
+    let deadline = Instant::now() + LOCK_WAIT;
+    while Instant::now() < deadline {
+        match lock_workspace(workspace) {
+            Err(LockError::Busy) => tokio::time::sleep(Duration::from_millis(200)).await,
+            // Free (the probe lock is dropped at once) or not probeable: let the start decide.
+            _ => return,
+        }
+    }
+}
+
 /// `spawn_worker_once`, trying again while the workspace is locked by another worker (an AI client using it headless).
 async fn spawn_worker(cfg: &HostConfig, shared: &Shared) -> Result<Started, HostError> {
     let deadline = Instant::now() + LOCK_WAIT;
@@ -396,8 +410,6 @@ pub struct Host {
     /// Workspace operations (create, switch, bind, rename, delete) one at a time, so a delete cannot slip between
     /// a switch's worker start and its binding.
     ops: tokio::sync::Mutex<()>,
-    /// `client` -> `ai:<name>` for connections that came in on the MCP socket; their requests are stamped with it (round 19).
-    ai_clients: Mutex<HashMap<String, String>>,
     secrets: SecretStoreHandle,
 }
 
@@ -436,7 +448,6 @@ impl Host {
             bindings: Mutex::new(HashMap::new()),
             active: Mutex::new(first.clone()),
             ops: tokio::sync::Mutex::new(()),
-            ai_clients: Mutex::new(HashMap::new()),
             secrets,
         });
         host.slot_for(&first).await.map_err(|e| HostError(e.detail.unwrap_or_else(|| format!("{:?}", e.code))))?;
@@ -512,6 +523,20 @@ impl Host {
 
     /// Forwards one request. `client` identifies the window or browser (§9.2).
     pub async fn request(&self, client: Option<&str>, method: &str, params: Value) -> Result<Value, ProtocolError> {
+        self.request_as(client, None, method, params).await
+    }
+
+    /// `request` on behalf of an operator the main process vouches for (`actor`, e.g. `ai:<name>` from the MCP socket,
+    /// round 19, D450): passed straight to the worker, never kept in a table, and it reaches nothing but the worker
+    /// (the main process's own `app.*` handling is not for it). A `client` id in the AI namespace without an actor is
+    /// refused: only the MCP socket may name one.
+    pub async fn request_as(&self, client: Option<&str>, actor: Option<String>, method: &str, params: Value) -> Result<Value, ProtocolError> {
+        if actor.is_some() {
+            return self.forward_as(client, actor, method, params).await;
+        }
+        if client.is_some_and(|c| c.starts_with(mcp_socket::CLIENT_PREFIX)) {
+            return Err(ProtocolError { code: ErrorCode::Denied, params: [("reason".to_string(), "reservedClient".to_string())].into(), detail: None });
+        }
         if method == onedesk_protocol::method::HELLO {
             let ok = params.get("protocol").and_then(Value::as_str) == Some(PROTOCOL_VERSION);
             if !ok {
@@ -666,8 +691,11 @@ impl Host {
 
     /// Sends one request to the worker of the workspace `client` uses.
     async fn forward(&self, client: Option<&str>, method: &str, params: Value) -> Result<Value, ProtocolError> {
+        self.forward_as(client, None, method, params).await
+    }
+
+    async fn forward_as(&self, client: Option<&str>, actor: Option<String>, method: &str, params: Value) -> Result<Value, ProtocolError> {
         let slot = self.slot_for(&self.bound(client)).await?;
-        let actor = client.and_then(|c| self.ai_clients.lock().unwrap().get(c).cloned());
         slot.forward_as(client, actor, method, params).await
     }
 
@@ -784,11 +812,6 @@ impl Host {
         }
     }
 
-    /// Marks `client` as an AI connection named `name`: every request it makes reaches the worker as `ai:<name>`.
-    pub fn mark_ai_client(&self, client: &str, name: &str) {
-        self.ai_clients.lock().unwrap().insert(client.to_string(), format!("ai:{name}"));
-    }
-
     /// The workspace folder a window or tab (`client`) uses now.
     pub fn client_folder(&self, client: &str) -> String {
         self.bound(Some(client))
@@ -797,23 +820,41 @@ impl Host {
     /// Binds a new window or tab to a workspace without changing the default for others (D403). Starts the
     /// workspace's worker if needed.
     pub async fn bind_client(&self, client: &str, workspace_id: &str) -> Result<WorkspaceEntry, ProtocolError> {
+        self.bind_client_with(client, workspace_id, true).await
+    }
+
+    /// `bind_client` for an AI connection: using a workspace through it does not make it "the one opened last" (D450).
+    pub async fn bind_ai_client(&self, client: &str, workspace_id: &str) -> Result<WorkspaceEntry, ProtocolError> {
+        self.bind_client_with(client, workspace_id, false).await
+    }
+
+    async fn bind_client_with(&self, client: &str, workspace_id: &str, touch: bool) -> Result<WorkspaceEntry, ProtocolError> {
+        // Waiting for a workspace another process holds (an AI client's headless worker) happens before the operations
+        // lock is taken, so switching or deleting other workspaces is not held up meanwhile (D450).
+        if let Ok((folder, _)) = self.find(workspace_id) {
+            if !self.running_workspaces().contains(&folder) {
+                wait_unlocked(&workspace_path(&self.data_dir, &folder)).await;
+            }
+        }
         let _one_at_a_time = self.ops.lock().await;
         let (folder, info) = self.find(workspace_id)?;
-        self.attach(client, &folder).await?;
+        self.attach(client, &folder, touch).await?;
         let info = workspaces::read_info(&workspace_path(&self.data_dir, &folder)).unwrap_or(info);
         Ok(workspaces::entry(&folder, &info, true))
     }
 
     /// Binds `client` to `folder` before the worker starts (so a delete cannot get in between) and starts it; on a
     /// failure the old binding stays. Called with the operations lock held.
-    async fn attach(&self, client: &str, folder: &str) -> Result<(), ProtocolError> {
+    async fn attach(&self, client: &str, folder: &str, touch: bool) -> Result<(), ProtocolError> {
         let old = self.bound(Some(client));
         self.bindings.lock().unwrap().insert(client.to_string(), folder.to_string());
         if let Err(e) = self.slot_for(folder).await {
             self.bindings.lock().unwrap().insert(client.to_string(), old);
             return Err(e);
         }
-        self.touch_last_opened(folder);
+        if touch {
+            self.touch_last_opened(folder);
+        }
         if old != folder {
             self.release(&old).await;
         }
@@ -823,7 +864,6 @@ impl Host {
     /// A window or tab went away: its worker stops when nobody else uses it.
     pub async fn unbind_client(&self, client: &str) {
         let _one_at_a_time = self.ops.lock().await;
-        self.ai_clients.lock().unwrap().remove(client);
         let old = self.bindings.lock().unwrap().remove(client);
         if let Some(folder) = old {
             // A connection that merely ends (a short rpc connection, a page reload) does not stop the worker of the
@@ -871,9 +911,15 @@ impl Host {
     /// `app.switchWorkspace { id }`: binds this connection to the workspace (starting its worker if needed). The
     /// worker left behind stops when no connection uses it any more.
     async fn switch_workspace(&self, client: Option<&str>, params: Value) -> Result<Value, ProtocolError> {
+        let id = parse::<WorkspaceIdParams>(params)?.id;
+        if let Ok((folder, _)) = self.find(&id) {
+            if !self.running_workspaces().contains(&folder) {
+                wait_unlocked(&workspace_path(&self.data_dir, &folder)).await;
+            }
+        }
         let _one_at_a_time = self.ops.lock().await;
-        let (folder, info) = self.find(&parse::<WorkspaceIdParams>(params)?.id)?;
-        self.attach(client.unwrap_or_default(), &folder).await?;
+        let (folder, info) = self.find(&id)?;
+        self.attach(client.unwrap_or_default(), &folder, true).await?;
         *self.active.lock().unwrap() = folder.clone();
         let info = workspaces::read_info(&workspace_path(&self.data_dir, &folder)).unwrap_or(info);
         Ok(serde_json::to_value(workspaces::entry(&folder, &info, true)).expect("entry serializes"))

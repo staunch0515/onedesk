@@ -25,6 +25,7 @@ fn auto(data: &Path, workspace: Option<&str>, idle_ms: u64, lock_wait_ms: u64) -
         client_name: "test-client".into(),
         idle: Duration::from_millis(idle_ms),
         lock_wait: Duration::from_millis(lock_wait_ms),
+        builtin_plugins: None,
     }))
 }
 
@@ -249,7 +250,7 @@ fn real_worker() -> Option<PathBuf> {
 }
 
 fn auto_real(data: &Path, worker: PathBuf) -> Arc<Auto> {
-    Arc::new(Auto::new(AutoConfig { data_dir: data.to_path_buf(), workspace: None, worker_bin: worker, client_name: "e2e".into(), idle: Duration::from_millis(500), lock_wait: Duration::from_secs(5) }))
+    Arc::new(Auto::new(AutoConfig { data_dir: data.to_path_buf(), workspace: None, worker_bin: worker, client_name: "e2e".into(), idle: Duration::from_millis(500), lock_wait: Duration::from_secs(5), builtin_plugins: None }))
 }
 
 // With the real kernel the switch is off by default: `aiOff` proves the request was the AI operator's
@@ -288,4 +289,98 @@ async fn real_kernel_through_the_app_socket_is_the_ai_operator() {
     let own = host.request(Some("win"), "mcp.tools", json!({})).await.unwrap_err();
     assert_eq!(own.params.get("reason").map(String::as_str), Some("aiOnly"));
     host.shutdown().await;
+}
+
+#[tokio::test]
+async fn session_is_named_after_the_mcp_client_with_a_suffix() {
+    use onedesk_mcp::server::{process_suffix, session_name};
+    assert_eq!(session_name(Some("claude-desktop")), format!("claude-desktop-{}", process_suffix()));
+    assert_eq!(session_name(Some("a/b:c")), format!("a_b_c-{}", process_suffix()));
+    assert_eq!(session_name(Some("  ")), format!("mcp-{}", process_suffix()));
+    assert!(session_name(Some(&"x".repeat(200))).len() <= 40 + 1 + 6);
+    let tmp = tempfile::tempdir().unwrap();
+    make_workspace(tmp.path(), "default", "ws-1", "Default", 1);
+    let mut c = start_server(auto(tmp.path(), None, 5000, 1000));
+    c.call(1, "initialize", json!({ "protocolVersion": "2025-06-18", "clientInfo": { "name": "Fancy Client", "version": "1" } })).await;
+    let r = c.call(2, "tools/call", json!({ "name": "search", "arguments": {} })).await;
+    assert_eq!(r["result"]["structuredContent"]["aiClient"], format!("Fancy Client-{}", process_suffix()));
+}
+
+#[tokio::test]
+async fn a_bad_line_does_not_end_the_session() {
+    let tmp = tempfile::tempdir().unwrap();
+    make_workspace(tmp.path(), "default", "ws-1", "Default", 1);
+    let mut c = start_server(auto(tmp.path(), None, 5000, 1000));
+    // Not UTF-8.
+    c.to.write_all(&[0xff, 0xfe, b'\n']).await.unwrap();
+    assert_eq!(c.recv().await["error"]["code"], -32700);
+    assert_eq!(c.call(1, "ping", Value::Null).await["result"], json!({}));
+    // Longer than the limit: refused, skipped to its end, the next message is read.
+    let big = vec![b'a'; onedesk_mcp::server::MAX_LINE + 10];
+    c.to.write_all(&big).await.unwrap();
+    c.to.write_all(b"\n").await.unwrap();
+    assert_eq!(c.recv().await["error"]["code"], -32700);
+    assert_eq!(c.call(2, "ping", Value::Null).await["result"], json!({}));
+}
+
+#[tokio::test]
+async fn a_tool_call_lost_in_flight_is_not_sent_again() {
+    let tmp = tempfile::tempdir().unwrap();
+    make_workspace(tmp.path(), "default", "ws-1", "Default", 1);
+    let mut c = start_server(auto(tmp.path(), None, 5000, 1000));
+    let r = c.call(1, "tools/call", json!({ "name": "die", "arguments": {} })).await;
+    assert_eq!(r["result"]["isError"], true);
+    let log = std::fs::read_to_string(tmp.path().join("workspaces/default/die.log")).unwrap();
+    assert_eq!(log.lines().count(), 1, "the call must not be repeated");
+    // The session lives on.
+    assert_eq!(c.call(2, "tools/call", json!({ "name": "search", "arguments": {} })).await["result"]["isError"], false);
+}
+
+#[tokio::test]
+async fn headless_worker_is_told_the_built_in_packages() {
+    let tmp = tempfile::tempdir().unwrap();
+    let data = tmp.path().join("data");
+    make_workspace(&data, "default", "ws-1", "Default", 1);
+    let builtin = tmp.path().join("builtin/org.test.alpha");
+    std::fs::create_dir_all(&builtin).unwrap();
+    std::fs::write(builtin.join("manifest.json"), r#"{"id":"org.test.alpha","version":"0.1.0"}"#).unwrap();
+    std::fs::write(builtin.join("main.js"), "export default {};").unwrap();
+    let a = Arc::new(Auto::new(AutoConfig { data_dir: data.clone(), workspace: None, worker_bin: fake_worker(), client_name: "t".into(), idle: Duration::from_secs(5), lock_wait: Duration::from_secs(1), builtin_plugins: Some(tmp.path().join("builtin")) }));
+    let mut c = start_server(a);
+    let r = c.call(1, "tools/call", json!({ "name": "search", "arguments": {} })).await;
+    assert_eq!(r["result"]["structuredContent"]["builtin"], json!(["org.test.alpha@0.1.0"]));
+    assert!(data.join("plugins/org.test.alpha/0.1.0/manifest.json").is_file());
+}
+
+#[tokio::test]
+async fn a_client_arriving_while_the_app_is_still_starting_queues_on_the_socket() {
+    let tmp = tempfile::tempdir().unwrap();
+    let data = tmp.path().join("data");
+    make_workspace(&data, "default", "ws-1", "Default", 1);
+    // The app has bound the socket but is still waiting for the workspace lock: no host yet.
+    let (listener, _) = mcp_socket::bind(&data).unwrap();
+    let mut c = start_server(auto(&data, None, 5000, 1000));
+    c.send(json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": { "name": "search", "arguments": {} } })).await;
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    let host = Host::start(HostConfig { data_dir: data.clone(), worker_bin: fake_worker(), builtin_plugins: None, secrets: Some(onedesk_kernel::secrets::SecretStoreHandle::memory().0) }).await.unwrap();
+    tokio::spawn(mcp_socket::serve(host.clone(), listener));
+    let r = c.recv().await;
+    assert_eq!(r["result"]["isError"], false, "{r}");
+    // It went through the app (no headless worker was started).
+    assert_eq!(r["result"]["structuredContent"]["aiClient"], "");
+    host.shutdown().await;
+}
+
+#[tokio::test]
+async fn binding_twice_keeps_the_first_socket_and_paths_are_per_user() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (_first, path) = mcp_socket::bind(tmp.path()).unwrap();
+    assert!(mcp_socket::bind(tmp.path()).is_err());
+    assert!(path.exists(), "a failed second bind must leave the first one's socket alone");
+    assert!(tokio::net::UnixStream::connect(&path).await.is_ok());
+    let long = PathBuf::from(format!("/Users/someone/{}/onedesk", "x".repeat(120)));
+    let p = mcp_socket::socket_path_in(&long, Path::new("/var/folders/ab/T"));
+    assert!(p.starts_with("/var/folders/ab/T"), "{p:?}");
+    let (a, _b) = tokio::net::UnixStream::pair().unwrap();
+    assert!(mcp_socket::peer_is_me(&a));
 }

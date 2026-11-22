@@ -50,9 +50,13 @@ pub fn info() -> Value {
 /// macOS limits socket paths to 103 bytes.
 const MAX_PATH: usize = 100;
 
-/// `<data dir>/mcp.sock`; when that is too long for a socket path, `/tmp/onedesk-<uid>-<hash>.sock`.
-/// Both ends (the app and `onedesk-mcp`) call this with the same data dir.
+/// `<data dir>/mcp.sock`; when that is too long for a socket path, `$TMPDIR/onedesk-<hash>.sock` (the per-user temporary
+/// folder, so no other user can plant a socket there). Both ends (the app and `onedesk-mcp`) call this with the same data dir.
 pub fn socket_path(data_dir: &Path) -> PathBuf {
+    socket_path_in(data_dir, &std::env::temp_dir())
+}
+
+pub fn socket_path_in(data_dir: &Path, tmp: &Path) -> PathBuf {
     let direct = data_dir.join("mcp.sock");
     if direct.as_os_str().len() < MAX_PATH {
         return direct;
@@ -63,9 +67,18 @@ pub fn socket_path(data_dir: &Path) -> PathBuf {
         h ^= u64::from(*b);
         h = h.wrapping_mul(0x100000001b3);
     }
+    let path = tmp.join(format!("onedesk-{h:016x}.sock"));
+    if path.as_os_str().len() < MAX_PATH {
+        path
+    } else {
+        PathBuf::from(format!("/tmp/onedesk-{h:016x}.sock"))
+    }
+}
+
+/// Whether the process on the other end of `stream` runs as us.
+pub fn peer_is_me(stream: &UnixStream) -> bool {
     // SAFETY: geteuid has no preconditions.
-    let uid = unsafe { libc::geteuid() };
-    PathBuf::from(format!("/tmp/onedesk-{uid}-{h:016x}.sock"))
+    stream.peer_cred().is_ok_and(|c| c.uid() == unsafe { libc::geteuid() })
 }
 
 fn denied(reason: &str) -> ProtocolError {
@@ -120,9 +133,7 @@ async fn reply(write: &mut tokio::net::unix::OwnedWriteHalf, value: Value) -> st
 }
 
 async fn connection(host: Arc<Host>, stream: UnixStream, n: u64) -> std::io::Result<()> {
-    // SAFETY: geteuid has no preconditions.
-    let me = unsafe { libc::geteuid() };
-    if stream.peer_cred()?.uid() != me {
+    if !peer_is_me(&stream) {
         return Ok(());
     }
     let (read, mut write) = stream.into_split();
@@ -138,11 +149,11 @@ async fn connection(host: Arc<Host>, stream: UnixStream, n: u64) -> std::io::Res
         return reply(&mut write, refuse(e)).await;
     }
     let client = format!("{CLIENT_PREFIX}mcp-{n}");
-    // The door stamps the operator; nothing the peer writes can change it.
-    host.mark_ai_client(&client, &client_name(hello.get("clientName").and_then(Value::as_str)));
+    // The door stamps the operator on every request; nothing the peer writes can change it.
+    let actor = format!("ai:{}", client_name(hello.get("clientName").and_then(Value::as_str)));
     let entry = match hello.get("workspace").and_then(Value::as_str).filter(|w| !w.is_empty()) {
         Some(wanted) => match resolve(&host, wanted) {
-            Ok(id) => host.bind_client(&client, &id).await,
+            Ok(id) => host.bind_ai_client(&client, &id).await,
             Err(e) => Err(e),
         },
         // Not named: the workspace the app opens by default (D406), starting its worker if it is not running.
@@ -150,7 +161,7 @@ async fn connection(host: Arc<Host>, stream: UnixStream, n: u64) -> std::io::Res
             let folder = host.client_folder(&client);
             let id = host.scanned().into_iter().find(|(f, _)| *f == folder).map(|(f, i)| workspaces::entry(&f, &i, false).id);
             match id {
-                Some(id) => host.bind_client(&client, &id).await,
+                Some(id) => host.bind_ai_client(&client, &id).await,
                 None => Err(ProtocolError { code: ErrorCode::NotFound, params: [("what".to_string(), "workspace".to_string())].into(), detail: None }),
             }
         }
@@ -172,10 +183,10 @@ async fn connection(host: Arc<Host>, stream: UnixStream, n: u64) -> std::io::Res
     });
     while let Ok(Some(line)) = lines.next_line().await {
         let Ok(req) = serde_json::from_str::<Request>(&line) else { continue };
-        let (host, tx, client) = (host.clone(), tx.clone(), client.clone());
+        let (host, tx, client, actor) = (host.clone(), tx.clone(), client.clone(), actor.clone());
         tokio::spawn(async move {
             let result = if req.method.starts_with(ALLOWED_PREFIX) {
-                host.request(Some(&client), &req.method, req.params).await
+                host.request_as(Some(&client), Some(actor), &req.method, req.params).await
             } else {
                 Err(denied("mcpOnly"))
             };

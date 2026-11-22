@@ -27,3 +27,17 @@
 
 ## 范围外
 - 应用的“退出时删套接字”只在正常退出；崩溃留下的陈旧文件由下次 `bind`/连接（拒绝连接即视为没开）处理。
+
+## D450 审查修项（合并 claude/onedesk-r19 后）
+
+| # | 做法 | 测试 |
+|---|---|---|
+| ① | 客户端名 = `initialize.clientInfo.name`（按内核规则清理、≤40）+ `-<进程随机后缀>`，只取第一次 `initialize`；套接字握手和 `--ai-client` 都用它 | `session_is_named_after_the_mcp_client_with_a_suffix` |
+| ② | 去掉主进程的全局 client 表；新 `Host::request_as(client, actor, …)`，套接字每个请求直接带 `ai:<名>`；带 actor 的请求只进工作进程（不碰 `app.*`）；`ai:` 开头的 client id 无 actor → `denied/reservedClient`；WebSocket 带这种 client → 403 | host `d450_the_ai_client_namespace_belongs_to_the_mcp_socket` |
+| ③ | `Host::bind_ai_client`：不 `touch_last_opened` | host `d450_an_ai_connection_does_not_become_the_last_opened_workspace` |
+| ④ | `src-tauri` 先 `bind` 套接字再 `Host::start`（等锁期间客户端在套接字上排队，握手最多等 90 秒）；`bind_client`/`switch_workspace` 在拿 ops 锁**之前**用 `wait_unlocked` 探测等锁（已在运行的工作区不等），不再持 ops 锁等 | host `d450_waiting_for_a_locked_workspace_does_not_block_other_operations`；mcp `a_client_arriving_while_the_app_is_still_starting_queues_on_the_socket` |
+| ⑤ | 无界面启动前像应用一样 `install_builtin` + 刷新 `.index`，并带 `--builtin`（来源 `plugins::bundled_dir()`：`ONEDESK_BUILTIN_PLUGINS` 或 `.app/Contents/Resources/plugins`） | `headless_worker_is_told_the_built_in_packages` |
+| ⑥ | 按字节读行，上限 4 MiB；超长/非 UTF-8/非 JSON → `-32700` 后继续 | `a_bad_line_does_not_end_the_session` |
+| ⑦ | `BackendError::Lost`（已发出后连接断）：`mcp.call` 不重发，只读的 `mcp.tools` 重试一次；`notifications/cancelled` 未做（可选） | `a_tool_call_lost_in_flight_is_not_sent_again` |
+| ⑧ | `src-tauri` 只在自己 `bind` 成功时记录路径，退出只删它；第二次 `bind` 失败不动第一个 | `binding_twice_keeps_the_first_socket_and_paths_are_per_user` |
+| ⑨ | 回退路径 = `$TMPDIR/onedesk-<hash>.sock`（每用户目录）；`SocketConn::connect` 校验服务端 uid（`peer_is_me`） | 同上（路径）；uid 校验只测了“自己通过”，别的 uid 的对端没法在测试里造 |

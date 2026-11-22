@@ -25,6 +25,60 @@ fn ok(id: Value, result: Value) -> Value {
     json!({ "jsonrpc": "2.0", "id": id, "result": result })
 }
 
+/// Longest line (one JSON-RPC message) read; a longer one is refused and skipped.
+pub const MAX_LINE: usize = 4 * 1024 * 1024;
+
+/// The name this session goes by in the kernel and its audit: the MCP client's own name, cleaned like the kernel does
+/// (`[A-Za-z0-9._ -]`, others become `_`), cut to 40, plus a per-process suffix so two sessions of one client differ.
+pub fn session_name(client: Option<&str>) -> String {
+    let cleaned: String = client.unwrap_or("").chars().take(40).map(|c| if c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | ' ' | '-') { c } else { '_' }).collect();
+    let base = if cleaned.trim().is_empty() { "mcp".to_string() } else { cleaned };
+    format!("{base}-{}", process_suffix())
+}
+
+/// Six hex digits from the process id and the start time; stable within the process.
+pub fn process_suffix() -> String {
+    static SUFFIX: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    SUFFIX
+        .get_or_init(|| {
+            let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.subsec_nanos()).unwrap_or(0);
+            format!("{:06x}", ((u64::from(std::process::id()) * 2_654_435_761) ^ u64::from(nanos)) & 0xff_ffff)
+        })
+        .clone()
+}
+
+/// One line as bytes, at most `MAX_LINE` of them. `Ok(None)`: input ended. `Err(())`: the line was longer (the rest of it
+/// has been skipped).
+async fn read_line<R: AsyncBufRead + Unpin>(input: &mut R, max: usize) -> std::io::Result<Option<Result<Vec<u8>, ()>>> {
+    let mut line = Vec::new();
+    let mut too_long = false;
+    loop {
+        let buf = input.fill_buf().await?;
+        if buf.is_empty() {
+            return Ok(if line.is_empty() && !too_long { None } else { Some(if too_long { Err(()) } else { Ok(line) }) });
+        }
+        let (take, done) = match buf.iter().position(|b| *b == b'\n') {
+            Some(i) => (i + 1, true),
+            None => (buf.len(), false),
+        };
+        if !too_long {
+            if line.len() + take > max + 1 {
+                too_long = true;
+                line = Vec::new();
+            } else {
+                line.extend_from_slice(&buf[..take]);
+            }
+        }
+        input.consume(take);
+        if done {
+            if !too_long {
+                line.pop();
+            }
+            return Ok(Some(if too_long { Err(()) } else { Ok(line) }));
+        }
+    }
+}
+
 /// Handles one parsed message. `None`: a notification (nothing to answer).
 pub async fn handle(backend: &dyn Backend, msg: Value) -> Option<Value> {
     let Some(method) = msg.get("method").and_then(Value::as_str) else {
@@ -36,6 +90,7 @@ pub async fn handle(backend: &dyn Backend, msg: Value) -> Option<Value> {
     let id = id?;
     Some(match method {
         "initialize" => {
+            backend.set_client_name(&session_name(params.pointer("/clientInfo/name").and_then(Value::as_str)));
             let asked = params.get("protocolVersion").and_then(Value::as_str).unwrap_or("");
             let version = SUPPORTED.iter().find(|v| **v == asked).copied().unwrap_or(SUPPORTED[0]);
             ok(
@@ -111,14 +166,19 @@ where
         }
     });
     let mut tasks = tokio::task::JoinSet::new();
-    let mut lines = input.lines();
-    while let Ok(Some(line)) = lines.next_line().await {
-        if line.trim().is_empty() {
-            continue;
-        }
-        let msg: Value = match serde_json::from_str(&line) {
-            Ok(m) => m,
-            Err(_) => {
+    let mut input = input;
+    while let Ok(Some(line)) = read_line(&mut input, MAX_LINE).await {
+        // A line that is too long, not UTF-8 or not JSON is one bad message, not the end of the session.
+        let msg: Value = match line.ok().and_then(|b| String::from_utf8(b).ok()) {
+            Some(text) if text.trim().is_empty() => continue,
+            Some(text) => match serde_json::from_str(&text) {
+                Ok(m) => m,
+                Err(_) => {
+                    let _ = tx.send(error(Value::Null, PARSE_ERROR, "parse error"));
+                    continue;
+                }
+            },
+            None => {
                 let _ = tx.send(error(Value::Null, PARSE_ERROR, "parse error"));
                 continue;
             }
