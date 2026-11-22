@@ -71,7 +71,7 @@ describe("required fields and the actions they stop (D436)", () => {
   const setup = async (actions: unknown[]) => {
     const { vi } = await import("vitest");
     const start = vi.fn(async () => "run1");
-    const save = vi.fn(async () => ({ page: { target: tab.target, title: "R", basis: "2" } }));
+    const save = vi.fn(async () => ({ page: { ...descriptor, basis: "2" } }));
     const base = kernelLikeClient(createMockClient({ fresh: true, quiet: true }), {});
     const client = { ...base, run: { ...base.run, start }, page: { ...base.page, save } };
     const page = { ...descriptor, view: [form], actions, values: { body: "a" } } as unknown as PageDescriptor;
