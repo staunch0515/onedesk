@@ -589,6 +589,7 @@
   "kernel.error.reason.helloFirst": "接続が初期化されていません。",
   "kernel.error.reason.notLoaded": "プラグインが読み込まれていません。",
   "kernel.error.reason.providedTree": "このツリーはプラグインが提供しており、ここでは変更できません。",
+  "kernel.error.reason.readOnlyField": "このフィールドは読み取り専用のため、変更できません。",
   "kernel.error.reason.unknownKind": "この種類は不明です。",
   "kernel.error.reason.unknownSetting": "プラグインにそのような設定はありません。",
   "kernel.error.reason.badValue": "この設定にその値は使えません。",

@@ -119,6 +119,7 @@ export const KERNEL_ERRORS: Table = {
   "reason.helloFirst": "kernel.error.reason.helloFirst",
   "reason.notLoaded": "kernel.error.reason.notLoaded",
   "reason.providedTree": "kernel.error.reason.providedTree",
+  "reason.readOnlyField": "kernel.error.reason.readOnlyField",
   "reason.unknownKind": "kernel.error.reason.unknownKind",
   "reason.unknownSetting": "kernel.error.reason.unknownSetting",
   "reason.badValue": "kernel.error.reason.badValue",

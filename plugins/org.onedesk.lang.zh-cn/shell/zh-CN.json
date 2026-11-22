@@ -589,6 +589,7 @@
   "kernel.error.reason.helloFirst": "连接还没有初始化。",
   "kernel.error.reason.notLoaded": "插件没有加载。",
   "kernel.error.reason.providedTree": "这棵树由插件提供，不能在这里修改。",
+  "kernel.error.reason.readOnlyField": "这个字段是只读的，不能修改。",
   "kernel.error.reason.unknownKind": "不认识这个类型。",
   "kernel.error.reason.unknownSetting": "插件没有这个设置项。",
   "kernel.error.reason.badValue": "这个值不符合设置项的要求。",

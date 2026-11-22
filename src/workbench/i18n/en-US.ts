@@ -720,6 +720,7 @@ export const enUS = {
   "kernel.error.reason.helloFirst": "The connection was not initialised.",
   "kernel.error.reason.notLoaded": "The plugin is not loaded.",
   "kernel.error.reason.providedTree": "This tree is provided by a plugin and cannot be changed here.",
+  "kernel.error.reason.readOnlyField": "This field is read-only and cannot be changed.",
   "kernel.error.reason.unknownKind": "This type is not known.",
   "kernel.error.reason.unknownSetting": "The plugin has no such setting.",
   "kernel.error.reason.badValue": "That value is not valid for this setting.",
