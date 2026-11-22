@@ -8,6 +8,7 @@ export const PLUGIN = "org.onedesk.ai";
 export const IFACE = "onedesk.ai.chat/1";
 export const KIND_ANALYSIS = "analysis";
 export const KIND_DOC = "doc";
+export const KIND_SETTINGS = "settings";
 export const MAX_DOCS = 8;
 export const POLICIES = ["off", "preview", "allow"];
 const AUDIT_KEY = "audit";
@@ -89,6 +90,10 @@ export async function pickConnection(ctx, given) {
     }
     via = "Default";
   }
+  if (!wanted) {
+    wanted = await settingsConnection(ctx);
+    via = "Settings";
+  }
   if (!wanted) throw new Error(tr(ctx, "error.noConnection"));
   let r = null;
   try {
@@ -102,6 +107,24 @@ export async function pickConnection(ctx, given) {
   if (!r) throw new Error(tr(ctx, `error.connectionMissing${via}`, { connection: wanted }));
   const model = r.body && typeof r.body.model === "string" ? r.body.model : "";
   return { id: r.id, name: r.name || r.id, model };
+}
+
+// The default connection chosen on the workbench settings page (a resource of this plugin). When generate is
+// called through the interface, that resource is the call's own.
+export async function settingsConnection(ctx) {
+  const own = ctx.resource && ctx.resource.body && typeof ctx.resource.body.connection === "string" ? ctx.resource : null;
+  if (own && String(ctx.resource.kind || "").endsWith(`:${KIND_SETTINGS}`)) return own.body.connection.trim();
+  try {
+    const all = (await ctx.host.resources.list({ kind: `${PLUGIN}:${KIND_SETTINGS}` })) || [];
+    for (const r of Array.isArray(all) ? all : all.items || []) {
+      const full = r.body ? r : await ctx.host.resources.get(r.id);
+      const v = full && full.body && typeof full.body.connection === "string" ? full.body.connection.trim() : "";
+      if (v) return v;
+    }
+  } catch (e) {
+    /* no settings resource: no default */
+  }
+  return "";
 }
 
 // Every connection resource of every plugin that implements the chat interface (for the picker).
@@ -482,6 +505,22 @@ export async function syncDocs(ctx) {
 
 export default {
   activate(host) {
+    host.pages.handle("settings", {
+      async render(ctx) {
+        const pick = bodyOf(ctx);
+        const chosen = pick("connection", "");
+        const conns = await connectionList(ctx);
+        const options = [{ value: "", label: ctx.t("connection.none") }, ...conns.map((r) => ({ value: r.id, label: r.name }))];
+        if (chosen && !conns.some((r) => r.id === chosen)) options.push({ value: chosen, label: chosen });
+        return {
+          view: [
+            { type: "form", id: "settings", layout: "stack", fields: [{ name: "connection", label: ctx.t("field.defaultConnection"), kind: "ref", kinds: ["@implements:onedesk.ai.chat/1"], bind: "body.connection", options, hint: tr(ctx, "field.defaultConnection.hint") }] },
+            { type: "text", id: "note", text: tr(ctx, "settings.note"), tone: "muted" },
+          ],
+        };
+      },
+    });
+
     host.pages.handle("doc", {
       async render(ctx) {
         const b = (ctx.resource && ctx.resource.body) || {};

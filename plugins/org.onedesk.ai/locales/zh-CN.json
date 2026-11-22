@@ -78,5 +78,13 @@
   "field.connection.hint": "留空：用环境里的，再用工作区默认。",
   "connection.default": "环境 / 默认",
   "error.noArtifacts": "当前版本不能把分析挂到运行下面。",
-  "message.noRun": "不知道这份分析来自哪次运行。"
+  "message.noRun": "不知道这份分析来自哪次运行。",
+  "kind.settings": "AI 工作台设置",
+  "settings.new": "AI 工作台设置",
+  "field.defaultConnection": "默认 AI 连接",
+  "field.defaultConnection.hint": "页面和环境的 ai.connection 都没指定时用它。",
+  "error.connectionMissingSettings": "找不到 AI 连接“{connection}”（来自 AI 工作台设置）。",
+  "error.connectionMissingPage": "找不到 AI 连接“{connection}”。",
+  "settings.note": "其他 AI 功能（如 SQL 里的“用 AI 写”）使用这个默认连接。保留一份即可。",
+  "connection.none": "无"
 }

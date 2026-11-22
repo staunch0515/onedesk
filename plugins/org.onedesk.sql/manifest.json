@@ -10,17 +10,13 @@
   "license": "MIT",
   "homepage": "https://onedesk.example.com/plugins/sql",
   "requires": {
-    "files": false
+    "files": false,
+    "resources": true
   },
   "depends": [
     {
       "id": "org.onedesk.datasource",
       "version": ">=0.1.0, <1.0.0"
-    },
-    {
-      "id": "org.onedesk.ai",
-      "version": ">=0.1.0, <1.0.0",
-      "optional": true
     }
   ],
   "exports": {
@@ -203,5 +199,8 @@
       "zh-CN": "locales/zh-CN.json",
       "ja-JP": "locales/ja-JP.json"
     }
-  }
+  },
+  "uses": [
+    "onedesk.ai.generate/1"
+  ]
 }

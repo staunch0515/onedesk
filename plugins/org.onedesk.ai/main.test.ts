@@ -384,6 +384,24 @@ describe("ai: generate (K7–K9)", () => {
     host.interfaces.call = vi.fn(async () => ({ text: "DELETE FROM t", model: "m", stop: "end" }));
     expect((await gen(host)).check).toEqual({ ok: false, reason: "notSelect" });
   });
+  it("implements the generate interface with its settings kind (a resource to call through) and uses the chat interface", () => {
+    expect(manifest.implements).toEqual({ "onedesk.ai.generate/1": { actions: ["generate"], kind: "settings" } });
+    expect(manifest.contributes.kinds.map((k: any) => k.id)).toContain("settings");
+    const g = manifest.contributes.actions.find((a: any) => a.id === "generate");
+    expect(g.kinds).toBeUndefined();
+    expect(g.confirm).toBeNull();
+  });
+  it("the settings page: a reference field for the default connection (any implementer); the choice is used last", async () => {
+    const host = fakeHost({}, { env: { "ai.connection": "" } });
+    const out = await registry(plugin).pages.settings.render(ctxOf(host, { resource: { id: "set1", kind: "org.onedesk.ai:settings", body: { connection: "c1" } } }));
+    expect(checkView(out.view)).toEqual([]);
+    expect(out.view[0].fields[0]).toMatchObject({ kind: "ref", kinds: ["@implements:onedesk.ai.chat/1"], bind: "body.connection" });
+    // read order: page, environment, workspace config, then the settings resource
+    expect((await pickConnection(ctxOf(host, { resource: { id: "set1", kind: "org.onedesk.ai:settings", body: { connection: "c1" } } }))).id).toBe("c1");
+    host.resources.list = vi.fn(async (q: any) => (q.kind === "org.onedesk.ai:settings" ? [{ id: "set1", body: { connection: "c1" } }] : []));
+    expect((await pickConnection(ctxOf(host))).id).toBe("c1");
+    await expect(pickConnection(ctxOf(fakeHost({}, { env: { "ai.connection": "" } })))).rejects.toThrow("No AI connection");
+  });
   it("is exported and declared", () => {
     expect(manifest.exports.actions).toEqual(["analyze", "generate"]);
     expect(manifest.contributes.actions.map((a: any) => a.id).sort()).toEqual(["analyze", "generate", "send", "syncDocs"]);

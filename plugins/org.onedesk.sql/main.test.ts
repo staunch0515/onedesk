@@ -135,7 +135,7 @@ describe("sql: page", () => {
     const out = await pages.editor.render(ctxOf(fakeHost(), resourceOf({ sql: "SELECT 1", source: "s2" })));
     expect(checkView(out.view)).toEqual([]);
     expect(onlyKeys(out, RENDER_KEYS)).toEqual([]);
-    expect(out.view.map((n: any) => n.id)).toEqual(["source", "editor", "ai"]);
+    expect(out.view.map((n: any) => n.id)).toEqual(["source", "editor", "aiOff"]); // no AI workbench in this fake host: the feature says so
     const pick = out.view[0].fields[0];
     expect(pick).toMatchObject({ kind: "ref", kinds: ["org.onedesk.datasource:source"], bind: "body.source" });
     expect(pick.options.map((o: any) => o.value)).toEqual(["", "s1", "s2"]);
@@ -328,11 +328,9 @@ describe("sql: exported create", () => {
 describe("sql: manifest", () => {
   const m = JSON.parse(readFileSync(new URL("./manifest.json", import.meta.url), "utf8"));
   it("depends on the data source plugin and asks for no capability of its own", () => {
-    expect(m.depends).toEqual([
-      { id: "org.onedesk.datasource", version: ">=0.1.0, <1.0.0" },
-      { id: "org.onedesk.ai", version: ">=0.1.0, <1.0.0", optional: true },
-    ]);
-    expect(m.requires).toEqual({ files: false });
+    expect(m.depends).toEqual([{ id: "org.onedesk.datasource", version: ">=0.1.0, <1.0.0" }]);
+    expect(m.requires).toEqual({ files: false, resources: true });
+    expect(m.uses).toEqual(["onedesk.ai.generate/1"]);
   });
   it("every action it handles is declared, and the run page ends with the sent SQL tab", () => {
     expect(m.contributes.actions.map((a: any) => a.id).sort()).toEqual(["aiSend", "aiWrite", "create", "newHere", "run"]);
@@ -346,7 +344,8 @@ describe("sql: write with AI (K7–K9)", () => {
   const withAi = (res: any, store = new Map<string, string>()) =>
     fakeHost({
       storage: { get: vi.fn(async (k: string) => store.get(k) ?? null), set: vi.fn(async (k: string, v: string) => void store.set(k, v)), remove: vi.fn(async (k: string) => void store.delete(k)) },
-      actions: { call: ai(res) },
+      interfaces: { list: vi.fn(async () => [{ plugin: "org.onedesk.ai", kind: "org.onedesk.ai:settings", label: "AI" }]), call: vi.fn(async () => (res && res.__throw ? Promise.reject(res.__throw) : { output: { type: "text", text: "" }, data: res })) },
+      resources: { list: vi.fn(async () => SOURCES), create: vi.fn(async (r: any) => ({ id: "new1", name: r.name })), search: vi.fn(async () => [{ id: "set1", kind: "org.onedesk.ai:settings", name: "S" }]) },
     });
   const aiCtx = (host: Host, extra: Record<string, unknown> = {}) => ctxOf(host, { ...resourceOf({ sql: "SELECT * FROM orders o JOIN public.users u ON 1=1", source: "s1" }), params: { aiInstruction: "orders per user" }, ...extra });
   const input = { "body.sql": "SELECT * FROM orders o JOIN public.users u ON 1=1", "body.source": "s1" };
@@ -359,7 +358,8 @@ describe("sql: write with AI (K7–K9)", () => {
   it("aiWrite asks generate with the words and table names only — no data — and stores the proposal; the editor text is not touched", async () => {
     const host = withAi({ text: "SELECT 1", model: "m", usage: null, check: okCheck });
     const res = await registry(plugin).actions.aiWrite(aiCtx(host), input);
-    expect(host.actions.call).toHaveBeenCalledWith("org.onedesk.ai:generate", { kind: "sql", instruction: "orders per user", context: { tables: ["orders", "users"] }, resource: "s1" }, {});
+    expect(host.interfaces.call).toHaveBeenCalledWith("onedesk.ai.generate/1", "generate", { kind: "sql", instruction: "orders per user", context: { tables: ["orders", "users"] }, resource: "s1" }, { resource: "set1" });
+    expect(host.resources.search).toHaveBeenCalledWith({ kinds: ["org.onedesk.ai:settings"], limit: 1 });
     expect(checkActionResult(res)).toEqual([]);
     expect(res.output).toEqual({ type: "text", text: "SELECT 1" });
     expect(host.resources.create).not.toHaveBeenCalled();
@@ -406,9 +406,9 @@ describe("sql: write with AI (K7–K9)", () => {
   it("policy preview: the first call only shows the request; aiSend then confirms", async () => {
     const calls: any[] = [];
     const host = withAi(null);
-    host.actions.call = vi.fn(async (_a: string, i: any) => {
+    host.interfaces.call = vi.fn(async (_i: string, _a: string, i: any) => {
       calls.push(i);
-      return i.confirm ? { text: "SELECT 2", model: "m", check: okCheck } : { needsPreview: true, request: "# Write", connection: "Local AI", model: "m", tokens: 12 };
+      return { data: i.confirm ? { text: "SELECT 2", model: "m", check: okCheck } : { needsPreview: true, request: "# Write", connection: "Local AI", model: "m", tokens: 12 } };
     });
     const { actions, pages } = registry(plugin);
     await actions.aiWrite(aiCtx(host), input);
@@ -422,16 +422,22 @@ describe("sql: write with AI (K7–K9)", () => {
     await expect(actions.aiSend(aiCtx(withAi(null), { params: {} }), input)).rejects.toThrow("no request waiting");
   });
 
-  it("errors: no instruction, the AI refuses (policy off, no connection), the workbench is not installed", async () => {
+  it("errors: no instruction, the AI refuses (policy off), no implementation, no settings resource, a wrong interface", async () => {
     const { actions } = registry(plugin);
     await expect(actions.aiWrite(aiCtx(withAi(null), { params: {} }), input)).rejects.toThrow("Describe the query");
     const off = withAi({ error: { code: "policyOff", message: "AI is turned off in this environment." } });
     await expect(actions.aiWrite(aiCtx(off), input)).rejects.toThrow("turned off");
     expect(JSON.parse((await off.storage.get("aiProposal:r1"))!)).toMatchObject({ stage: "error" });
-    const gone = withAi(null);
-    gone.actions.call = vi.fn(async () => {
-      throw hostError("denied", { reason: "notExported" });
-    });
-    await expect(actions.aiWrite(aiCtx(gone), input)).rejects.toThrow("not installed");
+    const none = withAi({});
+    none.interfaces.list = vi.fn(async () => []);
+    await expect(actions.aiWrite(aiCtx(none), input)).rejects.toThrow("no AI workbench");
+    const out = await registry(plugin).pages.editor.render(aiCtx(none));
+    expect(out.view.map((n: any) => n.id)).toEqual(["source", "editor", "aiOff"]);
+    expect(out.view[2].text).toContain("not available");
+    const nores = withAi({});
+    nores.resources.search = vi.fn(async () => []);
+    await expect(actions.aiWrite(aiCtx(nores), input)).rejects.toThrow("AI workbench settings");
+    const wrong = withAi({ __throw: hostError("invalid", { reason: "wrongInterface" }) });
+    await expect(actions.aiWrite(aiCtx(wrong), input)).rejects.toThrow("not available");
   });
 });

@@ -66,5 +66,7 @@
   "ai.none": "没有提议。",
   "ai.cannotAccept": "这个提议不能接受。",
   "ai.accepted": "已放进编辑器，尚未保存。",
-  "ai.discarded": "已放弃提议。"
+  "ai.discarded": "已放弃提议。",
+  "ai.noSettings": "请先新建“AI 工作台设置”（新建 → AI 工作台设置）并选一个连接。",
+  "ai.unavailable": "不能用 AI 写：没有安装 AI 工作台。"
 }

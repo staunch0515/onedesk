@@ -78,5 +78,13 @@
   "field.connection.hint": "空欄：環境の接続、次にワークスペースの既定。",
   "connection.default": "環境 / 既定",
   "error.noArtifacts": "このバージョンでは分析を実行に添付できません。",
-  "message.noRun": "この分析の元になった実行が不明です。"
+  "message.noRun": "この分析の元になった実行が不明です。",
+  "kind.settings": "AI ワークベンチ設定",
+  "settings.new": "AI ワークベンチ設定",
+  "field.defaultConnection": "既定の AI 接続",
+  "field.defaultConnection.hint": "ページにも環境の ai.connection にも指定がないときに使います。",
+  "error.connectionMissingSettings": "AI 接続「{connection}」（AI ワークベンチ設定から）が見つかりません。",
+  "error.connectionMissingPage": "AI 接続「{connection}」が見つかりません。",
+  "settings.note": "他の AI 機能（SQL の「AI で書く」など）はこの既定の接続を使います。1 つだけ用意してください。",
+  "connection.none": "なし"
 }

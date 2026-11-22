@@ -31,3 +31,10 @@
 3. 文档文件夹授权用文字设置 + 已授权的 `files.roots`，没有“选择文件夹”的专用界面。
 4. 中日文案由我写，没经母语审校。
 5. 事件处理函数里不能 `network.request`（D336）：所以“发送”和“用 AI 写”都是动作（run），不是页面事件。
+
+## D443 之后的结构
+
+- SQL 对工作台不再 `depends`（内核没有 `optional`）：SQL 清单 `uses: ["onedesk.ai.generate/1"]`、`requires.resources: true`；工作台清单 `implements: {"onedesk.ai.generate/1": {actions:["generate"], kind:"settings"}}`。
+- `interfaces.call` 必须带一个实现方类型的资源，所以工作台加了资源类型 `settings`（“AI 工作台设置”，页面里用 `ref` 字段 `@implements:onedesk.ai.chat/1` 选默认连接，存在 `body.connection`）。SQL 用 `interfaces.list` 取实现方的 kind，再 `resources.search({kinds:[kind],limit:1})` 找到设置资源，带着它调 `generate`。
+- 没有实现方 → SQL 页面不显示“用 AI 写”输入框，改显示一行说明；没有设置资源 → 点“用 AI 写”时提示先新建“AI 工作台设置”。**用户需要手动新建一份**（新建菜单里有）；若希望自动建，需要内核/协调会话定（例如激活时创建）。
+- 默认连接读取顺序：页面所选 → `params.get("ai.connection")` → `params.config("ai.connection.default")` → 设置资源里选的。选错类型时 `interfaces.call` 给 `wrongInterface`，界面报“不是 AI 连接”。
