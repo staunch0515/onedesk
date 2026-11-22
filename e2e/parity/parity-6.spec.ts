@@ -15,7 +15,7 @@ const MCP_BIN = process.env.ONEDESK_MCP_BIN ?? path.join(ROOT, "target/debug/one
 const DS = "org.onedesk.datasource:source";
 const SQLK = "org.onedesk.sql:query";
 let base: string, dataDir: string, pg: Pg, user: UserKernel;
-const ids: Record<string, string> = {};
+const ids = {} as Record<"ds"|"q"|"unmappedOk", string>;
 const policy = async (u: UserKernel, p: Record<string, string>) => {
   for (const [name, value] of Object.entries(p)) await u.rpc("workspace.setConfig", { name: `mcp.${name}`, value });
 };

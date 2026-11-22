@@ -61,7 +61,7 @@ const userText = (r: { body: any }): string => {
   const m = r.body?.messages?.[0];
   return typeof m?.content === "string" ? m.content : Array.isArray(m?.content) ? m.content.map((c: any) => c.text ?? "").join("") : "";
 };
-const ids: Record<string, string> = {};
+const ids = {} as Record<"anth"|"draft"|"ds"|"gdraft"|"sql", string>;
 const runSql = async (page: Page, sql: string, name: string) => {
   const rid = await create(page, SQLK, { name, "body.sql": sql, "body.source": ids.ds });
   return runRes(page, rid, "run", { input: { "body.sql": sql, "body.source": ids.ds } });
@@ -85,12 +85,10 @@ test("K: setup", async ({ page }) => {
 test("K1–K10", async ({ page }) => {
   await openKernel(page, host);
   ai.set({ kind: "ok" });
-  let tableRun = "";
   let draft = "";
 
   await row("K1", async () => {
     const table = await runSql(page, MASK_SQL, "Customers");
-    tableRun = table.id;
     const acts = await call<{ plugin: string; id: string; enabled: boolean }[]>(page, "result.actions", { runId: table.id });
     const a = acts.find((x) => x.plugin === AI && x.id === "analyze");
     expect(a?.enabled, JSON.stringify(acts)).toBe(true);

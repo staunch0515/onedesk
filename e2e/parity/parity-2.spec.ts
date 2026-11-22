@@ -1,14 +1,13 @@
 /** Round 20 parity batch 2: rows E1–E6, F1–F7, G1–G7, H1–H5 (real devhost, real PostgreSQL, browser shell). */
-import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, readFileSync, readdirSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { expect, test, type Page } from "@playwright/test";
 import { DEVHOST, openKernel, rpc, startHost, stopHost, type Host } from "../kernel-host";
 import { DB1, DB2, PG_PASSWORD, PG_USER, pgBinOrNull, startPg, type Pg } from "../pg-fixture";
 import { FakeTools } from "../fake-tools";
 import { ROOT } from "../kernel-host";
-import { Outcome, changed, mkBase, oracle, pass, row, seedParity, shot, unverified } from "./support";
+import { changed, mkBase, oracle, row, seedParity, shot, unverified } from "./support";
 import { existsSync } from "node:fs";
 
 test.use({ viewport: { width: 1280, height: 800 }, locale: "en-US" });
@@ -20,19 +19,6 @@ let base: string;
 let pg: Pg;
 let catalog: string;
 let fake: FakeTools;
-const hashDir = (d: string): string => {
-  const h = createHash("sha256");
-  const walk = (p: string) => {
-    for (const n of readdirSync(p, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
-      const f = path.join(p, n.name);
-      if (n.isDirectory()) walk(f);
-      else h.update(n.name).update(readFileSync(f));
-    }
-  };
-  walk(d);
-  return h.digest("hex");
-};
-let catalogHash0 = "";
 
 const MAPPING = `entities:
   order:
@@ -82,7 +68,6 @@ test.beforeAll(async () => {
   writeFileSync(path.join(catalog, "plain.sql"), "SELECT 1\n");
   writeFileSync(path.join(catalog, "broken.sql"), "/* ---\nid: [oops\n--- */\nSELECT 1\n");
   writeFileSync(path.join(catalog, "mapping.yaml"), MAPPING);
-  catalogHash0 = hashDir(catalog);
   fake = new FakeTools(path.join(base, "fake"), pgBinOrNull);
   fake.remoteDockerShim();
   const plugins = fake.preparePlugins(path.join(ROOT, "plugins"), path.join(base, "plugins"), path.join(base, "data"));
@@ -111,32 +96,14 @@ const waitRun = async (page: Page, id: string): Promise<RunInfo> => {
 };
 const startRun = async (page: Page, action: string, target: string, params: Record<string, string> = {}, extra: Record<string, unknown> = {}) => waitRun(page, await call<string>(page, "run.start", { action, target, tabId: "p-tab", input: {}, params, locale: "en-US", ...extra }));
 const rowsOf = async (page: Page, run: RunInfo, limit = 1000) => (await call<{ rows: string[][]; total: number }>(page, "run.rows", { id: run.id, offset: 0, limit })).rows;
-const sentSql = async (page: Page, run: RunInfo) => JSON.stringify(await call(page, "run.render", { id: run.id, tabId: "sent", locale: "en-US" }).catch(() => null));
 const CAT = "org.onedesk.catalog:catalog";
 const treeCmd = (page: Page, id: string, tree: string) => call(page, "command.execute", { id, context: { tree } });
-const ids: Record<string, string> = {};
+const ids = {} as Record<"e1note"|"envText"|"f6flaky"|"g2via"|"hist1"|"other"|"shop", string>;
 const sqlText = (s: string) => JSON.parse(s) as string;
 void sqlText;
 
 const tb = (page: Page, n: string) => page.getByRole("textbox", { name: n, exact: true });
 const treeItem = (page: Page, name: string) => page.getByRole("treeitem", { name, exact: true });
-const sqlBox = (page: Page) => page.getByRole("textbox", { name: "SQL", exact: true });
-const runBtn = (page: Page) => page.getByRole("button", { name: "Run", exact: true });
-const cell = (page: Page, text: string | RegExp) => page.getByRole("gridcell", { name: text }).or(page.getByRole("cell", { name: text })).first();
-const pickSource = async (page: Page, name: string) => {
-  await page.getByRole("combobox", { name: "Data source" }).click();
-  await page.getByRole("option", { name }).click();
-};
-const newSql = async (page: Page, sql: string, source = "") => {
-  await page.getByRole("button", { name: "New", exact: true }).first().click();
-  await page.getByRole("menuitem", { name: "SQL", exact: true }).click();
-  await sqlBox(page).fill(sql);
-  if (source) await pickSource(page, source);
-};
-const showResources = async (page: Page) => {
-  const b = page.getByRole("navigation", { name: "Views" }).getByRole("button", { name: "Resources", exact: true });
-  if ((await b.getAttribute("aria-pressed")) !== "true") await b.click();
-};
 const expectRows = (got: string[][], want: string[][]) => expect(got).toEqual(want);
 
 const showRunRecords = async (page: Page) => {
