@@ -889,5 +889,16 @@
   "kernel.error.invalid.badOutput": "部分输出与动作的输出类型不符。",
   "terminal.label": "终端输出",
   "kernel.error.reason.unsafeOpen": "打开这个文件会运行程序，所以不会打开。",
-  "kernel.error.denied.trashDenied": "OneDesk 无权把这个项目移到废纸篓。"
+  "kernel.error.denied.trashDenied": "OneDesk 无权把这个项目移到废纸篓。",
+  "result.elapsedFor": "已用 {time}",
+  "result.action.disabled.noExport": "此工作区的保护设置不允许",
+  "result.action.disabled.readonly": "此环境是只读的",
+  "result.action.disabled.pluginDisabled": "插件已关闭",
+  "result.action.disabled.other": "不可用",
+  "kernel.error.reason.notUsed": "该插件没有声明使用这个接口。",
+  "kernel.error.reason.notInResultAction": "只有在用户点击的结果区动作运行期间，才能读取运行的结果。",
+  "kernel.error.reason.noImplementation": "没有已启用的插件提供这个接口。",
+  "kernel.error.reason.wrongInterface": "这个资源的类型不提供该接口。",
+  "kernel.error.reason.notResultAction": "该动作不是结果区动作。",
+  "kernel.error.reason.badResultRun": "该运行没有这个动作可以处理的结果。"
 }

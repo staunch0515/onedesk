@@ -1,0 +1,20 @@
+{
+  "id": "org.test.nouses",
+  "version": "0.1.0",
+  "apiVersion": "2",
+  "name": "plugin.name",
+  "description": "plugin.description",
+  "icon": "flask-conical",
+  "main": "main.js",
+  "author": "test",
+  "license": "MIT",
+  "homepage": "https://onedesk.example.com/test",
+  "requires": { "files": false, "resources": true },
+
+  "contributes": {
+    "actions": [
+      { "id": "probe", "label": "action.probe", "icon": "flask-conical", "output": "text", "saveFirst": false, "confirm": null }
+    ],
+    "locales": { "en-US": "locales/en-US.json" }
+  }
+}
