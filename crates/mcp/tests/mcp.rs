@@ -195,6 +195,10 @@ async fn app_open_uses_the_socket_and_only_mcp_commands_pass() {
     let resp: Value = serde_json::from_str(&lines.next_line().await.unwrap().unwrap()).unwrap();
     // The client name the worker sees is ours, never the peer's.
     assert!(resp["result"]["content"]["client"].as_str().unwrap().starts_with("ai:mcp-"));
+    // The operator is stamped by the main process from the connection; what the peer writes is dropped.
+    w.write_all(format!("{}\n", json!({ "id": 10, "method": "mcp.call", "params": { "name": "search" }, "actor": "user" })).as_bytes()).await.unwrap();
+    let resp: Value = serde_json::from_str(&lines.next_line().await.unwrap().unwrap()).unwrap();
+    assert_eq!(resp["result"]["content"]["actor"], "ai:raw", "{resp}");
 
     // Bad hello / unknown workspace.
     for hello in [json!({ "hello": "x", "protocol": "1" }), json!({ "hello": "onedesk-mcp", "protocol": "99" }), json!({ "hello": "onedesk-mcp", "protocol": "1", "workspace": "nope" })] {
