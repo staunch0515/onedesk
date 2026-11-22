@@ -806,10 +806,16 @@ test.describe("shell (browser against the devhost)", () => {
 
       // --- the switch in the info panel: one resource, then a group (with everything below)
       await ui.node(page, "Beta item").click();
-      if (!(await page.getByRole("complementary", { name: "Info" }).isVisible().catch(() => false))) {
+      // The page (and so the info panel, which belongs to the open page) appears asynchronously after the click: wait for the tab
+      // and for the panel's own content; only if the panel is really closed (its switch never comes) open it from the palette.
+      // (Checking "is the panel visible" right after the click raced with the page load and toggled an open panel shut.)
+      await expect(ui.tab(page, "Beta item")).toBeVisible();
+      const panel = page.getByRole("complementary", { name: "Info" });
+      if (!(await panel.waitFor({ state: "visible", timeout: 3_000 }).then(() => true, () => false))) {
         await page.keyboard.press("ControlOrMeta+Shift+p");
         await page.getByPlaceholder("Type a command").fill("info panel");
         await page.getByRole("option", { name: "Show or hide info panel" }).click();
+        await expect(panel).toBeVisible();
       }
       const sw = page.getByRole("switch", { name: "Visible to AI" });
       await expect(sw).not.toBeChecked();
