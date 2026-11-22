@@ -8,7 +8,7 @@ OUT=src/workbench/protocol/generated
 gen() {
   rm -rf "$1"
   TS_RS_EXPORT_DIR="$(cd "$(dirname "$1")" && pwd)/$(basename "$1")" cargo test -q -p onedesk-protocol export_bindings >/dev/null
-  ( cd "$1" && for f in *.ts; do [ "$f" = index.ts ] || echo "export type * from \"./${f%.ts}\";"; done | sort > index.ts )
+  ( cd "$1" && for f in *.ts; do [ "$f" = index.ts ] || echo "export type * from \"./${f%.ts}\";"; done | LC_ALL=C sort > index.ts )
 }
 if [ "${1:-}" = "--check" ]; then
   TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
