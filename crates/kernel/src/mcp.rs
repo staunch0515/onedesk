@@ -580,6 +580,7 @@ impl Inner {
         *admitted = true;
         let target = self.resolve_tool(&policy, &p.name).ok_or_else(|| not_found("tool"))?;
         if let Target::Plugin(_, t) = &target {
+            // Defence in depth: `resolve_tool` already hides the tool (notFound/tool) while it is off.
             if t.free_query && !policy.free_query {
                 return Err(denied("aiFreeQuery"));
             }

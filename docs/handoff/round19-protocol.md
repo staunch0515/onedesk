@@ -152,7 +152,7 @@
 | `denied` / `aiReadOnly` | 管线收到 AI 的写命令 |
 | `denied` / `aiOnly` | 非 AI 调 `mcp.call`/`mcp.tools` |
 | `denied` / `notAiAction` | 动作没声明 `ai.readOnly`，或不在该类型上 |
-| `denied` / `aiFreeQuery` | 自由查询工具，`mcp.allow_free_query` 关 |
+| `notFound` / `tool`（`what=tool`） | 自由查询工具在 `mcp.allow_free_query` 关着时不列出、也不泄露存在性，调用得到这个；`denied/aiFreeQuery` 只是内核里的纵深防御，正常到不了 |
 | `denied` / `noExport`、`readonly`，`layer`、`layerName` | 环境/配置禁止导出；工作区只读时的运行 |
 | `notFound` / `resource`、`run`、`tool` | 对象不存在、不可见、不是自己的运行 |
 | `invalidParams` / `badArguments`，`path`、`rule` | JSON Schema 校验失败 |
