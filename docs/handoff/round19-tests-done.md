@@ -22,3 +22,9 @@
 
 ## 范围外
 - 分组节点在窗口里没有页签，“含下级”开关的界面点击在 e2e 里做不到（接受：vitest + 内核用例覆盖）。
+
+## 第二轮收尾（D450/D451/限流修复之后）
+- `e2e/round19.spec.ts` + `e2e/round19-sql.spec.ts`：45 条全过，连续 3 次（含「限流在并发下也成立」，内核 4a709a7 之后）。新增：D450 用例（探针插件 sneak：写资源/openExternal/POST/secrets.get 均 denied/aiRun；search 无 snippet；get_run 对不可见再拒；审计 80 字符与每秒 1 行；客户端名 = clientInfo.name + 后缀；限流重启后有效；并发）、D451 限流全工作区合计（两客户端轮流）、真 PG 的 SQL 经 MCP 带参数（行数截断、缺参/错类型/未声明参数被拒、写语句不改数据）。
+- 全量 e2e（ONEDESK_E2E_REQUIRE_PG=1）：388 通过，2 失败，3 跳过，10 未运行（串行用例在失败后跳过）。失败一：`round5` 的 `params.known` 清单要加上 5 个 `mcp.*`（预期内变化，已改）。失败二：`week1` “files: grant a folder…”（文件夹节点展开后出现 `docs` 页签），**在 main 上同样失败，非本轮引入**，没有处理。
+- 测试环境限制：headless 的 onedesk-mcp 与 devhost 是两个进程，内存钥匙串不共享，所以带密码的数据源经 MCP 的路径要在手动验收里用真钥匙串测；SQL 用例用免密码的 PG 角色（`e2e/pg-fixture.ts` 的 `PG_TRUST_USER`）。
+- 限流现在是全工作区合计：round19 的其它用例把 `mcp.rate_per_minute` 设为 600，限流用例按“窗口已用数 + 余量”设上限。
