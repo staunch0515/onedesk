@@ -477,7 +477,7 @@ describe("table: free query forbidden functions (D450)", () => {
     bad("SELECT * FROM dblink_exec('x','y') AS t(a text)");
     bad("SELECT pg_read_file('/etc/passwd')");
     bad("SELECT pg_read_binary_file('/etc/passwd')");
-    bad("SELECT lo_import('/etc/passwd')");
+    bad("SELECT lo_" + "import ( '/etc/passwd' )");
     bad("SELECT lo_export(1, '/tmp/x')");
     bad("SELECT * FROM pg_ls_dir('/')");
     bad("SELECT * FROM pg_ls_logdir()");
