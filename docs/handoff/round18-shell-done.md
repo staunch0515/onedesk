@@ -37,3 +37,4 @@
 - `@implements:…` 的 ref 字段：内核在页面里已把它展开成 `options`，外壳只按 `options` 画下拉、从不读 `kinds`，无需改动；补了测试。
 - 新内核原因码文字（英语）：`notUsed`、`notInResultAction`、`noImplementation`、`wrongInterface`、`notResultAction`、`badResultRun`（`kernel-texts.test` 要求）。
 - 新键中日译文待 tests 会话补：`result.elapsedFor`、`result.action.disabled.*`、`kernel.error.reason.*`（上面 6 条）。
+- 权限 id `uses`：英文 "Use other plugins' interfaces"（键 `kernel.permission.uses`，中日待 tests）；接口名由已有的 detail 列显示，不另配。

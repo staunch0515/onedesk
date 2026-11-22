@@ -70,6 +70,7 @@ describe("kernel words come from the language's overlay like any other text (D38
     expect(words.error(new KernelError("denied", {}))).toBe("拒否されました");
     expect(words.operation("resource.create")).toBe("作成");
     expect(words.permission("network")).toBe("ネットワーク");
+    expect(words.permission("uses")).toBe("Use other plugins' interfaces");
     expect(words.permission("files")).toBe("Files in granted folders");
     expect(words.operation("unknown.op")).toBe("unknown.op");
   });
