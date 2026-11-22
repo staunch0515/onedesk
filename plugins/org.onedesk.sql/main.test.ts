@@ -340,7 +340,6 @@ describe("sql: manifest", () => {
 
 describe("sql: write with AI (K7–K9)", () => {
   const okCheck = { ok: true };
-  const ai = (res: any) => vi.fn(async () => res);
   const withAi = (res: any, store = new Map<string, string>()) =>
     fakeHost({
       storage: { get: vi.fn(async (k: string) => store.get(k) ?? null), set: vi.fn(async (k: string, v: string) => void store.set(k, v)), remove: vi.fn(async (k: string) => void store.delete(k)) },
