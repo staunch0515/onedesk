@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 // @ts-ignore plain JS module, no types
-import plugin, { checkValue, pickSource, declarations, paramNames, renderSql, sqlLiteral, timePresets, tokenize, toSqlValue } from "./main.js";
+import plugin, { checkValue, pickSource, declarations, paramNames, proposalView, renderSql, sqlLiteral, tablesOf, timePresets, tokenize, toSqlValue } from "./main.js";
 import { RENDER_KEYS, checkActionResult, checkView, hostError, onlyKeys, registry } from "../_testing/view-check";
 
 const load = (f: string) => JSON.parse(readFileSync(new URL(`./locales/${f}.json`, import.meta.url), "utf8")) as Record<string, string>;
@@ -127,7 +127,7 @@ describe("sql: page", () => {
   it("registers what the manifest declares", () => {
     const r = registry(plugin);
     expect(Object.keys(r.pages)).toEqual(["editor"]);
-    expect(Object.keys(r.actions).sort()).toEqual(["create", "newHere", "run"]);
+    expect(Object.keys(r.actions).sort()).toEqual(["aiSend", "aiWrite", "create", "newHere", "run"]);
   });
 
   it("render: data source picker (empty = environment/default), then the code editor; no strip without parameters", async () => {
@@ -135,7 +135,7 @@ describe("sql: page", () => {
     const out = await pages.editor.render(ctxOf(fakeHost(), resourceOf({ sql: "SELECT 1", source: "s2" })));
     expect(checkView(out.view)).toEqual([]);
     expect(onlyKeys(out, RENDER_KEYS)).toEqual([]);
-    expect(out.view.map((n: any) => n.id)).toEqual(["source", "editor"]);
+    expect(out.view.map((n: any) => n.id)).toEqual(["source", "editor", "ai"]);
     const pick = out.view[0].fields[0];
     expect(pick).toMatchObject({ kind: "ref", kinds: ["org.onedesk.datasource:source"], bind: "body.source" });
     expect(pick.options.map((o: any) => o.value)).toEqual(["", "s1", "s2"]);
@@ -328,11 +328,110 @@ describe("sql: exported create", () => {
 describe("sql: manifest", () => {
   const m = JSON.parse(readFileSync(new URL("./manifest.json", import.meta.url), "utf8"));
   it("depends on the data source plugin and asks for no capability of its own", () => {
-    expect(m.depends).toEqual([{ id: "org.onedesk.datasource", version: ">=0.1.0, <1.0.0" }]);
+    expect(m.depends).toEqual([
+      { id: "org.onedesk.datasource", version: ">=0.1.0, <1.0.0" },
+      { id: "org.onedesk.ai", version: ">=0.1.0, <1.0.0", optional: true },
+    ]);
     expect(m.requires).toEqual({ files: false });
   });
   it("every action it handles is declared, and the run page ends with the sent SQL tab", () => {
-    expect(m.contributes.actions.map((a: any) => a.id).sort()).toEqual(["create", "newHere", "run"]);
+    expect(m.contributes.actions.map((a: any) => a.id).sort()).toEqual(["aiSend", "aiWrite", "create", "newHere", "run"]);
     expect(m.contributes.pages[0].resultTabs.map((x: any) => x.id)).toEqual(["result", "sent", "history"]);
+  });
+});
+
+describe("sql: write with AI (K7–K9)", () => {
+  const okCheck = { ok: true };
+  const ai = (res: any) => vi.fn(async () => res);
+  const withAi = (res: any, store = new Map<string, string>()) =>
+    fakeHost({
+      storage: { get: vi.fn(async (k: string) => store.get(k) ?? null), set: vi.fn(async (k: string, v: string) => void store.set(k, v)), remove: vi.fn(async (k: string) => void store.delete(k)) },
+      actions: { call: ai(res) },
+    });
+  const aiCtx = (host: Host, extra: Record<string, unknown> = {}) => ctxOf(host, { ...resourceOf({ sql: "SELECT * FROM orders o JOIN public.users u ON 1=1", source: "s1" }), params: { aiInstruction: "orders per user" }, ...extra });
+  const input = { "body.sql": "SELECT * FROM orders o JOIN public.users u ON 1=1", "body.source": "s1" };
+
+  it("tablesOf reads FROM/JOIN names without schema or quotes", () => {
+    expect(tablesOf("select 1 from a, b join public.\"Users\" u on 1 left join c on 1")).toEqual(["a", "Users", "c"]);
+    expect(tablesOf("")).toEqual([]);
+  });
+
+  it("aiWrite asks generate with the words and table names only — no data — and stores the proposal; the editor text is not touched", async () => {
+    const host = withAi({ text: "SELECT 1", model: "m", usage: null, check: okCheck });
+    const res = await registry(plugin).actions.aiWrite(aiCtx(host), input);
+    expect(host.actions.call).toHaveBeenCalledWith("org.onedesk.ai:generate", { kind: "sql", instruction: "orders per user", context: { tables: ["orders", "users"] }, resource: "s1" }, {});
+    expect(checkActionResult(res)).toEqual([]);
+    expect(res.output).toEqual({ type: "text", text: "SELECT 1" });
+    expect(host.resources.create).not.toHaveBeenCalled();
+    const view = proposalView(aiCtx(host), JSON.parse(await host.storage.get("aiProposal:r1")));
+    expect(view.map((n: any) => n.id)).toEqual(["aiNote", "aiProposal"]);
+    expect(view[1]).toMatchObject({ mono: true, language: "sql", text: "SELECT 1" });
+  });
+
+  it("render shows the instruction field and the stored proposal beside the untouched editor", async () => {
+    const host = withAi({ text: "SELECT 1", model: "m", check: okCheck });
+    await registry(plugin).actions.aiWrite(aiCtx(host), input);
+    const out = await registry(plugin).pages.editor.render(aiCtx(host));
+    expect(checkView(out.view)).toEqual([]);
+    expect(out.view.map((n: any) => n.id)).toEqual(["source", "editor", "ai", "aiNote", "aiProposal"]);
+    expect(out.view[2].fields[0]).toMatchObject({ name: "aiInstruction", kind: "text", param: true });
+    const run = await registry(plugin).pages.editor.render(aiCtx(host, { run: { id: "x", resourceId: "r1", input: {}, params: {} } }));
+    expect(run.view.map((n: any) => n.id)).not.toContain("ai");
+  });
+
+  it("accept puts the text in the editor as an unsaved change (changes), clears the proposal; nothing is written", async () => {
+    const host = withAi({ text: "SELECT 1", model: "m", check: okCheck });
+    const { actions, pages } = registry(plugin);
+    await actions.aiWrite(aiCtx(host), input);
+    const res = await pages.editor.onEvent(aiCtx(host), "aiAccept");
+    expect(res.changes).toEqual({ "body.sql": "SELECT 1" });
+    expect(onlyKeys(res, ["changes", "params", "message"])).toEqual([]);
+    expect(await host.storage.get("aiProposal:r1")).toBeNull();
+    expect(host.resources.create).not.toHaveBeenCalled();
+    expect((await pages.editor.onEvent(aiCtx(host), "aiAccept")).changes).toBeUndefined();
+  });
+
+  it("a proposal that fails the check shows why and cannot be accepted; discard clears it", async () => {
+    const host = withAi({ text: "DROP TABLE t", model: "m", check: { ok: false, reason: "notSelect" } });
+    const { actions, pages } = registry(plugin);
+    await actions.aiWrite(aiCtx(host), input);
+    const out = await pages.editor.render(aiCtx(host));
+    expect(out.view.find((n: any) => n.id === "aiNote")).toMatchObject({ tone: "danger" });
+    expect((await pages.editor.onEvent(aiCtx(host), "aiAccept")).changes).toBeUndefined();
+    expect(await host.storage.get("aiProposal:r1")).not.toBeNull();
+    await pages.editor.onEvent(aiCtx(host), "aiDiscard");
+    expect(await host.storage.get("aiProposal:r1")).toBeNull();
+  });
+
+  it("policy preview: the first call only shows the request; aiSend then confirms", async () => {
+    const calls: any[] = [];
+    const host = withAi(null);
+    host.actions.call = vi.fn(async (_a: string, i: any) => {
+      calls.push(i);
+      return i.confirm ? { text: "SELECT 2", model: "m", check: okCheck } : { needsPreview: true, request: "# Write", connection: "Local AI", model: "m", tokens: 12 };
+    });
+    const { actions, pages } = registry(plugin);
+    await actions.aiWrite(aiCtx(host), input);
+    const view = (await pages.editor.render(aiCtx(host))).view;
+    expect(view.map((n: any) => n.id)).toEqual(["source", "editor", "ai", "aiPreview", "aiRequest"]);
+    expect(view.find((n: any) => n.id === "aiPreview").text).toContain("Local AI");
+    expect(calls[0].confirm).toBeUndefined();
+    const res = await actions.aiSend(aiCtx(host, { params: {} }), input);
+    expect(calls[1]).toMatchObject({ confirm: true, instruction: "orders per user" });
+    expect(res.output.text).toBe("SELECT 2");
+    await expect(actions.aiSend(aiCtx(withAi(null), { params: {} }), input)).rejects.toThrow("no request waiting");
+  });
+
+  it("errors: no instruction, the AI refuses (policy off, no connection), the workbench is not installed", async () => {
+    const { actions } = registry(plugin);
+    await expect(actions.aiWrite(aiCtx(withAi(null), { params: {} }), input)).rejects.toThrow("Describe the query");
+    const off = withAi({ error: { code: "policyOff", message: "AI is turned off in this environment." } });
+    await expect(actions.aiWrite(aiCtx(off), input)).rejects.toThrow("turned off");
+    expect(JSON.parse((await off.storage.get("aiProposal:r1"))!)).toMatchObject({ stage: "error" });
+    const gone = withAi(null);
+    gone.actions.call = vi.fn(async () => {
+      throw hostError("denied", { reason: "notExported" });
+    });
+    await expect(actions.aiWrite(aiCtx(gone), input)).rejects.toThrow("not installed");
   });
 });

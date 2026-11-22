@@ -10,7 +10,9 @@
 
 export const SOURCE_KIND = "org.onedesk.datasource:source";
 export const DATASOURCE = "org.onedesk.datasource";
+export const AI = "org.onedesk.ai";
 const SENT_KEY = "lastSent";
+const PROPOSAL_KEY = "aiProposal";
 const TYPES = ["text", "number", "date", "datetime", "time", "enum"];
 const MAX_LEN_DEFAULT = 0;
 
@@ -259,6 +261,88 @@ function paramField(ctx, name, decl, now) {
   return field;
 }
 
+
+/* ---------------------------------------------------------------- "Write with AI" (K7–K9) */
+
+const proposalKey = (ctx) => `${PROPOSAL_KEY}:${(ctx.resource && ctx.resource.id) || "-"}`;
+
+async function readProposal(ctx) {
+  try {
+    const raw = await ctx.host.storage.get(proposalKey(ctx));
+    return raw ? JSON.parse(raw) : null;
+  } catch (e) {
+    return null;
+  }
+}
+
+// Table names of the statement on the page, as context for the model (never data).
+export function tablesOf(sql) {
+  const out = [];
+  const re = /\b(?:from|join)\s+((?:[A-Za-z_"][\w$"]*\.)*[A-Za-z_"][\w$"]*)/gi;
+  let m;
+  while ((m = re.exec(String(sql || "")))) {
+    const name = m[1].split(".").pop().replace(/"/g, "");
+    if (name && !out.includes(name)) out.push(name);
+  }
+  return out;
+}
+
+// What the editor page shows about the proposal (the editor itself is not touched until "Accept").
+export function proposalView(ctx, p) {
+  if (!p) return [];
+  const view = [];
+  if (p.stage === "preview") {
+    view.push({ type: "text", id: "aiPreview", text: tr(ctx, "ai.preview", { connection: p.connection || "", model: p.model || tr(ctx, "ai.modelDefault"), tokens: p.tokens || 0 }), tone: "muted" });
+    view.push({ type: "text", id: "aiRequest", text: p.request || "", format: "markdown" });
+  } else if (p.stage === "proposal") {
+    const note = p.check && p.check.ok ? tr(ctx, "ai.checkOk") : tr(ctx, `ai.check.${(p.check && p.check.reason) || "notSelect"}`);
+    view.push({ type: "text", id: "aiNote", text: `${tr(ctx, "ai.proposalFrom", { model: p.model || "" })}\n${note}`, tone: p.check && p.check.ok ? "muted" : "danger" });
+    view.push({ type: "text", id: "aiProposal", text: p.text || "", mono: true, language: "sql" });
+  } else if (p.stage === "error") {
+    view.push({ type: "text", id: "aiError", text: p.message || "", tone: "danger" });
+  }
+  return view;
+}
+
+async function callGenerate(ctx, instruction, sourceId, sql, confirm) {
+  const input = { kind: "sql", instruction, context: { tables: tablesOf(sql) } };
+  if (sourceId) input.resource = sourceId;
+  if (confirm) input.confirm = true;
+  try {
+    const ret = await ctx.host.actions.call(`${AI}:generate`, input, {});
+    return ret && ret.data ? ret.data : ret; // D441
+  } catch (e) {
+    if (e && e.params && e.params.reason === "notExported") throw new Error(tr(ctx, "ai.missing"));
+    throw e;
+  }
+}
+
+async function finishGenerate(ctx, res, instruction) {
+  const key = proposalKey(ctx);
+  if (res && res.error) {
+    const message = typeof res.error === "string" ? res.error : res.error.message || "";
+    await ctx.host.storage.set(key, JSON.stringify({ stage: "error", message }));
+    throw new Error(message);
+  }
+  if (res && res.needsPreview) {
+    await ctx.host.storage.set(key, JSON.stringify({ stage: "preview", instruction, request: res.request, connection: res.connection, model: res.model, tokens: res.tokens }));
+    const message = tr(ctx, "ai.reviewFirst");
+    return { output: { type: "text", text: message }, summary: { message } };
+  }
+  if (!res || typeof res.text !== "string") throw new Error(tr(ctx, "ai.missing"));
+  await ctx.host.storage.set(key, JSON.stringify({ stage: "proposal", instruction, text: res.text, model: res.model || "", check: res.check || { ok: false, reason: "notSelect" } }));
+  const message = tr(ctx, res.check && res.check.ok ? "ai.proposed" : "ai.proposedBad");
+  return { output: { type: "text", text: res.text }, summary: { message } };
+}
+
+async function sourceOf(ctx, input) {
+  try {
+    return await pickSource(ctx, String((input && input["body.source"]) || ""));
+  } catch (e) {
+    return "";
+  }
+}
+
 /* ---------------------------------------------------------------- plugin */
 
 export default {
@@ -307,10 +391,27 @@ export default {
           layout: "stack",
           fields: [{ name: "sql", label: ctx.t("field.sql"), kind: "code", bind: "body.sql", fill: true, language: "sql", placeholder: ctx.t("field.sql.placeholder"), ...ro }],
         });
+        if (!ctx.run) {
+          view.push({
+            type: "form",
+            id: "ai",
+            layout: "strip",
+            fields: [{ name: "aiInstruction", label: ctx.t("field.ai"), kind: "text", param: true, fill: true, placeholder: ctx.t("field.ai.placeholder") }],
+          });
+          view.push(...proposalView(ctx, await readProposal(ctx)));
+        }
         return { view };
       },
 
       async onEvent(ctx, event) {
+        if (event === "aiAccept" || event === "aiDiscard") {
+          const p = await readProposal(ctx);
+          if (!p) return { message: tr(ctx, "ai.none") };
+          if (event === "aiAccept" && !(p.stage === "proposal" && p.check && p.check.ok)) return { message: tr(ctx, "ai.cannotAccept") };
+          await ctx.host.storage.remove(proposalKey(ctx));
+          // the proposal enters the editor as an unsaved change; nothing is run or saved
+          return event === "aiAccept" ? { changes: { "body.sql": p.text }, message: tr(ctx, "ai.accepted") } : { message: tr(ctx, "ai.discarded") };
+        }
         if (event !== "copy") throw new Error(`unknown event ${event}`);
         const { sql } = bodyOf(ctx);
         await ctx.host.ui.copy(sql);
@@ -357,6 +458,24 @@ export default {
       for (const k of Object.keys(given)) if (typeof given[k] === "string" && given[k] !== "") vals[k] = given[k];
       if (Object.keys(vals).length > 0) out.params = vals;
       return { output: out, summary: { message: tr(ctx, "summary.created") } };
+    });
+
+    // "Write with AI": asks the AI workbench for a proposal. The editor keeps its text until "Accept".
+    host.actions.handle("aiWrite", async (ctx, input) => {
+      const instruction = String((ctx.params && ctx.params.aiInstruction) || "").trim();
+      if (!instruction) throw new Error(tr(ctx, "ai.noInstruction"));
+      ctx.progress(undefined, tr(ctx, "ai.step"));
+      const res = await callGenerate(ctx, instruction, await sourceOf(ctx, input), String((input && input["body.sql"]) || ""), false);
+      return finishGenerate(ctx, res, instruction);
+    });
+
+    // After the user has looked at what would be sent (policy "preview"): send it.
+    host.actions.handle("aiSend", async (ctx, input) => {
+      const p = await readProposal(ctx);
+      if (!p || p.stage !== "preview") throw new Error(tr(ctx, "ai.noPreview"));
+      ctx.progress(undefined, tr(ctx, "ai.step"));
+      const res = await callGenerate(ctx, p.instruction, await sourceOf(ctx, input), String((input && input["body.sql"]) || ""), true);
+      return finishGenerate(ctx, res, p.instruction);
     });
 
     host.actions.handle("run", async (ctx, input) => {
