@@ -889,5 +889,16 @@
   "kernel.error.invalid.badOutput": "部分的な出力が、アクションの出力タイプと一致しません。",
   "terminal.label": "ターミナル出力",
   "kernel.error.reason.unsafeOpen": "このファイルは開くとプログラムが実行されるため、開きません。",
-  "kernel.error.denied.trashDenied": "OneDesk にはこの項目をゴミ箱へ移動する権限がありません。"
+  "kernel.error.denied.trashDenied": "OneDesk にはこの項目をゴミ箱へ移動する権限がありません。",
+  "result.elapsedFor": "{time} 経過",
+  "result.action.disabled.noExport": "このワークスペースの保護設定で許可されていません",
+  "result.action.disabled.readonly": "この環境は読み取り専用です",
+  "result.action.disabled.pluginDisabled": "プラグインがオフになっています",
+  "result.action.disabled.other": "利用できません",
+  "kernel.error.reason.notUsed": "このプラグインはこのインターフェースの利用を宣言していません。",
+  "kernel.error.reason.notInResultAction": "実行結果は、ユーザーがクリックした結果エリアのアクションの実行中にのみ読み取れます。",
+  "kernel.error.reason.noImplementation": "このインターフェースを提供する有効なプラグインがありません。",
+  "kernel.error.reason.wrongInterface": "このリソースの種類はそのインターフェースを提供していません。",
+  "kernel.error.reason.notResultAction": "そのアクションは結果エリアのアクションではありません。",
+  "kernel.error.reason.badResultRun": "その実行には、このアクションが処理できる結果がありません。"
 }

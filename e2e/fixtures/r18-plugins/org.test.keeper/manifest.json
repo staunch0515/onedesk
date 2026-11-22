@@ -1,0 +1,22 @@
+{
+  "id": "org.test.keeper",
+  "version": "0.1.0",
+  "apiVersion": "2",
+  "name": "plugin.name",
+  "description": "plugin.description",
+  "icon": "flask-conical",
+  "main": "main.js",
+  "author": "test",
+  "license": "MIT",
+  "homepage": "https://onedesk.example.com/test",
+  "requires": { "files": false },
+  "contributes": {
+    "actions": [
+      { "id": "keep", "label": "action.keep", "icon": "bookmark", "output": "text", "saveFirst": false, "confirm": null }
+    ],
+    "resultActions": [
+      { "id": "keep", "label": "action.keep", "icon": "bookmark", "outputTypes": ["table", "text"], "action": "keep" }
+    ],
+    "locales": { "en-US": "locales/en-US.json" }
+  }
+}
