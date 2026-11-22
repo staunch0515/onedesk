@@ -1389,6 +1389,9 @@ pub enum RunOutput {
         line_tones: Option<Vec<Option<LineTone>>>,
         /// Round 17 (X10): absent = `plain`.
         appearance: Option<TextAppearance>,
+        /// D446: as `ViewNode::Text.format`; kept as given (the kernel only checks the value);
+        /// absent = `plain`. For the final output and for `runs.partial` alike.
+        format: Option<TextFormat>,
     },
     Link {
         label: String,

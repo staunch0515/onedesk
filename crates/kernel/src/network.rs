@@ -481,6 +481,22 @@ impl Inner {
         // The action's own time budget does not run while a long request waits (as for programs).
         let _hold = (stream || timeout > MAX_TIMEOUT_MS).then(|| info.hold.enter_wait());
         let deadline = tokio::time::Instant::now() + Duration::from_millis(timeout);
+        // D446: the plugin's pump waits on this stream; it is closed however the request ends
+        // (also when it fails before any answer: refused, reset, closed at once).
+        let sink = if stream {
+            o.get("streamId").and_then(Value::as_str).map(|sid| self.procs.stream(info.run_id.as_deref().unwrap_or_default(), &p.id, sid))
+        } else {
+            None
+        };
+        struct CloseOnDrop(Option<std::sync::Arc<crate::process::Stream>>);
+        impl Drop for CloseOnDrop {
+            fn drop(&mut self) {
+                if let Some(s) = &self.0 {
+                    s.close();
+                }
+            }
+        }
+        let _close = CloseOnDrop(sink.clone());
         let sent = self.http_open(p, info, o, Request { default_method: "GET", methods: METHODS, deadline, file: None }).await?;
         let (status, out_headers) = (sent.resp.status().as_u16(), sent.headers());
         let mut streamed = None;
@@ -489,7 +505,6 @@ impl Inner {
         let (bytes, truncated) = if stream {
             let idle = Duration::from_millis(o.get("idleTimeoutMs").and_then(Value::as_u64).unwrap_or(DEFAULT_IDLE_MS).clamp(1, MAX_IDLE_MS));
             let max_bytes = o.get("maxBytes").and_then(Value::as_u64).map_or(STREAM_DEFAULT_BYTES, |m| (m as usize).clamp(1, STREAM_MAX_BYTES));
-            let sink = o.get("streamId").and_then(Value::as_str).map(|sid| self.procs.stream(info.run_id.as_deref().unwrap_or_default(), &p.id, sid));
             let r = read_stream_body(sent.resp, deadline, idle, max_bytes, sink, &scrub_values).await?;
             streamed = Some(r.total);
             (r.head.into_bytes(), r.truncated)

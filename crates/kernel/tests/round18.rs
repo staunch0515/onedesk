@@ -92,6 +92,15 @@ async fn server() -> (u16, Server) {
                     "/err" => {
                         put(&mut s, format!("{}{}", hdr("500 Internal Server Error"), "x".repeat(20_000)).into_bytes()).await;
                     }
+                    "/cut" => {
+                        // Chunked, one block, then the socket closes before the final chunk.
+                        let h = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nTransfer-Encoding: chunked\r\n\r\n";
+                        put(&mut s, format!("{h}2\r\na\n\r\n").into_bytes()).await;
+                        tokio::time::sleep(Duration::from_millis(100)).await;
+                    }
+                    "/nothing" => {
+                        // The request is read, the answer never starts: the socket just closes.
+                    }
                     "/stall" => {
                         put(&mut s, format!("{}a\n", hdr("200 OK")).into_bytes()).await;
                         tokio::time::sleep(Duration::from_secs(5)).await;
@@ -265,6 +274,30 @@ async fn an_error_status_keeps_its_first_8k_and_still_goes_to_the_callback() {
     assert_eq!(res["bytes"], 20_000);
     let got: usize = o["chunks"].as_array().unwrap().iter().map(|v| v.as_str().unwrap().len()).sum();
     assert_eq!(got, 20_000, "the whole error body went through onChunk");
+}
+
+/// D446: a server that closes in the middle of a chunked body ends the request at once, as a
+/// network error (not as a timeout after the idle limit).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_cut_stream_ends_at_once_as_a_network_error() {
+    let (_env, c, port, _) = net_world(Duration::from_secs(20)).await;
+    let t = Instant::now();
+    let o = out(&run(&c, "t.net:stream", json!({ "port": port, "path": "/cut" })).await);
+    assert_eq!(o["r"]["error"], "invalid", "{o}");
+    assert_ne!(o["r"]["params"]["reason"], "timeout", "{o}");
+    assert_eq!(o["chunks"], json!(["a\n"]), "{o}");
+    assert!(t.elapsed() < Duration::from_secs(3), "{:?}", t.elapsed());
+}
+
+/// D446: the same when the connection closes before any answer (so before a status line).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_connection_closed_before_the_answer_ends_a_stream_at_once() {
+    let (_env, c, port, _) = net_world(Duration::from_secs(20)).await;
+    let t = Instant::now();
+    let o = out(&run(&c, "t.net:stream", json!({ "port": port, "path": "/nothing" })).await);
+    assert_eq!(o["r"]["error"], "invalid", "{o}");
+    assert_ne!(o["r"]["params"]["reason"], "timeout", "{o}");
+    assert!(t.elapsed() < Duration::from_secs(3), "{:?}", t.elapsed());
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -1177,4 +1210,69 @@ async fn an_error_body_is_scrubbed_before_it_is_cut_and_encodings_go_too() {
     let o = out(&run(&c, "t.net:plain", json!({ "port": port, "path": "/errkey", "opts": { "headers": { "x-key": "{{secret:k}}" } } })).await);
     check(o["ok"]["body"].as_str().unwrap());
     let _ = env;
+}
+
+/* ------------------------------------------------------------------ D446 */
+
+const FMT_MAIN: &str = r##"
+export default { activate(host) {
+  host.actions.handle("md", async () => ({ output: { type: "text", text: "# Hi", format: "markdown" } }));
+  host.actions.handle("badfmt", async () => ({ output: { type: "text", text: "x", format: "html" } }));
+  host.actions.handle("plainfmt", async () => ({ output: { type: "text", text: "x" } }));
+  host.actions.handle("part", async (ctx) => {
+    await ctx.host.runs.partial({ type: "text", text: "**so far**", format: "markdown" });
+    await ctx.host.util.sleep(1500);
+    return { output: { type: "text", text: "done", format: "markdown" } };
+  });
+  host.actions.handle("badpart", async (ctx) => {
+    let r;
+    try { await ctx.host.runs.partial({ type: "text", text: "x", format: "html" }); r = "ok"; } catch (e) { r = e.code + "/" + (e.params || {}).reason; }
+    return { output: { type: "text", text: r } };
+  });
+} };
+"##;
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn text_output_keeps_its_format_and_a_run_is_titled_by_its_action_label() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("plugins");
+    std::fs::create_dir_all(&root).unwrap();
+    let a = |id: &str, label: &str| json!({ "id": id, "label": label, "output": "text" });
+    pkg(&root, "t.fmt", json!({
+        "contributes": { "actions": [a("md", "ra.analyze"), a("badfmt", "ra.analyze"), a("plainfmt", "no.such.key"), a("part", "ra.other"), a("badpart", "ra.other")],
+                         "locales": { "en-US": "locales/en-US.json", "ja-JP": "locales/ja-JP.json" } }
+    }), FMT_MAIN);
+    let env = open_exact(tmp, &root, config_for(&root));
+    let c = Client::in_proc(env.kernel.clone());
+    c.hello().await;
+
+    let r = run(&c, "t.fmt:md", json!({})).await;
+    assert_eq!(r["output"], json!({ "type": "text", "text": "# Hi", "format": "markdown" }), "{r}");
+    // Saved as given: reading it again returns the same.
+    assert_eq!(c.ok("run.get", json!({ "id": r["id"] })).await["output"]["format"], "markdown");
+    assert_eq!(r["title"], "Analyze", "the label in the plugin's language");
+    let r = run(&c, "t.fmt:plainfmt", json!({})).await;
+    assert!(r["output"].get("format").is_none(), "{r}");
+    assert_eq!(r["title"], "plainfmt", "no label text: the action's name, not the full id");
+    // A value outside plain/markdown is refused.
+    let r = run(&c, "t.fmt:badfmt", json!({})).await;
+    assert_eq!(r["status"], "error", "{r}");
+    let r = run(&c, "t.fmt:badpart", json!({})).await;
+    assert_eq!(r["output"]["text"], "invalid/badOutput", "{r}");
+    // `runs.partial` carries it while the run goes on.
+    let id = start(&c, "t.fmt:part", json!({})).await;
+    let mut seen = Value::Null;
+    for _ in 0..100 {
+        let r = c.ok("run.get", json!({ "id": id })).await;
+        if r["partial"].is_object() {
+            seen = r["partial"].clone();
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert_eq!(seen, json!({ "type": "text", "text": "**so far**", "format": "markdown" }));
+    assert_eq!(finish(&c, &id).await["output"]["format"], "markdown");
+    // The title follows the interface language the run was started in.
+    let id = c.ok("run.start", json!({ "action": "t.fmt:md", "target": "core:none", "tabId": "t", "input": {}, "locale": "ja-JP" })).await;
+    assert_eq!(finish(&c, id.as_str().unwrap()).await["title"], "分析");
 }
