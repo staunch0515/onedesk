@@ -108,7 +108,7 @@ fn manifest() -> Value {
                         { "id": "badpartial", "label": "a", "output": "table" }],
             "commands": [{ "id": "probe", "label": "p" }, { "id": "ask", "label": "a" }],
             "trees": [{ "id": "t", "label": "T", "icon": "folder", "source": "provided" }],
-            "pages": [{ "id": "p", "resultTabs": [{ "id": "v", "type": "view", "label": "V" }], "actions": [{ "id": "go", "role": "run", "label": "Go", "command": "ask" },
+            "pages": [{ "id": "p", "resultTabs": [{ "id": "v", "type": "view", "label": "V" }], "actions": [{ "id": "go", "role": "run", "label": "Go", "command": "ask", "ignoreRequired": true },
                                                { "id": "run", "role": "run", "label": "Run", "action": "text" }] }],
             "events": ["resource.changed"]
         }
@@ -259,6 +259,9 @@ async fn d428_confirm_choices_pass_through_and_d429_page_items_name_commands() {
     assert!(items[0].get("action").is_none());
     assert_eq!(items[1]["action"], "t.r17:text");
     assert!(items[1].get("command").is_none());
+    // D436: `ignoreRequired` passes through as written, and is left out when not written.
+    assert_eq!(items[0]["ignoreRequired"], true);
+    assert!(items[1].get("ignoreRequired").is_none());
     // Kernel confirmations say they cannot be undone.
     let id = wait_run(&w.c, &start(&w.c, "text", json!({})).await).await["id"].as_str().unwrap().to_string();
     w.c.ok("run.setKept", json!({ "id": id, "kept": true })).await;

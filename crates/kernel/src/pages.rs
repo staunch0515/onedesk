@@ -238,6 +238,7 @@ fn actions(p: &Plugin, page: &str) -> Vec<ActionDecl> {
                     action: a.action.as_ref().map(|x| p.full(x)),
                     confirm: a.action.as_deref().and_then(|x| p.action(x)).and_then(|d| d.confirm.as_deref()).map(|k| p.label(k)),
                     command: a.command.as_ref().map(|x| p.full(x)),
+                    ignore_required: a.ignore_required,
                 })
                 .collect()
         })
