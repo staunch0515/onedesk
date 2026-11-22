@@ -13,9 +13,12 @@
 2. `onedesk-mcp` 的客户端名固定为 `mcp`（审计里 `ai:mcp`），不取 MCP `clientInfo.name`；多个客户端共用同一个限流窗口。若要区分，需 r19-mcp 改。
 3. 分组节点在窗口里没有自己的页签，“含下级”开关在 e2e 里点不到（vitest 覆盖，内核用例覆盖效果）。
 
+## 审查 #4 之后
+`check-arch-ai.mjs` 的字符串例外收紧为精确的 `"ai"`、`"ai:"`、`"ai:{名字}"`、`"ai:tool"`；`.sql` 只跳过整行注释。`e2e/arch-ai.spec.ts` 补了反例（`"ai:org.onedesk.sql …"`、`"ai:anthropic"`、`"ai:{client} extra"`、SQL 语句里 `--` 之后的词都被拦）。协调会话已定：自由查询关闭时按代码实际（notFound/tool），文档改。客户端名用例待 r19-mcp 按 D450⑤ 改完后更新。
+
 ## 没做（`test.fixme`）
 - 应用开着时 `onedesk-mcp` 经 `mcp.sock` 连主进程：devhost 不含套接字，需 `.app`，留给手动验收。
 - `run` 超过 `mcp_wait` 返回 `running`：需要慢动作夹具，沙箱里没有计时器，目前只有代码路径。
 
 ## 范围外
-- 无。
+- 分组节点在窗口里没有页签，“含下级”开关的界面点击在 e2e 里做不到（接受：vitest + 内核用例覆盖）。

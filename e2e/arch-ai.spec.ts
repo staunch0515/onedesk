@@ -32,4 +32,12 @@ test("everything else still fails", () => {
   expect(hit("// the AI plugin")).toBe(true);
   expect(hit('let k = "ai-chat";')).toBe(true);
   expect(hit('"ai"', "m.json")).toBe(true);
+  // the literal exception is exact: nothing may follow the colon (a plugin id there must still fail)
+  expect(hit('let a = "ai:org.onedesk.sql run";')).toBe(true);
+  expect(hit('let a = "ai:anthropic";')).toBe(true);
+  expect(hit('let a = "ai:{client} extra";')).toBe(true);
+  expect(hit('let a = "ai:{x.y}";')).toBe(true);
+  expect(hit('let a = "ai-x";')).toBe(true);
+  // .sql: only whole-line comments are skipped, not text after `--` inside a statement
+  expect(hit("SELECT 'x -- ai plugin' FROM t;", "m.sql")).toBe(true);
 });
