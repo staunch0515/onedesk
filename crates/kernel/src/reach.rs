@@ -149,7 +149,7 @@ impl Inner {
     }
 
     /// `host.resources.search(opts)` (D389).
-    pub(crate) fn resources_search(&self, plugin: &Plugin, opts: Value) -> KResult<Value> {
+    pub(crate) fn resources_search(&self, plugin: &Plugin, opts: Value, ai: bool) -> KResult<Value> {
         if !plugin.manifest.requires.resources {
             return Err(denied("notRequested"));
         }
@@ -158,6 +158,7 @@ impl Inner {
         } else {
             serde_json::from_value(opts).map_err(|e| invalid_params(format!("search: {e}")))?
         };
+        opts.ai_only = ai;
         // Round 18 (X6): a kind written without `:` is one of the caller's own.
         if let Some(k) = &mut opts.kinds {
             k.iter_mut().for_each(|x| *x = plugin.kind_ref(x));

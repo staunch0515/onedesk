@@ -141,6 +141,10 @@ pub struct CallInfo {
     pub drop_writes: Option<Arc<std::sync::Mutex<Vec<crate::pipeline::Command>>>>,
     /// Round 15 (D413): plugins whose `host.actions.call` led to this invocation, outermost first.
     pub callers: Vec<String>,
+    /// Round 19 (D450): the invocation is an AI client's (`run`, an `aiTools` tool, `describe`'s
+    /// parameters), directly or through `actions.call` / `interfaces.call`: the kernel limits
+    /// its host calls to reads, whatever the plugin says about itself.
+    pub ai: bool,
 }
 
 /// The only capability a plugin has. One instance per plugin version.

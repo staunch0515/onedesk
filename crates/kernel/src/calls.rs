@@ -122,6 +122,7 @@ impl Inner {
             run_id: Some(run.clone()),
             resource_id: resource.as_ref().map(|r| r.id.clone()),
             callers,
+            ai: info.ai,
             ..Default::default()
         };
         let started = Instant::now();

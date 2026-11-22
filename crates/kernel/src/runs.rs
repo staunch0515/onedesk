@@ -530,6 +530,7 @@ impl Inner {
             run_id: Some(id.clone()),
             pure: false,
             resource_id: res.map(|r| r.id.clone()),
+            ai: ai.is_some(),
             ..Default::default()
         };
         let started = Instant::now();

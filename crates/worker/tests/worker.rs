@@ -287,5 +287,5 @@ fn worker_started_for_an_ai_client_takes_every_request_as_the_ais() {
     // The audit of its refusals names who asked.
     let conn = rusqlite::Connection::open(ws.join("workspace.db")).unwrap();
     let n: i64 = conn.query_row("SELECT count(*) FROM audit WHERE actor = 'ai:claude desktop' AND op = 'mcp.refused'", [], |r| r.get(0)).unwrap();
-    assert_eq!(n, 2);
+    assert_eq!(n, 1, "two refusals of one kind within a second are one row (D450)");
 }

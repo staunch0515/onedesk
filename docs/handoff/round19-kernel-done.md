@@ -28,3 +28,12 @@
 - 插件：`ai` 声明、`aiTools`（`ai.describe` 动作返回 `data: { params, description? }`）、`locales` 里 `contributes.locales` 要声明：`r19-plugins`。
 - 自由查询的 SQL 词法检查、只读事务、超时由表插件自己做（内核只管 `mcp.allow_free_query` 开关与 `freeQuery` 工具的可见性）。
 - `status: running`（超过 `mcp_wait` 默认 30 秒才返回）路径只有代码，没有慢动作的自动测试（沙箱里没有计时器，留给 tests 会话用假慢服务验证）。
+
+## D450 审查后的修改（第二次提交）
+
+1. **AI 运行里宿主调用受限**：`CallInfo.ai`（经 `actions.call`/`interfaces.call` 传递），白名单见 protocol §10；测试 `inside_an_ais_run_…`：同一动作用户运行时写资源成功，AI 运行里 create/update/openExternal/notify/secret/POST 全部 `aiRun`，`resources.list/get` 只见可见的。
+2. **限流以审计表为准**：`the_limit_holds_after_the_process_is_gone_and_comes_back`（重开内核后仍受限）、`calls_that_run_at_once_…`（并发 8 个只过 3 个）。
+3. **审计截断与合并**：字段 80 字符；同类拒绝每秒最多 1 行并带 `suppressed`。
+4. `search` 不返回 snippet；`run` 参数按声明/describe 答复校验（含 required 在没给 params 时也查）；describe 答复清理截断；`get_run` 再查可见性；等运行结束用事件。
+- 注意：AI 运行里 `secrets.get` 现在一律拒绝（`aiRun`），所以第一轮“插件取过的密钥被抹除”的测试改成：AI 拒绝 + 用户运行仍抹除。
+- 范围外：`describe` 的动态参数调用仍受 10 秒上限；`network` 只 GET 的检查在方法名层面（插件用别的头触发写的不管，它是 GET）。
