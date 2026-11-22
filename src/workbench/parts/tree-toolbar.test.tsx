@@ -45,3 +45,21 @@ describe("tree toolbar buttons a plugin declares (X9)", () => {
     expect(await screen.findByText("orders.items")).toBeTruthy();
   });
 });
+
+describe("a tree with many toolbar buttons", () => {
+  it("keeps the new-group button and the expand/collapse buttons and moves the other buttons into one New menu", async () => {
+    const many = {
+      ...info,
+      id: "resources",
+      groups: true,
+      toolbar: [{ id: "node.newGroup", label: "node.newGroup", icon: "folder-plus" }, ...["A", "B", "C", "D", "E"].map((n) => ({ id: `new:k:${n}`, label: { "en-US": `Kind ${n}` }, icon: "file" }))],
+    } as unknown as TreeInfo;
+    const base = kernelLikeClient(createMockClient({ fresh: true, quiet: true }), {});
+    renderInShell({ ...base, tree: { ...base.tree, path: async () => [], children: async () => ({ nodes: [leaf("x")] }) } }, <TreePanel tree={many} />);
+    expect(await screen.findByText("x")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Kind A" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Expand all" })).toBeTruthy();
+    fireEvent.pointerDown(screen.getByRole("button", { name: "New" }), { button: 0, ctrlKey: false });
+    expect(await screen.findByRole("menuitem", { name: "Kind C" })).toBeTruthy();
+  });
+});

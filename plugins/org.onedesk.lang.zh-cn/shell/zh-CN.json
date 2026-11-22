@@ -835,6 +835,7 @@
   "kernel.audit.workspace.initSettings": "从其他工作区复制了设置",
   "kernel.error.reason.mainProcessOnly": "只有应用本身可以这样做。",
   "kernel.label.ui.theme": "外观",
+  "kernel.label.ui.language": "界面语言",
   "kernel.label.ui.density": "密度",
   "kernel.label.network.allow": "允许访问的网络主机",
   "kernel.label.process.allow": "允许运行的程序",

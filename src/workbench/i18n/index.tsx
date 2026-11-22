@@ -14,6 +14,8 @@ export interface I18n {
   plural: (key: MessageKey, count: number, vars?: Record<string, string | number>) => string;
   /** Text supplied by the kernel or a plugin. Kernel ids (`node.rename`) get their word; unknown ones show as they are (D262). */
   tx: (label: Label | undefined) => string;
+  /** A page or tab title from the kernel: the kernel names its own pages by id (`core:audit`), which get words here; anything else is already text. */
+  pageTitle: (title: string) => string;
   /** A failed protocol call as a sentence: by error code for the kernel (D219), else the error's own message. */
   error: (error: unknown) => string;
   /** Title and confirm-button words for a kernel `confirm` message key; undefined for other messages. */
@@ -80,6 +82,7 @@ function build(locale: Locale, texts?: Record<string, string>): I18n {
       const known = typeof label === "string" ? KERNEL_CONFIRMS[label] : undefined;
       return known ? { title: t(known.title), ok: t(known.ok) } : undefined;
     },
+    pageTitle: (title) => (title.startsWith("core:") && Object.hasOwn(KERNEL_LABELS, title) ? t(KERNEL_LABELS[title]!) : title),
     tx: (label) => (label === undefined ? "" : typeof label === "string" ? (KERNEL_LABELS[label] ? t(KERNEL_LABELS[label]!) : warnMissing(label)) : (label[locale] ?? label["en-US"] ?? "")),
     error: (error) => {
       const known = kernelErrorCode(error);

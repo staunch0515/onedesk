@@ -631,6 +631,7 @@ export const enUS = {
   "kernel.label.env": "Environments",
   "kernel.label.config": "Workspace configuration",
   "kernel.label.favorites": "Favorites",
+  "kernel.label.ui.language": "Interface language",
   "kernel.label.ui.theme": "Appearance",
   "kernel.label.ui.density": "Density",
   "kernel.label.network.allow": "Allowed network hosts",
