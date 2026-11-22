@@ -519,26 +519,26 @@ impl Inner {
         }
     }
 
-    /// Admits one more call of `client`, or refuses: the calls the audit holds for the last
-    /// minute (so a restart of the process does not clear them) and those still running.
+    /// Admits one more call, or refuses: the calls of ALL AI clients of the workspace in the last
+    /// minute that the audit holds (so a restart does not clear them, and a new client name buys no
+    /// new window — D451) plus those still running.
     fn rate_admit(&self, client: &str, limit: u32) -> KResult<()> {
-        let actor = Actor::Ai { client: client.into() }.as_text();
         let cutoff = now_ms() - WINDOW.as_millis() as i64;
         let (done, oldest): (i64, Option<i64>) = self.read(|c| {
             c.query_row(
-                "SELECT count(*), min(at) FROM audit WHERE op = 'mcp.call' AND actor = ?1 AND at > ?2
+                "SELECT count(*), min(at) FROM audit WHERE op = 'mcp.call' AND (actor = 'ai' OR actor LIKE 'ai:%') AND at > ?1
                    AND COALESCE(json_extract(summary, '$.reason'), '') NOT IN ('aiRateLimit', 'aiOff')",
-                rusqlite::params![actor, cutoff],
+                rusqlite::params![cutoff],
                 |r| Ok((r.get(0)?, r.get(1)?)),
             )
         })?;
         let mut m = self.mcp.inflight.lock().unwrap();
-        let running = m.entry(client.to_string()).or_default();
-        if done + i64::from(*running) >= i64::from(limit) {
+        let running: u32 = m.values().sum();
+        if done + i64::from(running) >= i64::from(limit) {
             let wait = oldest.map(|t| (t + WINDOW.as_millis() as i64 - now_ms()).clamp(1, WINDOW.as_millis() as i64)).unwrap_or(1000);
             return Err(err_p(ErrorCode::Denied, &[("reason", "aiRateLimit"), ("limit", &limit.to_string()), ("retryAfterMs", &wait.to_string())]));
         }
-        *running += 1;
+        *m.entry(client.to_string()).or_default() += 1;
         Ok(())
     }
 

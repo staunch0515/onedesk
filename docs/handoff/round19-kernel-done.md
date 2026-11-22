@@ -37,3 +37,8 @@
 4. `search` 不返回 snippet；`run` 参数按声明/describe 答复校验（含 required 在没给 params 时也查）；describe 答复清理截断；`get_run` 再查可见性；等运行结束用事件。
 - 注意：AI 运行里 `secrets.get` 现在一律拒绝（`aiRun`），所以第一轮“插件取过的密钥被抹除”的测试改成：AI 拒绝 + 用户运行仍抹除。
 - 范围外：`describe` 的动态参数调用仍受 10 秒上限；`network` 只 GET 的检查在方法名层面（插件用别的头触发写的不管，它是 GET）。
+
+## D451 修改
+
+- AI 运行里 `transfer.capture`（相对路径、无 url）、`transfer.progress/stop` 放行，其余 `transfer.*` 仍拒；Rust 测试在 `inside_an_ais_run_…`（upload/download/绝对路径/`..` 拒绝，相对路径过闸）。真 PG 的 `e2e/round19-sql.spec.ts` 我没跑（在 r19-tests 分支）。
+- 限流改为全工作区所有 AI 客户端合计；测试 `the_rate_limit_counts_all_ai_clients_together_over_a_minute`。

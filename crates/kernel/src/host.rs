@@ -106,6 +106,14 @@ fn ai_allows(method: &str, args: &Value) -> bool {
         "files.roots" | "files.list" | "files.stat" | "files.readText" | "files.find" => true,
         "settings.get" | "runs.partial" | "runs.progress" => true,
         "network.output" | "network.stop" => true,
+        // D451: capturing the output of a program the plugin may run (what its `process.run` wrapper
+        // does for a query) into a file of its own data folder: a relative path, never a granted
+        // folder or an address. Everything else of `transfer.*` writes somewhere or sends something.
+        "transfer.progress" | "transfer.stop" => true,
+        "transfer.capture" => args.get(0).is_some_and(|o| {
+            o.get("to").and_then(Value::as_str).is_some_and(|t| !t.is_empty() && !t.starts_with('/') && !t.starts_with('~') && !t.split('/').any(|c| c == ".."))
+                && o.get("url").is_none()
+        }),
         "network.request" => {
             let o = args.get(0);
             let method = o.and_then(|o| o.get("method")).and_then(Value::as_str).unwrap_or("GET");
