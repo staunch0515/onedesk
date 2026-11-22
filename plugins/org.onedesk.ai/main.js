@@ -72,8 +72,8 @@ export async function requireAllowed(ctx) {
   if ((await policyOf(ctx)) === "off") throw new Error(tr(ctx, "error.policyOff"));
 }
 
-// The connection: the one chosen on the page, else the environment's `ai.connection`, else the workspace default
-// `ai.connection.default` (a resource reference, like `datasource.default` of the SQL plugin). { id, name, model }.
+// The connection: the one chosen on the page, else the environment's `ai.connection`, else the workspace config
+// `ai.connection`, else the plugin setting `connection`. { id, name, model }.
 export async function pickConnection(ctx, given) {
   let wanted = String(given || "").trim();
   let via = "Page";
@@ -83,7 +83,7 @@ export async function pickConnection(ctx, given) {
   }
   if (!wanted) {
     try {
-      const def = await ctx.host.params.config("ai.connection.default");
+      const def = await ctx.host.params.config("ai.connection");
       wanted = def && def.found && String(def.value).trim() ? String(def.value).trim() : "";
     } catch (e) {
       wanted = "";
@@ -109,31 +109,19 @@ export async function pickConnection(ctx, given) {
   return { id: r.id, name: r.name || r.id, model };
 }
 
-// The default connection chosen on the workbench settings page (a resource of this plugin). When generate is
-// called through the interface, that resource is the call's own.
+// The default connection chosen in the plugin's settings (a resource setting; "" = none).
 export async function settingsConnection(ctx) {
-  const own = ctx.resource && ctx.resource.body && typeof ctx.resource.body.connection === "string" ? ctx.resource : null;
-  if (own && String(ctx.resource.kind || "").endsWith(`:${KIND_SETTINGS}`)) return own.body.connection.trim();
-  try {
-    const all = (await ctx.host.resources.list({ kind: `${PLUGIN}:${KIND_SETTINGS}` })) || [];
-    for (const r of Array.isArray(all) ? all : all.items || []) {
-      const full = r.body ? r : await ctx.host.resources.get(r.id);
-      const v = full && full.body && typeof full.body.connection === "string" ? full.body.connection.trim() : "";
-      if (v) return v;
-    }
-  } catch (e) {
-    /* no settings resource: no default */
-  }
-  return "";
+  return (await setting(ctx, "connection", "")).trim();
 }
 
-// The settings resource the generate interface is called through: one is kept ready (created when the workspace
+// The anchor resource the generate interface is called through (the interface needs a resource of the implementing
+// kind; nothing is stored in it): one is kept ready (created when the workspace
 // opens, and again by "Analyze" if the user deleted it). Returns its id.
 export async function ensureSettings(ctx) {
   const all = (await ctx.host.resources.list({ kind: `${PLUGIN}:${KIND_SETTINGS}` })) || [];
   const list = Array.isArray(all) ? all : all.items || [];
   if (list.length > 0) return list[0].id;
-  const made = await ctx.host.resources.create({ kind: KIND_SETTINGS, name: tr(ctx, "settings.new"), body: { connection: "" } });
+  const made = await ctx.host.resources.create({ kind: KIND_SETTINGS, name: tr(ctx, "settings.new"), body: { anchor: "" } });
   return made.id;
 }
 
@@ -528,17 +516,7 @@ export default {
 
     host.pages.handle("settings", {
       async render(ctx) {
-        const pick = bodyOf(ctx);
-        const chosen = pick("connection", "");
-        const conns = await connectionList(ctx);
-        const options = [{ value: "", label: ctx.t("connection.none") }, ...conns.map((r) => ({ value: r.id, label: r.name }))];
-        if (chosen && !conns.some((r) => r.id === chosen)) options.push({ value: chosen, label: chosen });
-        return {
-          view: [
-            { type: "form", id: "settings", layout: "stack", fields: [{ name: "connection", label: ctx.t("field.defaultConnection"), kind: "ref", kinds: ["@implements:onedesk.ai.chat/1"], bind: "body.connection", options, hint: tr(ctx, "field.defaultConnection.hint") }] },
-            { type: "text", id: "note", text: tr(ctx, "settings.note"), tone: "muted" },
-          ],
-        };
+        return { view: [{ type: "text", id: "note", text: tr(ctx, "settings.note"), tone: "muted" }], readOnly: true };
       },
     });
 

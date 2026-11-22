@@ -148,11 +148,11 @@ describe("ai: policy and connection (K10)", () => {
   });
   it("the connection: the environment's ai.connection, else the workspace setting; says where a stale one came from", async () => {
     expect(await pickConnection(ctxOf(fakeHost()))).toEqual({ id: "c1", name: "Local AI", model: "llama3" });
-    const def = fakeHost({}, { env: { "ai.connection": "" }, cfg: { "ai.connection.default": "c1" } });
+    const def = fakeHost({}, { env: { "ai.connection": "" }, cfg: { "ai.connection": "c1" } });
     expect((await pickConnection(ctxOf(def))).id).toBe("c1");
     await expect(pickConnection(ctxOf(fakeHost({}, { env: { "ai.connection": "" } })))).rejects.toThrow("No AI connection");
     await expect(pickConnection(ctxOf(fakeHost({}, { env: { "ai.connection": "ghost" } })))).rejects.toThrow("(from the environment) was not found");
-    await expect(pickConnection(ctxOf(fakeHost({}, { env: { "ai.connection": "" }, cfg: { "ai.connection.default": "ghost" } })))).rejects.toThrow("(the workspace default) was not found");
+    await expect(pickConnection(ctxOf(fakeHost({}, { env: { "ai.connection": "" }, cfg: { "ai.connection": "ghost" } })))).rejects.toThrow("(the workspace default) was not found");
   });
   it("a connection can be found by name too", async () => {
     const host = fakeHost({}, { env: { "ai.connection": "My AI" } });
@@ -170,7 +170,7 @@ describe("ai: the settings resource is kept ready", () => {
     expect(manifest.activation).toEqual(["workspace.opened"]);
     const host = fakeHost();
     await handler(ctxOf(host));
-    expect(host.resources.create).toHaveBeenCalledWith({ kind: "settings", name: "AI workbench settings", body: { connection: "" } });
+    expect(host.resources.create).toHaveBeenCalledWith({ kind: "settings", name: "AI workbench settings", body: { anchor: "" } });
     const had = fakeHost();
     had.resources.list = vi.fn(async () => [{ id: "set1" }]);
     await handler(ctxOf(had));
@@ -414,16 +414,21 @@ describe("ai: generate (K7–K9)", () => {
     expect(g.kinds).toBeUndefined();
     expect(g.confirm).toBeNull();
   });
-  it("the settings page: a reference field for the default connection (any implementer); the choice is used last", async () => {
-    const host = fakeHost({}, { env: { "ai.connection": "" } });
-    const out = await registry(plugin).pages.settings.render(ctxOf(host, { resource: { id: "set1", kind: "org.onedesk.ai:settings", body: { connection: "c1" } } }));
-    expect(checkView(out.view)).toEqual([]);
-    expect(out.view[0].fields[0]).toMatchObject({ kind: "ref", kinds: ["@implements:onedesk.ai.chat/1"], bind: "body.connection" });
-    // read order: page, environment, workspace config, then the settings resource
-    expect((await pickConnection(ctxOf(host, { resource: { id: "set1", kind: "org.onedesk.ai:settings", body: { connection: "c1" } } }))).id).toBe("c1");
-    host.resources.list = vi.fn(async (q: any) => (q.kind === "org.onedesk.ai:settings" ? [{ id: "set1", body: { connection: "c1" } }] : []));
+  it("the default connection is a resource setting of the plugin, read last (page, environment, workspace config, setting)", async () => {
+    const st = manifest.contributes.settings.find((x: any) => x.name === "connection");
+    expect(st).toMatchObject({ type: "resource", kinds: ["@implements:onedesk.ai.chat/1"], default: "" });
+    const host = fakeHost({}, { env: { "ai.connection": "" }, settings: { connection: "c1" } });
     expect((await pickConnection(ctxOf(host))).id).toBe("c1");
+    expect(host.params.config).toHaveBeenCalledWith("ai.connection");
+    const cfg = fakeHost({}, { env: { "ai.connection": "" }, cfg: { "ai.connection": "c1" }, settings: { connection: "ghost" } });
+    expect((await pickConnection(ctxOf(cfg))).id).toBe("c1"); // the workspace config comes first
+    await expect(pickConnection(ctxOf(fakeHost({}, { env: { "ai.connection": "" }, settings: { connection: "ghost" } })))).rejects.toThrow("(from the AI workbench settings) was not found");
     await expect(pickConnection(ctxOf(fakeHost({}, { env: { "ai.connection": "" } })))).rejects.toThrow("No AI connection");
+  });
+  it("the anchor resource page says there is nothing to set, and the kind is not in the New menu", async () => {
+    const out = await registry(plugin).pages.settings.render(ctxOf(fakeHost()));
+    expect(checkView(out.view)).toEqual([]);
+    expect(manifest.contributes.menus).toBeUndefined();
   });
   it("is exported and declared", () => {
     expect(manifest.exports.actions).toEqual(["analyze", "generate"]);
@@ -455,7 +460,7 @@ describe("ai: manifest and text", () => {
   it("asks for the chat interface, adds the Analyze result action for tables and text, and keeps settings for K10", () => {
     expect(manifest.uses).toEqual(["onedesk.ai.chat/1"]);
     expect(manifest.contributes.resultActions).toEqual([{ id: "analyze", label: "action.analyze", icon: "sparkles", outputTypes: ["table", "text"], action: "analyze" }]);
-    expect(manifest.contributes.settings.map((s: any) => s.name)).toEqual(["sensitiveColumns", "maxRows", "maxCell", "docFolder", "docBudget"]);
+    expect(manifest.contributes.settings.map((s: any) => s.name)).toEqual(["connection", "sensitiveColumns", "maxRows", "maxCell", "docFolder", "docBudget"]);
     expect(manifest.requires).toEqual({ files: true });
   });
   it("names no provider; the plugin has no CSS or TSX; every key the code and manifest use exists in all languages", () => {

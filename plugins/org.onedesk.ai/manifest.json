@@ -77,7 +77,7 @@
         "page": "settings",
         "newName": "settings.new",
         "defaults": {
-          "connection": ""
+          "anchor": ""
         },
         "draggable": false,
         "accepts": []
@@ -205,6 +205,16 @@
     ],
     "settings": [
       {
+        "name": "connection",
+        "label": "setting.connection",
+        "type": "resource",
+        "kinds": [
+          "@implements:onedesk.ai.chat/1"
+        ],
+        "default": "",
+        "hint": "setting.connection.hint"
+      },
+      {
         "name": "sensitiveColumns",
         "label": "setting.sensitiveColumns",
         "type": "text",
@@ -242,11 +252,6 @@
       "en-US": "locales/en-US.json",
       "zh-CN": "locales/zh-CN.json",
       "ja-JP": "locales/ja-JP.json"
-    },
-    "menus": {
-      "new": [
-        "settings"
-      ]
     }
   },
   "implements": {
