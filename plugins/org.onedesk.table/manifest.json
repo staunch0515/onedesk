@@ -94,6 +94,30 @@
         "output": "text",
         "saveFirst": false,
         "confirm": null
+      },
+      {
+        "id": "aiListTables",
+        "label": "action.aiListTables",
+        "icon": "table",
+        "output": "table",
+        "saveFirst": false,
+        "confirm": null,
+        "ai": {
+          "readOnly": true,
+          "description": "ai.tool.listTables"
+        }
+      },
+      {
+        "id": "aiRunSql",
+        "label": "action.aiRunSql",
+        "icon": "file-code",
+        "output": "table",
+        "saveFirst": false,
+        "confirm": null,
+        "ai": {
+          "readOnly": true,
+          "description": "ai.tool.runSql"
+        }
       }
     ],
     "pages": [
@@ -232,6 +256,52 @@
       "en-US": "locales/en-US.json",
       "zh-CN": "locales/zh-CN.json",
       "ja-JP": "locales/ja-JP.json"
-    }
+    },
+    "aiTools": [
+      {
+        "name": "list_tables",
+        "description": "ai.tool.listTables",
+        "action": "aiListTables",
+        "freeQuery": false,
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "filter": {
+              "type": "string",
+              "maxLength": 100,
+              "description": "Only tables or entities whose name contains this text."
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "run_sql",
+        "description": "ai.tool.runSql",
+        "action": "aiRunSql",
+        "freeQuery": true,
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "sql": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 20000,
+              "description": "One SELECT or WITH statement."
+            },
+            "limit": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 2000,
+              "description": "Most rows to return (default 200)."
+            }
+          },
+          "required": [
+            "sql"
+          ],
+          "additionalProperties": false
+        }
+      }
+    ]
   }
 }

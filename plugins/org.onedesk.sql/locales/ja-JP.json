@@ -71,5 +71,11 @@
   "ai.openReview": "リクエストを開いて確認し、そこで送信",
   "ai.notSentYet": "まだ送信していません。リクエストを開き、確認してそこで「送信」を押してから、ここで回答を受け取ってください。",
   "ai.check.sideEffects": "採用できません：副作用のある関数を呼んでいます（確認は PostgreSQL のみ）。",
-  "ai.preview": "まだ送信していません。接続：{connection} · モデル：{model} · 約 {tokens} トークン。AI ワークベンチで「送信」を押すまで何も送られません。データは含まれません。"
+  "ai.preview": "まだ送信していません。接続：{connection} · モデル：{model} · 約 {tokens} トークン。AI ワークベンチで「送信」を押すまで何も送られません。データは含まれません。",
+  "action.aiParams": "AI クライアント用のパラメーター",
+  "ai.runDesc": "保存済みの SQL をデータソース上で読み取り専用で実行し、行を返します。",
+  "ai.format.date": "形式 YYYY-MM-DD。",
+  "ai.format.datetime": "形式 YYYY-MM-DDTHH:MM（UTC）。",
+  "ai.format.time": "形式 HH:MM または HH:MM:SS。",
+  "ai.format.max": "最大 {max} 文字。"
 }

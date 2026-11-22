@@ -13,13 +13,29 @@
     "files": true
   },
   "depends": [
-    { "id": "org.onedesk.datasource", "version": ">=0.1.0, <1.0.0" },
-    { "id": "org.onedesk.sql", "version": ">=0.1.0, <1.0.0" }
+    {
+      "id": "org.onedesk.datasource",
+      "version": ">=0.1.0, <1.0.0"
+    },
+    {
+      "id": "org.onedesk.sql",
+      "version": ">=0.1.0, <1.0.0"
+    }
   ],
-  "activation": ["workspace.opened"],
+  "activation": [
+    "workspace.opened"
+  ],
   "exports": {
-    "kinds": [{ "id": "entry", "actions": false, "read": true }],
-    "actions": ["mapping"]
+    "kinds": [
+      {
+        "id": "entry",
+        "actions": false,
+        "read": true
+      }
+    ],
+    "actions": [
+      "mapping"
+    ]
   },
   "contributes": {
     "kinds": [
@@ -28,17 +44,86 @@
         "label": "kind.entry",
         "icon": "file-search",
         "page": "entry",
-        "defaults": { "id": "", "path": "", "sql": "", "params": [], "permissions": [], "datasource": "", "tags": [] },
+        "defaults": {
+          "id": "",
+          "path": "",
+          "sql": "",
+          "params": [],
+          "permissions": [],
+          "datasource": "",
+          "tags": []
+        },
         "draggable": false,
         "accepts": []
       }
     ],
     "actions": [
-      { "id": "run", "label": "action.run", "icon": "play", "kinds": ["entry"], "output": "table", "shortcut": ["Mod", "Enter"], "saveFirst": false, "confirm": null },
-      { "id": "saveAsSql", "label": "action.saveAsSql", "icon": "file-plus", "kinds": ["entry"], "output": "link", "saveFirst": false, "confirm": null },
-      { "id": "reindex", "label": "action.reindex", "icon": "refresh-cw", "output": "table", "saveFirst": false, "confirm": null },
-      { "id": "queriesHere", "label": "action.queriesHere", "icon": "folder-search", "kinds": ["org.onedesk.datasource:source"], "output": "table", "saveFirst": false, "confirm": null },
-      { "id": "mapping", "label": "action.mapping", "icon": "map", "output": "text", "saveFirst": false, "confirm": null }
+      {
+        "id": "run",
+        "label": "action.run",
+        "icon": "play",
+        "kinds": [
+          "entry"
+        ],
+        "output": "table",
+        "shortcut": [
+          "Mod",
+          "Enter"
+        ],
+        "saveFirst": false,
+        "confirm": null,
+        "ai": {
+          "readOnly": true,
+          "description": "ai.runDesc",
+          "describe": "aiParams"
+        }
+      },
+      {
+        "id": "saveAsSql",
+        "label": "action.saveAsSql",
+        "icon": "file-plus",
+        "kinds": [
+          "entry"
+        ],
+        "output": "link",
+        "saveFirst": false,
+        "confirm": null
+      },
+      {
+        "id": "reindex",
+        "label": "action.reindex",
+        "icon": "refresh-cw",
+        "output": "table",
+        "saveFirst": false,
+        "confirm": null
+      },
+      {
+        "id": "queriesHere",
+        "label": "action.queriesHere",
+        "icon": "folder-search",
+        "kinds": [
+          "org.onedesk.datasource:source"
+        ],
+        "output": "table",
+        "saveFirst": false,
+        "confirm": null
+      },
+      {
+        "id": "mapping",
+        "label": "action.mapping",
+        "icon": "map",
+        "output": "text",
+        "saveFirst": false,
+        "confirm": null
+      },
+      {
+        "id": "aiParams",
+        "label": "action.aiParams",
+        "icon": "list",
+        "output": "none",
+        "saveFirst": false,
+        "confirm": null
+      }
     ],
     "pages": [
       {
@@ -46,14 +131,51 @@
         "recompute": false,
         "usesEnv": true,
         "actions": [
-          { "id": "run", "role": "run", "action": "run", "label": "action.run", "icon": "play", "primary": true, "shortcut": ["Mod", "Enter"] },
-          { "id": "saveAsSql", "role": "run", "action": "saveAsSql", "label": "action.saveAsSql", "icon": "file-plus" },
-          { "id": "copy", "role": "event", "label": "action.copy", "icon": "copy" }
+          {
+            "id": "run",
+            "role": "run",
+            "action": "run",
+            "label": "action.run",
+            "icon": "play",
+            "primary": true,
+            "shortcut": [
+              "Mod",
+              "Enter"
+            ]
+          },
+          {
+            "id": "saveAsSql",
+            "role": "run",
+            "action": "saveAsSql",
+            "label": "action.saveAsSql",
+            "icon": "file-plus"
+          },
+          {
+            "id": "copy",
+            "role": "event",
+            "label": "action.copy",
+            "icon": "copy"
+          }
         ],
         "resultTabs": [
-          { "id": "result", "type": "output", "label": "tab.result", "icon": "table" },
-          { "id": "sent", "type": "view", "label": "tab.sent", "icon": "file-code" },
-          { "id": "history", "type": "history", "label": "tab.history", "icon": "history" }
+          {
+            "id": "result",
+            "type": "output",
+            "label": "tab.result",
+            "icon": "table"
+          },
+          {
+            "id": "sent",
+            "type": "view",
+            "label": "tab.sent",
+            "icon": "file-code"
+          },
+          {
+            "id": "history",
+            "type": "history",
+            "label": "tab.history",
+            "icon": "history"
+          }
         ]
       },
       {
@@ -61,10 +183,22 @@
         "recompute": false,
         "usesEnv": false,
         "actions": [
-          { "id": "reindex", "role": "run", "action": "reindex", "label": "action.reindex", "icon": "refresh-cw", "primary": true }
+          {
+            "id": "reindex",
+            "role": "run",
+            "action": "reindex",
+            "label": "action.reindex",
+            "icon": "refresh-cw",
+            "primary": true
+          }
         ],
         "resultTabs": [
-          { "id": "result", "type": "output", "label": "tab.skipped", "icon": "table" }
+          {
+            "id": "result",
+            "type": "output",
+            "label": "tab.skipped",
+            "icon": "table"
+          }
         ]
       }
     ],
@@ -74,15 +208,35 @@
         "label": "tree.catalog",
         "icon": "folder-search",
         "source": "provided",
-        "toolbar": ["reindex", "openIndex", "plugin.grantFolder"]
+        "toolbar": [
+          "reindex",
+          "openIndex",
+          "plugin.grantFolder"
+        ]
       }
     ],
     "commands": [
-      { "id": "reindex", "label": "command.reindex", "icon": "refresh-cw", "palette": true },
-      { "id": "openIndex", "label": "command.openIndex", "icon": "list-checks", "palette": true }
+      {
+        "id": "reindex",
+        "label": "command.reindex",
+        "icon": "refresh-cw",
+        "palette": true
+      },
+      {
+        "id": "openIndex",
+        "label": "command.openIndex",
+        "icon": "list-checks",
+        "palette": true
+      }
     ],
     "settings": [
-      { "name": "mappingFile", "label": "setting.mappingFile", "type": "text", "default": "", "hint": "setting.mappingFile.hint" }
+      {
+        "name": "mappingFile",
+        "label": "setting.mappingFile",
+        "type": "text",
+        "default": "",
+        "hint": "setting.mappingFile.hint"
+      }
     ],
     "locales": {
       "en-US": "locales/en-US.json",

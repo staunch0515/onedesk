@@ -1020,6 +1020,21 @@ async function valuesOf(ctx, names, decls) {
   return values;
 }
 
+// The parameters of an entry as an AI client sees them (ParamDecl, protocol §2.3). Dates and times are text
+// with the format said in the description.
+export function aiParamDecls(ctx, decls) {
+  return decls.map((d) => {
+    const out = { name: d.name, type: d.type === "number" ? "number" : d.type === "enum" ? "enum" : "text", required: d.required === true };
+    const parts = [];
+    if (d.description) parts.push(d.description);
+    if (["date", "datetime", "time"].includes(d.type)) parts.push(tr(ctx, `ai.format.${d.type}`));
+    if (d.type === "text" && d.max > 0) parts.push(tr(ctx, "ai.format.max", { max: d.max }));
+    if (parts.length > 0) out.description = parts.join(" · ");
+    if (out.type === "enum") out.options = (d.values || []).slice();
+    return out;
+  });
+}
+
 // `-- @param` lines in the SQL plugin's syntax, so a saved copy keeps types and descriptions.
 export function paramDeclLines(decls) {
   return decls
@@ -1213,6 +1228,22 @@ export default {
       const { mapping, problem, problems } = await loadMapping(ctx);
       const text = JSON.stringify({ ...mapping, problem, problems: problems || [] });
       return { output: { type: "text", text }, summary: { message: tr(ctx, "message.mapping", { count: Object.keys(mapping.entities).length }) } };
+    });
+
+    // Called by the kernel for the AI client's `describe` (manifest `ai.describe`): nothing runs, nothing is written.
+    host.actions.handle("aiParams", async (ctx) => {
+      const entry = entryOf(ctx);
+      // describe is a pure call: when the mapping cannot be read the parameters of the text as written are given
+      let ex = { sql: entry.sql, versioned: false };
+      try {
+        ex = expand(entry.sql, (await loadMapping(ctx)).mapping);
+      } catch (e) {
+        ex = { sql: entry.sql, versioned: false };
+      }
+      const used = paramNames(ex.sql);
+      const decls = declsWithAsOf(entry, ex.versioned);
+      const listed = used.map((n) => decls.find((d) => d.name === n) || { name: n, type: "text", required: false, description: "", values: [], max: 0 });
+      return { output: { type: "none" }, params: aiParamDecls(ctx, listed) };
     });
 
     host.actions.handle("run", async (ctx) => {
