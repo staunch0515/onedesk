@@ -1398,7 +1398,7 @@ fn check_result_actions(dir: &Path, m: &Manifest) -> Result<(), Rejection> {
     Ok(())
 }
 
-fn valid_ai_name(n: &str, max: usize) -> bool {
+pub(crate) fn valid_ai_name(n: &str, max: usize) -> bool {
     let mut c = n.chars();
     c.next().is_some_and(|f| f.is_ascii_alphabetic() || f == '_')
         && n.len() <= max

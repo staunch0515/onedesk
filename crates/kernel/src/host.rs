@@ -96,6 +96,25 @@ pub fn external_object(raw: &str) -> Option<String> {
 const ROUND17_FILES: &[&str] =
     &["mkdir", "copy", "move", "trash", "remove", "open", "reveal", "find", "addRoot", "replaceRoot", "removeRoot"];
 
+/// Round 19 (D450): what a host call may do inside an AI client's run: reads, the plugin's own
+/// storage and programs, GET requests, calls into other plugins (which are limited the same way).
+/// Resource writes, file writes, settings writes, `plugins.*`, `ui.*`, secrets in plain text,
+/// transfers and artifacts are refused.
+fn ai_allows(method: &str, args: &Value) -> bool {
+    match method {
+        "resources.get" | "resources.list" | "resources.search" => true,
+        "files.roots" | "files.list" | "files.stat" | "files.readText" | "files.find" => true,
+        "settings.get" | "runs.partial" | "runs.progress" => true,
+        "network.output" | "network.stop" => true,
+        "network.request" => {
+            let o = args.get(0);
+            let method = o.and_then(|o| o.get("method")).and_then(Value::as_str).unwrap_or("GET");
+            method.eq_ignore_ascii_case("GET") && o.is_none_or(|o| o.get("body").is_none_or(Value::is_null) && o.get("file").is_none_or(Value::is_null))
+        }
+        m => ["storage.", "process.", "interfaces.", "actions.", "params.", "util."].iter().any(|p| m.starts_with(p)),
+    }
+}
+
 fn arg(args: &Value, i: usize) -> Value {
     args.get(i).cloned().unwrap_or(Value::Null)
 }
@@ -114,7 +133,10 @@ impl Inner {
         ];
         // Review #7: `process.*` answers `notInRun` itself (and audits `run`), in `migrate` too;
         // so does `transfer.*` (round 8).
-        let res = if info.pure && !PURE_OK.contains(&method) && !method.starts_with("process.") && !method.starts_with("transfer.") {
+        let res = if info.ai && !ai_allows(method, &args) {
+            // Round 19 (D450): an AI's run reads; nothing else, whatever the plugin declared.
+            Err(err_p(ErrorCode::Denied, &[("reason", "aiRun"), ("method", method)]))
+        } else if info.pure && !PURE_OK.contains(&method) && !method.starts_with("process.") && !method.starts_with("transfer.") {
             Err(denied("pureCall"))
         } else if !info.pure && method == "storage.readFrom" {
             Err(denied("notInMigrate"))
@@ -131,6 +153,16 @@ impl Inner {
     async fn host_dispatch(&self, plugin: &'static Plugin, info: &CallInfo, cap: &str, op: &str, method: &str, args: &Value) -> KResult<Value> {
         let args = args.clone();
         match cap {
+            "resources" if info.ai => {
+                // Round 19 (D450): an AI's run sees the resources made visible to AI, no more.
+                let v = self.host_resources(plugin, info, op, &args).await?;
+                let visible = |v: &Value| v.get("id").and_then(Value::as_str).is_none_or(|id| self.read(|c| store::is_ai_visible(c, id)).unwrap_or(false));
+                Ok(match (op, v) {
+                    ("get", v) if !visible(&v) => Value::Null,
+                    ("list", Value::Array(a)) => Value::Array(a.into_iter().filter(|x| visible(x)).collect()),
+                    (_, v) => v,
+                })
+            }
             "resources" => self.host_resources(plugin, info, op, &args).await,
             "files" if ROUND17_FILES.contains(&op) => self.host_files17(plugin, info, op, &args).await,
             "files" => self.host_files(plugin, op, &args).await,
@@ -331,7 +363,7 @@ impl Inner {
                 Ok(Value::Null)
             }
             // Round 12 (D389): basic information of every resource, with `requires.resources`.
-            "search" => self.resources_search(plugin, arg(args, 0)),
+            "search" => self.resources_search(plugin, arg(args, 0), info.ai),
             "remove" => {
                 let id = arg_str(args, 0, "id")?;
                 self.own_row(plugin, &id)?.ok_or_else(|| not_found("resource"))?;

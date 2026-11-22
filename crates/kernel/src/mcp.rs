@@ -3,7 +3,7 @@
 //! the tools beyond the four general ones are whatever manifests declare (`aiTools`).
 //! Names, fields, limits: `docs/handoff/round19-protocol.md`.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
@@ -35,7 +35,6 @@ pub const MAX_TEXT_CHARS: usize = 65536;
 pub const MAX_RESULT_BYTES: usize = 1024 * 1024;
 const SEARCH_MAX_LIMIT: u64 = 50;
 const SEARCH_DEFAULT_LIMIT: u64 = 20;
-const SNIPPET_CHARS: usize = 100;
 const DESCRIPTION_CHARS: usize = 400;
 const ARGS_SUMMARY_BYTES: usize = 1024;
 const ARG_STRING_CHARS: usize = 80;
@@ -44,10 +43,27 @@ const WINDOW: Duration = Duration::from_secs(60);
 /// Requests an AI actor may make besides `mcp.tools` / `mcp.call`.
 const PLAIN_METHODS: &[&str] = &[method::HELLO, method::WORKSPACE_INFO, method19::MCP_STATUS];
 
-/// Rate-limit memory: when each client's recent calls were made.
+/// In-process memory only for what the audit table cannot know: calls begun and not yet written
+/// (the limit counts finished ones from the audit, so it survives a restart), and when a
+/// refusal of the same kind was last written (D450③).
 #[derive(Default)]
 pub struct McpState {
-    calls: Mutex<HashMap<String, VecDeque<Instant>>>,
+    inflight: Mutex<HashMap<String, u32>>,
+    quiet: Mutex<HashMap<(String, String), (Instant, u64)>>,
+}
+
+/// Longest `object`, `resource`, `runId`, tool name in an audit row.
+const AUDIT_FIELD_CHARS: usize = 80;
+/// Refusals of one kind by one client are written at most this often.
+const REFUSAL_EVERY: Duration = Duration::from_secs(1);
+
+fn short(s: &str) -> String {
+    let (c, cut) = cut_chars(s, AUDIT_FIELD_CHARS);
+    if cut {
+        format!("{c}…")
+    } else {
+        c
+    }
 }
 
 /// `mcp.policy` as the workspace configuration says it.
@@ -476,27 +492,60 @@ impl Inner {
             summary["ok"] = json!(false);
             summary["code"] = json!(code_of(e));
             summary["reason"] = json!(e.params.get("reason"));
+            // D450③: what a client can repeat for free (switch off, over the limit, a method it
+            // may not use, a tool that is not there) is written once a second, with the count.
+            let reason = e.params.get("reason").map(String::as_str).unwrap_or("");
+            if matches!(reason, "aiOff" | "aiRateLimit" | "aiNotAllowed") || e.code == ErrorCode::NotFound && e.params.get("what").map(String::as_str) == Some("tool") {
+                let key = (client.to_string(), format!("{op}/{reason}/{}", code_of(e)));
+                let mut q = self.mcp.quiet.lock().unwrap();
+                if q.len() > 1000 {
+                    q.clear();
+                }
+                let now = Instant::now();
+                let slot = q.entry(key).or_insert((now - REFUSAL_EVERY, 0));
+                if now.duration_since(slot.0) < REFUSAL_EVERY {
+                    slot.1 += 1;
+                    return;
+                }
+                if slot.1 > 0 {
+                    summary["suppressed"] = json!(slot.1);
+                }
+                *slot = (now, 0);
+            }
         }
-        let cmd = Command::Stopped { op: op.into(), object: object.into(), summary, result };
+        let cmd = Command::Stopped { op: op.into(), object: short(object), summary, result };
         if self.pipeline.execute(Actor::Ai { client: client.into() }, cmd).await.is_ok() {
             self.emit(onedesk_protocol::topic2::AUDIT, None, None);
         }
     }
 
-    /// One more call of `client` within the last minute, or the refusal.
-    fn rate_check(&self, client: &str, limit: u32) -> KResult<()> {
-        let now = Instant::now();
-        let mut m = self.mcp.calls.lock().unwrap();
-        let q = m.entry(client.to_string()).or_default();
-        while q.front().is_some_and(|t| now.duration_since(*t) >= WINDOW) {
-            q.pop_front();
-        }
-        if q.len() >= limit as usize {
-            let wait = q.front().map(|t| WINDOW.saturating_sub(now.duration_since(*t)).as_millis() as u64).unwrap_or(0);
+    /// Admits one more call of `client`, or refuses: the calls the audit holds for the last
+    /// minute (so a restart of the process does not clear them) and those still running.
+    fn rate_admit(&self, client: &str, limit: u32) -> KResult<()> {
+        let actor = Actor::Ai { client: client.into() }.as_text();
+        let cutoff = now_ms() - WINDOW.as_millis() as i64;
+        let (done, oldest): (i64, Option<i64>) = self.read(|c| {
+            c.query_row(
+                "SELECT count(*), min(at) FROM audit WHERE op = 'mcp.call' AND actor = ?1 AND at > ?2
+                   AND COALESCE(json_extract(summary, '$.reason'), '') NOT IN ('aiRateLimit', 'aiOff')",
+                rusqlite::params![actor, cutoff],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+        })?;
+        let mut m = self.mcp.inflight.lock().unwrap();
+        let running = m.entry(client.to_string()).or_default();
+        if done + i64::from(*running) >= i64::from(limit) {
+            let wait = oldest.map(|t| (t + WINDOW.as_millis() as i64 - now_ms()).clamp(1, WINDOW.as_millis() as i64)).unwrap_or(1000);
             return Err(err_p(ErrorCode::Denied, &[("reason", "aiRateLimit"), ("limit", &limit.to_string()), ("retryAfterMs", &wait.to_string())]));
         }
-        q.push_back(now);
+        *running += 1;
         Ok(())
+    }
+
+    fn rate_release(&self, client: &str) {
+        if let Some(n) = self.mcp.inflight.lock().unwrap().get_mut(client) {
+            *n = n.saturating_sub(1);
+        }
     }
 
     /* ---------------------------------------------------------------- mcp.call */
@@ -504,8 +553,9 @@ impl Inner {
     pub(crate) async fn mcp_call(&self, client: &str, p: McpCallParams) -> KResult<McpCallResult> {
         let t0 = Instant::now();
         let args = p.arguments.clone().unwrap_or_else(|| json!({}));
-        let mut info = json!({ "tool": p.name, "args": capped_args(&args) });
-        let res = self.mcp_call_inner(client, &p, &args, &mut info).await;
+        let mut info = json!({ "tool": short(&p.name), "args": capped_args(&args) });
+        let mut admitted = false;
+        let res = self.mcp_call_inner(client, &p, &args, &mut info, &mut admitted).await;
         info["ms"] = json!(t0.elapsed().as_millis() as u64);
         match &res {
             Ok(r) => {
@@ -515,15 +565,19 @@ impl Inner {
             }
             Err(e) => self.mcp_audit(client, "mcp.call", &p.name, info, Some(e)).await,
         }
+        if admitted {
+            self.rate_release(client);
+        }
         res
     }
 
-    async fn mcp_call_inner(&self, client: &str, p: &McpCallParams, args: &Value, info: &mut Value) -> KResult<McpCallResult> {
+    async fn mcp_call_inner(&self, client: &str, p: &McpCallParams, args: &Value, info: &mut Value, admitted: &mut bool) -> KResult<McpCallResult> {
         let policy = self.mcp_policy()?;
         if !policy.enabled {
             return Err(denied("aiOff"));
         }
-        self.rate_check(client, policy.rate)?;
+        self.rate_admit(client, policy.rate)?;
+        *admitted = true;
         let target = self.resolve_tool(&policy, &p.name).ok_or_else(|| not_found("tool"))?;
         if let Target::Plugin(_, t) = &target {
             if t.free_query && !policy.free_query {
@@ -543,7 +597,7 @@ impl Inner {
             Target::Search => self.tool_search(args, &policy).await,
             Target::Describe => self.tool_describe(s("id").unwrap_or_default()).await,
             Target::Run => {
-                info["resource"] = json!(s("id"));
+                info["resource"] = json!(s("id").map(short));
                 self.tool_run(client, &policy, args, info).await
             }
             Target::GetRun => self.tool_get_run(client, &policy, args, info).await,
@@ -583,7 +637,7 @@ impl Inner {
         };
         let (res, scores) = self.search_core(&o, true)?;
         let mut items = Vec::new();
-        for (it, (score, snippet)) in res.items.iter().zip(scores) {
+        for (it, (score, _)) in res.items.iter().zip(scores) {
             let Some(row) = self.read(|c| store::get(c, &it.id))? else { continue };
             items.push(json!({
                 "id": it.id,
@@ -592,7 +646,6 @@ impl Inner {
                 "name": it.name,
                 "description": cut_chars(&row.description, DESCRIPTION_CHARS).0,
                 "tags": it.tags,
-                "snippet": cut_chars(&snippet, SNIPPET_CHARS).0,
                 "score": score,
             }));
         }
@@ -615,10 +668,35 @@ impl Inner {
             .collect()
     }
 
+    /// One `ParamDecl` as the AI gets it: only the known fields, cut to size (§2.3, D450④); `None` if malformed.
+    fn sanitize_param(p: &Value) -> Option<Value> {
+        let name = p.get("name").and_then(Value::as_str).filter(|n| crate::manifest::valid_ai_name(n, 64))?;
+        let ty = p.get("type").and_then(Value::as_str).filter(|t| matches!(*t, "text" | "number" | "boolean" | "enum"))?;
+        let required = match p.get("required") {
+            None => false,
+            Some(r) => r.as_bool()?,
+        };
+        let mut v = json!({ "name": name, "type": ty, "required": required });
+        if let Some(d) = p.get("description").and_then(Value::as_str) {
+            v["description"] = json!(cut_chars(d, DESCRIPTION_CHARS).0);
+        }
+        if ty == "enum" {
+            let opts: Vec<String> = p.get("options")?.as_array()?.iter().map(|o| o.as_str().map(|o| cut_chars(o, 200).0)).collect::<Option<_>>()?;
+            if opts.is_empty() || opts.len() > 50 {
+                return None;
+            }
+            v["options"] = json!(opts);
+        }
+        if let Some(d) = p.get("default").and_then(Value::as_str) {
+            v["default"] = json!(cut_chars(d, 200).0);
+        }
+        Some(v)
+    }
+
     fn static_params(pl: &Plugin, a: &ActionDef) -> Vec<Value> {
         a.ai.iter()
             .flat_map(|x| x.params.iter())
-            .map(|p| {
+            .filter_map(|p| {
                 let mut v = json!({ "name": p.name, "type": p.ty, "required": p.required });
                 if let Some(d) = &p.description {
                     v["description"] = json!(pl.text(d, Some("en-US")));
@@ -629,9 +707,17 @@ impl Inner {
                 if let Some(d) = &p.default {
                     v["default"] = json!(d);
                 }
-                v
+                Self::sanitize_param(&v)
             })
             .collect()
+    }
+
+    /// The parameters an AI action takes: the plugin's answer (`ai.describe`) when it has one, else its manifest's.
+    async fn action_params(&self, pl: &'static Plugin, a: &ActionDef, row: &Row) -> Result<(Vec<Value>, Option<String>), String> {
+        match a.ai.as_ref().and_then(|x| x.describe.as_deref()) {
+            Some(d) => self.describe_params(pl, d, row).await,
+            None => Ok((Self::static_params(pl, a), None)),
+        }
     }
 
     async fn tool_describe(&self, id: &str) -> KResult<McpCallResult> {
@@ -642,10 +728,10 @@ impl Inner {
             let ai = a.ai.as_ref().expect("filtered");
             let mut entry = json!({ "action": a.id, "label": pl.text(&a.label, Some("en-US")), "params": Self::static_params(pl, a) });
             if let Some(d) = &ai.description {
-                entry["description"] = json!(pl.text(d, Some("en-US")));
+                entry["description"] = json!(cut_chars(&pl.text(d, Some("en-US")), DESCRIPTION_CHARS).0);
             }
-            if let Some(dn) = &ai.describe {
-                match self.describe_params(pl, dn, &row).await {
+            if ai.describe.is_some() {
+                match self.action_params(pl, a, &row).await {
                     Ok((params, desc)) => {
                         entry["params"] = Value::Array(params);
                         if let Some(d) = desc {
@@ -666,6 +752,7 @@ impl Inner {
     }
 
     /// §2.4: the plugin names a resource's parameters. A pure call, no environment, no network.
+    /// What it answers is checked and cut like a manifest's (D450④).
     async fn describe_params(&self, pl: &'static Plugin, action: &str, row: &Row) -> Result<(Vec<Value>, Option<String>), String> {
         let resource = self.resource(row).map_err(|e| code_of(&e))?;
         let resource = crate::deps::without_secrets(
@@ -674,7 +761,7 @@ impl Inner {
         );
         let ctx = json!({ "target": format!("resource:{}", row.id), "resource": resource, "envId": null, "params": {}, "runId": null,
                           "locale": "en-US" });
-        let info = CallInfo { pure: true, resource_id: Some(row.id.clone()), ..Default::default() };
+        let info = CallInfo { pure: true, ai: true, resource_id: Some(row.id.clone()), ..Default::default() };
         let v = self
             .call_version(pl, "actions", action, "", json!([ctx, {}]), info, None, Some(Duration::from_secs(10)))
             .await
@@ -685,14 +772,13 @@ impl Inner {
             return Err("badOutput".into());
         }
         let mut out = Vec::new();
+        let mut seen = std::collections::HashSet::new();
         for p in list {
-            let ok = p.get("name").and_then(Value::as_str).is_some()
-                && matches!(p.get("type").and_then(Value::as_str), Some("text" | "number" | "boolean" | "enum"))
-                && p.get("required").is_some_and(Value::is_boolean);
-            if !ok {
+            let p = Self::sanitize_param(p).ok_or("badOutput")?;
+            if !seen.insert(p["name"].as_str().unwrap_or_default().to_string()) {
                 return Err("badOutput".into());
             }
-            out.push(p.clone());
+            out.push(p);
         }
         Ok((out, data.get("description").and_then(Value::as_str).map(|d| cut_chars(d, DESCRIPTION_CHARS).0)))
     }
@@ -720,30 +806,43 @@ impl Inner {
                 _ => return Err(err_p(ErrorCode::InvalidParams, &[("reason", "needAction")])),
             },
         };
+        // What it may pass is what the action declares (its manifest, or its own answer): names,
+        // types, options, the required ones — always checked, also when none is given.
+        let declared = self
+            .action_params(pl, a, &row)
+            .await
+            .map_err(|code| err_p(ErrorCode::PluginError, &[("reason", "badOutput"), ("what", "params"), ("code", &code)]))?;
+        let declared = declared.0;
+        let given = args.get("params").and_then(Value::as_object);
+        if given.is_some_and(|o| o.len() > 32) {
+            return Err(bad_args("/params", "maxProperties"));
+        }
         let mut params = std::collections::BTreeMap::new();
-        if let Some(o) = args.get("params").and_then(Value::as_object) {
-            let declared = &a.ai.as_ref().expect("filtered").params;
-            for (k, v) in o {
-                let text = match v {
-                    Value::String(s) => s.clone(),
-                    Value::Number(n) => n.to_string(),
-                    Value::Bool(b) => b.to_string(),
-                    _ => return Err(bad_args(&format!("/params/{k}"), "type")),
-                };
-                if !declared.is_empty() {
-                    match declared.iter().find(|d| &d.name == k) {
-                        None => return Err(bad_args(&format!("/params/{k}"), "additionalProperties")),
-                        Some(d) if d.ty == "enum" && !d.options.iter().flatten().any(|x| *x == text) => return Err(bad_args(&format!("/params/{k}"), "enum")),
-                        Some(d) if d.ty == "number" && text.parse::<f64>().is_err() => return Err(bad_args(&format!("/params/{k}"), "type")),
-                        Some(_) => {}
-                    }
-                }
-                params.insert(k.clone(), text);
+        for (k, v) in given.into_iter().flatten() {
+            let text = match v {
+                Value::String(s) => s.clone(),
+                Value::Number(n) => n.to_string(),
+                Value::Bool(b) => b.to_string(),
+                _ => return Err(bad_args(&format!("/params/{k}"), "type")),
+            };
+            if text.chars().count() > 1000 {
+                return Err(bad_args(&format!("/params/{k}"), "maxLength"));
             }
-            for d in declared.iter().filter(|d| d.required) {
-                if !params.contains_key(&d.name) {
-                    return Err(bad_args(&format!("/params/{}", d.name), "required"));
+            let d = declared.iter().find(|d| d["name"] == json!(k)).ok_or_else(|| bad_args(&format!("/params/{k}"), "additionalProperties"))?;
+            match d["type"].as_str() {
+                Some("enum") if !d["options"].as_array().is_some_and(|o| o.iter().any(|x| x.as_str() == Some(text.as_str()))) => {
+                    return Err(bad_args(&format!("/params/{k}"), "enum"));
                 }
+                Some("number") if text.parse::<f64>().is_err() => return Err(bad_args(&format!("/params/{k}"), "type")),
+                Some("boolean") if text != "true" && text != "false" => return Err(bad_args(&format!("/params/{k}"), "type")),
+                _ => {}
+            }
+            params.insert(k.clone(), text);
+        }
+        for d in declared.iter().filter(|d| d["required"] == json!(true)) {
+            let n = d["name"].as_str().unwrap_or_default();
+            if !params.contains_key(n) {
+                return Err(bad_args(&format!("/params/{n}"), "required"));
             }
         }
         let env = self.ai_env(policy)?;
@@ -780,15 +879,26 @@ impl Inner {
     }
 
     async fn finish_ai_run(&self, client: &str, policy: &McpPolicy, rp: RunStartParams, info: &mut Value) -> KResult<McpCallResult> {
+        // Told when the run ends (its topic), not asked every few milliseconds; subscribed first so
+        // an end that comes at once is not missed.
+        let mut events = self.events.subscribe();
         let id = self.run_start_as(rp, None, Some(client)).await?;
-        info["runId"] = json!(id);
-        let deadline = Instant::now() + self.cfg.mcp_wait;
-        let row = loop {
+        info["runId"] = json!(short(&id));
+        let topic = format!("{}{id}", onedesk_protocol::topic3::RUN);
+        let deadline = tokio::time::Instant::now() + self.cfg.mcp_wait;
+        let row = 'wait: loop {
             let row = self.read(|c| store::run_get(c, &id))?.ok_or_else(|| not_found("run"))?;
-            if row.status != "running" || Instant::now() >= deadline {
+            if row.status != "running" || tokio::time::Instant::now() >= deadline {
                 break row;
             }
-            tokio::time::sleep(Duration::from_millis(10)).await;
+            loop {
+                match tokio::time::timeout_at(deadline, events.recv()).await {
+                    Ok(Ok(ev)) if ev.topic != topic => continue,
+                    Ok(Err(tokio::sync::broadcast::error::RecvError::Closed)) => break 'wait row,
+                    // The run's topic, a missed message, or the time is up: look again.
+                    _ => continue 'wait,
+                }
+            }
         };
         let (v, truncated, rows) = run_value(&row, 0, policy.max_rows as usize);
         Ok(self.result(v, truncated, Some(rows)))
@@ -796,9 +906,13 @@ impl Inner {
 
     async fn tool_get_run(&self, client: &str, policy: &McpPolicy, args: &Value, info: &mut Value) -> KResult<McpCallResult> {
         let id = args.get("runId").and_then(Value::as_str).unwrap_or_default();
-        info["runId"] = json!(id);
+        info["runId"] = json!(short(id));
         let row = self.read(|c| store::run_get(c, id))?.filter(|r| r.source == "ai" && r.actor == format!("ai:{client}")).ok_or_else(|| not_found("run"))?;
         self.read(|c| Ok(crate::policy::check(c, crate::policy::NO_EXPORT, row.env_id.as_deref())))??;
+        // Switched off for AI since: its runs are not readable any more.
+        if let Some(r) = &row.resource_id {
+            self.ai_row(r).map_err(|_| not_found("run"))?;
+        }
         let offset = args.get("offset").and_then(Value::as_u64).unwrap_or(0) as usize;
         let limit = args.get("limit").and_then(Value::as_u64).map(|l| l as usize).unwrap_or(usize::MAX).min(policy.max_rows as usize);
         let (v, truncated, rows) = run_value(&row, offset, limit);

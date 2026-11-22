@@ -107,7 +107,7 @@
 
 入参 `McpCallParams { name: string, arguments?: object }`；返回 `McpCallResult { content: any (JSON), truncated: boolean, rows?: number }`；任何失败都是**协议错误**（`{code, params}`，见 §6），`onedesk-mcp` 把它译成 MCP 的 `isError: true`。顺序：①总开关（`aiOff`）②限流（`aiRateLimit`）③工具存在（`notFound/tool`）④策略 ⑤参数校验 ⑥执行。**每一次 `mcp.call`（成功或失败，含被限流的）都写一条审计**（§5）。
 
-- `search` → `content = { items: [{ id, kind, kindLabel, name, description, tags, snippet, score }], total }`。只搜 `ai_visible = 1`；`mode: any`、`rank: relevance`；`kindLabel` 是英语。`description` 截 400 字符。
+- `search` → `content = { items: [{ id, kind, kindLabel, name, description, tags, score }], total }`（D450④：没有正文 snippet）。只搜 `ai_visible = 1`；`mode: any`、`rank: relevance`；`kindLabel` 是英语。`description` 截 400 字符。
 - `describe` → `content = { id, kind, kindLabel, name, description, tags, actions: [{ action, label, description?, params: ParamDecl[], paramsError? }] }`。`actions` = 该类型上所有 `ai.readOnly` 的动作（`action` 是短 id，`run` 入参里就写它）；不返回资源 `body`（正文里可能有连接串，AI 不需要；要看内容就运行它）。
 - `run` → 先校验：资源存在且 `ai_visible`；`action` 缺省时若只有一个 AI 动作就用它，多个而没给 → `invalidParams/needAction`；动作必须在 `describe` 列出的里面（`denied/notAiAction`）。`params` 里的值一律转成字符串交给 `RunStartParams.params`；**`input` 恒为空对象**（AI 不能改写资源正文，只能跑保存好的东西）。环境 = `mcp.env`。等运行结束，最多等 `KernelConfig.mcp_wait`（默认 30 秒）。`content = McpRun`：
   ```ts
@@ -125,7 +125,7 @@
 
 - 表格：行数 ≤ `mcp.max_rows`（`run`）/ `min(limit, mcp.max_rows)`（`get_run`）；单元格文字超过 2000 字符截成前 2000 字符并加 `…`（`truncated` 也置 true）；每次结果的 JSON 总量 ≤ 1 MiB，超了再减行。
 - 文字：超过 65536 字符截断，`totalChars` 给原长。
-- `search`：`limit` ≤ 50；`snippet` ≤ 100 字符。
+- `search`：`limit` ≤ 50。
 - 密钥值：内核不从结果里“认”密钥，靠已有的两道：①`{{secret:…}}` 只在宿主里代入，插件拿不到值；②运行结束时按该运行用过的密钥值抹除输出（`secrets::scrub`，同现有）。`McpRun` 在抹除之后才生成；审计与日志从不含参数的原值（§5）。
 
 ## 5. 审计
@@ -190,3 +190,11 @@
   - `exists`：此刻该路径上有没有文件（开发版没打包时为 false，外壳可提示）。
   - `config`：可直接复制进 Claude Desktop `claude_desktop_config.json` 的 JSON 文本：`{ "mcpServers": { "onedesk": { "command": "<path>" } } }`。要指定工作区，用户在 `command` 旁自己加 `"args": ["--workspace", "<名字或 id>"]`。
 - 外壳 mock 需要同步这一个方法。
+
+## 10. D450 审查后的补充（内核会话）
+
+- **AI 运行里的宿主调用**（`run`、插件工具、`describe` 的动态参数，经 `actions.call`/`interfaces.call` 传递，`CallInfo.ai`）：只放行 `resources.get/list/search`（只返回 `ai_visible=1`）、`files.roots/list/stat/readText/find`、`settings.get`、`storage.*`、`process.*`、`interfaces.*`、`actions.*`、`params.*`、`util.*`、`runs.partial/progress`、`network.request`（只 GET、不带 body/file）与 `network.output/stop`；其余（资源写、文件写/移/删、`settings` 写、`plugins.*`、`ui.*`、`secrets.get`、`transfer.*`、成品写入）一律 `denied/aiRun`（`params.method`）。
+- **限流**按审计表算：最近 60 秒内 `op='mcp.call'` 且 `actor=ai:<客户端>` 的行（不含 `aiRateLimit`/`aiOff` 拒绝行）加上正在进行的调用数；跨进程、跨无界面重启仍然有效。
+- **审计**：`object`/`resource`/`runId`/`tool` 截到 80 字符；`aiOff`、`aiRateLimit`、`aiNotAllowed`、未知工具这几类拒绝，同一客户端同一原因每秒最多写 1 行，被省掉的次数记在下一条的 `summary.suppressed`。
+- **`run` 参数**：一律按动作声明（静态 `ai.params` 或 `ai.describe` 的答复）校验：名字、类型、枚举、必填（没给 `params` 也检查）、≤ 32 个键、值 ≤ 1000 字符；没有声明的动作不接受任何参数。插件 `describe` 的答复按 §2.3 清理并截断（描述 400、选项 ≤ 50 个每个 ≤ 200），格式不对 → `describe` 里 `paramsError`、`run` 里 `pluginError/badOutput`。
+- `get_run` 再查一次资源可见性（用户关掉后读不了，`notFound/run`）；`run` 等结束用事件通知，不轮询。

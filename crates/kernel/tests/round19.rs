@@ -5,6 +5,8 @@
 mod common;
 
 use std::path::Path;
+use std::sync::Arc;
+
 use common::*;
 use onedesk_protocol::ProtocolError;
 use serde_json::{json, Value};
@@ -27,6 +29,22 @@ export default { activate(host) {
     if (input.boom) throw new Error("bad password " + pw);
     return { output: { type: "table", columns: [{ key: "p", label: "P" }], rows: [["pw=" + pw]], total: 1, truncated: false } };
   });
+  host.actions.handle("probe", async (ctx, input) => {
+    const out = {};
+    const t = async (k, f) => { try { await f(); out[k] = "ok"; } catch (e) { out[k] = (e.params && e.params.reason) || e.code || String(e); } };
+    await t("create", () => ctx.host.resources.create({ kind: "query", name: "made" }));
+    await t("update", () => ctx.host.resources.update(ctx.resource.id, { name: "renamed" }));
+    await t("open", () => ctx.host.ui.openExternal("https://example.invalid/"));
+    await t("notify", () => ctx.host.ui.notify("hello"));
+    await t("secret", () => ctx.host.secrets.get("pw"));
+    await t("storage", () => ctx.host.storage.set("k", "v"));
+    await t("post", () => ctx.host.network.request({ url: "http://127.0.0.1:1/", method: "POST", body: "x" }));
+    await t("list", async () => { out.listed = (await ctx.host.resources.list({ kind: "query" })).map((r) => r.name).sort(); });
+    await t("get", async () => { out.got = ctx.params.other ? (await ctx.host.resources.get(ctx.params.other)) !== null : null; });
+    return { output: { type: "text", text: JSON.stringify(out) } };
+  });
+  host.actions.handle("dynlong", async () => ({ output: { type: "none" }, data: { description: "D".repeat(5000),
+    params: [{ name: "x", type: "text", required: false, description: "d".repeat(5000), junk: "z" }] } }));
   host.actions.handle("fail", async () => { throw new Error("nope: " + "q".repeat(900)); });
 } };
 "#;
@@ -57,6 +75,9 @@ fn manifest() -> Value {
                 { "id": "bigtext", "label": "Big", "output": "text", "kinds": ["query"], "ai": ai(json!({})) },
                 { "id": "info", "label": "Info", "output": "text", "kinds": ["query"], "ai": ai(json!({})) },
                 { "id": "leak", "label": "Leak", "output": "table", "kinds": ["query"], "ai": ai(json!({})) },
+                { "id": "probe", "label": "Probe", "output": "text", "kinds": ["query"], "ai": ai(json!({ "params": [{ "name": "other", "type": "text" }] })) },
+                { "id": "readLong", "label": "Long", "output": "text", "kinds": ["query"], "ai": ai(json!({ "describe": "dynlong" })) },
+                { "id": "dynlong", "label": "d", "output": "none", "kinds": ["query"] },
                 { "id": "fail", "label": "Fail", "output": "text", "kinds": ["query"], "ai": ai(json!({})) },
                 { "id": "write", "label": "Write", "output": "text", "kinds": ["query"] },
                 { "id": "readDyn", "label": "Dyn", "output": "text", "kinds": ["query"], "ai": ai(json!({ "describe": "dyn" })) },
@@ -275,8 +296,18 @@ async fn an_ai_client_may_make_no_request_but_the_few_it_is_given() {
     assert_eq!(count(&env, "SELECT count(*) FROM resources"), before, "nothing was written");
     assert_eq!(count(&env, "SELECT count(*) FROM revisions"), revs);
     assert_eq!(c.ok("workspace.getConfig", json!({ "name": "mcp.enabled" })).await, json!("true"));
-    assert_eq!(audit(&env, "mcp.refused").len(), 17, "each refusal is audited");
-    assert!(audit(&env, "mcp.refused").iter().all(|r| r.0 == "ai:tester" && r.3 == "failed:denied"));
+    // D450: what a client can repeat for free is written once a second, with the count.
+    let refused = audit(&env, "mcp.refused");
+    assert!(refused.len() <= 2, "{}", refused.len());
+    assert!(refused.iter().all(|r| r.0 == "ai:tester" && r.3 == "failed:denied"));
+    let seen: u64 = refused.iter().map(|r| 1 + r.2["suppressed"].as_u64().unwrap_or(0)).sum();
+    assert!(seen <= 17);
+    // The count of what was left out comes with the next one written, a second on.
+    tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
+    c.call_ai(CLIENT, "page.save", json!({})).await.unwrap_err();
+    let refused = audit(&env, "mcp.refused");
+    let seen: u64 = refused.iter().map(|r| 1 + r.2["suppressed"].as_u64().unwrap_or(0)).sum();
+    assert_eq!(seen, 18, "every refusal is counted: {refused:?}");
     // What it may: hello, workspace.info, mcp.status.
     c.call_ai(CLIENT, "hello", json!({ "protocol": onedesk_protocol::PROTOCOL_VERSION })).await.unwrap();
     c.call_ai(CLIENT, "workspace.info", json!({})).await.unwrap();
@@ -426,7 +457,7 @@ async fn describe_lists_the_ai_actions_with_parameters_and_nothing_else() {
     assert_eq!((d["name"].clone(), d["kind"].clone(), d["description"].clone()), (json!("q1"), json!("t.ai:query"), json!("the first")));
     assert!(!d.to_string().contains("postgres"), "the body is not described: {d}");
     let names: Vec<&str> = d["actions"].as_array().unwrap().iter().map(|a| a["action"].as_str().unwrap()).collect();
-    assert_eq!(names, ["read", "bigtext", "info", "leak", "fail", "readDyn", "readBad"], "the action without `ai` is not offered");
+    assert_eq!(names, ["read", "bigtext", "info", "leak", "probe", "readLong", "fail", "readDyn", "readBad"], "the action without `ai` is not offered");
     let read = &d["actions"][0];
     assert_eq!(read["description"], "Reads rows");
     assert_eq!(read["params"][0], json!({ "name": "n", "type": "number", "required": false }));
@@ -564,14 +595,17 @@ async fn a_failed_run_says_why_in_few_words() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn a_secret_the_plugin_used_is_not_in_the_result_the_audit_or_the_records() {
+async fn a_secret_is_not_in_the_result_the_audit_or_the_records() {
     let (env, c, q) = table_world(&[]).await;
     c.ok("secrets.set", json!({ "name": "pw", "value": "hunter2-secret" })).await;
+    // Plain-text secrets are not for an AI's run at all (D450); the user's own run of the same action gets it, scrubbed.
     let r = call_ok(&c, "run", json!({ "id": q, "action": "leak" })).await;
-    assert_eq!(r["status"], "success", "{r}");
-    assert_eq!(r["output"]["rows"], json!([["pw=***"]]));
-    let e = call_ok(&c, "run", json!({ "id": q, "action": "leak", "params": { "boom": "1" } })).await;
-    assert!(!e.to_string().contains("hunter2"), "{e}");
+    assert_eq!(r["status"], "error", "{r}");
+    assert_eq!(r["error"]["code"], "aiRun");
+    assert!(!r.to_string().contains("hunter2"), "{r}");
+    let user = c.ok("run.start", json!({ "action": "t.ai:leak", "resourceId": q, "target": format!("resource:{q}"), "tabId": "t" })).await;
+    let user = wait_run(&c, user.as_str().unwrap()).await;
+    assert_eq!(user["output"]["rows"], json!([["pw=***"]]), "the scrubbing of results is the old one's, and stays");
     let s = call_ok(&c, "search", json!({ "query": "q1" })).await;
     assert!(!s.to_string().contains("hunter2"));
     let dump: String = {
@@ -586,6 +620,55 @@ async fn a_secret_the_plugin_used_is_not_in_the_result_the_audit_or_the_records(
         all
     };
     assert!(!dump.contains("hunter2"), "a secret value is in the database");
+}
+
+async fn wait_run(c: &Client, id: &str) -> Value {
+    for _ in 0..500 {
+        let r = c.ok("run.get", json!({ "id": id })).await;
+        if r["status"] != "running" {
+            return r;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    panic!("run did not end");
+}
+
+/* ------------------------------------------------------------------ D450: an AI's run reads only */
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn inside_an_ais_run_the_plugin_may_read_and_nothing_more_whatever_it_declared() {
+    let (env, c, q) = table_world(&[]).await;
+    let hidden = make(&c, "query", "hidden one", "", None).await;
+    // The same action, run by the user: the writes work (so the refusals below are the AI mode's).
+    let user = c.ok("run.start", json!({ "action": "t.ai:probe", "resourceId": q, "target": format!("resource:{q}"), "tabId": "t", "params": { "other": hidden } })).await;
+    let user = wait_run(&c, user.as_str().unwrap()).await;
+    let u: Value = serde_json::from_str(user["output"]["text"].as_str().unwrap()).unwrap();
+    assert_eq!((u["create"].clone(), u["update"].clone()), (json!("ok"), json!("ok")), "{u}");
+    assert_eq!(u["listed"], json!(["hidden one", "made", "renamed"]), "the user sees them all");
+    c.ok("page.save", json!({ "target": format!("resource:{q}"), "changes": { "name": "q1" } })).await;
+    let made: String = db(&env).query_row("SELECT id FROM resources WHERE name = 'made'", [], |r| r.get(0)).unwrap();
+    c.ok("resource.delete", json!({ "id": made })).await;
+    let live = |env: &Env| count(env, "SELECT count(*) FROM resources WHERE deleted_at IS NULL");
+    let live_before = live(&env);
+    let r = call_ok(&c, "run", json!({ "id": q, "action": "probe", "params": { "other": hidden } })).await;
+    assert_eq!(r["status"], "success", "{r}");
+    let o: Value = serde_json::from_str(r["output"]["text"].as_str().unwrap()).unwrap();
+    for k in ["create", "update", "open", "notify", "secret", "post"] {
+        assert_eq!(o[k], "aiRun", "{k}: {o}");
+    }
+    assert_eq!(o["storage"], "ok", "its own storage stays");
+    assert_eq!(o["listed"], json!(["q1"]), "only what is visible to AI: {o}");
+    assert_eq!(o["got"], false, "a resource not visible to AI reads as not there");
+    assert_eq!(live(&env), live_before, "nothing was made");
+    assert_eq!(c.ok("resource.get", json!({ "id": q })).await["name"], "q1", "nor renamed");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn the_free_tools_run_is_limited_the_same_way() {
+    // A tool's action has no resource, and `ctx.ai` is set: the same gate.
+    let (_env, c, _q) = table_world(&[]).await;
+    let r = call_ok(&c, "t_ai__lookup", json!({ "text": "x" })).await;
+    assert_eq!(r["status"], "success");
 }
 
 /* ------------------------------------------------------------------ environment and policy */
@@ -658,6 +741,39 @@ async fn the_rate_limit_counts_each_client_over_a_minute() {
     assert_eq!(c.ok("mcp.status", json!({})).await["ratePerMinute"], 1);
     c.ok("workspace.setConfig", json!({ "name": "mcp.rate_per_minute", "value": "lots" })).await;
     assert_eq!(c.ok("mcp.status", json!({})).await["ratePerMinute"], 30);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn the_limit_holds_after_the_process_is_gone_and_comes_back() {
+    let (env, c) = world(&[ON, ("mcp.rate_per_minute", "2")]).await;
+    call_ok(&c, "search", json!({ "query": "a" })).await;
+    call_ok(&c, "search", json!({ "query": "a" })).await;
+    let Env { tmp, kernel } = env;
+    kernel.shutdown();
+    drop(c);
+    drop(kernel);
+    // A headless worker that idled out is a new process on the same workspace.
+    let root = tmp.path().join("plugins");
+    let again = Arc::new(onedesk_kernel::Kernel::open(&tmp.path().join("ws"), &root, config_for(&root)).unwrap());
+    let c = Client::in_proc(again);
+    c.hello().await;
+    assert_eq!(call_err(&c, "search", json!({ "query": "a" })).await, "denied/aiRateLimit");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn calls_that_run_at_once_do_not_get_past_the_limit() {
+    let (_env, c, q) = table_world(&[("mcp.rate_per_minute", "3")]).await;
+    let c = Arc::new(c);
+    let mut tasks = Vec::new();
+    for _ in 0..8 {
+        let (c, q) = (c.clone(), q.clone());
+        tasks.push(tokio::spawn(async move { call(&c, "run", json!({ "id": q, "action": "read" })).await.is_ok() }));
+    }
+    let mut ok = 0;
+    for t in tasks {
+        ok += usize::from(t.await.unwrap());
+    }
+    assert_eq!(ok, 3);
 }
 
 /* ------------------------------------------------------------------ plugin tools */
@@ -804,4 +920,75 @@ async fn the_policy_keys_are_known_parameters() {
     for k in ["mcp.enabled", "mcp.rate_per_minute", "mcp.max_rows", "mcp.allow_free_query", "mcp.env"] {
         assert!(names.contains(&k), "{k} in {names:?}");
     }
+}
+
+/* ------------------------------------------------------------------ review (D450) */
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn audit_fields_are_cut_and_a_flood_of_refusals_is_a_few_rows() {
+    let (env, c, q) = table_world(&[]).await;
+    let long = "x".repeat(5000);
+    call_err(&c, &long, json!({})).await;
+    let rows = audit(&env, "mcp.call");
+    assert!(rows[0].1.chars().count() <= 81 && rows[0].2["tool"].as_str().unwrap().chars().count() <= 81, "{:?}", rows[0]);
+    let r = call_ok(&c, "run", json!({ "id": q, "action": "read" })).await;
+    let last = audit(&env, "mcp.call").pop().unwrap();
+    assert_eq!(last.2["runId"], r["runId"]);
+    // 200 calls of a tool that is not there: not 200 rows.
+    for _ in 0..200 {
+        let _ = call(&c, "nope", json!({})).await;
+    }
+    let n = audit(&env, "mcp.call").iter().filter(|r| r.2["reason"].is_null() && r.3 == "failed:notFound").count();
+    assert!(n <= 3, "{n}");
+    // The switch off, the limit: the same.
+    c.ok("workspace.setConfig", json!({ "name": "mcp.enabled", "value": "false" })).await;
+    let before = count(&env, "SELECT count(*) FROM audit");
+    for _ in 0..100 {
+        let _ = call(&c, "search", json!({ "query": "x" })).await;
+    }
+    assert!(count(&env, "SELECT count(*) FROM audit") - before <= 2);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn search_gives_no_text_of_the_body_and_a_run_is_unreadable_once_switched_off() {
+    let (_env, c, q) = table_world(&[]).await;
+    c.ok("page.save", json!({ "target": format!("resource:{q}"), "changes": { "body.text": "needle-in-the-body secret words" } })).await;
+    let r = call_ok(&c, "search", json!({ "query": "needle" })).await;
+    for it in r["items"].as_array().unwrap() {
+        assert!(it.get("snippet").is_none(), "{it}");
+    }
+    assert!(!r.to_string().contains("secret words"), "{r}");
+    let run = call_ok(&c, "run", json!({ "id": q, "action": "read" })).await;
+    let id = run["runId"].as_str().unwrap().to_string();
+    call_ok(&c, "get_run", json!({ "runId": id })).await;
+    visible(&c, &q, false).await;
+    assert_eq!(call_err(&c, "get_run", json!({ "runId": id })).await, "notFound/");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn parameters_are_checked_against_what_the_action_declares_or_its_own_answer() {
+    let (_env, c, q) = table_world(&[]).await;
+    // No declaration: no parameters.
+    assert_eq!(call_err(&c, "run", json!({ "id": q, "action": "info", "params": { "a": "1" } })).await, "invalidParams/badArguments");
+    // Its own answer (required `x`): missing, with none given at all, is refused too; unknown and too long as well.
+    assert_eq!(call_err(&c, "run", json!({ "id": q, "action": "readDyn" })).await, "invalidParams/badArguments");
+    assert_eq!(call_err(&c, "run", json!({ "id": q, "action": "readDyn", "params": { "y": "1" } })).await, "invalidParams/badArguments");
+    assert_eq!(call_err(&c, "run", json!({ "id": q, "action": "readDyn", "params": { "x": "z".repeat(1001) } })).await, "invalidParams/badArguments");
+    let many: serde_json::Map<String, Value> = (0..40).map(|i| (format!("p{i}"), json!("1"))).collect();
+    assert_eq!(call_err(&c, "run", json!({ "id": q, "action": "read", "params": many })).await, "invalidParams/badArguments");
+    let r = call_ok(&c, "run", json!({ "id": q, "action": "readDyn", "params": { "x": "1" } })).await;
+    assert!(r["status"].is_string(), "it started: {r}");
+    // A bad answer of the plugin is not run on.
+    assert_eq!(call_err(&c, "run", json!({ "id": q, "action": "readBad" })).await, "pluginError/badOutput");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn what_the_plugin_answers_about_its_parameters_is_cut_to_the_format() {
+    let (_env, c, q) = table_world(&[]).await;
+    let d = call_ok(&c, "describe", json!({ "id": q })).await;
+    let long = d["actions"].as_array().unwrap().iter().find(|a| a["action"] == "readLong").unwrap();
+    assert_eq!(long["description"].as_str().unwrap().chars().count(), 400);
+    let p = &long["params"][0];
+    assert_eq!(p["description"].as_str().unwrap().chars().count(), 400);
+    assert!(p.get("junk").is_none(), "{p}");
 }
