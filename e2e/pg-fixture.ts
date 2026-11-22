@@ -44,6 +44,9 @@ async function freePort(): Promise<number> {
 
 export const PG_USER = "app";
 export const PG_PASSWORD = "e2e-Pg-pass-7x";
+// Round 19: a role that connects over TCP without a password (trust), for specs whose connection is used by a second process
+// (a headless worker cannot see the devhost's in-memory secret store, and the real keychain is never touched by tests).
+export const PG_TRUST_USER = "app_trust";
 export const DB1 = "shop";
 export const DB2 = "other";
 
@@ -59,10 +62,11 @@ export async function startPg(dir: string): Promise<Pg> {
   const run = (cmd: string, args: string[], input?: string) => execFileSync(path.join(bin, cmd), args, { input, encoding: "utf8", env: { PATH: "/usr/bin:/bin", LANG: "C", LC_ALL: "C" } });
   run("initdb", ["-D", data, "-U", "postgres", "-A", "trust", "--no-sync", "-E", "UTF8", "--locale=C"]);
   // trust on the unix socket for the set-up below; the TCP side asks for the scram password
-  writeFileSync(path.join(data, "pg_hba.conf"), "local all all trust\nhost all all 127.0.0.1/32 scram-sha-256\nhost all all ::1/128 scram-sha-256\n");
+  writeFileSync(path.join(data, "pg_hba.conf"), `local all all trust\nhost all ${PG_TRUST_USER} 127.0.0.1/32 trust\nhost all all 127.0.0.1/32 scram-sha-256\nhost all all ::1/128 scram-sha-256\n`);
   run("pg_ctl", ["-D", data, "-o", `-p ${port} -k ${sock} -c listen_addresses=127.0.0.1 -c fsync=off`, "-l", path.join(dir, "pg.log"), "-w", "start"]);
   const psql = (db: string, sql: string, user = "postgres") => run("psql", ["-X", "-q", "-h", sock, "-p", String(port), "-U", user, "-d", db, "-v", "ON_ERROR_STOP=1", "-c", sql]);
   psql("postgres", `CREATE ROLE ${PG_USER} LOGIN PASSWORD '${PG_PASSWORD}'`);
+  psql("postgres", `CREATE ROLE ${PG_TRUST_USER} LOGIN`);
   for (const db of [DB1, DB2]) psql("postgres", `CREATE DATABASE ${db} OWNER ${PG_USER}`);
   psql(
     DB1,
@@ -71,6 +75,7 @@ export async function startPg(dir: string): Promise<Pg> {
 line');`,
     PG_USER,
   );
+  psql(DB1, `GRANT SELECT ON ALL TABLES IN SCHEMA public TO ${PG_TRUST_USER}`, PG_USER);
   psql(DB2, "CREATE TABLE marker (v text); INSERT INTO marker VALUES ('second database');", PG_USER);
   return {
     bin,

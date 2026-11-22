@@ -11,7 +11,7 @@ import { expect, test } from "@playwright/test";
 import { AiWorker, UserKernel } from "./_mcp/kernel-conn";
 import { connectMcp } from "./_mcp/mcp-client";
 import { DEVHOST, ROOT } from "./kernel-host";
-import { DB1, PG_PASSWORD, PG_SKIP_REASON, PG_USER, startPg, type Pg } from "./pg-fixture";
+import { DB1, PG_PASSWORD, PG_SKIP_REASON, PG_TRUST_USER, startPg, type Pg } from "./pg-fixture";
 
 test.describe.configure({ mode: "serial" });
 test.setTimeout(120_000);
@@ -51,7 +51,7 @@ const open = () => connectMcp({ command: MCP_BIN, args: ["--data-dir", dataDir],
 test("setup: a data source and a saved query with a declared parameter; both visible to AI", async () => {
   await user.start();
   try {
-    ids.ds = await create(user, DS, { name: "Local shop", "body.mode": "direct", "body.host": "127.0.0.1", "body.port": String(pg.port), "body.database": DB1, "body.user": PG_USER, "body.password": PG_PASSWORD });
+    ids.ds = await create(user, DS, { name: "Local shop", "body.mode": "direct", "body.host": "127.0.0.1", "body.port": String(pg.port), "body.database": DB1, "body.user": PG_TRUST_USER }); // no password: the test PostgreSQL trusts local connections, and a password would sit in the devhost's in-memory secret store, which a headless worker (another process) cannot see — that case is for the manual acceptance with the real keychain
     ids.q = await create(user, SQLK, {
       name: "Numbers up to n",
       "body.sql": "-- @param n type=number required -- how many\nSELECT g AS id, 'row-' || g AS label FROM generate_series(1, :n::int) g ORDER BY g",
@@ -85,7 +85,7 @@ test("run with parameters works under MCP: rows come back, cut at the row limit;
     const r = await c.callTool("run", { id: ids.q, action: "run", params: { n: 3 } });
     expect(r.isError, r.text).toBe(false);
     expect(r.json.status, r.text + "\n" + dbq("SELECT title||' '||ifnull(error,'') FROM runs ORDER BY seq DESC LIMIT 3")).toBe("success");
-    expect(r.json.output.rows).toEqual([[1, "row-1"], [2, "row-2"], [3, "row-3"]]);
+    expect(r.json.output.rows).toEqual([["1", "row-1"], ["2", "row-2"], ["3", "row-3"]]); // a data source answers in text
     const big = await c.callTool("run", { id: ids.q, action: "run", params: { n: 80 } });
     expect(big.json.output.rows).toHaveLength(50);
     expect(big.json.output).toMatchObject({ truncated: true });
@@ -112,7 +112,7 @@ test("a statement that writes is stopped by the read-only execution, not by trus
   expect(pg.psql(DB1, "SELECT count(*) FROM keep", "postgres").trim()).toContain("1");
 });
 
-test("the raw AI connection still cannot read the data source's password (no secret in any output)", async () => {
+test("the raw AI connection sees no connection secrets in describe/run output", async () => {
   const w = await new AiWorker(dataDir, "e2e-sql").start();
   try {
     const out = JSON.stringify(await w.call("mcp.call", { name: "describe", arguments: { id: ids.ds } }).catch((e) => e.err));

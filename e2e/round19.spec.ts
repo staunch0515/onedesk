@@ -93,6 +93,15 @@ async function withRaw2<T>(client: string, fn: (w: AiWorker) => Promise<T>): Pro
     await w.stop();
   }
 }
+/** calls of ALL ai clients in the last minute that the rate limit counts (D451: audit-based, workspace-wide) */
+const windowCount = (): number =>
+  Number(
+    db(
+      `SELECT count(*) FROM audit WHERE op='mcp.call' AND (actor='ai' OR actor LIKE 'ai:%') AND at > ${Date.now() - 60_000} AND COALESCE(json_extract(summary,'$.reason'),'') NOT IN ('aiRateLimit','aiOff')`,
+    ).trim(),
+  );
+/** the limit that leaves exactly \`room\` calls in the current window */
+const roomFor = (room: number) => windowCount() + room;
 const setPolicy = (u: UserKernel, p: Record<string, unknown>) => Promise.all(Object.entries(p).map(([name, value]) => u.rpc("workspace.setConfig", { name: `mcp.${name}`, value: String(value) })));
 const create = async (u: UserKernel, name: string, extra: Record<string, unknown> = {}) => (await u.rpc("page.save", { target: `new:${KIND}`, changes: { name, ...extra } })).page.resourceId as string;
 const setVisible = (u: UserKernel, id: string, visible: boolean, withChildren = false) => u.rpc("resource.setAiVisible", { id, visible, withChildren });
@@ -159,7 +168,7 @@ test.describe("default is all off", () => {
   });
 
   test("开了总开关但资源默认不可见：search 搜不到，describe/run 读不到（notFound，不泄露存在）", async () => {
-    await asUser((u) => setPolicy(u, { enabled: true }));
+    await asUser((u) => setPolicy(u, { enabled: true, rate_per_minute: 600 })); // D451: the window is workspace-wide, so the many calls of this spec need room
     await withMcp(async (c) => {
       expect((await c.callTool("search", { query: "Alpha" })).json.items).toEqual([]);
       for (const [tool, args] of [
@@ -397,7 +406,7 @@ test.describe("refusals: the ai operator can never ...", () => {
       expect((await u.rpc("resource.get", { id: ids.alpha })).name).toBe("Alpha item");
       expect((await u.rpc("resource.get", { id: ids.beta })).aiVisible ?? false).toBe(false);
       expect((await u.rpc("mcp.status")).enabled).toBe(true);
-      expect((await u.rpc("mcp.status")).ratePerMinute).toBe(30);
+      expect((await u.rpc("mcp.status")).ratePerMinute).toBe(600);
       const plugins = JSON.stringify(await u.rpc("tree.children", { tree: "plugins" }));
       expect(plugins).toContain("org.test.mcp");
       expect((await u.rpc("secrets.list")).map((x: { name: string }) => x.name)).not.toContain("r19-key");
@@ -473,27 +482,28 @@ test.describe("limits", () => {
       expect(await read()).toMatchObject({ ratePerMinute: 600, maxRows: 2000 });
       await setPolicy(u, { rate_per_minute: "lots", max_rows: "many" });
       expect(await read()).toMatchObject({ ratePerMinute: 30, maxRows: 200 });
-      await setPolicy(u, { rate_per_minute: 30, max_rows: 200 });
+      await setPolicy(u, { rate_per_minute: 600, max_rows: 200 });
     });
   });
 
-  test("每分钟上限：上限 3，连调 4 次，第 4 次 denied/aiRateLimit（带 retryAfterMs）；被限流的也进审计；别的客户端名不受影响", async () => {
-    await asUser((u) => setPolicy(u, { rate_per_minute: 3 }));
+  test("每分钟上限：上限 3，连调 4 次，第 4 次 denied/aiRateLimit（带 retryAfterMs）；被限流的也进审计；换个客户端名也不能多拿一个窗口（D451，全工作区合计）", async () => {
+    const limit = roomFor(3);
+    await asUser((u) => setPolicy(u, { rate_per_minute: limit }));
     await withMcp(async (c) => {
       for (let i = 0; i < 3; i++) expect((await c.callTool("search", { query: "Alpha" })).isError, `call ${i + 1}`).toBe(false);
       const r = await c.callTool("search", { query: "Alpha" });
       expect(r.isError).toBe(true);
-      expect(r.json).toMatchObject({ code: "denied", params: { reason: "aiRateLimit", limit: "3" } });
+      expect(r.json).toMatchObject({ code: "denied", params: { reason: "aiRateLimit", limit: String(limit) } });
       expect(Number(r.json.params.retryAfterMs)).toBeGreaterThan(0);
       expect((await c.listTools()).length).toBeGreaterThan(0); // tools/list is not counted
     });
     const row = lastSummary("search");
     expect(row).toMatchObject({ ok: false, code: "denied", reason: "aiRateLimit" });
     await withRaw(async (w) => {
-      // another client name has its own window
-      expect((await w.call("mcp.call", { name: "search", arguments: { query: "Alpha" } })).content.items).toHaveLength(1);
+      // D451: the window is the workspace's, all AI clients together — another client name buys no new window
+      await expectErr(w.call("mcp.call", { name: "search", arguments: { query: "Alpha" } }), "denied", "aiRateLimit");
     });
-    await asUser((u) => setPolicy(u, { rate_per_minute: 30 }));
+    await asUser((u) => setPolicy(u, { rate_per_minute: 600 }));
   });
 });
 
@@ -672,7 +682,7 @@ test.describe("D450: runs for an AI, truncation, rate limit across restarts", ()
   });
 
   test("限流在无界面进程重启后仍然有效（按审计算，同一客户端名）", async () => {
-    await asUser((u) => setPolicy(u, { rate_per_minute: 3 }));
+    await asUser((u) => setPolicy(u, { rate_per_minute: roomFor(3) }));
     const call = (w: AiWorker) => w.call("mcp.call", { name: "search", arguments: { query: "Alpha" } });
     await withRaw2("e2e-restart", async (w) => {
       for (let i = 0; i < 3; i++) await call(w);
@@ -684,8 +694,27 @@ test.describe("D450: runs for an AI, truncation, rate limit across restarts", ()
     // reported to the coordinator (a client that restarts itself gets a fresh window).
   });
 
+  test("限流两个客户端合计：上限留 4 次，客户端 A 用 2 次、客户端 B 用 2 次，A 再来 1 次被拒", async () => {
+    await asUser((u) => setPolicy(u, { rate_per_minute: roomFor(4) }));
+    const call = (w: AiWorker) => w.call("mcp.call", { name: "search", arguments: { query: "Alpha" } });
+    // one worker per workspace: the two clients take turns
+    await withRaw2("e2e-client-a", async (a) => {
+      await call(a);
+      await call(a);
+    });
+    await withRaw2("e2e-client-b", async (b) => {
+      await call(b);
+      await call(b);
+      await expectErr(call(b), "denied", "aiRateLimit"); // B has used only 2 of its own, the workspace's 4 are gone
+    });
+    await withRaw2("e2e-client-a", async (a) => {
+      await expectErr(call(a), "denied", "aiRateLimit");
+    });
+    await asUser((u) => setPolicy(u, { rate_per_minute: 600 })); // the window above is full; later tests are not about the limit
+  });
+
   test("限流在并发下也成立：上限 4，同时发 12 个 → 恰好 4 个成功，其余 aiRateLimit", async () => {
-    await asUser((u) => setPolicy(u, { rate_per_minute: 4 }));
+    await asUser((u) => setPolicy(u, { rate_per_minute: roomFor(4) }));
     await withRaw2("e2e-concurrent", async (w) => {
       const r = await Promise.all(
         Array.from({ length: 12 }, () =>
@@ -698,7 +727,7 @@ test.describe("D450: runs for an AI, truncation, rate limit across restarts", ()
       expect(r.filter((x) => x === "ok")).toHaveLength(4);
       expect(r.filter((x) => x === "aiRateLimit")).toHaveLength(8);
     });
-    await asUser((u) => setPolicy(u, { rate_per_minute: 30 }));
+    await asUser((u) => setPolicy(u, { rate_per_minute: 600 }));
   });
 });
 

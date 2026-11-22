@@ -66,7 +66,20 @@ export class AiWorker {
     private client = "e2e-raw",
     private workspace = "default",
   ) {}
-  async start() {
+  async start(): Promise<this> {
+    // the workspace lock may still be held for a moment by a headless worker that is leaving (exit code 3): wait for it like the app does
+    for (let i = 0; ; i++) {
+      try {
+        return await this.startOnce();
+      } catch (e) {
+        if (i >= 40 || !/worker exited 3/.test(String((e as Error).message))) throw e;
+        await new Promise((r) => setTimeout(r, 250));
+      }
+    }
+  }
+  private async startOnce() {
+    this.stderr = "";
+    this.exitCode = null;
     const socketPath = path.join(tmpdir(), `od-r19-${process.pid}-${Date.now()}.sock`);
     const bin = process.env.ONEDESK_WORKER_BIN ?? path.join(ROOT, "target/debug/onedesk-worker");
     this.proc = spawn(bin, ["--workspace", path.join(this.dataDir, "workspaces", this.workspace), "--plugins", path.join(this.dataDir, "plugins"), "--socket", socketPath, "--ai-client", this.client], {
