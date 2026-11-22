@@ -508,7 +508,7 @@ async fn run_gives_the_table_and_records_the_run_as_the_ais() {
     let r = call_ok(&c, "run", json!({ "id": q, "action": "read", "params": { "n": 3, "mode": "a" } })).await;
     assert_eq!(r["status"], "success", "{r}");
     assert_eq!(r["output"]["type"], "table");
-    assert_eq!(r["output"]["columns"], json!(["a", "b"]));
+    assert_eq!(r["output"]["columns"], json!(["A", "B"]));
     assert_eq!(r["output"]["rows"], json!([[0, "v0"], [1, "v1"], [2, "v2"]]));
     assert_eq!((r["output"]["total"].clone(), r["output"]["truncated"].clone()), (json!(3), json!(false)));
     let run = db(&env).query_row("SELECT actor, source, in_task_panel, params FROM runs WHERE id = ?1", [r["runId"].as_str().unwrap()], |x| {

@@ -113,7 +113,7 @@
   ```ts
   McpRun = { runId: string, status: "success"|"error"|"cancelled"|"running",
              output?: McpOutput, error?: { code: string, message?: string }, durationMs?: number }
-  McpOutput = { type: "table", columns: string[], rows: any[][], total: number, offset: number, truncated: boolean }
+  McpOutput = { type: "table", columns: string[] /* readable names: label, else key; repeats get _2, _3 */, rows: any[][], total: number, offset: number, truncated: boolean }
             | { type: "text", text: string, truncated: boolean, totalChars: number }
             | { type: "link", label: string, target: string } | { type: "none" }
   ```

@@ -268,12 +268,41 @@ fn general_tools() -> Vec<McpTool> {
 }
 
 /// Table output → `McpOutput`, from `offset` at most `max_rows` rows, cells cut, the whole under the byte limit.
+/// Column names for the client: the readable `label`, else the key; never a bare key when a label
+/// exists. A label that is an object (per-language texts) gives its `en`, else its first text.
+/// Empty names fall back to the key; repeated names get `_2`, `_3`… so they stay distinct.
+fn column_names(columns: Option<&Value>) -> Vec<Value> {
+    let mut seen: std::collections::HashMap<String, u32> = std::collections::HashMap::new();
+    let mut out = Vec::new();
+    for (i, x) in columns.and_then(Value::as_array).into_iter().flatten().enumerate() {
+        let text = |v: Option<&Value>| -> Option<String> {
+            match v? {
+                Value::String(s) => Some(s.trim().to_string()),
+                Value::Object(m) => m
+                    .get("en")
+                    .and_then(Value::as_str)
+                    .or_else(|| m.values().find_map(Value::as_str))
+                    .map(|s| s.trim().to_string()),
+                _ => None,
+            }
+            .filter(|s| !s.is_empty())
+        };
+        let base = text(x.get("label")).or_else(|| text(x.get("key"))).unwrap_or_else(|| format!("column_{}", i + 1));
+        let mut name = base.clone();
+        let mut k = seen.get(&base).copied().unwrap_or(0);
+        while seen.contains_key(&name) {
+            k += 1;
+            name = format!("{base}_{}", k + 1);
+        }
+        seen.insert(base.clone(), k);
+        seen.insert(name.clone(), 0);
+        out.push(Value::String(name));
+    }
+    out
+}
+
 fn table_out(o: &Value, offset: usize, max_rows: usize) -> (Value, bool, u64) {
-    let columns: Vec<Value> = o
-        .get("columns")
-        .and_then(Value::as_array)
-        .map(|c| c.iter().map(|x| x.get("key").cloned().unwrap_or(Value::Null)).collect())
-        .unwrap_or_default();
+    let columns = column_names(o.get("columns"));
     let all = o.get("rows").and_then(Value::as_array).cloned().unwrap_or_default();
     let total = o.get("total").and_then(Value::as_u64).unwrap_or(all.len() as u64);
     let mut cut_cell = false;
@@ -977,6 +1006,23 @@ mod tests {
         assert_eq!(s["q"].as_str().unwrap().chars().count(), 81);
         assert!(!s.to_string().contains("hunter2"));
         assert!(s["deep"]["a"].as_str().unwrap().contains("keys"));
+    }
+
+    #[test]
+    fn column_names_use_labels_not_keys() {
+        let n = |v: Value| column_names(Some(&v));
+        assert_eq!(n(json!([{ "key": "c0", "label": "id" }, { "key": "c1", "label": "label" }])), vec![json!("id"), json!("label")]);
+        // Repeated labels get a counter.
+        assert_eq!(n(json!([{ "key": "c0", "label": "id" }, { "key": "c1", "label": "id" }, { "key": "c2", "label": "id" }])), vec![json!("id"), json!("id_2"), json!("id_3")]);
+        // A later column that already looks like the counter name stays distinct.
+        assert_eq!(n(json!([{ "key": "a", "label": "id" }, { "key": "b", "label": "id_2" }, { "key": "c", "label": "id" }])), vec![json!("id"), json!("id_2"), json!("id_3")]);
+        // No label, empty label or blank label: the key.
+        assert_eq!(n(json!([{ "key": "k1" }, { "key": "k2", "label": "" }, { "key": "k3", "label": "  " }])), vec![json!("k1"), json!("k2"), json!("k3")]);
+        // Per-language object: English, else the first text; never the key when there is text.
+        assert_eq!(n(json!([{ "key": "c0", "label": { "zh": "名称", "en": "Name" } }, { "key": "c1", "label": { "zh": "年龄" } }])), vec![json!("Name"), json!("年龄")]);
+        // Nothing usable at all: a position name, not null.
+        assert_eq!(n(json!([{}])), vec![json!("column_1")]);
+        assert!(column_names(None).is_empty());
     }
 
     #[test]
