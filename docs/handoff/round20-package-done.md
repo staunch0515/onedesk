@@ -40,3 +40,7 @@
 
 ## 补：用户手动验证（2026-11-23）
 用户在 `.app` 里 `pkill -9` worker 后，窗口正常恢复（用户口头确认）。应用截图由用户手动放入 `docs/screenshots/app/`，上面“未完成”两项以此为准。
+
+## 补：审查修正
+- `build-app.sh` 的 `--config` 是 merge patch：给默认键 `../target/bundle-inputs/plugins` 写 `null`，只留 `$tgt/bundle-inputs/plugins`（`.app` 里 `Resources/plugins` 仍 22 个）。
+- 发布二进制去掉构建机路径：脚本导出 `RUSTFLAGS` 的 `--remap-path-prefix`（`~/.cargo`、`~/.rustup`、sysroot、检出目录）；`src-tauri/src/lib.rs` 里 `CARGO_MANIFEST_DIR` 回退改为仅 debug 编译（`#[cfg(debug_assertions)]`）。脚本末尾 `strings | grep /Users/` 计数，现在为 0（之前 447+）。会改变 release 编译指纹，首次整包重编约 10 分钟。
