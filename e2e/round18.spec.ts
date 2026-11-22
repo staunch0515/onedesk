@@ -747,15 +747,17 @@ test("shell: the result area shows an Analyze button on a table; the preview pag
   await expect(page.getByText(/tokens will be sent/i).first()).toBeVisible({ timeout: 15_000 });
   await expect(page.getByText(/Fake Anthropic/).first()).toBeVisible();
   await page.screenshot({ path: path.join(OUT, "round18-analysis-preview.png") });
+  const area = page.getByRole("region", { name: "Result area" });
   ai.set({ kind: "slow", pieces: ["## Summary\n\n", "- first point\n", "- **second** point\n", "\nDone."], delayMs: 1500 });
   await page.getByRole("button", { name: "Send" }).first().click();
-  await expect(page.locator("li", { hasText: "first point" })).toBeVisible({ timeout: 20_000 }); // Markdown: a real list item, not the raw text
+  await expect(area.locator("li", { hasText: "first point" })).toBeVisible({ timeout: 20_000 }); // Markdown: a real list item, not the raw text
   await page.screenshot({ path: path.join(OUT, "round18-streaming-answer.png") });
-  await expect(page.locator("p", { hasText: "Done." })).toBeVisible({ timeout: 20_000 });
+  // the answer is in the result area (the run output) and, once stored, on the page body too: look in the result area
+  await expect(area.locator("p", { hasText: "Done." })).toBeVisible({ timeout: 20_000 });
   await expect(page.getByText(/Answered by/).first()).toBeVisible({ timeout: 20_000 }); // the run has ended: the final output replaced the partial one
   await page.screenshot({ path: path.join(OUT, "round18-answer.png") });
   await findingA("the finished answer is shown as readable Markdown, like the partial one was", async () => {
-    await expect(page.getByRole("heading", { name: "Summary" })).toBeVisible({ timeout: 2000 });
+    await expect(area.getByRole("heading", { name: "Summary" })).toBeVisible({ timeout: 2000 });
   });
 });
 

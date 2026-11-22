@@ -92,3 +92,17 @@
 +    "resources": true
    },
 ```
+
+
+---
+
+# 第三轮（合并审查修复后）· 结果
+
+devhost：用合并后的 `claude/onedesk-r18` 重构建。**注意：内核跑在 `onedesk-worker` 里，只重建 `onedesk-host` 不会更新 worker**（共享 target 里的 worker 是别的分支更早构建的，表现为“unknown field `format`”）。要同时 `cargo build -p onedesk-worker -p onedesk-host`，并把 `onedesk-devhost` 和 `onedesk-worker` 拷到一个私有目录再用 `ONEDESK_DEVHOST_BIN=…`、`E2E_PORT=1437`。
+
+- `round18.spec.ts`：23 个用例，**22 通过、1 失败**（最后一个“没有已知缺陷断言失败”汇总用例）。去掉了 `R18_SOFT`：已知缺陷的断言现在照常执行，失败只记入汇总，由最后一个用例统一报出，不阻断依赖状态的后续用例。
+- 唯一的真缺陷：**`error.connectionMissingPage` 文字键缺失**（`plugins/org.onedesk.ai/main.js:110` 用 `error.connectionMissing${via}`，`via` 为 `Page`，三份 `locales/*.json` 只有 `Env`/`Default`/`Settings`），用户在分析页选了不存在的连接时看到的是裸键 `error.connectionMissingPage`。归 r18-workbench。
+- 新增并通过的审查用例：#1（工作台列出并用服务商连接发送）、#2（资料索引非空）、#3（分析时先存草稿附属内容，首次“保存分析”成功，删运行连带删）、#5（`uses` 列入权限）、#6（调用方 `confirm:true` 不能绕过预览；发送的正是预览里的文字；`context` 里的行和非标识符名字不外传）、#7（`passwordhash`/`accesstoken`/`emailaddress`/`密码`/`手机号`/`電話番号`/`ApiKey` 被遮；电话号码被遮）。#8 的行为（`ai.policy=off` 时点击才报错）也测了：环境取来源运行的环境（D444④）。
+- 旧缺陷复核：#1、#2、#3（审查号）、断流（现在约 150 ms 以网络错误结束，用原始 TCP 服务器的 4 种断法验证；fake-ai 的 `drop` 用例在 round18 里通过）、点“分析”落空白页（已修）、回答最终以 Markdown 显示（已修）都已通过。**回答在页面正文和结果区各显示一次是预期**（页面正文显示存起来的回答供“保存分析”，结果区显示这次运行的输出）；用例改成在 “Result area” 区域里定位。
+- 抽查整套：`round17.spec.ts` 44 通过；`round16.spec.ts` + `workbench.spec.ts` + `round12.spec.ts` 共 76 个用例 75 通过、1 个按原本就是 skip；`plugins/_testing` 的 vitest 通过。**没有跑完 `pnpm e2e` 的全部**（一次跑超过 10 分钟，被我停掉）；抽查时重写的旧基准截图已还原。
+- 译文：补了 `kernel.permission.uses`、`result.elapsedFor`、`result.action.disabled.*`、6 条 `kernel.error.reason.*`；`view-check.ts` 允许 `output.format` 与 `data`。
