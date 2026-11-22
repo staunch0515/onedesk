@@ -10,7 +10,7 @@
 
 export const SOURCE_KIND = "org.onedesk.datasource:source";
 export const DATASOURCE = "org.onedesk.datasource";
-export const AI = "org.onedesk.ai";
+export const GENERATE = "onedesk.ai.generate/1";
 const SENT_KEY = "lastSent";
 const PROPOSAL_KEY = "aiProposal";
 const TYPES = ["text", "number", "date", "datetime", "time", "enum"];
@@ -304,15 +304,30 @@ export function proposalView(ctx, p) {
   return view;
 }
 
+// Who writes SQL: the plugins that implement the generate interface (none → the feature is off, said on the page).
+async function generators(ctx) {
+  try {
+    return (await ctx.host.interfaces.list(GENERATE)) || [];
+  } catch (e) {
+    return [];
+  }
+}
+
 async function callGenerate(ctx, instruction, sourceId, sql, confirm) {
+  const impls = await generators(ctx);
+  if (impls.length === 0) throw new Error(tr(ctx, "ai.unavailable"));
+  // the interface is called with a resource of the implementing kind (its settings resource)
+  const found = await ctx.host.resources.search({ kinds: [impls[0].kind], limit: 1 });
+  const hit = Array.isArray(found) ? found[0] : found && found.items ? found.items[0] : null;
+  if (!hit) throw new Error(tr(ctx, "ai.noSettings"));
   const input = { kind: "sql", instruction, context: { tables: tablesOf(sql) } };
   if (sourceId) input.resource = sourceId;
   if (confirm) input.confirm = true;
   try {
-    const ret = await ctx.host.actions.call(`${AI}:generate`, input, {});
+    const ret = await ctx.host.interfaces.call(GENERATE, "generate", input, { resource: hit.id });
     return ret && ret.data ? ret.data : ret; // D441
   } catch (e) {
-    if (e && e.params && e.params.reason === "notExported") throw new Error(tr(ctx, "ai.missing"));
+    if (e && e.code === "invalid" && e.params && (e.params.reason === "noImplementation" || e.params.reason === "wrongInterface")) throw new Error(tr(ctx, "ai.unavailable"));
     throw e;
   }
 }
@@ -391,7 +406,9 @@ export default {
           layout: "stack",
           fields: [{ name: "sql", label: ctx.t("field.sql"), kind: "code", bind: "body.sql", fill: true, language: "sql", placeholder: ctx.t("field.sql.placeholder"), ...ro }],
         });
-        if (!ctx.run) {
+        if (!ctx.run && (await generators(ctx)).length === 0) {
+          view.push({ type: "text", id: "aiOff", text: tr(ctx, "ai.unavailable"), tone: "muted" });
+        } else if (!ctx.run) {
           view.push({
             type: "form",
             id: "ai",
