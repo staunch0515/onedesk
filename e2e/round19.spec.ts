@@ -19,7 +19,7 @@ import path from "node:path";
 import { expect, test } from "@playwright/test";
 import { connectMcp, type SpawnSpec, type StdioMcpClient } from "./_mcp/mcp-client";
 import { AiWorker, RpcError, UserKernel } from "./_mcp/kernel-conn";
-import { DEVHOST, ROOT } from "./kernel-host";
+import { DEVHOST, openKernel, OUT, ROOT, ui } from "./kernel-host";
 
 test.describe.configure({ mode: "serial" });
 test.setTimeout(180_000);
@@ -647,11 +647,100 @@ test.describe("connection: app closed (headless) / app open", () => {
 
 /* ------------------------------------------------- 8. what stays open (needs the shell / the real app) */
 
-test.describe("shell and real app (phase 2b: after r19-shell is merged)", () => {
-  test.fixme("外壳：信息面板“对 AI 可见”开关切换后 kernel 字段随之变化（界面操作 → rpc 回读）；分组“含下级”；截图 docs/screenshots/round19-visible.png", async () => {});
-  test.fixme("工作区 AI 设置页：总开关、每分钟上限、行数上限、允许自由查询、AI 用的环境；改动后 mcp.status 回读一致；截图 round19-settings.png", async () => {});
-  test.fixme("审计页按操作者 AI 过滤（界面）：只剩 ai 的行，文字来自新键；截图 round19-audit.png", async () => {});
-  test.fixme("给用户复制到 Claude Desktop 配置的说明：JSON 可解析，command 指向 .app 里的 onedesk-mcp（app.mcpInfo），点复制后剪贴板与显示一致", async () => {});
-  test.fixme("应用开着时 onedesk-mcp 经 mcp.sock 连主进程（操作者 ai，按用户校验）；应用等无界面进程放锁：需要 .app，手动验收（round19-acceptance）", async () => {});
-  test.fixme("run 超过 mcp_wait（默认 30 秒）返回 status=running，再 get_run 取结果：需要慢动作夹具，Rust 只有代码路径，待补", async () => {});
+test.describe("shell (browser against the devhost)", () => {
+  test.use({ viewport: { width: 1280, height: 800 }, locale: "en-US" });
+
+  test("信息面板“对 AI 可见”开关 → kernel 字段随之变化；AI 设置页读写 mcp 策略；Claude Desktop 配置可解析；审计页“仅 AI”过滤", async ({ page }) => {
+    test.setTimeout(90_000);
+    page.setDefaultTimeout(8_000);
+    await user.start();
+    try {
+      await openKernel(page, user.host);
+      const aiVisible = async (id: string) => Boolean((await user.rpc("resource.get", { id })).aiVisible);
+      await ui.node(page, "Probe group").waitFor();
+
+      // --- the switch in the info panel: one resource, then a group (with everything below)
+      await ui.node(page, "Beta item").click();
+      if (!(await page.getByRole("complementary", { name: "Info" }).isVisible().catch(() => false))) {
+        await page.keyboard.press("ControlOrMeta+Shift+p");
+        await page.getByPlaceholder("Type a command").fill("info panel");
+        await page.getByRole("option", { name: "Show or hide info panel" }).click();
+      }
+      const sw = page.getByRole("switch", { name: "Visible to AI" });
+      await expect(sw).not.toBeChecked();
+      await sw.click();
+      await expect.poll(() => aiVisible(ids.beta)).toBe(true);
+      await sw.click();
+      await expect.poll(() => aiVisible(ids.beta)).toBe(false);
+      // (a group has no page of its own in the window, so the "including everything below" switch is covered by the shell's
+      // vitest and, against the kernel, by the group case above)
+      await sw.click();
+      await expect.poll(() => aiVisible(ids.beta)).toBe(true);
+      await page.screenshot({ path: path.join(OUT, "round19-visible.png") });
+      await sw.click();
+      await expect.poll(() => aiVisible(ids.beta)).toBe(false);
+
+      // --- the AI access page
+      await page.keyboard.press("ControlOrMeta+Shift+p");
+      await page.getByPlaceholder("Type a command").fill("AI access");
+      await page.getByRole("option", { name: "AI access" }).click();
+      const enabled = page.getByRole("switch", { name: "Allow AI clients" });
+      await expect(enabled).toBeChecked(); // the earlier tests switched the policy on
+      await enabled.click();
+      await expect.poll(async () => (await user.rpc("mcp.status")).enabled).toBe(false);
+      await enabled.click();
+      await expect.poll(async () => (await user.rpc("mcp.status")).enabled).toBe(true);
+      const rate = page.getByRole("spinbutton", { name: "Calls per minute" }).or(page.getByRole("textbox", { name: "Calls per minute" }));
+      await rate.fill("12");
+      await rate.blur();
+      await expect.poll(async () => (await user.rpc("mcp.status")).ratePerMinute).toBe(12);
+      await rate.fill("0"); // out of range: the field says so; leaving it puts back what is stored
+      await expect(page.getByText("Enter a whole number from 1 to 600.")).toBeVisible();
+      await rate.blur();
+      await expect(rate).toHaveValue("12");
+      expect((await user.rpc("mcp.status")).ratePerMinute).toBe(12);
+      await rate.fill("30");
+      await rate.blur();
+      await expect.poll(async () => (await user.rpc("mcp.status")).ratePerMinute).toBe(30);
+      await page.getByRole("switch", { name: "Allow free queries" }).click();
+      await expect.poll(async () => (await user.rpc("mcp.status")).allowFreeQuery).toBe(true);
+      await page.getByRole("switch", { name: "Allow free queries" }).click();
+      await expect.poll(async () => (await user.rpc("mcp.status")).allowFreeQuery).toBe(false);
+      // the copy-able text for Claude Desktop: valid JSON that starts onedesk-mcp
+      const snippet = await page.getByRole("textbox", { name: "Configuration" }).inputValue();
+      const cfg = JSON.parse(snippet);
+      expect(JSON.stringify(cfg)).toContain("onedesk-mcp");
+      expect(JSON.stringify(cfg)).toContain("command");
+      expect(await page.getByRole("textbox", { name: "Program" }).inputValue()).toContain("onedesk-mcp");
+      await page.screenshot({ path: path.join(OUT, "round19-settings.png") });
+
+      // --- the audit page, filtered to AI
+      await page.keyboard.press("ControlOrMeta+Shift+p");
+      await page.getByPlaceholder("Type a command").fill("audit");
+      await page.getByRole("option", { name: "Open audit log" }).click();
+      const rows = page.getByRole("table").locator("tbody tr");
+      await expect(rows.first()).toBeVisible();
+      await page.getByRole("combobox", { name: "Source" }).click();
+      await page.getByRole("option", { name: "AI only" }).click();
+      await expect(rows.first()).toBeVisible();
+      const aiOnly = async () => (await rows.allInnerTexts()).map((t) => t.trim()).filter(Boolean);
+      await expect.poll(async () => (await aiOnly()).length).toBeGreaterThan(3);
+      await expect.poll(async () => (await aiOnly()).every((t) => /AI tool call|AI request refused/.test(t))).toBe(true); // the user's own rows are gone
+      await page.screenshot({ path: path.join(OUT, "round19-audit.png") });
+    } finally {
+      await user.stop();
+    }
+  });
+
+  test("界面里的错误文字：AI 的拒绝码有英语文字（kernel.error.reason.*）", async () => {
+    // the shell test (kernel-texts.test.ts) lists every reason the kernel can send; here: the codes this spec provoked are all covered
+    const provoked = ["aiOff", "aiRateLimit", "aiNotAllowed", "aiOnly", "notAiAction", "aiEnvMissing", "badArguments"];
+    const { enUS } = await import("../src/workbench/i18n/en-US");
+    for (const r of provoked) expect((enUS as Record<string, string>)[`kernel.error.reason.${r}`], r).toBeTruthy();
+  });
+});
+
+test.describe("what stays manual / later", () => {
+  test.fixme("应用开着时 onedesk-mcp 经 mcp.sock 连主进程（操作者 ai，按用户校验）；应用等无界面进程放锁：devhost 不含 mcp.sock，需要 .app，手动验收（round19-acceptance）", async () => {});
+  test.fixme("run 超过 mcp_wait（默认 30 秒）返回 status=running，再 get_run 取结果：需要慢动作夹具（沙箱里没有计时器），Rust 只有代码路径，待补", async () => {});
 });
