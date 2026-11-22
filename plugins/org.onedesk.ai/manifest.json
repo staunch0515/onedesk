@@ -15,6 +15,9 @@
   "uses": [
     "onedesk.ai.chat/1"
   ],
+  "activation": [
+    "workspace.opened"
+  ],
   "exports": {
     "actions": [
       "analyze",

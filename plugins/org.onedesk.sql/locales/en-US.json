@@ -67,6 +67,6 @@
   "ai.cannotAccept": "This proposal cannot be accepted.",
   "ai.accepted": "Put in the editor. Not saved yet.",
   "ai.discarded": "Proposal discarded.",
-  "ai.noSettings": "Create “AI workbench settings” (New → AI workbench settings) and choose a connection first.",
+  "ai.noSettings": "The AI workbench settings do not exist yet. Reopen the workspace, or press “Analyze” on any result once; they are created automatically.",
   "ai.unavailable": "Write with AI is not available: no AI workbench is installed."
 }

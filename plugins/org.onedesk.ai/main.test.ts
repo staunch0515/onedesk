@@ -162,6 +162,30 @@ describe("ai: policy and connection (K10)", () => {
   });
 });
 
+describe("ai: the settings resource is kept ready", () => {
+  it("is created when the workspace opens, once; an existing one is kept", async () => {
+    let handler: any;
+    const events = { on: (n: string, h: unknown) => void (n === "workspace.opened" && (handler = h)) };
+    (plugin as any).activate({ pages: { handle() {} }, actions: { handle() {} }, kinds: { handle() {} }, events });
+    expect(manifest.activation).toEqual(["workspace.opened"]);
+    const host = fakeHost();
+    await handler(ctxOf(host));
+    expect(host.resources.create).toHaveBeenCalledWith({ kind: "settings", name: "AI workbench settings", body: { connection: "" } });
+    const had = fakeHost();
+    had.resources.list = vi.fn(async () => [{ id: "set1" }]);
+    await handler(ctxOf(had));
+    expect(had.resources.create).not.toHaveBeenCalled();
+    const broken = fakeHost();
+    broken.resources.list = vi.fn(async () => { throw hostError("denied"); });
+    await expect(handler(ctxOf(broken))).resolves.toBeUndefined();
+  });
+  it("Analyze makes one again if the user deleted it", async () => {
+    const host = fakeHost();
+    await A(host, "analyze", { runId: "run1" });
+    expect(host.resources.create.mock.calls.map((c: any) => c[0].kind)).toEqual(["settings", "analysis"]);
+  });
+});
+
 describe("ai: analyze (K1) and the preview page (K3)", () => {
   it("analyze reads the run's result (only now), builds a masked draft and opens it; nothing is sent", async () => {
     const host = fakeHost();
@@ -170,8 +194,7 @@ describe("ai: analyze (K1) and the preview page (K3)", () => {
     expect(host.interfaces.call).not.toHaveBeenCalled();
     expect(checkActionResult(res)).toEqual([]);
     expect(res.output).toEqual({ type: "link", label: "Analysis " + new Date().toISOString().slice(0, 10), target: "resource:a1" });
-    const body = host.resources.create.mock.calls[0][0].body;
-    expect(host.resources.create.mock.calls[0][0].kind).toBe("analysis");
+    const body = host.resources.create.mock.calls.map((c: any) => c[0]).find((r: any) => r.kind === "analysis").body;
     expect(body.request).toContain("Masked columns: Email, apiKey");
     expect(body.request).not.toMatch(/a@b\.com|4111/);
     expect(body.runId).toBe("run1");
@@ -183,7 +206,7 @@ describe("ai: analyze (K1) and the preview page (K3)", () => {
   it("uses the settings for rows, cell length and the user's sensitive columns", async () => {
     const host = fakeHost({}, { settings: { maxRows: "1", maxCell: "5", sensitiveColumns: "note" } });
     await A(host, "analyze", { runId: "run1" });
-    const req = host.resources.create.mock.calls[0][0].body.request;
+    const req = host.resources.create.mock.calls.map((c: any) => c[0]).find((r: any) => r.kind === "analysis").body.request;
     expect(req).toContain("Only the first 1 of 2 rows");
     expect(req).toContain("Masked columns: Email, note, apiKey");
   });

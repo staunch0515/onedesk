@@ -127,6 +127,16 @@ export async function settingsConnection(ctx) {
   return "";
 }
 
+// The settings resource the generate interface is called through: one is kept ready (created when the workspace
+// opens, and again by "Analyze" if the user deleted it). Returns its id.
+export async function ensureSettings(ctx) {
+  const all = (await ctx.host.resources.list({ kind: `${PLUGIN}:${KIND_SETTINGS}` })) || [];
+  const list = Array.isArray(all) ? all : all.items || [];
+  if (list.length > 0) return list[0].id;
+  const made = await ctx.host.resources.create({ kind: KIND_SETTINGS, name: tr(ctx, "settings.new"), body: { connection: "" } });
+  return made.id;
+}
+
 // Every connection resource of every plugin that implements the chat interface (for the picker).
 export async function connectionList(ctx) {
   const out = [];
@@ -505,6 +515,17 @@ export async function syncDocs(ctx) {
 
 export default {
   activate(host) {
+    // The workspace opened: make sure the settings resource exists (no network, no content involved).
+    if (host.events && typeof host.events.on === "function") {
+      host.events.on("workspace.opened", async (ctx) => {
+        try {
+          await ensureSettings(ctx);
+        } catch (e) {
+          /* a failed start-up step must not break the workspace; "Analyze" tries again */
+        }
+      });
+    }
+
     host.pages.handle("settings", {
       async render(ctx) {
         const pick = bodyOf(ctx);
@@ -580,6 +601,7 @@ export default {
     // K1 (result action): the user clicked "Analyze" on a run's result → a draft to look at, nothing sent.
     host.actions.handle("analyze", async (ctx, input) => {
       await requireAllowed(ctx);
+      await ensureSettings(ctx).catch(() => undefined);
       const runId = String((input && input.runId) || (ctx.args && ctx.args.runId) || "");
       if (!runId) throw new Error(tr(ctx, "error.noRun"));
       const read = await ctx.host.runs.read(runId);
