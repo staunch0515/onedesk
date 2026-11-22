@@ -44,7 +44,7 @@ if (existsSync(pluginsDir)) {
 }
 
 // ---- 1: kernel-side sources know no concrete plugin
-const BANNED_WORDS = ["note", "sql", "postgres", "postgresql", "ssh", "docker", "psql", "video", "ffmpeg", "bash", "pg_dump", "pg_restore", "disk-file"]; // round 17: + bash, pg_dump, pg_restore, disk-file (ssh and docker were already here)
+const BANNED_WORDS = ["note", "sql", "postgres", "postgresql", "ssh", "docker", "psql", "video", "ffmpeg", "bash", "pg_dump", "pg_restore", "disk-file", "anthropic", "ollama", "claude", "ai", "sse", "ndjson"]; // round 18: + anthropic, ollama, claude, ai, sse, ndjson (whole words, case-insensitive; `ai` also matches the id segment in org.onedesk.ai). round 17: + bash, pg_dump, pg_restore, disk-file (ssh and docker were already here)
 const wordRe = new RegExp(`(?<![A-Za-z0-9_])(${BANNED_WORDS.join("|")})(?![A-Za-z0-9_])`, "i");
 const wordReNoSql = new RegExp(`(?<![A-Za-z0-9_])(${BANNED_WORDS.filter((w) => w !== "sql").join("|")})(?![A-Za-z0-9_])`, "i");
 // Round 15 (D412): the kernel's own SQLite layer makes the word `sql` unusable as a ban there, so what is
