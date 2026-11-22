@@ -150,6 +150,9 @@ export function ViewPage({ tab, descriptor: initial }: { tab: TabState; descript
   const [addingParam, setAddingParam] = useState(false);
   const running = useQuery((c) => (tab.runId ? c.run.get(tab.runId) : Promise.resolve(null)), [tab.runId], tab.runId ? [`run:${tab.runId}`] : []);
   const isRunning = running.data?.status === "running";
+  // The plugin that owns this resource's type: its own actions are named in full too, and are not "foreign" (D351).
+  const kindName = useQuery((c) => (initial.resourceId ? c.resource.get(initial.resourceId) : Promise.resolve(null)), [initial.resourceId], []).data?.kind;
+  const ownerPlugin = kindName?.includes(":") ? kindName.slice(0, kindName.indexOf(":")) : undefined;
 
   useEffect(() => setDescriptor(initial), [initial]);
 
@@ -299,7 +302,7 @@ export function ViewPage({ tab, descriptor: initial }: { tab: TabState; descript
           input: context.draft,
           params,
         });
-        const own = isForeignAction(action.action ?? action.id) ? undefined : now.descriptor.resultTabs.find((x) => x.type === "output")?.id;
+        const own = isForeignAction(action.action ?? action.id, ownerPlugin) ? undefined : now.descriptor.resultTabs.find((x) => x.type === "output")?.id;
         actions.updateTab(tab.id, { runId, resultTab: own ?? DEFAULT_OUTPUT_TAB });
         store.set({ panelOpen: true });
       } else if (action.role === "event") {

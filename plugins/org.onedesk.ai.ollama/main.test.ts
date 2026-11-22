@@ -53,7 +53,7 @@ const conn = (body: Record<string, unknown> = {}) => ({ id: "c1", body: { baseUr
 const ctxOf = (host: unknown, resource: unknown, progress?: string[]) => ({ target: "resource:c1", locale: "en-US", host, t, params: {}, resource, progress: (_f: unknown, m: string) => progress?.push(m) });
 const result = (r: any) => r.data;
 // the shell's validator knows no `data` yet (D441): check the rest of the result
-const plain = (r: any) => ({ output: r.output, ...(r.summary ? { summary: r.summary } : {}) });
+const plain = (r: any) => ({ output: (({ format: _f, ...o }) => o)(r.output), ...(r.summary ? { summary: r.summary } : {}) });
 const actions = () => registry(plugin as any).actions;
 const reset = () => (fake.requests.length = 0, fake.set({ kind: "ok" }), fake.setModels(["llama3.1"]));
 
@@ -101,6 +101,7 @@ describe("ollama: chat against the fake server", () => {
     const texts = partials.map((p) => p.text);
     expect(texts.at(-1)).toBe("Hello!");
     for (let i = 1; i < texts.length; i++) expect(texts[i].startsWith(texts[i - 1])).toBe(true);
+    expect(partials.every((p) => p.type === "text" && p.format === "markdown")).toBe(true);
     expect(progress).toEqual(["Loading the model…", "Generating…"]);
     expect(calls[0]).toMatchObject({ method: "POST", stream: true, timeoutMs: 600000, url: `${fake.url}/api/chat` });
     expect(fake.requests[0]!.body).toMatchObject({ model: "llama3.1", stream: true, keep_alive: "5m" });
@@ -182,7 +183,7 @@ describe("ollama: return shape (D441)", () => {
     reset();
     fake.set({ kind: "ok", pieces: ["Hi", "!"] });
     const res = await actions().chat(ctxOf(hostFor().host, conn()), { messages: [] });
-    expect(res.output).toEqual({ type: "text", text: "Hi!" });
+    expect(res.output).toEqual({ type: "text", text: "Hi!", format: "markdown" });
     expect(res.data).toMatchObject({ text: "Hi!", stop: "end" });
     fake.set({ kind: "error", status: 401 });
     const bad = await actions().chat(ctxOf(hostFor().host, conn()), { messages: [] });
@@ -190,6 +191,8 @@ describe("ollama: return shape (D441)", () => {
     expect(bad.output.text).toMatch(/did not accept/);
     const list = await actions().models(ctxOf(hostFor().host, conn()), {});
     expect(list.output.type).toBe("text");
+    expect(list.output).not.toHaveProperty("format");
+    expect(bad.output).not.toHaveProperty("format");
     expect(Array.isArray(list.data.models) || list.data.error).toBeTruthy();
   });
 });

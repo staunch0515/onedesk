@@ -33,10 +33,12 @@ export interface I18n {
 /** What a kernel text key looks like (`node.rename`, `core:group`); plain words and names do not match. */
 const KEY_LIKE = /^[a-z][A-Za-z0-9]*(\.[A-Za-z0-9]+)+$|^core:[a-z-]+$/;
 const warned = new Set<string>();
+/** The first parts of the kernel's own keys: a name that merely looks like a key (`orders.md`, a file name) is not one, so it never warns. */
+const KEY_PREFIXES = new Set([...Object.keys(KERNEL_LABELS), ...Object.keys(AUDIT_OPERATIONS)].map((k) => k.split(/[.:]/)[0]!));
 
 /** A kernel key without a word is shown as it is, but a developer should hear about it. */
 function warnMissing(label: string): string {
-  if (import.meta.env.DEV && KEY_LIKE.test(label) && !warned.has(label)) {
+  if (import.meta.env.DEV && KEY_LIKE.test(label) && KEY_PREFIXES.has(label.split(/[.:]/)[0]!) && !warned.has(label)) {
     warned.add(label);
     console.warn(`[i18n] no text for kernel key "${label}" (add it to src/workbench/i18n/kernel-texts.ts)`);
   }

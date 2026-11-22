@@ -224,3 +224,10 @@ type ResultAction = {
 - **#11 结果区动作的环境**：`run.start` 带 `resultRun` 时，新运行的 `envId` **一律取来源运行的 `envId`**（外壳传的 `envId` 被忽略；来源没有环境就没有）。`readonly`、`noExport` 按来源运行的环境检查（`denied/readonly`、`denied/noExport`）。`result.actions` 的 `enabled` 早就是按来源运行查的。
 - **#12 流的键**：内部的流键里加了插件 id（`<run>\n<plugin>\n<sid>`）。同一次运行里调用方和被调用方（`interfaces.call`/`actions.call`）各自的 `onChunk`/`onOutput`/`onProgress` 流 id 撞名也互不干扰；对插件没有可见的变化。
 - **#13 非 2xx 正文**：`stream: true` 返回值里的 `body`/`text`（前 8KB）现在是**先抹除密钥、再截 8KB**；`onChunk` 收到的块早就先抹除。抹除的值除了请求里代入的原值，还包括它的**百分号编码**（RFC 3986）和**标准 base64**（带填充）形式——不管请求里用的是 `{{secret:名|url}}`、`|base64`、`|basic:` 还是原样（服务器回显什么形式都抹）。同样适用于不流式的 `body`。限制：`|basic:用户名` 拼出来的 `用户名:密钥` 的 base64 在代入时已记入抹除表；其它自己算出来的变形（如大小写、拆开、转十六进制）抹除不了——这属于插件拿到明文才有的问题（要明文需要 `secrets.plaintext` 权限）。
+
+### 9.10 D446：文字输出的 `format`、运行标题、流中途断开
+
+- **`RunOutput::Text.format`**（可选，`"plain"` | `"markdown"`，类型同 `ViewNode.text.format` 的 `TextFormat`）：动作的最终输出和 `ctx.host.runs.partial` 都可带。别的值（如 `"html"`）→ 最终输出按“输出不合法”结束（运行 `error`）、`runs.partial` 抛 `invalid/badOutput`。内核原样保存、`run.get` 原样交回（部分输出同），不认识含义；没有值 = 纯文字。已生成 `RunOutput.ts`。
+- **运行标题**：没有资源时，`Run.title` 是动作的显示名——清单里动作的 `label` 在 `run.start.locale`（没传则 `en-US`）下的文字；该 label 在插件的语言文件里查不到（或没写）才退回动作名（`id` 的动作部分，如 `chat`，不再是 `插件:动作` 全名）。有资源时仍是资源名。`Run.action`、`actionLabel` 不变。
+- **流中途断开**：服务器在回答开始前就关连接、或回答到一半关连接，请求立刻以 `invalid`（`detail` 是网络错误文字，不是 `reason: "timeout"`）结束，已收到的块照常交给 `onChunk`。原因与修复：流队列原先只在“读正文”开始后才保证关闭；连接在响应头之前就断时队列没人关，插件的取块循环一直等到动作超时。现在队列在 `network.request` 一开始就绑定，无论怎样结束都关闭。
+

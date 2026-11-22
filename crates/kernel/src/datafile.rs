@@ -205,7 +205,7 @@ pub fn read(path: &Path, o: &Map<String, Value>) -> Result<FromFile, String> {
                 text.truncate(i);
             }
             let appearance = appearance_of(o)?;
-            Ok(FromFile { output: RunOutput::Text { text, line_tones: None, appearance }, cut: false, offsets: vec![] })
+            Ok(FromFile { output: RunOutput::Text { text, line_tones: None, appearance, format: None }, cut: false, offsets: vec![] })
         }
         "table" => {
             let header = match o.get("header") {

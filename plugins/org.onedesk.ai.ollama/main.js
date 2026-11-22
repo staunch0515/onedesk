@@ -147,7 +147,9 @@ function finish(ctx, result) {
   if (result.error) text = errorText(ctx, result.error);
   else if (Array.isArray(result.models)) text = result.models.map((m) => m.id).join("\n");
   else text = result.text;
-  return { output: { type: "text", text }, data: result };
+  // an answer is Markdown (D446); an error text or a model list is plain
+  const markdown = !result.error && !Array.isArray(result.models);
+  return { output: { type: "text", text, ...(markdown ? { format: "markdown" } : {}) }, data: result };
 }
 const failure = (ctx, error) => finish(ctx, { error });
 
@@ -210,7 +212,7 @@ async function runChat(ctx, input) {
           started = true;
           if (progress) progress(undefined, tr(ctx, "step.generating"));
         }
-        if (partial) Promise.resolve(partial({ type: "text", text })).catch(() => {});
+        if (partial) Promise.resolve(partial({ type: "text", text, format: "markdown" })).catch(() => {});
       },
     });
   } catch (err) {

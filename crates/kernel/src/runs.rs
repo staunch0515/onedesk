@@ -375,7 +375,13 @@ impl Inner {
         };
         let row = RunRow {
             id: id.clone(),
-            title: res.as_ref().map(|r| r.name.clone()).unwrap_or_else(|| action_full.clone()),
+            // D446: without a resource, the title is the action's display name (its label in the
+            // interface language), not the bare id.
+            title: res.as_ref().map(|r| r.name.clone()).unwrap_or_else(|| match resolved {
+                Some((pl, a)) if !a.label.is_empty() && pl.locales.values().any(|t| t.contains_key(&a.label)) => pl.text(&a.label, p.locale.as_deref()),
+                Some((_, a)) => a.id.clone(),
+                None => action_full.clone(),
+            }),
             icon: res.as_ref().map(|r| self.row_meta(r).icon).or(icon).unwrap_or_else(|| "play".into()),
             resource_id: res.as_ref().map(|r| r.id.clone()).or(p.resource_id.clone()),
             // Round 16 (E3): a `new:` tab's run records its kind (reopened, and drawn, by it).
