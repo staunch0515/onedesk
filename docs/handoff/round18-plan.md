@@ -19,11 +19,11 @@ X5、X6、X15、X16，各自的错误码、审计、Rust 测试（含取消立�
 
 | 会话 | 模型 | 做什么 | 允许修改 |
 |---|---|---|---|
-| `r18-kernel` | Opus | §2；第一次提交先把 `round18-protocol.md` 里要补的细节定好 | `crates/kernel/**`、`crates/worker/**`、`crates/protocol/**`（只增不改）、生成的 TS、`scripts/check-arch.mjs`（只加禁用词）、`docs/handoff/round18-protocol.md`、`round18-kernel-done.md` |
+| `r18-kernel` | Opus | §2；第一次提交先把 `round18-protocol.md` 里要补的细节定好 | `crates/kernel/**`、`crates/worker/**`、`crates/protocol/**`（只增不改）、生成的 TS、`docs/handoff/round18-protocol.md`、`round18-kernel-done.md` |
 | `r18-shell` | Sonnet | 结果区按钮（`result.actions`）；运行中部分输出显示（含 Markdown）；预览页需要的外壳支持；新文字只加英语；假协议客户端（`protocol/mock`）同步 | `crates/host/**`、`src-tauri/**`、`src/workbench/**`（`protocol/generated/` 除外）、`src/design/**`、`round18-shell-done.md` |
 | `r18-providers` | Sonnet | `org.onedesk.ai.anthropic`、`org.onedesk.ai.ollama`；`locales/`（英中日）；假 host 的 vitest；假 SSE/NDJSON 服务夹具放 `plugins/_testing/fake-ai/**`（`r18-tests` 之后复用） | `plugins/org.onedesk.ai.anthropic/**`、`plugins/org.onedesk.ai.ollama/**`、`plugins/_testing/fake-ai/**`、`round18-providers-done.md` |
 | `r18-workbench` | Opus | `org.onedesk.ai`（K1–K10、`generate`、`ai.policy`、审计）；SQL 插件“用 AI 写”入口；`locales/`；vitest | `plugins/org.onedesk.ai/**`、`plugins/org.onedesk.sql/**`、`round18-workbench-done.md` |
-| `r18-tests` | Sonnet | 第一阶段：`scripts/check-arch.mjs` 的禁用词（与内核会话协调：由 tests 会话只改禁用词列表之外的？——**由 tests 会话改，内核会话不改此文件**）；假服务商的 e2e 脚手架（用 `r18-providers` 的夹具，不重复造）；第二阶段（合并后由协调会话通知）：`e2e/round18.spec.ts` 按 K1–K10 逐行；外壳新键的中日译文 | `e2e/**`、`playwright.config.ts`、`scripts/check-*.mjs`、`plugins/org.onedesk.lang.*/**`、`plugins/_testing/**`（`fake-ai/` 之外）、`docs/screenshots/`、`round18-tests-done.md` |
+| `r18-tests` | Sonnet | 第一阶段：`scripts/check-arch.mjs` 加本轮内核禁用词（只有 tests 会话改此文件）；假服务商的 e2e 脚手架（用 `r18-providers` 的夹具，不重复造）；第二阶段（合并后由协调会话通知）：`e2e/round18.spec.ts` 按 K1–K10 逐行；外壳新键的中日译文 | `e2e/**`、`playwright.config.ts`、`scripts/check-*.mjs`、`plugins/org.onedesk.lang.*/**`、`plugins/_testing/**`（`fake-ai/` 之外）、`docs/screenshots/`、`round18-tests-done.md` |
 
 规则同前几轮：一个文件同一时间只有一个写入者；会话间只通过 `docs/handoff/` 交流；范围外的问题写进各自 done 文件的“范围外”一节，不改 `todo.md`；协议新增字段以 `round18-protocol.md` 为准，需要改名字先问协调会话。磁盘有限：只有内核会话在自己工作树里建 `target/`，其他会话需要 Rust 构建时用 `CARGO_TARGET_DIR=/Users/chloe/onedesk/repo/target`。
 
