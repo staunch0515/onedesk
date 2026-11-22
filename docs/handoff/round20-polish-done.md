@@ -30,6 +30,15 @@
 - **插件堆栈行**：不是插件加的——内置插件的 `main.js` 里没有 `.stack`，是内核沙箱把插件抛出的异常（message + stack，`sandbox.rs:65`）原样放进了运行错误的 `detail`。**需要内核派发**：detail 里只留 message。
 - A2（psql NULL/空串）按指示等 r20-parity，没动。
 
+## 第三轮（r20-parity 的 sqlpool 验收缺陷，来自 `round20-parity.md` §2）
+
+提交号见本节末（同一个提交）。缺陷 3（内核）不在我范围。
+
+1. **K11 自由查询放行系统目录（已修）**：`plugins/org.onedesk.table/main.js` 新增 `systemName()`，`freeQueryProblem` 对 `pg_catalog`、`information_schema`、`pg_toast`、`pg_temp*`、`pg_stat_*`，以及不带 schema 也能找到的目录表/视图（`pg_user`、`pg_shadow`、`pg_roles`、`pg_class`、`pg_database` 等）返回 `systemSchema`，三种语言文件补 `ai.sql.systemSchema`。`pg_typeof` 等函数仍可用。测试在 `main.test.ts`（`SELECT usename FROM pg_catalog.pg_user` 修之前放行，现在拒绝）。
+2. **G2 拖到没有子节点的环境上没反应（已修）**：根因是树组件（`src/design/components/tree.tsx`）对不可展开的行把上下各一半都算作“之前/之后”，没有“放进”这一区。现在若该行按 `canDrop(…, "inside")` 接受被拖节点，就留出中间一半作“放进”。测试 `round12.test.tsx`“dropping a node into a leaf that accepts it”（修之前失败）。
+3. **配置页 datasource.default 显示原始 id（已修，外壳侧折中）**：根因在内核——配置页是内核用 `param_form` 画的，引用型参数被压成普通文本框（`pages.rs:197` 的 `Ref → FieldKind::Text`），外壳无从知道它是引用。外壳现在对“`params.` 开头、值是 32 位十六进制且能查到资源”的文本框，在框下面用小字显示资源名（框仍显示 id，可编辑）。测试在 `field-control.test.tsx`。**更干净的做法在内核**：`param_form` 对 `Ref` 输出 `FieldKind::Ref` 并给出 `options`（外壳已支持，D414），建议内核会话顺手改；改了之后外壳这段兜底可以删。
+4. **F6 导入连接串偶发不填（未复现）**：在同一页面里先建第一个数据源（分别用“保存”和“保存并测试”，间隔 0–750 ms），再 New → Data source 填连接串点“Import connection string”，三种节奏共 48 次，全部填进了库/用户。读了 `view-page.tsx` 的事件路径（`pageParams(now.tab.params)` → `page.event` → `setDraft`）和 `run-refresh.ts`，没有发现按标签页之间共享的状态。没有足够线索改代码，留作未复现；若 r20-parity 再遇到，请记下当时第一个数据源的运行是否还没结束。
+
 ## 范围外
 
 见 `post-1.0.md` 末尾“逐页检查新增”四条。
