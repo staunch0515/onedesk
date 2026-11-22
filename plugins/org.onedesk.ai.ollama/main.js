@@ -21,9 +21,28 @@ export function bodyOf(ctx) {
   return b;
 }
 
+// Parses the connection address by hand (the sandbox has no URL class). Returns { base, host } or { error }:
+//   "badUrl"   not http(s), or characters that make the host ambiguous
+//   "userInfo" the address holds user info (https://api.example.com@evil.example): always refused
+//   "insecure" plain http to a host that is not this machine (127.0.0.1, localhost, [::1]): the secret would travel in clear
+export function checkBase(text, fallback) {
+  const raw = String(text === undefined || text === null || String(text).trim() === "" ? fallback : text).trim().replace(/\/+$/, "");
+  const m = /^(https?):\/\/([^/?#]*)([/?#].*)?$/i.exec(raw);
+  if (!m || /[\s\\\u0000-\u001f]/.test(raw)) return { error: "badUrl" };
+  const authority = m[2];
+  if (authority.includes("@")) return { error: "userInfo" };
+  const hm = /^(\[[0-9a-fA-F:.]+\]|[^:\[\]]+)(?::(\d{1,5}))?$/.exec(authority);
+  if (!hm) return { error: "badUrl" };
+  const host = hm[1].toLowerCase();
+  const local = host === "127.0.0.1" || host === "localhost" || host === "[::1]";
+  if (m[1].toLowerCase() === "http" && !local) return { error: "insecure" };
+  return { base: raw, host: hm[2] ? `${host}:${hm[2]}` : host };
+}
+
+const BASE_ERRORS = { badUrl: "error.badUrl", userInfo: "error.userInfo", insecure: "error.insecure" };
+
 export function baseUrl(body) {
-  const b = String(body.baseUrl || DEFAULT_BASE).trim().replace(/\/+$/, "");
-  return /^https?:\/\//i.test(b) ? b : null;
+  return checkBase(body.baseUrl, DEFAULT_BASE).base || null;
 }
 
 export function secretName(body) {
@@ -140,8 +159,9 @@ function netError(ctx, err) {
 }
 
 function preflight(ctx, body) {
-  const base = baseUrl(body);
-  if (!base) return { error: { code: "other", message: tr(ctx, "error.badUrl") } };
+  const checked = checkBase(body.baseUrl, DEFAULT_BASE);
+  if (checked.error) return { error: { code: "other", message: tr(ctx, BASE_ERRORS[checked.error]) } };
+  const base = checked.base;
   const auth = authHeaders(body);
   if (auth === null) return { error: { code: "other", message: tr(ctx, "error.headerName") } };
   return { base, auth };
@@ -261,6 +281,13 @@ async function runTest(ctx) {
   return { output: { type: "text", text: message }, data: { ok: true, version, models: names.length }, summary: { message: tr(ctx, "summary.test", { version, count: names.length }) } };
 }
 
+// The line under the form: the host that is really reached, or why the address is refused.
+function baseNote(ctx, body) {
+  const checked = checkBase(body.baseUrl, DEFAULT_BASE);
+  if (checked.error) return { text: tr(ctx, BASE_ERRORS[checked.error]), tone: "danger" };
+  return { text: tr(ctx, "note.host", { host: checked.host }), tone: "muted" };
+}
+
 export default {
   activate(host) {
     host.pages.handle("editor", {
@@ -268,7 +295,6 @@ export default {
         const b = bodyOf(ctx);
         const ro = ctx.run ? { readOnly: true } : {};
         const f = (name, kind, extra) => ({ name, label: ctx.t(`field.${name}`), kind, bind: `body.${name}`, ...ro, ...(extra || {}) });
-        const base = baseUrl(b) || DEFAULT_BASE;
         const view = [
           { type: "form", id: "address", layout: "strip", fields: [f("baseUrl", "text", { placeholder: DEFAULT_BASE, fill: true })] },
           {
@@ -278,7 +304,7 @@ export default {
             fields: [f("model", "text", { placeholder: "llama3.1", hint: ctx.t("field.model.hint"), ...(ctx.run ? {} : { required: true }) }), f("numCtx", "number", { hint: ctx.t("field.numCtx.hint") }), f("keepAlive", "text", { placeholder: DEFAULT_KEEP, hint: ctx.t("field.keepAlive.hint") })],
           },
           { type: "form", id: "auth", layout: "strip", fields: [f("authHeader", "text", { placeholder: "Authorization", hint: ctx.t("field.authHeader.hint") }), f("secret", "secret", { hint: ctx.t("field.secret.hint") })] },
-          { type: "text", id: "note", text: tr(ctx, "note.host", { host: base.replace(/^https?:\/\//i, "") }), tone: "muted" },
+          { type: "text", id: "note", ...baseNote(ctx, b) },
         ];
         return { view };
       },

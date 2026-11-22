@@ -38,5 +38,7 @@
   "error.badAnswer": "応答を読み取れませんでした。",
   "test.ok": "接続しました：Ollama {version}、取得済みモデル {count} 件（{models}）",
   "test.noModels": "接続しました：Ollama {version}。ただしモデルが取得されていません。次を実行してください：ollama pull {model}",
-  "summary.test": "Ollama {version} · {count} 件のモデル"
+  "summary.test": "Ollama {version} · {count} 件のモデル",
+  "error.userInfo": "アドレスにユーザー名やパスワード（user@host）を含めることはできません。",
+  "error.insecure": "リモートのアドレスは https:// にしてください。http:// は本機（127.0.0.1、localhost、[::1]）のみ許可されます。"
 }
