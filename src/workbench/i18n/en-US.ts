@@ -806,6 +806,7 @@ export const enUS = {
   "kernel.error.reason.notAiAction": "This action is not available to AI clients.",
   "kernel.error.reason.aiFreeQuery": "Free queries are switched off for AI clients.",
   "kernel.error.reason.aiEnvMissing": "The environment chosen for AI runs no longer exists.",
+  "kernel.error.reason.aiRun": "This action is not allowed in a run started by an AI client.",
   "kernel.error.reason.readonly": "Read-only protection is on (protection.readonly), so nothing can be changed. Turn it off in the workspace configuration or the environment that sets it.",
   "kernel.error.reason.readonly|layerName": "Read-only protection is on (protection.readonly, set by “{layerName}”), so nothing can be changed. Turn it off in “{layerName}”.",
   "kernel.error.reason.noExport|layerName": "Export protection is on (protection.no_export, set by “{layerName}”), so nothing can be exported. Turn it off in “{layerName}”.",

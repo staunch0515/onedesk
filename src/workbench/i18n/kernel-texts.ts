@@ -196,6 +196,7 @@ export const KERNEL_ERRORS: Table = {
   "reason.unconfirmedVersion": "kernel.error.reason.unconfirmedVersion",
   "reason.changedSinceInspect": "kernel.error.reason.changedSinceInspect",
   "reason.readonly": "kernel.error.reason.readonly",
+  "reason.aiRun": "kernel.error.reason.aiRun",
   "reason.badArguments": "kernel.error.reason.badArguments",
   "reason.needAction": "kernel.error.reason.needAction",
   "reason.aiNotAllowed": "kernel.error.reason.aiNotAllowed",
