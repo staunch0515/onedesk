@@ -73,5 +73,6 @@
   "ai.sql.severalStatements": "只允许一条语句。",
   "ai.sql.notSelect": "只允许 SELECT 或 WITH 语句。",
   "ai.sql.forbiddenFunction": "“{name}”不允许出现在自由查询里（它会作用于服务器或读取文件）。",
-  "ai.sql.unicodeEscape": "自由查询里不允许写成 U&\"…\" 的名字。"
+  "ai.sql.unicodeEscape": "自由查询里不允许写成 U&\"…\" 的名字。",
+  "ai.sql.systemSchema": "“{name}”是系统目录；自由查询只能读取已映射的表。"
 }

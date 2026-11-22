@@ -218,7 +218,8 @@ export function Tree({
       const target = latest.current.rows.find((r) => r.key === key);
       const rect = rowEl.getBoundingClientRect();
       const ratio = (ev.clientY - rect.top) / Math.max(1, rect.height);
-      const edge = target?.expandable ? 0.25 : 0.5;
+      // A leaf has no middle to drop into, unless it takes the dragged node as a child (an environment among environments).
+      const edge = target?.expandable || (key !== row.key && latest.current.canDrop?.(row.key, key, "inside")) ? 0.25 : 0.5;
       const position: TreeDropPosition = ratio < edge ? "before" : ratio >= 1 - edge ? "after" : "inside";
       return { target: key, position, inside: true };
     };

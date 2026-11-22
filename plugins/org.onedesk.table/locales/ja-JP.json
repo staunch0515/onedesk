@@ -73,5 +73,6 @@
   "ai.sql.severalStatements": "1 文のみ使えます。",
   "ai.sql.notSelect": "SELECT または WITH の文のみ使えます。",
   "ai.sql.forbiddenFunction": "「{name}」は自由クエリでは使えません（サーバーに作用するか、ファイルを読みます）。",
-  "ai.sql.unicodeEscape": "U&\"…\" 形式の名前は自由クエリでは使えません。"
+  "ai.sql.unicodeEscape": "U&\"…\" 形式の名前は自由クエリでは使えません。",
+  "ai.sql.systemSchema": "「{name}」はシステムカタログです。自由クエリではマッピング済みのテーブルのみ読めます。"
 }

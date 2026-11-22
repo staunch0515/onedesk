@@ -73,5 +73,6 @@
   "ai.sql.severalStatements": "Only one statement is allowed.",
   "ai.sql.notSelect": "Only SELECT or WITH statements are allowed.",
   "ai.sql.forbiddenFunction": "“{name}” is not allowed in a free query (it acts on the server or reads files).",
-  "ai.sql.unicodeEscape": "Names written as U&\"…\" are not allowed in a free query."
+  "ai.sql.unicodeEscape": "Names written as U&\"…\" are not allowed in a free query.",
+  "ai.sql.systemSchema": "“{name}” is a system catalog; a free query only reads the mapped tables."
 }
