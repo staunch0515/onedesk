@@ -85,6 +85,7 @@ test("run with parameters works under MCP: rows come back, cut at the row limit;
     const r = await c.callTool("run", { id: ids.q, action: "run", params: { n: 3 } });
     expect(r.isError, r.text).toBe(false);
     expect(r.json.status, r.text + "\n" + dbq("SELECT title||' '||ifnull(error,'') FROM runs ORDER BY seq DESC LIMIT 3")).toBe("success");
+    expect(r.json.output.columns, "column names, not keys (c0, c1)").toEqual(["id", "label"]);
     expect(r.json.output.rows).toEqual([["1", "row-1"], ["2", "row-2"], ["3", "row-3"]]); // a data source answers in text
     const big = await c.callTool("run", { id: ids.q, action: "run", params: { n: 80 } });
     expect(big.json.output.rows).toHaveLength(50);

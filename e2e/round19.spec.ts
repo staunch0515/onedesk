@@ -247,7 +247,7 @@ test.describe("tools", () => {
       const r = await c.callTool("run", { id: ids.alpha, action: "rows", params: { n: 3 } });
       expect(r.isError).toBe(false);
       expect(r.json?.status, r.text.slice(0, 600)).toBe("success");
-      expect(r.json.output).toMatchObject({ type: "table", columns: ["i", "item", "cell"], total: 3, offset: 0, truncated: false });
+      expect(r.json.output).toMatchObject({ type: "table", columns: ["I", "Item", "Cell"], total: 3, offset: 0, truncated: false });
       expect(r.json.output.rows.map((x: unknown[]) => x[0])).toEqual([1, 2, 3]);
       expect(r.json.output.rows[0][1]).toBe("Alpha item");
       const dflt = await c.callTool("run", { id: ids.alpha });
