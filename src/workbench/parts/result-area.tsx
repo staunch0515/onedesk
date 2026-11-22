@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Badge, Banner, BottomPanel, Button, DataGrid, EmptyState, ErrorState, IconButton, LoadingState, MarkdownText, Pane, Progress, TerminalText, Text, TextBlock, useToast, type DataGridColumn, type Tone } from "../../design";
 import { useI18n, type MessageKey } from "../i18n";
-import type { OutputCell, PageDescriptor, ResultAction, Run, RunOutput, RunStatus } from "../protocol";
+import type { OutputCell, PageDescriptor, ProtocolClient, ResultAction, Run, RunOutput, RunStatus } from "../protocol";
 import { useQuery, useUi, useWorkbench } from "../state/context";
 import type { TabState } from "../state/store";
 import { startRunExport } from "./transfer-dialogs";
@@ -146,6 +146,39 @@ function MarkdownBlock({ source, label }: { source: string; label: string }) {
   );
 }
 
+/**
+ * What happens after a result-area action starts. An action that answers with a `link` output (a page reference, like the AI
+ * preview page) opens that page and nothing else: the run itself is bookkeeping. Any other outcome (it failed, produced text, or
+ * is streaming output) opens the run, so its progress and answer are seen. Settles when it has done one of the two.
+ */
+export function followResultRun(client: ProtocolClient, id: string, open: (target: string, options?: { params?: Record<string, string> }) => void): Promise<void> {
+  return new Promise((resolve) => {
+    let off = () => undefined as void;
+    let done = false;
+    const finish = (target: string, params?: Record<string, string>) => {
+      if (done) return;
+      done = true;
+      off();
+      open(target, params ? { params } : undefined);
+      resolve();
+    };
+    const check = async () => {
+      if (done) return;
+      const run = await client.run.get(id).catch(() => null);
+      if (done) return;
+      if (!run) return finish(`run:${id}`);
+      if (run.status === "running") {
+        if (run.partial) finish(`run:${id}`);
+        return;
+      }
+      if (run.status === "success" && run.output?.type === "link") return finish(run.output.target, run.output.params);
+      finish(`run:${id}`);
+    };
+    off = client.events.subscribe(`run:${id}`, () => void check());
+    void check();
+  });
+}
+
 const DISABLED_REASONS: Record<string, MessageKey> = {
   noExport: "result.action.disabled.noExport",
   readonly: "result.action.disabled.readonly",
@@ -168,7 +201,7 @@ export function ResultActions({ runId, envId }: { runId: string; envId?: string 
     setBusy(key);
     client.run
       .start({ action: a.action, target: `run:${runId}`, tabId: "", envId: envId ?? null, input: {}, params: {}, resultRun: runId })
-      .then((id) => actions.open(`run:${id}`))
+      .then((id) => followResultRun(client, id, actions.open))
       .catch(actions.fail)
       .finally(() => setBusy((b) => (b === key ? null : b)));
   };
@@ -348,7 +381,13 @@ function ViewTab({ runId, tabId }: { runId: string | null; tabId: string }) {
 export const DEFAULT_OUTPUT_TAB = "run-output";
 
 /** An action added by a dependent plugin carries its plugin id (`<plugin>:<action>`); a page's own actions never do. */
-export const isForeignAction = (action: string | undefined): boolean => (action ?? "").includes(":");
+export const isForeignAction = (action: string | undefined, owner?: string): boolean => {
+  const a = action ?? "";
+  const i = a.indexOf(":");
+  if (i < 0) return false;
+  // The kernel names a page's own actions in full too (`<plugin>:<name>`): when the owner is known, only another plugin's are foreign.
+  return owner === undefined ? true : a.slice(0, i) !== owner;
+};
 
 /** Result area of a page (§9.5): the page chooses the sub-tabs, the frame owns the toolbar. */
 export function ResultArea({ tab, descriptor }: { tab: TabState; descriptor: PageDescriptor }) {
@@ -362,7 +401,9 @@ export function ResultArea({ tab, descriptor }: { tab: TabState; descriptor: Pag
   const elapsed = useElapsed(r?.startedAt, r?.status === "running");
   // A dependent plugin's output is never drawn by the page owner's tabs (D351): the shell's own output tab shows it, named after the
   // action. A page without an output tab gets the same tab, so a run always has somewhere to show.
-  const foreign = isForeignAction(r?.action);
+  const kind = useQuery((c) => (descriptor.resourceId ? c.resource.get(descriptor.resourceId) : Promise.resolve(null)), [descriptor.resourceId], []);
+  const owner = kind.data?.kind.includes(":") ? kind.data.kind.slice(0, kind.data.kind.indexOf(":")) : undefined;
+  const foreign = isForeignAction(r?.action, owner);
   const ownTabs = descriptor.resultTabs;
   const defaultTab = r && (foreign || !ownTabs.some((x) => x.type === "output")) ? { id: DEFAULT_OUTPUT_TAB, label: r.actionLabel ?? t("result.result"), icon: "terminal", type: "output" as const } : null;
   const tabs = defaultTab ? (foreign ? [defaultTab, ...ownTabs] : [...ownTabs, defaultTab]) : ownTabs;
