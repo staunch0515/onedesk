@@ -14,7 +14,7 @@ export type McpCallResult = {
   isError: boolean;
   /** concatenated text parts */
   text: string;
-  /** `text` parsed as JSON when it is JSON, else null */
+  /** the first text part parsed as JSON when it is JSON, else null */
   json: any;
   raw: any;
 };
@@ -126,7 +126,8 @@ export class StdioMcpClient {
     const text = (raw.content ?? []).filter((c: any) => c.type === "text").map((c: any) => c.text).join("");
     let json: any = null;
     try {
-      json = JSON.parse(text);
+      // the first part is the result JSON; further parts are notes (e.g. "truncated")
+      json = JSON.parse((raw.content ?? []).find((c: any) => c.type === "text")?.text ?? "");
     } catch {
       /* plain text */
     }
