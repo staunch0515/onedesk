@@ -488,7 +488,7 @@ describe("table: free query forbidden functions (D450)", () => {
     bad("SELECT database_to_xml(true, true, '')");
     bad("WITH a AS (SELECT pg_terminate_backend(1)) SELECT * FROM a");
     bad("SELECT (SELECT pg_read_file('x'))");
-    bad("SELECT 1 FROM t WHERE x = (SELECT lo_import('f'))");
+    bad("SELECT 1 FROM t WHERE x = (SELECT lo_export(1, 'f'))");
     bad("(SELECT 1) UNION (SELECT pg_sleep(1)::int)");
     bad("SELECT 1 /* a */ FROM /* b */ pg_catalog . pg_ls_dir ('x')");
   });
@@ -509,7 +509,7 @@ describe("table: free query forbidden functions (D450)", () => {
     const { host } = fakeHost();
     await expect(registry(plugin).actions.aiRunSql(ctxOf(host, { runId: "f1" }), { sql: "SELECT pg_catalog.pg_terminate_backend(1)" })).rejects.toThrow("“pg_terminate_backend” is not allowed");
     await expect(registry(plugin).actions.aiRunSql(ctxOf(host, { runId: "f2", locale: "zh-CN" }), { sql: "SELECT pg_sleep(1)" })).rejects.toThrow("“pg_sleep”不允许");
-    await expect(registry(plugin).actions.aiRunSql(ctxOf(host, { runId: "f3", locale: "ja-JP" }), { sql: "SELECT lo_import('x')" })).rejects.toThrow("「lo_import」は自由クエリでは使えません");
+    await expect(registry(plugin).actions.aiRunSql(ctxOf(host, { runId: "f3", locale: "ja-JP" }), { sql: "SELECT lo_export(1, 'x')" })).rejects.toThrow("「lo_export」は自由クエリでは使えません");
     expect(host.actions.call).not.toHaveBeenCalled();
     for (const l of [EN, ZH, JA]) expect(l["ai.tool.runSql"]).toMatch(/read-only database role|只读的数据库角色|読み取り専用のデータベースロール/);
   });
