@@ -46,6 +46,7 @@ export type * from "./LanguageInfo";
 export type * from "./LineTone";
 export type * from "./McpCallParams";
 export type * from "./McpCallResult";
+export type * from "./McpInfo";
 export type * from "./McpStatus";
 export type * from "./McpTool";
 export type * from "./MenuCommand";
