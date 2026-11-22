@@ -121,3 +121,9 @@
 - 先合并了集成分支 `f90d120`。`ActionOut` 加 `failed: { message }`（同样 `deny_unknown_fields`），`output` 在有 `failed` 时可省（用最后一次 `runs.partial`）。状态 `error`、`error.code = "pluginError"`，`message` 抹密钥、截到 2000 字符；`output`、`summary` 照常检查并保存。
 - 测试：`round17.rs` `d435_a_failed_run_keeps_its_output_summary_and_history`（状态、码、抹除与截断、`summary`、`output`、`run.rows`、`run.render`、`run.listFor`、只有 `failed` 时用部分输出、没有 `failed` 时缺 `output` 仍报 `badOutput`）。旧代码里 `failed` 是未知键，这类运行会以 `badOutput` 结束。
 - 验证：`cargo test --workspace`、`pnpm clippy`、`pnpm lint`、`pnpm typecheck`、`gen-types --check` 通过；`pnpm test` 只有中日语言包那 4 个旧失败。e2e 没跑。
+
+## 12. D436：页面动作的 `ignoreRequired`
+
+- `crates/protocol` 的 `ActionDecl` 与清单的页面动作各增可选 `ignoreRequired`（布尔），`page.resolve` 透传；内置动作（依赖页、借用页）不写它。
+- 测试：`manifest.rs` 的清单测试（`true`/`false` 通过，字符串、数字为 `schema`）；`round17.rs` 的 `d428_…_d429_…` 里检查透传与未写时不出现。
+- 已跑 `pnpm gen:types`（`ActionDecl.ts` 多了 `ignoreRequired?: boolean`）。

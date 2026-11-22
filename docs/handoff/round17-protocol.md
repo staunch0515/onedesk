@@ -203,6 +203,12 @@ return { failed: { message: "timed out" } };   // 不给 output：用最后一�
 - 没有 `failed` 时 `output` 仍是必填（缺了 → `badOutput`）。
 - `actions.call` 调用别的插件的动作时，`failed` 只是返回数据的一部分，原样交给调用方（D435：所以不用 `error` 这个名字）。
 
+## 3.10 页面动作的 `ignoreRequired`（D436）
+
+- 清单 `contributes.pages[].actions[]` 与协议 `ActionDecl` 各增一个可选字段 `ignoreRequired?: boolean`。
+- 内核只校验它是布尔值（不是布尔值时插件加载失败，原因 `schema`），在 `page.resolve` 的 `actions[]` 里原样透传；没写时不出现。
+- 有 `ignoreRequired: true` 的动作，外壳不检查任何必填（D436 ②）；参数字段只拦 run / save-run（D436 ①）也是外壳的事，内核不变。
+
 ## 3.5 程序的查找与时长（第二版）
 
 - 清单 `requires.programs[].searchPaths` 可以写 **`~/` 开头**的路径（如 `~/.docker/bin`），按当前用户的家目录展开（不支持 `~其他用户`）。

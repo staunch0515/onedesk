@@ -437,6 +437,9 @@ pub struct ActionDeclM {
     /// Round 17 (D429): instead of `action`, a command (short id in `contributes.commands`).
     #[serde(default)]
     pub command: Option<String>,
+    /// Round 17 (D436): the shell checks no required fields before this item.
+    #[serde(default)]
+    pub ignore_required: Option<bool>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -1828,6 +1831,12 @@ mod tests {
         let both = json!([{ "id": "go", "role": "run", "label": "a", "command": own_cmd, "action": "run" }]);
         assert_eq!(reason(cmd_of(both)), "actionAndCommand");
         assert_eq!(reason(cmd_of(json!([{ "id": "go", "role": "save", "label": "a", "command": own_cmd }]))), "actionAndCommand");
+        // Round 17 (D436): `ignoreRequired` is an optional boolean.
+        let ign = |v: Value| cmd_of(json!([{ "id": "go", "role": "run", "label": "a", "command": own_cmd, "ignoreRequired": v }]));
+        assert_eq!(reason(ign(json!(true))), "ok");
+        assert_eq!(reason(ign(json!(false))), "ok");
+        assert_eq!(reason(ign(json!("yes"))), "schema");
+        assert_eq!(reason(ign(json!(1))), "schema");
         let act = |o: Value| with(good(), &["contributes", "actions"], json!([o]));
         assert_eq!(reason(act(json!({ "id": "run", "label": "a", "output": "table", "kinds": ["nope"] }))), "unknownKind");
         assert_eq!(reason(act(json!({ "id": "run", "label": "a", "output": "chart" }))), "schema");
