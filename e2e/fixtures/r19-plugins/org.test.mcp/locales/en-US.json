@@ -1,0 +1,15 @@
+{
+  "plugin.name": "Test MCP probe",
+  "plugin.description": "e2e probe for round 19",
+  "kind.item": "Probe item",
+  "action.rows": "Rows",
+  "action.write": "Write",
+  "action.ping": "Ping",
+  "action.free": "Free",
+  "action.calls": "Calls",
+  "ai.rowsDesc": "Returns n numbered rows.",
+  "ai.p.n": "How many rows",
+  "ai.p.mode": "Mode",
+  "ai.pingDesc": "Echoes its input and who is asking.",
+  "ai.freeDesc": "A free-form tool (only with free queries on)."
+}
