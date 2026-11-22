@@ -669,11 +669,11 @@ export default {
         // the proposal waits in the plugin's storage for the plugin that asked (generate with `fetch`)
         const p = proposalOf(answer);
         await ctx.host.storage.set(`proposal:${res.id}`, JSON.stringify(p));
-        return { output: { type: "text", text: p.text }, summary: { message: tr(ctx, p.check.ok ? "summary.proposed" : "summary.proposedBad") } };
+        return { output: { type: "text", text: p.text, format: "markdown" }, summary: { message: tr(ctx, p.check.ok ? "summary.proposed" : "summary.proposedBad") } };
       }
       // not in the resource body: it is kept only when the user saves the analysis
       await ctx.host.storage.set(lastKey(res.id), JSON.stringify({ answer: answer.text, model: answer.model || "", usage: usageText(answer.usage), connection: connection.name, sent: text }));
-      return { output: { type: "text", text: answer.text }, summary: { message: tr(ctx, "summary.answered", { model: answer.model || "", usage: usageText(answer.usage) }) } };
+      return { output: { type: "text", text: answer.text, format: "markdown" }, summary: { message: tr(ctx, "summary.answered", { model: answer.model || "", usage: usageText(answer.usage) }) } };
     });
 
     // K7–K9: exported for other plugins. A proposal made from the words and the names of tables and columns —
@@ -682,7 +682,7 @@ export default {
     host.actions.handle("generate", async (ctx, input) => {
       const data = await generate(ctx, input);
       const text = data.error ? data.error.message : data.needsPreview ? data.request : data.pending ? "" : data.text;
-      return { output: { type: "text", text: String(text || "") }, data };
+      return { output: { type: "text", text: String(text || ""), format: "markdown" }, data };
     });
 
     // K2: folder → document resources.

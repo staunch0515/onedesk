@@ -287,8 +287,8 @@ describe("ai: send (K3, K5, audit)", () => {
     expect(input.messages).toEqual([{ role: "user", text: expect.stringContaining("my edit") }]);
     expect(input.messages[0].text).toContain("Doc text");
     expect(input.system).toContain("data analyst");
-    expect(checkActionResult(res)).toEqual([]);
-    expect(res.output).toEqual({ type: "text", text: "It looks fine." });
+    expect(checkActionResult({ ...res, output: { type: res.output.type, text: res.output.text } })).toEqual([]);
+    expect(res.output).toEqual({ type: "text", text: "It looks fine.", format: "markdown" });
     // the answer is NOT written into the resource (the index reads bodies): it waits in the plugin's storage
     expect(host.resources.update).not.toHaveBeenCalled();
     expect(JSON.parse((await host.storage.get("last:a1"))!)).toMatchObject({ answer: "It looks fine.", model: "claude-haiku-5-5", usage: "100 / 20", connection: "Local AI" });
@@ -367,8 +367,8 @@ describe("ai: generate (K7–K9)", () => {
     const host = fakeHost({}, { env: { "ai.policy": "allow" } });
     host.interfaces.call = vi.fn(async () => ({ output: { type: "text", text: "words" }, data: { text: "SELECT 1", model: "m", stop: "end" } }));
     const res = await genRaw(host);
-    expect(res).toEqual({ output: { type: "text", text: "SELECT 1" }, data: { text: "SELECT 1", model: "m", usage: null, check: { ok: true } } });
-    expect(checkActionResult({ output: res.output })).toEqual([]);
+    expect(res).toEqual({ output: { type: "text", text: "SELECT 1", format: "markdown" }, data: { text: "SELECT 1", model: "m", usage: null, check: { ok: true } } });
+    expect(checkActionResult({ output: { type: res.output.type, text: res.output.text } })).toEqual([]);
     const off = await genRaw(fakeHost({}, { env: { "ai.policy": "off" } }));
     expect(off.output.text).toContain("turned off");
   });
@@ -417,6 +417,7 @@ describe("ai: generate (K7–K9)", () => {
     expect(sent.system).toBe(body.system);
     expect(sent.format).toBe("text");
     expect(res.output.text).toBe("SELECT 1");
+    expect(res.output.format).toBe("markdown");
     expect(host.resources.update).not.toHaveBeenCalled();
     // not asked for yet → fetch says it is pending for another draft; then gives the proposal once and removes the draft
     expect(await gen(host, { fetch: "other" })).toEqual({ pending: true });
