@@ -50,7 +50,7 @@ const conn = (fake: FakeAi, body: Record<string, unknown> = {}) => ({ id: "c1", 
 const ctxOf = (host: unknown, resource: unknown) => ({ target: "resource:c1", locale: "en-US", host, t, params: {}, resource });
 const result = (r: any) => r.data;
 // the shell's validator knows no `data` yet (D441): check the rest of the result
-const plain = (r: any) => ({ output: r.output, ...(r.summary ? { summary: r.summary } : {}) });
+const plain = (r: any) => ({ output: (({ format: _f, ...o }) => o)(r.output), ...(r.summary ? { summary: r.summary } : {}) });
 
 let fake: FakeAi;
 beforeAll(async () => void (fake = await startFakeAi()));
@@ -115,7 +115,7 @@ describe("anthropic: chat against the fake server", () => {
     const texts = partials.map((p) => p.text);
     expect(texts.at(-1)).toBe("ABC");
     for (let i = 1; i < texts.length; i++) expect(texts[i].startsWith(texts[i - 1])).toBe(true);
-    expect(partials.every((p) => p.type === "text")).toBe(true);
+    expect(partials.every((p) => p.type === "text" && p.format === "markdown")).toBe(true);
     expect(calls[0]).toMatchObject({ method: "POST", stream: true, timeoutMs: 600000, url: `${fake.url}/v1/messages` });
     expect(calls[0].headers).toMatchObject({ "x-api-key": `{{secret:${SECRET}}}`, "anthropic-version": "2026-10-21" });
     expect(calls[0].headers).not.toHaveProperty("anthropic-beta");
@@ -197,7 +197,7 @@ describe("anthropic: return shape (D441)", () => {
     reset();
     fake.set({ kind: "ok", pieces: ["Hi", "!"] });
     const res = await actions().chat(ctxOf(hostFor(fake).host, conn(fake)), { messages: [] });
-    expect(res.output).toEqual({ type: "text", text: "Hi!" });
+    expect(res.output).toEqual({ type: "text", text: "Hi!", format: "markdown" });
     expect(res.data).toMatchObject({ text: "Hi!", stop: "end" });
     fake.set({ kind: "error", status: 401 });
     const bad = await actions().chat(ctxOf(hostFor(fake).host, conn(fake)), { messages: [] });
@@ -205,6 +205,8 @@ describe("anthropic: return shape (D441)", () => {
     expect(bad.output.text).toMatch(/not accepted/);
     const list = await actions().models(ctxOf(hostFor(fake).host, conn(fake)), {});
     expect(list.output.type).toBe("text");
+    expect(list.output).not.toHaveProperty("format");
+    expect(bad.output).not.toHaveProperty("format");
     expect(Array.isArray(list.data.models) || list.data.error).toBeTruthy();
   });
 });
