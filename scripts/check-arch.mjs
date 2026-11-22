@@ -9,6 +9,7 @@
  *  4. plugins/<id>: no imports outside the package, no browser/sandbox-absent globals.
  */
 import { readFileSync, readdirSync, statSync, existsSync } from "node:fs";
+import { stripAllowedAi } from "./check-arch-ai.mjs";
 import { join, relative, resolve, dirname, sep } from "node:path";
 
 const root = resolve(dirname(new URL(import.meta.url).pathname), "..");
@@ -81,7 +82,7 @@ for (const dir of kernelSide) {
     code.split("\n").forEach((rawLine, i) => {
       // Migration file names (`include_str!("migrations/0003_x.sql")`) and the SQLite binding's own names
       // (`rusqlite`, `SQLITE_*`) belong to the kernel's storage layer, not to a database plugin.
-      const line = rawLine.replace(/include_str!\s*\([^)]*\)/g, "").replace(/\brusqlite\b|\bSQLITE_[A-Z0-9_]+/g, "");
+      const line = stripAllowedAi(rawLine, f).replace(/include_str!\s*\([^)]*\)/g, "").replace(/\brusqlite\b|\bSQLITE_[A-Z0-9_]+/g, "");
       const m = re.exec(line);
       if (m) errors_.push(`${rel(f)}:${i + 1}: 出现具体插件相关的词 "${m[1]}"`);
       const k = inKernel ? kernelDbRe.exec(line) : null;
