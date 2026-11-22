@@ -86,6 +86,4 @@ SELECT * FROM customers LIMIT :n
 
 把一条目录查询复制成你自己的“保存的 SQL”，之后可以随便改。
 
-> 待补截图：目录树与参数输入。
->
-> 待确认：映射文件的完整格式（`entities` 下各字段）请以 `plugins/org.onedesk.catalog/README.md` 为准，本手册不重复。
+> 映射文件的完整格式（`entities` 下各字段）请以 `plugins/org.onedesk.catalog/README.md` 为准，本手册不重复。

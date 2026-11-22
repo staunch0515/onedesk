@@ -20,21 +20,18 @@
 
 核对来源：各插件的 `manifest.json`/`main.js`/`locales`，`crates/kernel/src/manifest.rs`、`mcp.rs`、`workspace.rs`，`crates/host/src/{data_dir,workspaces}.rs`，`crates/mcp/src/main.rs`，`crates/protocol/src/lib.rs`（ViewNode），外壳中文文字表（`plugins/org.onedesk.lang.zh-cn/shell/zh-CN.json`），`ai-plugins.md`、`ai-interface.md`、D447–D452、第十八/十九轮验收记录。
 
-## 待确认（手册里已写“待确认”，没有编造）
+## 第二轮修订（按协调会话 2026-11-23 的要求）
 
-1. **分发形式**（dmg 还是 zip）、`.app` 名称——`r20-package`。
-2. **较新 macOS 上“右键打开”后是否要去“隐私与安全性”点“仍要打开”**，以及从网上下载是否要 `xattr -dr com.apple.quarantine`——要在打出的 `.app` 上试。
-3. **首次启动欢迎页**的内容（手册现在只描述现有的“欢迎”插件页）——`r20-package`。
-4. **升级应用后钥匙串是否再次询问**（自签名换版本）。
-5. **`onedesk-mcp` 在 `.app` 里的确切路径**（手册写了预期 `Contents/MacOS/onedesk-mcp`，以“AI 访问”页显示为准）——`r20-package` 的 `app.mcpInfo` 验证。
-6. **只替换 `workspace.db` 的恢复步骤**（`-wal`/`-shm` 残留）没有专门测试过。
-7. 在界面里加工作区配置参数/环境参数的**具体点法**、AI 工作台设置项在“插件”页里的位置、**切换界面语言的入口名称**：对照的是文字表，没在运行的应用里点过。
-8. 真实 **Anthropic/Ollama**、真实 **Claude Desktop**、带密码数据源经 MCP、真服务器的“备份到本机”都没有真实环境验收（见 round17–19 验收记录）；手册是按协议与假服务验证过的行为写的。
-9. 查询目录**映射文件的完整格式**：手册指向 `plugins/org.onedesk.catalog/README.md`，没重复。
+已按 `round20-package-done.md`（来自 `claude/onedesk-r20`，用 `git show` 只读核对，**本会话的合并被权限拦截，分支未合并进来**，文档改动与 r20 不冲突，合并由协调会话做）与代码落实并去掉标记：分发形式（以 `.app` 压缩包分发，未公证，首次右键打开 / `xattr -dr com.apple.quarantine` / “隐私与安全性”里“仍要打开”）、`onedesk-mcp` 在 `Contents/MacOS/`、欢迎页是 `org.onedesk.welcome`、语言切换入口（状态栏右侧“语言”菜单，`status-bar.tsx`）、全部“待补截图”（手册暂不带图，截图由协调会话手测后补）。`plugins/README.md` 的 `transfer` 补了 `download`/`upload`（`carry.rs`：只在 run 内，`to`/`from` 路径，需 network/files 或 programs 授权），`storage` 补了 `keys`（并写了 `readFrom`，见 `host.rs`）。
 
-## 待补截图（`.app` 打出后补）
+## 最终待确认清单（需要真机或真服务，手册里仍标“待确认”）
 
-安装右键“打开”、工作区菜单与管理对话框、数据源页（直连/ssh）、目录树与参数输入、新建 Anthropic 连接页、AI 预览页、AI 访问页、信息面板“对 AI 可见”开关。
+1. 升级应用后钥匙串是否再次询问（01）。
+2. 只替换 `workspace.db` 的恢复，`-wal`/`-shm` 残留（02）。
+3. 界面里加工作区配置参数的具体点法（03）。
+4. AI 工作台设置项在“插件”页的位置（06）。
+5. 真实 Anthropic / Ollama（06）、真实 Claude Desktop（07）、带密码数据源经 MCP 读钥匙串（07）、真服务器/容器的“备份到本机”（04）。
+6. 右键“打开”在各 macOS 版本上的实际表现：r20-package 没在 Finder 里真实操作过，手册给的三条路径（右键打开 / 仍要打开 / xattr）未逐一试过。
 
 ## 发现的问题（范围外，没改）
 
