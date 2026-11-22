@@ -46,10 +46,7 @@
   "summary.answered": "{model} が回答しました（入力/出力トークン：{usage}）",
   "summary.synced": "{count} 件のドキュメントを更新しました。",
   "message.kept": "「{name}」を実行に保存しました。",
-  "message.keptLocal": "「{name}」をこのプラグインに保存しました（実行には載せられませんでした）。",
   "message.nothingToKeep": "保存できる回答がまだありません。",
-  "setting.connection": "既定の AI 接続",
-  "setting.connection.hint": "接続リソース（ID または名前）。環境の ai.connection が優先されます。",
   "setting.sensitiveColumns": "追加の機密列名",
   "setting.sensitiveColumns.hint": "カンマ区切り。その列は丸ごとマスクされます。password、token、secret、email、phone などは常にマスクされます。",
   "setting.maxRows": "送信する行数",
@@ -76,5 +73,10 @@
   "error.chat.tooLong": "リクエストがモデルには長すぎます。ドキュメントか行を減らしてください。",
   "error.chat.refusal": "モデルが回答を断りました。",
   "error.chat.network": "AI サービスに接続できません。{message}",
-  "error.chat.other": "AI サービスでエラーが起きました。{message}"
+  "error.chat.other": "AI サービスでエラーが起きました。{message}",
+  "field.connection": "AI 接続",
+  "field.connection.hint": "空欄：環境の接続、次にワークスペースの既定。",
+  "connection.default": "環境 / 既定",
+  "error.noArtifacts": "このバージョンでは分析を実行に添付できません。",
+  "message.noRun": "この分析の元になった実行が不明です。"
 }

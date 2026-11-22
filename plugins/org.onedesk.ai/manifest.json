@@ -46,7 +46,8 @@
           "use4": "true",
           "use5": "true",
           "use6": "true",
-          "use7": "true"
+          "use7": "true",
+          "connectionId": ""
         },
         "draggable": false,
         "accepts": []
@@ -170,13 +171,6 @@
       }
     ],
     "settings": [
-      {
-        "name": "connection",
-        "label": "setting.connection",
-        "type": "text",
-        "default": "",
-        "hint": "setting.connection.hint"
-      },
       {
         "name": "sensitiveColumns",
         "label": "setting.sensitiveColumns",

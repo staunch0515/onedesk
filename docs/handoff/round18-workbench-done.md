@@ -8,9 +8,9 @@
 | K3 预览 | 通过 | `analysis` 页：连接/模型/token 估算、可编辑 `body.request`、每个参考文档一个勾选框、完整发送文本；取消勾选和编辑立即改变全文与估算；只有“发送”动作（`send`）才调 `interfaces.call`；策略 off 时红字提示 |
 | K4 脱敏 | 通过 | 敏感列名（password/token/secret/email/phone/api_key… 按词和驼峰，设置里可加）整列 `***`；邮箱→`[email]`；≥9 位数字串→`[number]`；前 20 行；单元格 200 字；行数/字数可在设置里改；请求里写明截了什么、遮了哪些列。测试“masking (K4)” |
 | K2 资料索引 | 通过（搜索待内核 X6 实测） | `syncDocs` 把授权文件夹里的 .md/.txt 同步成 `doc` 资源（`upsertByKey`，只在 files.roots 内）；分析时用语句里 FROM/JOIN 的表名+结果列名调 `resources.search({mode:"any",rank:"relevance",kinds:["org.onedesk.ai:doc"],limit:8})`，按 `docBudget` token 预算取，最后一篇可截断 |
-| K6 保存分析 | 按新需求改了/部分 | “保存分析”事件调 `ctx.host.runs.saveArtifact(runId, {...})`；**协议文档没有定 run_artifacts 的宿主接口名**，这是我的猜测；没有该函数时退回写插件自己的存储（并提示“保存在本插件里”）。需要协调会话定名或补接口 |
+| K6 保存分析 | 通过（待内核 D442 实测） | “保存分析”事件调 `ctx.host.runs.saveArtifact(runId,{name,kind:"analysis",data})`（D442）；没有该函数就报错，不再退回存储。没有来源运行 id 时提示不保存 |
 | K7–K9 生成 SQL | 通过 | 导出动作 `generate`（输入 §8；返回 `{text, model, usage, check}`，出错 `{error:{code,message}}`），只带说明、表名/列名、相关文档，**不带数据**；K8 检查 `checkSql`：单条 SELECT/WITH，去掉注释和字符串后看，多条/写入/`INTO` 都拒绝。SQL 插件：“用 AI 写”输入框 + 动作 `aiWrite`/`aiSend`，提议显示在编辑器下面，**接受前不改编辑器**；“接受”事件返回 `changes: {"body.sql": …}`（未保存修改），检查不过不能接受。测试 “sql: write with AI” |
-| K10 设置 | 按新需求改了/部分 | 清单 `settings`：默认连接（文字，编号或名称）、更多敏感列名、行数、字数、文档文件夹、文档预算。环境参数 `ai.connection` 优先于设置；**设置项类型目前没有“资源引用”**，所以默认连接是文字框，待内核支持清单里的 `kinds: {implements}` 后换成选择器 |
+| K10 设置 | 通过（待内核实测） | 默认连接是资源引用：分析页顶部有 `ref` 字段，`kinds: ["@implements:onedesk.ai.chat/1"]`、`bind: body.connectionId`，选项来自 `interfaces.list` + `resources.list`；选择顺序：页面所选 → 环境参数 `ai.connection` → 工作区默认 `params.config("ai.connection.default")`（同 SQL 的 `datasource.default`）。**工作区默认的设置入口**：我没有在清单里声明它（清单设置项没有资源引用类型），沿用 datasource.default 的做法；若外壳没有给它的界面，需要内核/外壳补。清单 `settings` 只剩：更多敏感列名、行数、字数、文档文件夹、文档预算 |
 | `ai.policy` | 通过 | 环境参数 `ai.policy`：`off`（analyze/send/generate 都拒绝）、`preview`（默认；`generate` 第一次只返回 `{needsPreview, request, tokens…}`，调用方显示后带 `confirm:true` 再发）、`allow`（`generate` 直接发）。无效值按 preview |
 | 审计 | 通过（部分） | 每次发送记 `{at, kind, connection, model, chars, usage}`，不含内容，最近 200 条存在插件存储；内核对 `interfaces.call` 自己有审计 |
 

@@ -46,10 +46,7 @@
   "summary.answered": "Answered by {model} (tokens in/out: {usage})",
   "summary.synced": "{count} documents updated.",
   "message.kept": "Saved “{name}” with the run.",
-  "message.keptLocal": "Saved “{name}” in this plugin (the run could not hold it).",
   "message.nothingToKeep": "There is no answer to save yet.",
-  "setting.connection": "Default AI connection",
-  "setting.connection.hint": "A connection resource (id or name). The environment's ai.connection wins.",
   "setting.sensitiveColumns": "More sensitive column names",
   "setting.sensitiveColumns.hint": "Comma separated; those columns are masked as a whole. password, token, secret, email, phone and the like are always masked.",
   "setting.maxRows": "Rows sent",
@@ -76,5 +73,10 @@
   "error.chat.tooLong": "The request is too long for the model. Remove documents or rows.",
   "error.chat.refusal": "The model declined to answer.",
   "error.chat.network": "The AI service could not be reached. {message}",
-  "error.chat.other": "The AI service failed. {message}"
+  "error.chat.other": "The AI service failed. {message}",
+  "field.connection": "AI connection",
+  "field.connection.hint": "Empty: the environment's, then the workspace default.",
+  "connection.default": "Environment / default",
+  "error.noArtifacts": "This version cannot attach an analysis to a run.",
+  "message.noRun": "The run this analysis came from is not known."
 }

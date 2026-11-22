@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 // @ts-ignore plain JS module, no types
-import plugin, { audit, buildRequest, checkSql, composeRequest, estimateTokens, extractSql, isSensitiveColumn, markdownTable, maskText, parseExtra, pickConnection, pickDocs, policyOf, redactTable, saveArtifact, searchTerms, syncDocs, tableNamesIn } from "./main.js";
+import plugin, { audit, buildRequest, checkSql, composeRequest, estimateTokens, extractSql, isSensitiveColumn, markdownTable, maskText, parseExtra, pickConnection, pickDocs, policyOf, redactTable, searchTerms, syncDocs, tableNamesIn } from "./main.js";
 import { checkActionResult, checkView, hostError, onlyKeys, registry, RENDER_KEYS } from "../_testing/view-check";
 
 const load = (f: string) => JSON.parse(readFileSync(new URL(`./locales/${f}.json`, import.meta.url), "utf8")) as Record<string, string>;
@@ -25,13 +25,14 @@ const table = {
 };
 const reply = { text: "It looks fine.", model: "claude-haiku-5-5", usage: { input: 100, output: 20 }, stop: "end" };
 
-function fakeHost(over: Host = {}, opts: { env?: Record<string, string>; settings?: Record<string, string> } = {}): Host {
+function fakeHost(over: Host = {}, opts: { env?: Record<string, string>; settings?: Record<string, string>; cfg?: Record<string, string> } = {}): Host {
   const store = new Map<string, string>();
   const bodies = new Map<string, any>();
   const env: Record<string, string> = { "ai.connection": "c1", ...(opts.env || {}) };
   const settings = opts.settings || {};
+  const cfg = opts.cfg || {};
   return {
-    params: { get: vi.fn(async (n: string) => (env[n] ? { found: true, value: env[n], sourceName: "Env" } : { found: false, value: "", sourceName: "" })) },
+    params: { config: vi.fn(async (n: string) => (cfg[n] ? { found: true, value: cfg[n], sourceName: "Workspace" } : { found: false, value: "", sourceName: "" })), get: vi.fn(async (n: string) => (env[n] ? { found: true, value: env[n], sourceName: "Env" } : { found: false, value: "", sourceName: "" })) },
     settings: { get: vi.fn(async (n: string) => settings[n] ?? "") },
     storage: { get: vi.fn(async (k: string) => store.get(k) ?? null), set: vi.fn(async (k: string, v: string) => void store.set(k, v)), remove: vi.fn(async (k: string) => void store.delete(k)) },
     runs: { read: vi.fn(async () => ({ output: table, meta: { plugin: "org.onedesk.sql", kind: "query", resource: "q1", at: 1 } })) },
@@ -46,7 +47,7 @@ function fakeHost(over: Host = {}, opts: { env?: Record<string, string>; setting
       update: vi.fn(async () => undefined),
       upsertByKey: vi.fn(async () => ({ ids: {} })),
     },
-    interfaces: { call: vi.fn(async () => reply) },
+    interfaces: { call: vi.fn(async () => reply), list: vi.fn(async () => [{ plugin: "org.onedesk.ai.x", kind: "connection", label: "X" }]) },
     files: { roots: vi.fn(async () => [{ path: "/docs" }]), list: vi.fn(async () => ({ entries: [] })), readText: vi.fn(async () => ({ text: "x" })) },
     ...over,
   };
@@ -147,15 +148,16 @@ describe("ai: policy and connection (K10)", () => {
   });
   it("the connection: the environment's ai.connection, else the workspace setting; says where a stale one came from", async () => {
     expect(await pickConnection(ctxOf(fakeHost()))).toEqual({ id: "c1", name: "Local AI", model: "llama3" });
-    const def = fakeHost({}, { env: { "ai.connection": "" }, settings: { connection: "c1" } });
+    const def = fakeHost({}, { env: { "ai.connection": "" }, cfg: { "ai.connection.default": "c1" } });
     expect((await pickConnection(ctxOf(def))).id).toBe("c1");
     await expect(pickConnection(ctxOf(fakeHost({}, { env: { "ai.connection": "" } })))).rejects.toThrow("No AI connection");
     await expect(pickConnection(ctxOf(fakeHost({}, { env: { "ai.connection": "ghost" } })))).rejects.toThrow("(from the environment) was not found");
-    await expect(pickConnection(ctxOf(fakeHost({}, { env: { "ai.connection": "" }, settings: { connection: "ghost" } })))).rejects.toThrow("(the workspace default) was not found");
+    await expect(pickConnection(ctxOf(fakeHost({}, { env: { "ai.connection": "" }, cfg: { "ai.connection.default": "ghost" } })))).rejects.toThrow("(the workspace default) was not found");
   });
   it("a connection can be found by name too", async () => {
     const host = fakeHost({}, { env: { "ai.connection": "My AI" } });
     host.resources.list = vi.fn(async () => [{ id: "c9", name: "My AI" }]);
+    expect(await pickConnection(ctxOf(fakeHost()), "c1")).toMatchObject({ id: "c1" }); // the page's own choice wins
     expect((await pickConnection(ctxOf(host))).id).toBe("c9");
   });
 });
@@ -198,12 +200,14 @@ describe("ai: analyze (K1) and the preview page (K3)", () => {
     const out = await pages.analysis.render(analysisCtx(host));
     expect(checkView(out.view)).toEqual([]);
     expect(onlyKeys(out, RENDER_KEYS)).toEqual([]);
-    expect(out.view.map((n: any) => n.id)).toEqual(["info", "request", "docs", "full"]);
+    expect(out.view.map((n: any) => n.id)).toEqual(["info", "connection", "request", "docs", "full"]);
+    expect(out.view[1].fields[0]).toMatchObject({ kind: "ref", kinds: ["@implements:onedesk.ai.chat/1"], bind: "body.connectionId" });
+    expect(host.resources.list).toHaveBeenCalledWith({ kind: "org.onedesk.ai.x:connection" });
     expect(out.view[0].text).toContain("Connection: Local AI · Model: llama3");
     expect(out.view[0].text).toMatch(/About \d+ tokens/);
-    expect(out.view[1].fields[0]).toMatchObject({ kind: "longtext", bind: "body.request" });
-    expect(out.view[2].fields[0]).toMatchObject({ kind: "boolean", bind: "body.use0", label: "orders.md" });
-    expect(out.view[3].text).toContain("### orders.md");
+    expect(out.view[2].fields[0]).toMatchObject({ kind: "longtext", bind: "body.request" });
+    expect(out.view[3].fields[0]).toMatchObject({ kind: "boolean", bind: "body.use0", label: "orders.md" });
+    expect(out.view[4].text).toContain("### orders.md");
     expect(host.interfaces.call).not.toHaveBeenCalled();
   });
   it("unticking a document and editing the request change the full text and the estimate at once (the draft counts)", async () => {
@@ -233,7 +237,7 @@ describe("ai: analyze (K1) and the preview page (K3)", () => {
     expect(live.view.find((n: any) => n.id === "keep").fields[0]).toMatchObject({ name: "name", param: true });
     const ro = await pages.analysis.render(analysisCtx(fakeHost(), body, { run: { id: "x", resourceId: "a1", input: {}, params: {} } }));
     expect(ro.view.find((n: any) => n.id === "keep")).toBeUndefined();
-    expect(ro.view[1].fields[0].readOnly).toBe(true);
+    expect(ro.view[2].fields[0].readOnly).toBe(true);
     expect(checkView(live.view)).toEqual([]);
   });
   it("the doc page shows the file's text", async () => {
@@ -293,21 +297,20 @@ describe("ai: send (K3, K5, audit)", () => {
     await expect(send(null, hostError("invalid", { reason: "wrongInterface" }))).rejects.toThrow("“Local AI” is not an AI connection");
     await expect(send(null, hostError("denied", { reason: "cancelled" }))).rejects.toMatchObject({ code: "denied" });
   });
-  it("keep (K6): saves the analysis with the run it came from; without the run API it stays in the plugin's storage", async () => {
+  it("keep (K6): saves the analysis with the run it came from (D442); without the host call it is an error, not a silent copy", async () => {
     const { pages } = registry(plugin);
     const body = draftBody({ answer: "A", model: "m", usage: "1 / 2", connection: "Local AI", sent: "S" });
-    const host = fakeHost({ runs: { saveArtifact: vi.fn(async () => undefined) } });
+    const host = fakeHost({ runs: { saveArtifact: vi.fn(async () => ({ id: "art1" })) } });
     const res = await pages.analysis.onEvent(analysisCtx(host, body, { params: { name: "Q3 look" } }), "keep");
-    expect(host.runs.saveArtifact).toHaveBeenCalledWith("run1", { kind: "analysis", name: "Q3 look", request: "S", answer: "A", connection: "Local AI", model: "m", usage: "1 / 2" });
+    expect(host.runs.saveArtifact).toHaveBeenCalledWith("run1", { name: "Q3 look", kind: "analysis", data: { request: "S", answer: "A", connection: "Local AI", model: "m", usage: "1 / 2" } });
     expect(onlyKeys(res, ["changes", "params", "message"])).toEqual([]);
     expect(res.message).toContain("with the run");
     const plain = fakeHost();
-    const res2 = await pages.analysis.onEvent(analysisCtx(plain, body, { params: { name: "N" } }), "keep");
-    expect(JSON.parse((await plain.storage.get("artifact:run1:N"))!)).toMatchObject({ answer: "A", name: "N" });
-    expect(res2.message).toContain("in this plugin");
+    await expect(pages.analysis.onEvent(analysisCtx(plain, body, { params: { name: "N" } }), "keep")).rejects.toThrow("cannot attach");
+    expect(plain.storage.set).not.toHaveBeenCalled();
     expect((await pages.analysis.onEvent(analysisCtx(plain), "keep")).message).toContain("no answer");
+    expect((await pages.analysis.onEvent(analysisCtx(plain, draftBody({ answer: "A", runId: "" })), "keep")).message).toContain("not known");
     await expect(pages.analysis.onEvent(analysisCtx(plain), "nope")).rejects.toThrow();
-    expect(await saveArtifact(ctxOf(fakeHost()), "r", { name: "x" })).toBe("storage");
   });
   it("the audit keeps the last 200 only and never fails the answer", async () => {
     const host = fakeHost();
@@ -411,7 +414,7 @@ describe("ai: manifest and text", () => {
   it("asks for the chat interface, adds the Analyze result action for tables and text, and keeps settings for K10", () => {
     expect(manifest.uses).toEqual(["onedesk.ai.chat/1"]);
     expect(manifest.contributes.resultActions).toEqual([{ id: "analyze", label: "action.analyze", icon: "sparkles", outputTypes: ["table", "text"], action: "analyze" }]);
-    expect(manifest.contributes.settings.map((s: any) => s.name)).toEqual(["connection", "sensitiveColumns", "maxRows", "maxCell", "docFolder", "docBudget"]);
+    expect(manifest.contributes.settings.map((s: any) => s.name)).toEqual(["sensitiveColumns", "maxRows", "maxCell", "docFolder", "docBudget"]);
     expect(manifest.requires).toEqual({ files: true });
   });
   it("names no provider; the plugin has no CSS or TSX; every key the code and manifest use exists in all languages", () => {

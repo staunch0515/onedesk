@@ -46,10 +46,7 @@
   "summary.answered": "{model} 已回答（输入/输出 token：{usage}）",
   "summary.synced": "已更新 {count} 份文档。",
   "message.kept": "已把“{name}”保存到这次运行下。",
-  "message.keptLocal": "已把“{name}”保存在本插件里（运行下放不下）。",
   "message.nothingToKeep": "还没有可保存的回答。",
-  "setting.connection": "默认 AI 连接",
-  "setting.connection.hint": "一个连接资源（编号或名称）。环境里的 ai.connection 优先。",
   "setting.sensitiveColumns": "更多敏感列名",
   "setting.sensitiveColumns.hint": "用逗号分隔；这些列整列打码。password、token、secret、email、phone 等始终打码。",
   "setting.maxRows": "发送的行数",
@@ -76,5 +73,10 @@
   "error.chat.tooLong": "请求对这个模型太长了。请去掉一些文档或行。",
   "error.chat.refusal": "模型拒绝回答。",
   "error.chat.network": "连不上 AI 服务。{message}",
-  "error.chat.other": "AI 服务出错了。{message}"
+  "error.chat.other": "AI 服务出错了。{message}",
+  "field.connection": "AI 连接",
+  "field.connection.hint": "留空：用环境里的，再用工作区默认。",
+  "connection.default": "环境 / 默认",
+  "error.noArtifacts": "当前版本不能把分析挂到运行下面。",
+  "message.noRun": "不知道这份分析来自哪次运行。"
 }

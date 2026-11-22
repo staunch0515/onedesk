@@ -71,12 +71,22 @@ export async function requireAllowed(ctx) {
   if ((await policyOf(ctx)) === "off") throw new Error(tr(ctx, "error.policyOff"));
 }
 
-// The default connection: the environment's `ai.connection`, else the workspace setting. Returns { id, name, model }.
-export async function pickConnection(ctx) {
-  let wanted = await envValue(ctx, "ai.connection");
-  let via = "Env";
+// The connection: the one chosen on the page, else the environment's `ai.connection`, else the workspace default
+// `ai.connection.default` (a resource reference, like `datasource.default` of the SQL plugin). { id, name, model }.
+export async function pickConnection(ctx, given) {
+  let wanted = String(given || "").trim();
+  let via = "Page";
   if (!wanted) {
-    wanted = (await setting(ctx, "connection", "")).trim();
+    wanted = await envValue(ctx, "ai.connection");
+    via = "Env";
+  }
+  if (!wanted) {
+    try {
+      const def = await ctx.host.params.config("ai.connection.default");
+      wanted = def && def.found && String(def.value).trim() ? String(def.value).trim() : "";
+    } catch (e) {
+      wanted = "";
+    }
     via = "Default";
   }
   if (!wanted) throw new Error(tr(ctx, "error.noConnection"));
@@ -87,17 +97,31 @@ export async function pickConnection(ctx) {
     r = null;
   }
   if (!r) {
-    try {
-      const all = (await ctx.host.resources.list({})) || [];
-      const list = Array.isArray(all) ? all : all.items || [];
-      r = list.find((x) => x.name === wanted) || null;
-    } catch (e) {
-      r = null;
-    }
+    for (const x of await connectionList(ctx)) if (x.id === wanted || x.name === wanted) r = x;
   }
   if (!r) throw new Error(tr(ctx, `error.connectionMissing${via}`, { connection: wanted }));
   const model = r.body && typeof r.body.model === "string" ? r.body.model : "";
   return { id: r.id, name: r.name || r.id, model };
+}
+
+// Every connection resource of every plugin that implements the chat interface (for the picker).
+export async function connectionList(ctx) {
+  const out = [];
+  let impls = [];
+  try {
+    impls = (await ctx.host.interfaces.list(IFACE)) || [];
+  } catch (e) {
+    return out;
+  }
+  for (const i of impls) {
+    try {
+      const all = (await ctx.host.resources.list({ kind: `${i.plugin}:${i.kind}` })) || [];
+      for (const r of Array.isArray(all) ? all : all.items || []) out.push(r);
+    } catch (e) {
+      /* a plugin whose resources cannot be listed has none to offer */
+    }
+  }
+  return out;
 }
 
 // What is kept about a send (never the content): who, when, which connection and model, how long, how much.
@@ -367,16 +391,12 @@ const usageText = (u) => (u && typeof u === "object" ? `${u.input || 0} / ${u.ou
 
 /* ---------------------------------------------------------------- K6 saving */
 
-// The analysis belongs to the run it analyzes (deleted with it). The host call for that is
-// `ctx.host.runs.saveArtifact(runId, artifact)`; where it is missing the analysis stays in the plugin's storage.
+// The analysis belongs to the run it analyzes (D442: deleted with it). No such host call → an error, never a
+// silent copy somewhere else.
 export async function saveArtifact(ctx, runId, artifact) {
   const runs = ctx.host.runs;
-  if (runs && typeof runs.saveArtifact === "function") {
-    await runs.saveArtifact(runId, artifact);
-    return "run";
-  }
-  await ctx.host.storage.set(`artifact:${runId}:${artifact.name}`, JSON.stringify(artifact));
-  return "storage";
+  if (!runs || typeof runs.saveArtifact !== "function") throw new Error(tr(ctx, "error.noArtifacts"));
+  return runs.saveArtifact(runId, artifact);
 }
 
 /* ---------------------------------------------------------------- the analysis page */
@@ -404,9 +424,9 @@ export function chosenDocs(docs, pick) {
   return docs.filter((_, i) => pick(`use${i}`, "true") !== "false");
 }
 
-async function connectionLine(ctx) {
+async function connectionLine(ctx, given) {
   try {
-    const c = await pickConnection(ctx);
+    const c = await pickConnection(ctx, given);
     return { text: tr(ctx, "info.connection", { connection: c.name, model: c.model || tr(ctx, "info.modelDefault") }), connection: c };
   } catch (e) {
     return { text: String(e.message || e), danger: true, connection: null };
@@ -473,7 +493,7 @@ export default {
       async render(ctx) {
         const pick = bodyOf(ctx);
         const view = [];
-        const info = await connectionLine(ctx);
+        const info = await connectionLine(ctx, pick("connectionId", ""));
         const docs = docsOf(pick);
         const used = chosenDocs(docs, pick);
         const full = composeRequest(ctx, pick("request", ""), used);
@@ -481,6 +501,11 @@ export default {
         const ro = ctx.run ? { readOnly: true } : {};
         const lines = [info.text, tr(ctx, "info.tokens", { tokens: estimateTokens(full) }), tr(ctx, `info.policy.${policy}`)];
         view.push({ type: "text", id: "info", text: lines.join("\n"), tone: info.danger || policy === "off" ? "danger" : "muted" });
+        const conns = await connectionList(ctx);
+        const chosen = pick("connectionId", "");
+        const options = [{ value: "", label: ctx.t("connection.default") }, ...conns.map((r) => ({ value: r.id, label: r.name }))];
+        if (chosen && !conns.some((r) => r.id === chosen)) options.push({ value: chosen, label: chosen });
+        view.push({ type: "form", id: "connection", layout: "strip", fields: [{ name: "connectionId", label: ctx.t("field.connection"), kind: "ref", kinds: ["@implements:onedesk.ai.chat/1"], bind: "body.connectionId", options, hint: tr(ctx, "field.connection.hint"), ...ro }] });
         view.push({ type: "form", id: "request", layout: "stack", fields: [{ name: "request", label: ctx.t("field.request"), kind: "longtext", bind: "body.request", fill: true, hint: tr(ctx, "field.request.hint"), ...ro }] });
         if (docs.length > 0) {
           view.push({
@@ -507,8 +532,9 @@ export default {
         const b = (ctx.resource && ctx.resource.body) || {};
         if (!b.answer) return { message: tr(ctx, "message.nothingToKeep") };
         const name = String((ctx.params && ctx.params.name) || "").trim() || tr(ctx, "analysis.defaultName", { date: new Date().toISOString().slice(0, 10) });
-        const where = await saveArtifact(ctx, b.runId || "-", { kind: "analysis", name, request: b.sent || b.request || "", answer: b.answer, connection: b.connection || "", model: b.model || "", usage: b.usage || "" });
-        return { message: tr(ctx, where === "run" ? "message.kept" : "message.keptLocal", { name }) };
+        if (!b.runId) return { message: tr(ctx, "message.noRun") };
+        await saveArtifact(ctx, b.runId, { name, kind: "analysis", data: { request: b.sent || b.request || "", answer: b.answer, connection: b.connection || "", model: b.model || "", usage: b.usage || "" } });
+        return { message: tr(ctx, "message.kept", { name }) };
       },
     });
 
@@ -539,7 +565,7 @@ export default {
         const cols = (read.output.columns || []).map((c) => String(c.label || c.key));
         docs = await pickDocs(ctx, searchTerms(tables, cols), await settingNumber(ctx, "docBudget", 3000));
       }
-      const body = { request, docs: JSON.stringify(docs.slice(0, MAX_DOCS)), runId, answer: "", model: "", usage: "", connection: "", sent: "" };
+      const body = { request, docs: JSON.stringify(docs.slice(0, MAX_DOCS)), runId, answer: "", model: "", usage: "", connection: "", connectionId: "", sent: "" };
       for (let i = 0; i < MAX_DOCS; i++) body[`use${i}`] = "true";
       const created = await ctx.host.resources.create({ kind: KIND_ANALYSIS, name: tr(ctx, "analysis.defaultName", { date: new Date().toISOString().slice(0, 10) }), body });
       return { output: { type: "link", label: created.name || tr(ctx, "analysis.new"), target: `resource:${created.id}` }, summary: { message: tr(ctx, "summary.draft") } };
@@ -555,7 +581,7 @@ export default {
       const docs = docsOf(pickBody);
       const text = composeRequest(ctx, pickBody("request", ""), chosenDocs(docs, pickBody));
       if (!text.trim()) throw new Error(tr(ctx, "error.empty"));
-      const connection = await pickConnection(ctx);
+      const connection = await pickConnection(ctx, pickBody("connectionId", ""));
       ctx.progress(undefined, tr(ctx, "step.sending", { connection: connection.name }));
       const answer = await chat(ctx, connection, { system: tr(ctx, "system.analyze"), messages: [{ role: "user", text }] });
       await ctx.host.resources.update(res.id, { "body.answer": answer.text, "body.model": answer.model || "", "body.usage": usageText(answer.usage), "body.connection": connection.name, "body.sent": text });
