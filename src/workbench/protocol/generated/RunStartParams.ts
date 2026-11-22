@@ -21,4 +21,10 @@ params: { [key in string]: string },
 /**
  * Current interface language; handed to the action as `ctx.locale` and kept with the run.
  */
-locale?: string, };
+locale?: string, 
+/**
+ * Round 18 (X5): set when the user clicked a result-area action: the run whose result it is.
+ * The action must be declared in `resultActions`; it gets `input.runId` and may read that
+ * one run with `host.runs.read` while it executes.
+ */
+resultRun?: string, };

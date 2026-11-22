@@ -40,6 +40,15 @@ pub struct SearchOpts {
     pub tags: Option<Vec<String>>,
     #[serde(default)]
     pub text: Option<String>,
+    /// Round 18 (X6): like `text`, but the answer is a list of `{ id, kind, name, snippet, score }`.
+    #[serde(default)]
+    pub query: Option<String>,
+    /// Round 18 (X6): `all` (default) or `any` word.
+    #[serde(default)]
+    pub mode: Option<SearchMode>,
+    /// Round 18 (X6): `none` (default) or `relevance`.
+    #[serde(default)]
+    pub rank: Option<SearchRank>,
     #[serde(default)]
     pub ids: Option<Vec<String>>,
     #[serde(default)]
@@ -141,16 +150,41 @@ impl Inner {
         if !plugin.manifest.requires.resources {
             return Err(denied("notRequested"));
         }
-        let opts: SearchOpts = if opts.is_null() {
+        let mut opts: SearchOpts = if opts.is_null() {
             SearchOpts::default()
         } else {
             serde_json::from_value(opts).map_err(|e| invalid_params(format!("search: {e}")))?
         };
-        let out = self.search_basic(&opts)?;
-        serde_json::to_value(out).map_err(internal)
+        // Round 18 (X6): a kind written without `:` is one of the caller's own.
+        if let Some(k) = &mut opts.kinds {
+            k.iter_mut().for_each(|x| *x = plugin.kind_ref(x));
+        }
+        match opts.query.take() {
+            Some(q) => {
+                if opts.text.is_some() {
+                    return Err(invalid_params("search: give query or text, not both"));
+                }
+                opts.text = Some(q);
+                opts.limit = Some(opts.limit.unwrap_or(20).min(200));
+                let (res, scores) = self.search_core(&opts, true)?;
+                let hits: Vec<Value> = res
+                    .items
+                    .iter()
+                    .zip(scores)
+                    .map(|(i, (score, snippet))| json!({ "id": i.id, "kind": i.kind, "name": i.name, "snippet": snippet, "score": score }))
+                    .collect();
+                Ok(Value::Array(hits))
+            }
+            None => serde_json::to_value(self.search_basic(&opts)?).map_err(internal),
+        }
     }
 
     pub(crate) fn search_basic(&self, o: &SearchOpts) -> KResult<ResourceSearchResult> {
+        Ok(self.search_core(o, false)?.0)
+    }
+
+    /// `search_basic`, and with `ranked` (or `any` / `relevance`) each item's score and snippet.
+    pub(crate) fn search_core(&self, o: &SearchOpts, force_rank: bool) -> KResult<(ResourceSearchResult, Vec<(f64, String)>)> {
         let kinds = o.kinds.as_ref().filter(|k| !k.is_empty());
         let tags = o.tags.as_ref().filter(|t| !t.is_empty());
         let text = o.text.as_deref().map(str::trim).filter(|t| !t.is_empty());
@@ -193,6 +227,28 @@ impl Inner {
                 wheres.push(format!("EXISTS (SELECT 1 FROM json_each(r.tags) WHERE value = ?{i})"));
             }
         }
+        let any = o.mode == Some(SearchMode::Any);
+        let relevance = o.rank == Some(SearchRank::Relevance);
+        if let Some(text) = text.filter(|_| any || relevance || force_rank) {
+            // Round 18 (X6): ranked; every candidate is read, ordered, then paged.
+            let words = crate::round18::query_words(text)?;
+            let mut cands = self.search_candidates(&words, any, &wheres, &args)?;
+            crate::round18::rank(&mut cands, &words, relevance);
+            let total = cands.len() as u32;
+            let page: Vec<_> = cands.into_iter().skip(offset as usize).take(limit as usize).collect();
+            let mut rows = Vec::new();
+            for c in &page {
+                if let Some(r) = self.read(|conn| store::get(conn, &c.id))? {
+                    rows.push((r, c.score, c.snippet.clone()));
+                }
+            }
+            let mut memo = HashMap::new();
+            let items: Vec<ResourceInfo> = rows.iter().map(|(r, _, _)| self.resource_info(r, &mut memo)).collect();
+            let end = offset.saturating_add(items.len() as u32);
+            let next = (!items.is_empty() && end < total).then_some(end);
+            let scores = rows.into_iter().map(|(_, s, sn)| (s, sn)).collect();
+            return Ok((ResourceSearchResult { items, total, next }, scores));
+        }
         let mut join = "";
         if let Some(text) = text {
             // The kernel's full-text search (name, description, tags, body): long words through the
@@ -216,7 +272,7 @@ impl Inner {
         let items: Vec<ResourceInfo> = rows.iter().map(|r| self.resource_info(r, &mut memo)).collect();
         let end = offset.saturating_add(items.len() as u32);
         let next = (!items.is_empty() && end < total).then_some(end);
-        Ok(ResourceSearchResult { items, total, next })
+        Ok((ResourceSearchResult { items, total, next }, vec![]))
     }
 
     /// A drop of `row` onto `target` (both in `tree`): when the target's kind decides drops and the

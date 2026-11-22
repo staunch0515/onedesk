@@ -142,11 +142,13 @@ type ResultAction = {
   - `uses`: `["<接口>", …]`，格式同接口名，不重复。
   - 写错 → 安装拒绝 `badImplements`（`detail` 说明哪里）。
 - `ctx.host.interfaces.call(接口, 动作, 输入, { resource })`：**只在运行里**（否则 `denied/notInRun`；事件处理函数里同样）。顺序检查：
-  1. 调用方清单没有 `uses` 该接口 → `denied/notUsed`。
-  2. `resource` 缺或不是字符串 → `invalid_params`；资源不存在 → `notFound/resource`。
-  3. 资源的类型所属插件没有声明实现该接口，或声明了但 `kind` 不是这个资源的类型 → `invalid/wrongInterface`。
-  4. 该插件被禁用、或没有任何已启用插件实现该接口，或 `动作` 不在该接口的 `actions` 里 → `invalid/noImplementation`（动作不在时多一个 `action` 参数）。
-  5. 同 `actions.call`：嵌套最多 4 层，回到已在链上的插件 → `denied/callDepth`。
+  1. 调用方清单没有 `uses` 该接口 → `denied/notUsed`（先于下面所有检查，含不在运行里时）。
+  2. 不在运行里 → `denied/notInRun`；`动作` 或 `resource` 缺或不是字符串 → `invalidParams`；资源不存在（或已删除）→ `notFound/resource`。
+  3. 没有任何已启用插件实现该接口 → `invalid/noImplementation`。
+  4. 资源的类型所属插件（按资源绑定的版本）没有声明实现该接口，或声明了但 `kind` 不是这个资源的类型 → `invalid/wrongInterface`。
+  5. 该插件被禁用、或 `动作` 不在该接口的 `actions` 里 → `invalid/noImplementation`（动作不在时多一个 `action` 参数）。
+  6. 动作自己带 `kinds` 而资源不在其中 → `denied/wrongKind`。
+  7. 同 `actions.call`：嵌套最多 4 层，回到已在链上的插件 → `denied/callDepth`。
   - 被调用方**以自己的身份**在同一次运行里执行（自己的沙箱、网络授权、密钥；**资源由内核交给它**当作 `ctx.resource`，并可用资源里保存的密钥引用，D318）；调用方这次运行的环境策略（`network.allow`、`process.allow`）照样约束它；调用方的动作预算在等待期间暂停（同长请求，最多 1 小时）；被调用方有自己的动作时限（60 秒，不含它等网络/程序的时间）。取消沿用同一次运行的取消。
   - 被调用方推的 `runs.partial` 就是这次运行的部分输出（类型按调用方的动作声明的输出类型检查）。
   - 返回动作的返回值（JSON，原样；数据文件 `output.file` 的交接规则同 `actions.call`）。

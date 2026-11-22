@@ -493,11 +493,33 @@ impl Inner {
     /* ---------------------------------------------------------------- search (D277) */
 
     fn search(&self, p: SearchQueryParams) -> KResult<Vec<SearchHit>> {
-        let terms: Vec<String> = p.text.split_whitespace().map(|t| t.to_lowercase()).collect();
+        let terms = crate::round18::query_words(&p.text)?;
         if terms.is_empty() {
             return Ok(vec![]);
         }
         let limit = p.limit.unwrap_or(20).clamp(1, 200);
+        // Round 18 (X6): `any` / `relevance` / `kinds` go through the ranked search.
+        let ranked = p.mode == Some(SearchMode::Any) || p.rank == Some(SearchRank::Relevance) || p.kinds.is_some();
+        if ranked {
+            let mut wheres = vec!["r.deleted_at IS NULL".to_string(), "r.tree IS NOT ?1".to_string(), "r.state <> 'missing'".to_string()];
+            let mut args: Vec<String> = vec![TREE_PLUGIN_STATE.to_string()];
+            let mut sets: Vec<Vec<String>> = Vec::new();
+            sets.extend(p.kind.iter().map(|k| vec![k.clone()]));
+            sets.extend(p.kinds.iter().cloned());
+            for set in sets {
+                args.push(serde_json::to_string(&set).map_err(internal)?);
+                wheres.push(format!("r.kind IN (SELECT value FROM json_each(?{}))", args.len()));
+            }
+            let mut cands = self.search_candidates(&terms, p.mode == Some(SearchMode::Any), &wheres, &args)?;
+            crate::round18::rank(&mut cands, &terms, p.rank == Some(SearchRank::Relevance));
+            cands.truncate(limit as usize);
+            let mut out = Vec::new();
+            for c in cands {
+                let Some(r) = self.read(|conn| store::get(conn, &c.id))? else { continue };
+                out.push(self.search_hit(&r)?);
+            }
+            return Ok(out);
+        }
         // Round 16 (parity A4): a resource whose source is gone is not found.
         let mut wheres = vec!["r.deleted_at IS NULL".to_string(), "r.tree IS NOT ?1".to_string(), "r.state <> 'missing'".to_string()];
         let mut args: Vec<String> = vec![TREE_PLUGIN_STATE.to_string()];
@@ -533,17 +555,21 @@ impl Inner {
         let mut out = Vec::new();
         for id in ids {
             let Some(r) = self.read(|c| store::get(c, &id))? else { continue };
-            let meta = self.row_meta(&r);
-            let path: Vec<String> = self.read(|c| store::ancestors(c, &r))?.into_iter().map(|a| a.name).collect();
-            out.push(SearchHit {
-                target: format!("resource:{}", r.id),
-                title: r.name.clone(),
-                icon: meta.icon,
-                subtitle: path.join(" / "),
-                state: store::shown_state(&r, meta.state, &None).0,
-            });
+            out.push(self.search_hit(&r)?);
         }
         Ok(out)
+    }
+
+    fn search_hit(&self, r: &store::Row) -> KResult<SearchHit> {
+        let meta = self.row_meta(r);
+        let path: Vec<String> = self.read(|c| store::ancestors(c, r))?.into_iter().map(|a| a.name).collect();
+        Ok(SearchHit {
+            target: format!("resource:{}", r.id),
+            title: r.name.clone(),
+            icon: meta.icon,
+            subtitle: path.join(" / "),
+            state: store::shown_state(r, meta.state, &None).0,
+        })
     }
 
     /* ---------------------------------------------------------------- audit */
