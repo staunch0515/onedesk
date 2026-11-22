@@ -270,6 +270,10 @@ describe("script: manifest", () => {
   it("every action the plugin handles is declared", () => {
     expect(m.contributes.actions.map((a: any) => `${a.id}:${a.output}`)).toEqual(["run:table", "exportAll:table"]);
   });
+  it("D436: only Export all (it uses no script parameter) skips the required check", () => {
+    const skip = m.contributes.pages.flatMap((p: any) => p.actions).filter((a: any) => a.ignoreRequired === true).map((a: any) => a.id);
+    expect(skip).toEqual(["export-all"]);
+  });
   it("every label key the manifest uses exists in English", () => {
     const keys = JSON.stringify(m.contributes).match(/"(?:kind|action|tab)\.[A-Za-z.]+"/g) ?? [];
     for (const k of keys) expect(EN[JSON.parse(k)], k).toBeDefined();

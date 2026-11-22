@@ -93,3 +93,4 @@
 - vitest：ssh 页面上没有备份字段是必填；页面动作前 4 个是 test/save/save-test/import。
 - 验证：单独跑 `e2e/fake-tools.spec.ts` + `e2e/round15.spec.ts`，21 条全过。
 - 外壳缺口（不在插件里绕）：`required` 是整页的，不能只对某个动作生效。脚本插件里标了 `required` 的 `@param` 为空时，也会拦住同页的“全部导出”和“保存”（导出和保存都不用参数）。建议：required 只拦 `action` 用到这些字段的动作，或者参数字段（`param: true`）不拦 save。
+- D436（合并内核 `b93a7a0` 后提交）：脚本插件“全部导出”（`export-all`）声明 `"ignoreRequired": true`。逐个核对过页面动作：命令插件的运行、保存并运行都用参数，保存按 D436 ① 不再被参数拦，复制是事件，所以都不加；数据源的测试连接和备份都需要连接的必填项，也不加。vitest：脚本插件只有 `export-all` 跳过必填检查，命令插件没有动作跳过。 真内核（本工作区构建的 devhost + worker，临时数据目录）：三个插件的页面都能打开，脚本页的动作为 `run, save, save-run, export-all(ignoreRequired)`，命令页 `run, save, save-run, copy`，清单被接受。

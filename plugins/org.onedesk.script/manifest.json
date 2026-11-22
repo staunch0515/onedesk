@@ -104,7 +104,8 @@
             "role": "run",
             "action": "exportAll",
             "label": "action.exportAll",
-            "icon": "folder-output"
+            "icon": "folder-output",
+            "ignoreRequired": true
           }
         ],
         "resultTabs": [
