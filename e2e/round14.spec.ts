@@ -292,98 +292,117 @@ test("D5 setup: one of every type, with something to look at", async ({ page }) 
   await create(page, "org.onedesk.sample:query", { name: "Sample query" });
 });
 
+/**
+ * The tour is split into short parts (each opens its own page): one 20-screenshot test took 60-120 s under load and hit the
+ * timeout. Each part writes its own lines; the contrast test below reads them all.
+ */
+type Snap = (name: string) => Promise<void>;
+type Ctx = { page: Page; snap: Snap; open: (n: string | RegExp) => Promise<void> };
+const PARTS: { name: string; run: (c: Ctx, theme: "light" | "dark") => Promise<void> }[] = [
+  {
+    name: "resources",
+    run: async ({ page, snap, open }) => {
+      await expect(page.getByRole("heading", { name: "Welcome to OneDesk" })).toBeVisible({ timeout: 20_000 });
+      await snap("welcome");
+      await showTree(page, "Resources");
+      await open(/^Docs link/);
+      await expect(page.getByRole("textbox", { name: "Address", exact: true })).toBeVisible();
+      await snap("link");
+      await open(/^Meeting summary/);
+      await expect(page.getByRole("textbox", { name: "Prompt", exact: true })).toBeVisible();
+      await snap("prompt");
+      await open(/^Friday bundle/);
+      await page.keyboard.press("ArrowRight");
+      await expect(treeItem(page, /^Weekly plan/).first()).toBeVisible();
+      await snap("composite");
+      await open(/^Weekly plan/);
+      await expect(page.getByRole("textbox", { name: "Content", exact: true })).toBeVisible();
+      await snap("tree-note");
+      await open(/^Everything for work/);
+      await expect(page.getByRole("tab", { name: /^Everything for work/, selected: true })).toBeVisible();
+      await snap("collection");
+    },
+  },
+  {
+    name: "http-and-query",
+    run: async ({ page, snap, open }) => {
+      await showTree(page, "Resources");
+      await page.locator(`[data-tree-key="${seeded.request}"]`).click();
+      await expect(page.getByRole("button", { name: "Send", exact: true }).first()).toBeVisible({ timeout: 15_000 });
+      await page.getByRole("button", { name: "Send", exact: true }).first().click();
+      await expect(page.getByText(/200 OK · \d+ ms/).first()).toBeVisible({ timeout: 30_000 });
+      await snap("http");
+      await open(/^Sample query/);
+      await expect(page.getByRole("tab", { name: /^Sample query/, selected: true })).toBeVisible();
+      await snap("sample");
+    },
+  },
+  {
+    name: "market-files-env",
+    run: async ({ page, snap, open }) => {
+      await showTree(page, "Plugin market");
+      await page.locator("[data-tree-key]", { hasText: "Local packages" }).first().dblclick();
+      await expect(page.getByRole("combobox", { name: "Package to install" })).toBeVisible({ timeout: 20_000 });
+      await snap("market");
+      await showTree(page, "Files");
+      await expect(page.getByRole("navigation", { name: "Views" }).getByRole("button", { name: "Files", exact: true })).toHaveAttribute("aria-pressed", "true");
+      await snap("files");
+      await showTree(page, "Environments");
+      await open(/^Default/);
+      await expect(page.getByRole("textbox", { name: "team", exact: true })).toBeVisible();
+      await snap("environment");
+    },
+  },
+  {
+    name: "settings-and-menus",
+    run: async ({ page, snap, open }) => {
+      await showTree(page, "Settings");
+      await open(/^Workspace/);
+      await expect(page.getByRole("button", { name: "Add parameter" })).toBeVisible();
+      await snap("workspace-config");
+      await showTree(page, "Plugins");
+      await open(/^HTTP request/);
+      await expect(page.getByRole("tab", { name: /HTTP request/, selected: true })).toBeVisible();
+      await snap("plugin");
+      await settingsMenu(page).click();
+      await expect(page.getByRole("menuitem").first()).toBeVisible();
+      await snap("settings");
+      await page.keyboard.press("Escape");
+      await page.keyboard.press("ControlOrMeta+Shift+p");
+      await expect(page.getByPlaceholder("Type a command")).toBeFocused();
+      await snap("palette");
+      await page.keyboard.press("Escape");
+      const wsButton = page.locator('button[aria-haspopup="menu"]').filter({ hasText: /\S/ }).first();
+      await wsButton.click();
+      await page.getByRole("menuitem", { name: "Manage workspaces…" }).click();
+      await expect(page.getByRole("dialog")).toBeVisible();
+      await snap("workspaces");
+    },
+  },
+];
+
 for (const theme of ["light", "dark"] as const) {
-  test(`D5 ${theme}: the main pages, photographed; contrast collected for the next test`, async ({ page }) => {
-    const strict: string[] = []; // under the D411 need (4.5:1 text, 3:1 large/disabled)
-    const snap = async (name: string) => {
-      await page.mouse.move(640, 2);
-      await page.waitForTimeout(500);
-      await page.screenshot({ path: path.join(OUT, `round14-${theme}-${name}.png`) });
-      const low = await lowContrast(page);
-      for (const l of low) {
-        const line = `${theme}/${name}: <${l.where}> "${l.text}" ${l.ratio}:1 < ${l.need}:1 (text ${l.fg} on ${l.bg})`;
-        strict.push(line);
-      }
-    };
-    const open = (n: string | RegExp) => treeItem(page, n).first().click();
-
-    await openKernel(page, host, theme);
-    await expect(page.getByRole("heading", { name: "Welcome to OneDesk" })).toBeVisible({ timeout: 20_000 });
-    await snap("welcome");
-
-    await showTree(page, "Resources");
-    await open(/^Docs link/);
-    await expect(page.getByRole("textbox", { name: "Address", exact: true })).toBeVisible();
-    await snap("link");
-    await open(/^Meeting summary/);
-    await expect(page.getByRole("textbox", { name: "Prompt", exact: true })).toBeVisible();
-    await snap("prompt");
-    await open(/^Friday bundle/);
-    await page.keyboard.press("ArrowRight");
-    await expect(treeItem(page, /^Weekly plan/).first()).toBeVisible();
-    await snap("composite");
-    await open(/^Weekly plan/);
-    await expect(page.getByRole("textbox", { name: "Content", exact: true })).toBeVisible();
-    await snap("tree-note");
-    await open(/^Everything for work/);
-    await expect(page.getByRole("tab", { name: /^Everything for work/, selected: true })).toBeVisible();
-    await page.waitForTimeout(500);
-    await snap("collection");
-
-    await page.locator(`[data-tree-key="${seeded.request}"]`).click();
-    await expect(page.getByRole("button", { name: "Send", exact: true }).first()).toBeVisible({ timeout: 15_000 });
-    await page.getByRole("button", { name: "Send", exact: true }).first().click();
-    await expect(page.getByText(/200 OK · \d+ ms/).first()).toBeVisible({ timeout: 30_000 });
-    await snap("http");
-
-    await open(/^Sample query/);
-    await page.waitForTimeout(800);
-    await snap("sample");
-
-    await showTree(page, "Plugin market");
-    await page.locator("[data-tree-key]", { hasText: "Local packages" }).first().dblclick();
-    await expect(page.getByRole("combobox", { name: "Package to install" })).toBeVisible({ timeout: 20_000 });
-    await page.waitForTimeout(500);
-    await snap("market");
-    await showTree(page, "Files");
-    await page.waitForTimeout(500);
-    await snap("files");
-
-    await showTree(page, "Environments");
-    await open(/^Default/);
-    await expect(page.getByRole("textbox", { name: "team", exact: true })).toBeVisible();
-    await snap("environment");
-
-    await showTree(page, "Settings");
-    await open(/^Workspace/);
-    await expect(page.getByRole("button", { name: "Add parameter" })).toBeVisible();
-    await snap("workspace-config");
-
-    await showTree(page, "Plugins");
-    await open(/^HTTP request/);
-    await expect(page.getByRole("tab", { name: /HTTP request/, selected: true })).toBeVisible();
-    await snap("plugin");
-
-    await settingsMenu(page).click();
-    await expect(page.getByRole("menuitem").first()).toBeVisible();
-    await snap("settings");
-    await page.keyboard.press("Escape");
-
-    await page.keyboard.press("ControlOrMeta+Shift+p");
-    await expect(page.getByPlaceholder("Type a command")).toBeFocused();
-    await snap("palette");
-    await page.keyboard.press("Escape");
-
-    const wsButton = page.locator('button[aria-haspopup="menu"]').filter({ hasText: /\S/ }).first();
-    await wsButton.click();
-    await page.getByRole("menuitem", { name: "Manage workspaces…" }).click();
-    await expect(page.getByRole("dialog")).toBeVisible();
-    await snap("workspaces");
-
-    strictProblems[theme] = strict;
-    mkdirSync(path.join(ROOT, "test-results"), { recursive: true });
-    writeFileSync(path.join(ROOT, `test-results/round14-contrast-${theme}.txt`), strict.join("\n") + "\n");
-  });
+  for (const part of PARTS) {
+    test(`D5 ${theme}: the main pages, photographed (${part.name}); contrast collected for the next test`, async ({ page }) => {
+      const strict: string[] = []; // under the D411 need (4.5:1 text, 3:1 large/disabled)
+      const snap: Snap = async (name) => {
+        await page.mouse.move(640, 2);
+        // settle instead of sleeping: wait for every finite CSS transition/animation to end, then two frames
+        await page.evaluate(async () => {
+          await Promise.all(document.getAnimations().filter((a) => a.effect?.getComputedTiming().iterations !== Infinity).map((a) => a.finished.catch(() => undefined)));
+          await new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r())));
+        });
+        await page.screenshot({ path: path.join(OUT, `round14-${theme}-${name}.png`) });
+        for (const l of await lowContrast(page)) strict.push(`${theme}/${name}: <${l.where}> "${l.text}" ${l.ratio}:1 < ${l.need}:1 (text ${l.fg} on ${l.bg})`);
+      };
+      const open = (n: string | RegExp) => treeItem(page, n).first().click();
+      await openKernel(page, host, theme);
+      await part.run({ page, snap, open }, theme);
+      (strictProblems[theme] ??= []).push(...strict);
+      mkdirSync(path.join(ROOT, "test-results"), { recursive: true });
+      writeFileSync(path.join(ROOT, `test-results/round14-contrast-${theme}.txt`), strictProblems[theme]!.join("\n") + "\n");
+    });
+  }
 
   test(`D5 ${theme}: contrast meets D411 (4.5:1 text, 3:1 large and disabled)`, async () => {
     const found = strictProblems[theme] ?? [];

@@ -467,6 +467,24 @@ export function sqlWords(sql) {
   return { words, unicodeEscape };
 }
 
+// System catalogs: the schemas, and the catalog tables and views the search path finds without a schema (pg_user, ...),
+// hold other things than the mapped tables, so a free query stays out of them. Functions such as pg_typeof stay allowed.
+const SYSTEM_SCHEMAS = new Set([
+  "pg_catalog", "information_schema", "pg_toast", "pg_temp", "pg_internal",
+  "pg_user", "pg_shadow", "pg_roles", "pg_authid", "pg_auth_members", "pg_group", "pg_database", "pg_class", "pg_namespace",
+  "pg_tables", "pg_views", "pg_matviews", "pg_indexes", "pg_index", "pg_settings", "pg_proc", "pg_attribute", "pg_type",
+  "pg_description", "pg_extension", "pg_tablespace", "pg_user_mappings", "pg_hba_file_rules", "pg_file_settings", "pg_locks", "pg_prepared_statements",
+]);
+
+// The first system-catalog name in the text, or "".
+export function systemName(sql) {
+  for (const w of sqlWords(sql).words) {
+    const l = w.toLowerCase();
+    if (SYSTEM_SCHEMAS.has(l) || l.startsWith("pg_toast_") || l.startsWith("pg_temp_") || l.startsWith("pg_stat_") || l.startsWith("pg_statio_")) return w;
+  }
+  return "";
+}
+
 // The first forbidden name in the text, or "".
 export function forbiddenName(sql) {
   for (const w of sqlWords(sql).words) {
@@ -489,6 +507,7 @@ export function freeQueryProblem(sql) {
   if (r.first !== "SELECT" && r.first !== "WITH") return "notSelect";
   if (sqlWords(text).unicodeEscape) return "unicodeEscape";
   if (forbiddenName(text)) return "forbiddenFunction";
+  if (systemName(text)) return "systemSchema";
   return null;
 }
 
@@ -765,7 +784,7 @@ export default {
     host.actions.handle("aiRunSql", async (ctx, input) => {
       const sql = String((input && input.sql) || "");
       const problem = freeQueryProblem(sql);
-      if (problem) throw new Error(tr(ctx, `ai.sql.${problem}`, { name: problem === "forbiddenFunction" ? forbiddenName(sql) : "" }));
+      if (problem) throw new Error(tr(ctx, `ai.sql.${problem}`, { name: problem === "forbiddenFunction" ? forbiddenName(sql) : problem === "systemSchema" ? systemName(sql) : "" }));
       const source = await sourceId(ctx);
       if (!source) throw new Error(tr(ctx, "error.noSource"));
       const limit = Number.isInteger(input && input.limit) && input.limit > 0 ? Math.min(input.limit, 2000) : AI_DEFAULT_ROWS;

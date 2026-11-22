@@ -33,7 +33,7 @@ function aiCall(row: AuditRow): AiCall | null {
 /** Audit log (I.13): table with filters by time, actor, operation, result and text. */
 export function AuditPage({ tab, descriptor }: { tab: TabState; descriptor: PageDescriptor }) {
   const { store } = useWorkbench();
-  const { t, operation: opName, dateTime, number } = useI18n();
+  const { t, pageTitle, operation: opName, dateTime, number } = useI18n();
   const { toast } = useToast();
   const [range, setRange] = useState("168");
   const [actor, setActor] = useState(ALL);
@@ -116,7 +116,7 @@ export function AuditPage({ tab, descriptor }: { tab: TabState; descriptor: Page
           <LoadingState layout="inline" label={t("common.loading")} />
         ) : (
           <DataGrid
-            label={descriptor.title}
+            label={pageTitle(descriptor.title)}
             columns={columns}
             rows={rows.data}
             getRowKey={(a) => a.id}

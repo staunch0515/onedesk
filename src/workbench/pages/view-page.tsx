@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Banner, Button, CodeEditor, Dialog, DropdownMenu, FieldStrip, FormField, IconButton, Input, Pane, Select, StripField, Switch, Textarea, useToast, type ActionBarItem } from "../../design";
+import { Banner, Button, CodeEditor, Dialog, DropdownMenu, FieldStrip, FormField, IconButton, Input, Pane, Select, StripField, Switch, Text, Textarea, useToast, type ActionBarItem } from "../../design";
 import { useI18n } from "../i18n";
 import type { ActionDecl, PageDescriptor, RunStatus, ViewField, ViewNode } from "../protocol";
 import { applyPageParams, runParams } from "./run-params";
@@ -38,6 +38,19 @@ function LanguageSelect({ id, size, label, value, disabled, onChange }: { id?: s
   // A language that is configured but not on offer (its plugin is off) stays visible, as it is.
   const options = [...list, ...(value && !list.some((l) => l.locale === value) ? [{ locale: value, name: value }] : [])];
   return <Select id={id} size={size} aria-label={label} disabled={disabled} value={value || undefined} placeholder={t("field.choose")} onValueChange={onChange} options={options.map((l) => ({ value: l.locale, label: l.name }))} />;
+}
+
+const RESOURCE_ID = /^[0-9a-f]{32}$/;
+
+/** A configuration parameter that holds a resource (the kernel draws a reference as a text box of its id) says whose id it is. */
+function ResourceName({ id }: { id: string }) {
+  const res = useQuery((c) => c.resource.get(id), [id], [`resource:${id}`]);
+  if (!res.data || res.data.deleted) return null;
+  return (
+    <Text size="xs" tone="muted" truncate>
+      {res.data.name}
+    </Text>
+  );
 }
 
 /** One form control, chosen by the field's kind. Values are always text; booleans are "true" / "false". */
@@ -90,6 +103,14 @@ export function FieldControl({ field, value, onChange, size, readOnly, id, secre
           onChange={(e) => onChange(e.target.value)}
         />
       );
+      if (!field.presets && !time && field.kind === "text" && field.bind?.startsWith("params.") && RESOURCE_ID.test(value)) {
+        return (
+          <Pane gap="xs">
+            {input}
+            <ResourceName id={value} />
+          </Pane>
+        );
+      }
       if (!field.presets || locked) return input;
       return (
         <Pane direction="row" gap="xs" align="center">

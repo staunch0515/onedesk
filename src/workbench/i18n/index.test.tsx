@@ -67,6 +67,9 @@ describe("kernel words come from the language's overlay like any other text (D38
     );
     expect(words.tx("node.rename")).toBe("名前を変更");
     expect(words.tx("node.open")).toBe("Open");
+    expect(words.pageTitle("core:audit")).toBe("Audit");
+    expect(words.pageTitle("env")).toBe("env"); // a resource that happens to be called like a tree is not renamed
+    expect(words.pageTitle("Meeting notes")).toBe("Meeting notes");
     expect(words.error(new KernelError("denied", {}))).toBe("拒否されました");
     expect(words.operation("resource.create")).toBe("作成");
     expect(words.permission("network")).toBe("ネットワーク");

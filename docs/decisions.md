@@ -598,3 +598,7 @@
 - **D451** 对 D450 的两处修正（r19-tests 发现）：①AI 运行里 `process.run` 内部为抓输出调用的 `transfer.capture`（只读捕获本次进程的输出）对 AI 放行；`transfer.*` 其余（写文件、上传等）仍拒绝。②限流按**整个工作区所有 `ai:*` 客户端合计**数，不按单个客户端名；客户端名后缀随进程随机，只用来让 `get_run` 只读自己的运行与审计区分，不用来给限流开新窗口。
 
 - **D452** 第二十轮（发布收尾）的决定：①版本号 `1.0.0`（`package.json`、各 `Cargo.toml`、`tauri.conf.json` 一致）；②打包只做本机自签名（ad-hoc `codesign -s -`），不公证；用户手册写明同事第一次打开要右键“打开”；③“旧版本数据目录能升级打开”指：任何已发布过的迁移版本的库，升到最新都成功并有升级测试（D403 已取消旧 sqlpool 数据的导入，这里不做）；④用户手册用中文写，另附英文摘要一页；插件开发说明 `plugins/README.md` 保持英文；⑤`todo.md` 分诊规则：影响日常使用（数据丢失、崩溃、错误结果、明显卡顿、看不懂的界面文字、无法完成的主流程）→ 1.0 前修；其余标 “1.0 之后”并写进 `docs/handoff/post-1.0.md`；⑥sqlpool 90 项逐行验收的结论只有“通过/不通过/按新需求改了”，由独立会话在真运行的 OneDesk（真 PostgreSQL）里做并留证据，发现的缺陷回内核/插件补，不绕过；⑦真实 Anthropic/Ollama 的人工验收（D447）放在 `.app` 打出之后由用户自己填密钥进行。
+
+- **D453** 第二十轮内核两处缺陷（sqlpool 验收缺陷 3、4；协调会话派发，2026-11-23）：①`page.save` 对资源：若页面是只读页（`readOnly`），则 `body.*` 的键只接受该页表单绑定的字段，其余返回 `denied`、`reason: "readOnlyField"`、`field: <键>`（整次保存都不生效）；`name`/`description`/`tags` 与 `new:` 不受影响；插件自己用宿主接口 `resources.*` 的写入不经 `page.save`，不受影响。②“配置”页（`param_form`）对 `ref` 型参数输出 `FieldKind::Ref`，`options` 是与当前所指资源同 kind 的资源（按名字，至多 `MAX_REF_OPTIONS`，当前值必含）；值为空或指向不存在的资源时仍是文本框。协议没有新增字段。外壳可为 `readOnlyField` 配文字（按 code 配，D219）。
+- **D454** 第二十轮收尾的三处小修（协调会话派发，2026-11-23）：①插件抛出的错误，运行错误的 `detail` 只含错误文字，不含栈（`at fn (main.js:行:列)`），`sandbox::without_stack`；②A1 核实：`RunError.params`（D360）已有，外部程序（`program`）与 `layer`/`layerName` 已随错误下发，无需改协议；③A2：数据源插件的 `runReadonly` 让 psql 用 `\pset null '<OD-NULL-7c1e4f>'` 写 NULL，解析时该文字为 NULL、空字段为空串；`captureReadonly`（写文件）不变。
+

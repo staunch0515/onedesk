@@ -89,6 +89,29 @@ describe("a node that accepts any resource (dropAny, D390)", () => {
   });
 });
 
+describe("dropping a node into a leaf that accepts it (environments, G2)", () => {
+  const env = (key: string, over: Partial<TreeNode> = {}): TreeNode =>
+    ({ key, tree: "t14", label: key, icon: "globe", kind: "core:env", expandable: false, state: "ok", menu: [], draggable: true, accepts: ["core:env"], ...over }) as TreeNode;
+  const info = { id: "t14", title: "Envs", icon: "list", source: "stored", toolbar: [], menu: [], groups: false } as unknown as TreeInfo;
+  const at = (key: string) => document.querySelector<HTMLElement>(`[data-tree-key="${key}"]`)!;
+
+  it("the middle of a row without children means 'into it', so Team A can go under Team B", async () => {
+    const move = vi.fn<ProtocolClient["tree"]["move"]>(async () => undefined);
+    const nodes = [env("a"), env("b")];
+    const base = kernelLikeClient(createMockClient({ fresh: true, quiet: true }), {});
+    renderInShell({ ...base, tree: { ...base.tree, children: async () => ({ nodes }), path: async () => [], move } }, <TreePanel tree={info} />);
+    await screen.findByText("b");
+    const target = at("b");
+    vi.spyOn(target, "getBoundingClientRect").mockReturnValue({ top: 0, height: 100, left: 0, right: 100, bottom: 100, width: 100, x: 0, y: 0, toJSON: () => ({}) });
+    document.elementFromPoint = () => target;
+    fireEvent.pointerDown(at("a"), { button: 0, clientX: 0, clientY: 0, pointerId: 1 });
+    fireEvent.pointerMove(window, { clientX: 30, clientY: 50 });
+    fireEvent.pointerMove(window, { clientX: 31, clientY: 50 });
+    fireEvent.pointerUp(window, { clientX: 31, clientY: 50 });
+    await waitFor(() => expect(move).toHaveBeenCalledWith("t14", "a", "b", "inside", expect.any(String)));
+  });
+});
+
 describe("a provided node whose target is gone (state broken)", () => {
   it("is drawn in its state with the plugin's words as its hint", async () => {
     const node = { key: "@c/1", tree: "t13", label: "(gone)", icon: "file", kind: "x", expandable: false, state: "broken", stateReason: { "en-US": "No longer exists" }, menu: [], draggable: false, accepts: [] } as TreeNode;

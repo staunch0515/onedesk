@@ -46,7 +46,7 @@ describe("ui.language on the configuration page (D379)", () => {
     const onChange = vi.fn();
     const lang: ViewField = { name: "ui.language", label: "ui.language", kind: "text", bind: "params.ui.language" };
     renderInShell(client, <FieldControl field={lang} value="zh-CN" onChange={onChange} size="md" readOnly={false} />);
-    const box = await screen.findByRole("combobox", { name: "ui.language" });
+    const box = await screen.findByRole("combobox", { name: "Interface language" });
     expect(box.textContent).toBe("zh-CN");
     fireEvent.keyDown(box, { key: "Enter" });
     expect((await screen.findAllByRole("option")).map((o) => o.textContent)).toEqual(["English", "日本語", "zh-CN"]);
@@ -73,5 +73,31 @@ describe("time and reference fields (D414)", () => {
       </I18nProvider>,
     );
     expect(screen.getByRole("combobox", { name: "Source" })).toBeTruthy();
+  });
+});
+
+describe("a configuration parameter that holds a resource id (datasource.default)", () => {
+  const id = "9199c85d0be109830eeceb0228330c43";
+  const param: ViewField = { name: "datasource.default", label: "datasource.default", kind: "text", bind: "params.datasource.default" };
+
+  it("says which resource the id is, under the box that keeps the id editable", async () => {
+    const { kernelLikeClient, renderInShell } = await import("../testing/harness");
+    const { createMockClient } = await import("../protocol/mock");
+    const base = kernelLikeClient(createMockClient({ fresh: true, quiet: true }), {});
+    const client = { ...base, resource: { ...base.resource, get: async (rid: string) => (rid === id ? ({ id, name: "Shop DB", deleted: false } as never) : null) } };
+    renderInShell(client, <FieldControl field={param} value={id} onChange={vi.fn()} size="md" readOnly={false} />);
+    expect(await screen.findByText("Shop DB")).toBeTruthy();
+    expect((screen.getByLabelText("datasource.default") as HTMLInputElement).value).toBe(id);
+  });
+
+  it("stays a plain box for other text, and for an id that names nothing", async () => {
+    const { kernelLikeClient, renderInShell } = await import("../testing/harness");
+    const { createMockClient } = await import("../protocol/mock");
+    const base = kernelLikeClient(createMockClient({ fresh: true, quiet: true }), {});
+    const client = { ...base, resource: { ...base.resource, get: async () => null } };
+    renderInShell(client, <FieldControl field={param} value={id} onChange={vi.fn()} size="md" readOnly={false} />);
+    await new Promise((r) => setTimeout(r, 30));
+    expect(screen.queryByText("Shop DB")).toBeNull();
+    expect((screen.getByLabelText("datasource.default") as HTMLInputElement).value).toBe(id);
   });
 });

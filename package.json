@@ -1,7 +1,7 @@
 {
   "name": "onedesk",
   "private": true,
-  "version": "0.2.0",
+  "version": "1.0.0",
   "type": "module",
   "engines": {
     "node": ">=22 <23",
@@ -23,6 +23,8 @@
     "test:rust": "cargo test --workspace",
     "clippy": "cargo clippy --workspace --all-targets -- -D warnings",
     "e2e": "playwright test",
+    "e2e:app": "playwright test e2e/smoke-app.spec.ts",
+    "smoke:app": "sh scripts/smoke-app.sh",
     "check": "pnpm check:types && pnpm typecheck && pnpm lint && pnpm test && pnpm test:rust && pnpm clippy && ONEDESK_E2E_REQUIRE_DEVHOST=1 pnpm e2e",
     "gen:types": "sh scripts/gen-types.sh",
     "check:types": "sh scripts/gen-types.sh --check"

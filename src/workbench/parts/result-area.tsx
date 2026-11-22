@@ -282,7 +282,7 @@ export function OutputTab({ tab, run, widthKey }: { tab: TabState; run: Run | nu
     // Errors stay here until the next run or "clear" (I.7): never a toast that disappears.
     return (
       <Pane grow scroll pad="md" gap="sm">
-        <Banner tone="danger" title={`${run.error.code} — ${runError(run.error)}`}>
+        <Banner tone="danger" title={runError(run.error)}>
           {run.error.hint}
         </Banner>
         {run.error.detail && (

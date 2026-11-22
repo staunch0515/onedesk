@@ -26,6 +26,7 @@ export const KERNEL_LABELS: Table = {
   "env": "kernel.label.env",
   "config": "kernel.label.config",
   "favorites": "kernel.label.favorites",
+  "ui.language": "kernel.label.ui.language",
   "ui.theme": "kernel.label.ui.theme",
   "ui.density": "kernel.label.ui.density",
   "network.allow": "kernel.label.network.allow",

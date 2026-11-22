@@ -420,6 +420,11 @@ describe("table: for AI clients (round 19)", () => {
     expect(freeQueryProblem("/* x */ UPDATE t SET a = 1")).toBe("notSelect");
     expect(freeQueryProblem("EXPLAIN SELECT 1")).toBe("notSelect");
     expect(freeQueryProblem("COPY t TO PROGRAM 'x'")).toBe("notSelect");
+    expect(freeQueryProblem("SELECT usename FROM pg_catalog.pg_user LIMIT 2")).toBe("systemSchema");
+    expect(freeQueryProblem("select * from information_schema.tables")).toBe("systemSchema");
+    expect(freeQueryProblem("SELECT * FROM pg_user")).toBe("systemSchema");
+    expect(freeQueryProblem('SELECT * FROM "pg_catalog"."pg_class"')).toBe("systemSchema");
+    expect(freeQueryProblem("SELECT 'pg_user' FROM orders")).toBeNull();
     expect(freeQueryProblem("SELECT 1\n\\! ls")).toBe("backslash");
     expect(freeQueryProblem("SELECT 1 " + "x".repeat(20001))).toBe("tooLong");
   });

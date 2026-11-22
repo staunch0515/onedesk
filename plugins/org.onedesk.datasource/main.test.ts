@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 // @ts-ignore plain JS module, no types
-import plugin, { BACKUP_STEPS, backupPlanOf, backupToLocal, checkBackup, dockerArgs, dumpSpec, safeContainer, safeDbName, stampOf, suggestDbName, captureReadonly, checkConnection, connectionOf, errorText, parseConnectionUrl, parseCsv, positiveInt, processSpec, readonlyScript, refuse, scanSql, runReadonly, safePart } from "./main.js";
+import plugin, { BACKUP_STEPS, backupPlanOf, backupToLocal, checkBackup, dockerArgs, dumpSpec, safeContainer, safeDbName, stampOf, suggestDbName, captureReadonly, checkConnection, connectionOf, errorText, parseConnectionUrl, parseCsv, NULL_TEXT, positiveInt, processSpec, readonlyScript, refuse, scanSql, runReadonly, safePart } from "./main.js";
 import { RENDER_KEYS, checkActionResult, checkView, hostError, onlyKeys, registry } from "../_testing/view-check";
 
 const load = (f: string) => JSON.parse(readFileSync(new URL(`./locales/${f}.json`, import.meta.url), "utf8")) as Record<string, string>;
@@ -21,7 +21,7 @@ function fakeHost(over: Host = {}): Host {
     params: { get: vi.fn(async () => ({ found: false, value: "", sourceName: "" })) },
     settings: { get: vi.fn(async () => null) },
     resources: { get: vi.fn(async (id: string) => sources[id] ?? null), list: vi.fn(async () => [SOURCE, SSH]) },
-    process: { run: vi.fn(async () => csv("a,b\n1,x\n2,\n")) },
+    process: { run: vi.fn(async () => csv(`a,b\n1,x\n2,${NULL_TEXT}\n`)) },
     transfer: { capture: vi.fn(async () => ({ code: 0, signal: "", stderr: "", truncated: false, bytes: 10, path: "x" })) },
     ...over,
   };
@@ -105,6 +105,15 @@ describe("datasource: helpers", () => {
     expect(parseCsv("a\r\n1\r\n")).toEqual([["a"], ["1"]]);
     expect(parseCsv("")).toEqual([]);
     expect(parseCsv("a,b")).toEqual([["a", "b"]]);
+  });
+
+  it("A2: NULL and an empty string differ — psql is told to write NULL as a marker text", async () => {
+    expect(readonlyScript("SELECT 1", 1000, NULL_TEXT)).toBe(`\\pset null '${NULL_TEXT}'\nBEGIN READ ONLY;\nSET LOCAL statement_timeout = 1000;\nSET LOCAL standard_conforming_strings = on;\nSELECT 1\n;\nROLLBACK;\n`);
+    expect(parseCsv(`a,b,c\n1,${NULL_TEXT},\n"",${NULL_TEXT},"${NULL_TEXT}"\n`, NULL_TEXT)).toEqual([["a", "b", "c"], ["1", null, ""], ["", null, NULL_TEXT]]);
+    const run = vi.fn(async () => csv(`a,b\n1,${NULL_TEXT}\n2,\n`));
+    const out = await runReadonly(ctxOf(fakeHost({ process: { run } })), connectionOf(SOURCE.body), "SELECT a, b FROM t", {});
+    expect(out.rows).toEqual([["1", null], ["2", ""]]);
+    expect((run.mock.calls[0] as any)[0].stdin).toContain(`\\pset null '${NULL_TEXT}'`);
   });
 
   it("imports postgres:// and ssh:// strings; a password in the string is reported, not kept", () => {

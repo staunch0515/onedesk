@@ -4,12 +4,6 @@ import type { KernelClient } from "./real/real-client";
 
 /** The mock's general resource tree is renamed so it cannot clash with the kernel's `resources` (D265). */
 const DEMO_RESOURCES = "demo:resources";
-/**
- * Trees the kernel provides (or a plugin does) are dropped from the demo: files (a plugin's tree),
- * environments (kernel tree `env`). Config, favorites and deleted have the same ids on both sides,
- * so the kernel's wins automatically.
- */
-const DROPPED_MOCK_TREES = new Set(["files", "environments"]);
 /** Demo topics that the kernel words differently. */
 const TOPIC_ALIASES: Record<string, string> = { env: "tree:env", "tree:environments": "tree:env" };
 
@@ -41,15 +35,10 @@ export function createMixedClient(kernel: KernelClient, mock: ProtocolClient): P
   /** `new:` targets the mock handed out (marked with `demo=1`). */
   const isDemoNew = (target: string) => target.startsWith("new:") && target.includes("demo=1");
 
+  /** The release shows only the kernel's trees: the demo's (fake resources, fake data sources) are never listed next to real data (D452 review). */
   const listTrees = async (): Promise<TreeInfo[]> => {
-    const real = await kernel.tree.list();
-    const realIds = new Set(real.map((t) => t.id));
-    const demo = (await mock.tree.list())
-      .map((t) => (t.id === "resources" ? { ...t, id: DEMO_RESOURCES, title: { "en-US": "Demo resources", "zh-CN": "演示资源" } } : t))
-      .filter((t) => t.id === DEMO_RESOURCES || (!DROPPED_MOCK_TREES.has(t.id) && !realIds.has(t.id)));
     mockTrees.clear();
-    for (const t of demo) mockTrees.add(t.id);
-    return [...real, ...demo];
+    return kernel.tree.list();
   };
 
   /**

@@ -33,8 +33,7 @@ describe("kernel texts", () => {
     const { readFileSync } = await import("node:fs");
     const names = ["policy.rs", "network.rs", "process.rs"].flatMap((f) => [...readFileSync(`crates/kernel/src/${f}`, "utf8").matchAll(/pub const [A-Z_]+: &str = "([a-z_]+\.[a-z_]+)";/g)].map((m) => m[1]!));
     expect(names).toEqual(expect.arrayContaining(["network.allow", "protection.readonly", "ui.language"]));
-    // ui.language keeps its own field label (D379).
-    for (const name of [...names.filter((n) => n !== "ui.language"), "ui.theme", "ui.density"]) expect(KERNEL_LABELS["en-US"][name], name).toBeTruthy();
+    for (const name of [...names, "ui.theme", "ui.density"]) expect(KERNEL_LABELS["en-US"][name], name).toBeTruthy();
   });
 
 });

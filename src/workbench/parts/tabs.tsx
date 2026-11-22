@@ -16,7 +16,7 @@ function withPinned(tabs: TabState[], id: string, pinned: boolean): TabState[] {
 
 export function TabsPart() {
   const { store, actions } = useWorkbench();
-  const { t } = useI18n();
+  const { t, pageTitle } = useI18n();
   const tabs = useUi((s) => s.tabs);
   const activeId = useUi((s) => s.activeTabId);
   const drafts = useUi((s) => s.drafts);
@@ -72,10 +72,10 @@ export function TabsPart() {
             label={t("tabs.all")}
             empty={t("tabs.none")}
             items={tabs
-              .filter((x) => !needle || x.title.toLowerCase().includes(needle))
+              .filter((x) => !needle || pageTitle(x.title).toLowerCase().includes(needle))
               .map((x) => ({
                 key: x.id,
-                label: x.title || "…",
+                label: pageTitle(x.title) || "…",
                 icon: x.icon,
                 selected: x.id === activeId,
                 meta: x.pinned ? t("tabs.pinned") : Object.keys(drafts[x.id] ?? {}).length > 0 ? t("tabs.unsaved") : undefined,
@@ -109,7 +109,7 @@ export function TabsPart() {
         activeId={activeId}
         tabs={tabs.map((x) => ({
           id: x.id,
-          label: x.title || "…",
+          label: pageTitle(x.title) || "…",
           icon: x.icon,
           pinned: x.pinned,
           dirty: Object.keys(drafts[x.id] ?? {}).length > 0,
