@@ -2533,6 +2533,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "onedesk-mcp"
+version = "0.2.0"
+dependencies = [
+ "libc",
+ "onedesk-host",
+ "onedesk-kernel",
+ "onedesk-protocol",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
 name = "onedesk-protocol"
 version = "0.2.0"
 dependencies = [
