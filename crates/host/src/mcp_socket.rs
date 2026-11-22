@@ -30,7 +30,7 @@ pub const CLIENT_PREFIX: &str = "ai:";
 
 /// Main-process request (not forwarded to a worker): where `onedesk-mcp` is and what to paste into Claude Desktop's config.
 /// Returns `{ path: string, exists: boolean, config: string }`; `config` is the JSON text of the `mcpServers` entry.
-pub const APP_MCP_INFO: &str = "app.mcpInfo";
+pub const APP_MCP_INFO: &str = onedesk_protocol::method19::APP_MCP_INFO;
 
 /// `ONEDESK_MCP_BIN`, else `onedesk-mcp` next to the running executable (inside the `.app`: `Contents/MacOS`).
 pub fn mcp_bin() -> PathBuf {
@@ -44,7 +44,7 @@ pub fn mcp_bin() -> PathBuf {
 pub fn info() -> Value {
     let path = mcp_bin();
     let config = json!({ "mcpServers": { "onedesk": { "command": path.to_string_lossy() } } });
-    json!({ "path": path.to_string_lossy(), "exists": path.is_file(), "config": serde_json::to_string_pretty(&config).expect("json") })
+    serde_json::to_value(onedesk_protocol::McpInfo { path: path.to_string_lossy().into_owned(), exists: path.is_file(), config: serde_json::to_string_pretty(&config).expect("json") }).expect("McpInfo serializes")
 }
 
 /// macOS limits socket paths to 103 bytes.

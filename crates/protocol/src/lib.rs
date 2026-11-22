@@ -2484,6 +2484,21 @@ pub mod method19 {
     /// `McpCallParams` → `McpCallResult` (AI only).
     pub const MCP_CALL: &str = "mcp.call";
     pub const ALL: &[&str] = &[RESOURCE_SET_AI_VISIBLE, MCP_STATUS, MCP_TOOLS, MCP_CALL];
+    /// Answered by the main process itself (never forwarded to a worker, so not in `ALL`): No params → `McpInfo`.
+    pub const APP_MCP_INFO: &str = "app.mcpInfo";
+}
+
+/// Where the MCP program is and what to paste into an AI client's configuration (D449).
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct McpInfo {
+    /// Absolute path of the `onedesk-mcp` program (inside the `.app` in a release build).
+    pub path: String,
+    /// Whether a file is there now.
+    pub exists: bool,
+    /// JSON text of a `{ "mcpServers": { "onedesk": { "command": <path> } } }` entry, ready to copy.
+    pub config: String,
 }
 
 #[skip_serializing_none]
