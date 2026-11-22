@@ -10,13 +10,11 @@
   "license": "MIT",
   "homepage": "https://onedesk.example.com/plugins/ai",
   "requires": {
-    "files": true
+    "files": true,
+    "resources": true
   },
   "uses": [
     "onedesk.ai.chat/1"
-  ],
-  "activation": [
-    "workspace.opened"
   ],
   "exports": {
     "actions": [
@@ -34,14 +32,12 @@
         "page": "analysis",
         "newName": "analysis.new",
         "defaults": {
+          "mode": "",
+          "system": "",
           "request": "",
           "docs": "[]",
           "runId": "",
-          "answer": "",
-          "model": "",
-          "usage": "",
-          "connection": "",
-          "sent": "",
+          "connectionId": "",
           "use0": "true",
           "use1": "true",
           "use2": "true",
@@ -49,8 +45,7 @@
           "use4": "true",
           "use5": "true",
           "use6": "true",
-          "use7": "true",
-          "connectionId": ""
+          "use7": "true"
         },
         "draggable": false,
         "accepts": []
@@ -65,19 +60,6 @@
         "defaults": {
           "path": "",
           "text": ""
-        },
-        "draggable": false,
-        "accepts": []
-      },
-      {
-        "id": "settings",
-        "label": "kind.settings",
-        "icon": "settings",
-        "tree": "resources",
-        "page": "settings",
-        "newName": "settings.new",
-        "defaults": {
-          "anchor": ""
         },
         "draggable": false,
         "accepts": []
@@ -184,23 +166,6 @@
       },
       {
         "id": "doc"
-      },
-      {
-        "id": "settings",
-        "recompute": true,
-        "usesEnv": true,
-        "actions": [
-          {
-            "id": "save",
-            "role": "save",
-            "label": "action.save",
-            "icon": "save",
-            "shortcut": [
-              "Mod",
-              "S"
-            ]
-          }
-        ]
       }
     ],
     "settings": [
@@ -258,8 +223,7 @@
     "onedesk.ai.generate/1": {
       "actions": [
         "generate"
-      ],
-      "kind": "settings"
+      ]
     }
   }
 }

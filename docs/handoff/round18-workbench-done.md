@@ -43,3 +43,21 @@
 
 - 清单 `contributes.settings` 有 `connection`：`type:"resource"`、`kinds:["@implements:onedesk.ai.chat/1"]`、`default:""`（内核 §9.8）。读取顺序：页面所选 → `params.get("ai.connection")` → `params.config("ai.connection")` → `settings.get("connection")`。
 - `settings` 资源类型保留，只作为 `interfaces.call(generate)` 的调用锚点：工作区打开时自动建一份（用户不需要操作），页面只有一行说明，不在“新建”菜单里，里面不存任何东西。内核若以后允许不带资源的接口调用，可以删掉它。
+
+## 第十八轮审查后的修改（D444/D445）
+
+| 审查项 | 做法 | 验证（vitest） |
+|---|---|---|
+| #1 连接读不到 | 连接一律经 `ctx.host.interfaces.resources("onedesk.ai.chat/1")`（`{id,name,kind,fields}`，型号取 `fields.model`），不再 `resources.get/list` 服务商资源；分析页的连接下拉只写 `kinds:["@implements:…"]`，不填 `options` | “connections come only from interfaces.resources”“the page shows the connection…” |
+| #17/D445 | `implements["onedesk.ai.generate/1"]` 不写 `kind`；删掉 `settings` 资源类型、页面、`activation`、`ensureSettings`；SQL 去掉 `requires.resources`，`interfaces.call(..., {})` 不带资源 | “implements the generate interface without a kind”“SQL manifest” |
+| #2 K2 | 工作台清单 `requires.resources:true`；文档用 `resources.search` 取；表名不再读 SQL 插件的资源，改为：运行 meta.resource 的名字（`resources.search({ids})`）的词 + 结果列名 | “analyze reads the run's result…” |
+| #3 K6 | “分析”被点击时先 `saveArtifact(runId,{name:"Analysis draft",kind:"analysis-draft",data})`（失败不挡打开）；保存时再存正式的 `analysis`，并 `listArtifacts/deleteArtifact` 删草稿 | “the click stores a draft…”“keep (K6)…” |
+| #6 预览 | 预览由工作台自己出：`policy=preview` 时 `generate` 建一个 `mode:"sql"` 的草稿资源（只读、显示 system 与请求），用户在工作台页面按“发送”，发出的是草稿里保存的原文（输入被忽略）；答案存在插件存储，调用方用 `generate({fetch: 草稿id})` 取（一次，取后删草稿）。**调用方的 `confirm` 不再有效**。SQL 的 `aiSend` 改为 `aiFetch`“取回答案”，页面里放链接到草稿。`instruction` 截 1000 字并脱敏邮箱/长数字，`tables` 只收像名字的（≤50 表、100 列） | “preview (the default)…”“the user sends the draft…”“only names go out…” |
+| #7 脱敏 | 小写子串匹配（password/passwd/pwd/token/secret/email/mail/phone/mobile/key/credential/ssn/iban/cvv/salt/passport + 中日文词表），label 和 key 都查；会误伤如 `primary_key`，宁多勿漏 | “masks whole columns by name…” |
+| #15 | 带各种分隔符的 ≥8 位数字串打码（电话、卡号）；`YYYY-MM-DD` 开头的日期保留 | “masks emails and numbers with any separators…” |
+| #14 | `checkSql` 加有副作用函数黑名单（pg_terminate_backend、nextval、setval、pg_sleep、set_config、lo_*、dblink*、pg_advisory*、pg_read_file…），原因码 `sideEffects`，注释写明只按 PostgreSQL 语义 | “refuses functions with side effects…”，SQL 页面一例 |
+| #16 | 预览页显示 system 提示词（分析页、SQL 预览）；`send` 不再写资源正文：答案放插件存储 `last:<id>`，用户“保存分析”才进运行附属内容 | “sends the edited request…”“keep (K6)…” |
+| #9 | 默认连接名统一 `ai.connection`；读取顺序 页面 → 环境 → 工作区配置 → 插件设置项 | “the connection: page, then…” |
+| #8 | `ai.policy=off` 时点“分析”：先查策略，什么都不读，提示写明“ai.policy = off，什么都没读取、没发送，请管理环境的人修改” | “is refused when the environment says off” |
+
+**别人的事**：`plugins/_testing/lang-check.test.ts` 的 4 个测试在我动手之前就失败（外壳新增的键还没有中日译文，归 r18-tests）。

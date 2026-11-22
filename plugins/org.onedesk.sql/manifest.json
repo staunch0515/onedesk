@@ -10,8 +10,7 @@
   "license": "MIT",
   "homepage": "https://onedesk.example.com/plugins/sql",
   "requires": {
-    "files": false,
-    "resources": true
+    "files": false
   },
   "depends": [
     {
@@ -88,8 +87,8 @@
         "confirm": null
       },
       {
-        "id": "aiSend",
-        "label": "action.aiSend",
+        "id": "aiFetch",
+        "label": "action.aiFetch",
         "icon": "send",
         "kinds": [
           "query"
@@ -148,10 +147,10 @@
             "icon": "sparkles"
           },
           {
-            "id": "aiSend",
+            "id": "aiFetch",
             "role": "run",
-            "action": "aiSend",
-            "label": "action.aiSend",
+            "action": "aiFetch",
+            "label": "action.aiFetch",
             "icon": "send"
           },
           {

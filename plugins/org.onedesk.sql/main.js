@@ -293,7 +293,9 @@ export function proposalView(ctx, p) {
   const view = [];
   if (p.stage === "preview") {
     view.push({ type: "text", id: "aiPreview", text: tr(ctx, "ai.preview", { connection: p.connection || "", model: p.model || tr(ctx, "ai.modelDefault"), tokens: p.tokens || 0 }), tone: "muted" });
+    view.push({ type: "text", id: "aiSystem", text: `**${tr(ctx, "ai.system")}**\n\n${p.system || ""}`, format: "markdown" });
     view.push({ type: "text", id: "aiRequest", text: p.request || "", format: "markdown" });
+    if (p.draft) view.push({ type: "link", id: "aiOpen", label: tr(ctx, "ai.openReview"), target: `resource:${p.draft}` });
   } else if (p.stage === "proposal") {
     const note = p.check && p.check.ok ? tr(ctx, "ai.checkOk") : tr(ctx, `ai.check.${(p.check && p.check.reason) || "notSelect"}`);
     view.push({ type: "text", id: "aiNote", text: `${tr(ctx, "ai.proposalFrom", { model: p.model || "" })}\n${note}`, tone: p.check && p.check.ok ? "muted" : "danger" });
@@ -313,23 +315,22 @@ async function generators(ctx) {
   }
 }
 
-async function callGenerate(ctx, instruction, sourceId, sql, confirm) {
+async function callGenerate(ctx, input) {
   const impls = await generators(ctx);
   if (impls.length === 0) throw new Error(tr(ctx, "ai.unavailable"));
-  // the interface is called with a resource of the implementing kind (its settings resource)
-  const found = await ctx.host.resources.search({ kinds: [impls[0].kind], limit: 1 });
-  const hit = Array.isArray(found) ? found[0] : found && found.items ? found.items[0] : null;
-  if (!hit) throw new Error(tr(ctx, "ai.noSettings"));
-  const input = { kind: "sql", instruction, context: { tables: tablesOf(sql) } };
-  if (sourceId) input.resource = sourceId;
-  if (confirm) input.confirm = true;
   try {
-    const ret = await ctx.host.interfaces.call(GENERATE, "generate", input, { resource: hit.id });
+    // the implementing plugin takes no resource (D445)
+    const ret = await ctx.host.interfaces.call(GENERATE, "generate", input, {});
     return ret && ret.data ? ret.data : ret; // D441
   } catch (e) {
     if (e && e.code === "invalid" && e.params && (e.params.reason === "noImplementation" || e.params.reason === "wrongInterface")) throw new Error(tr(ctx, "ai.unavailable"));
     throw e;
   }
+}
+
+// Only the words and the names of the tables go to the AI workbench — never rows.
+export function generateInput(instruction, sql) {
+  return { kind: "sql", instruction, context: { tables: tablesOf(sql) } };
 }
 
 async function finishGenerate(ctx, res, instruction) {
@@ -340,7 +341,7 @@ async function finishGenerate(ctx, res, instruction) {
     throw new Error(message);
   }
   if (res && res.needsPreview) {
-    await ctx.host.storage.set(key, JSON.stringify({ stage: "preview", instruction, request: res.request, connection: res.connection, model: res.model, tokens: res.tokens }));
+    await ctx.host.storage.set(key, JSON.stringify({ stage: "preview", instruction, draft: res.draft, request: res.request, system: res.system, connection: res.connection, model: res.model, tokens: res.tokens }));
     const message = tr(ctx, "ai.reviewFirst");
     return { output: { type: "text", text: message }, summary: { message } };
   }
@@ -348,14 +349,6 @@ async function finishGenerate(ctx, res, instruction) {
   await ctx.host.storage.set(key, JSON.stringify({ stage: "proposal", instruction, text: res.text, model: res.model || "", check: res.check || { ok: false, reason: "notSelect" } }));
   const message = tr(ctx, res.check && res.check.ok ? "ai.proposed" : "ai.proposedBad");
   return { output: { type: "text", text: res.text }, summary: { message } };
-}
-
-async function sourceOf(ctx, input) {
-  try {
-    return await pickSource(ctx, String((input && input["body.source"]) || ""));
-  } catch (e) {
-    return "";
-  }
 }
 
 /* ---------------------------------------------------------------- plugin */
@@ -477,21 +470,25 @@ export default {
       return { output: out, summary: { message: tr(ctx, "summary.created") } };
     });
 
-    // "Write with AI": asks the AI workbench for a proposal. The editor keeps its text until "Accept".
+    // "Write with AI": asks the AI workbench for a proposal. The editor keeps its text until "Accept". Where the
+    // environment wants a preview, the workbench makes the request and shows it on its own page; the user sends it
+    // there, and "Get the answer" fetches what the workbench stored.
     host.actions.handle("aiWrite", async (ctx, input) => {
       const instruction = String((ctx.params && ctx.params.aiInstruction) || "").trim();
       if (!instruction) throw new Error(tr(ctx, "ai.noInstruction"));
       ctx.progress(undefined, tr(ctx, "ai.step"));
-      const res = await callGenerate(ctx, instruction, await sourceOf(ctx, input), String((input && input["body.sql"]) || ""), false);
+      const res = await callGenerate(ctx, generateInput(instruction, String((input && input["body.sql"]) || "")));
       return finishGenerate(ctx, res, instruction);
     });
 
-    // After the user has looked at what would be sent (policy "preview"): send it.
-    host.actions.handle("aiSend", async (ctx, input) => {
+    host.actions.handle("aiFetch", async (ctx) => {
       const p = await readProposal(ctx);
-      if (!p || p.stage !== "preview") throw new Error(tr(ctx, "ai.noPreview"));
-      ctx.progress(undefined, tr(ctx, "ai.step"));
-      const res = await callGenerate(ctx, p.instruction, await sourceOf(ctx, input), String((input && input["body.sql"]) || ""), true);
+      if (!p || p.stage !== "preview" || !p.draft) throw new Error(tr(ctx, "ai.noPreview"));
+      const res = await callGenerate(ctx, { fetch: p.draft });
+      if (res && res.pending) {
+        const message = tr(ctx, "ai.notSentYet");
+        return { output: { type: "text", text: message }, summary: { message } };
+      }
       return finishGenerate(ctx, res, p.instruction);
     });
 

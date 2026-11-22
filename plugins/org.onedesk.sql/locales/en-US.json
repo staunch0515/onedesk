@@ -45,7 +45,6 @@
   "field.ai": "Write with AI",
   "field.ai.placeholder": "Describe the query you want",
   "action.aiWrite": "Write with AI",
-  "action.aiSend": "Send to AI",
   "action.aiAccept": "Accept",
   "action.aiDiscard": "Discard",
   "ai.step": "Asking the AI…",
@@ -53,8 +52,7 @@
   "ai.noInstruction": "Describe the query first.",
   "ai.noPreview": "There is no request waiting to be sent.",
   "ai.modelDefault": "the connection's default",
-  "ai.preview": "Not sent yet. Connection: {connection} · Model: {model} · about {tokens} tokens. Press “Send to AI” to send it. No data is included.",
-  "ai.reviewFirst": "Look at the request, then send it.",
+  "ai.reviewFirst": "The AI workbench made the request. Review it and send it there.",
   "ai.proposalFrom": "Proposed by {model}. Your editor has not changed.",
   "ai.checkOk": "Checked: one read-only statement. Press “Accept” to put it in the editor as an unsaved change.",
   "ai.check.empty": "Not acceptable: the answer is empty.",
@@ -67,6 +65,11 @@
   "ai.cannotAccept": "This proposal cannot be accepted.",
   "ai.accepted": "Put in the editor. Not saved yet.",
   "ai.discarded": "Proposal discarded.",
-  "ai.noSettings": "The AI workbench settings do not exist yet. Reopen the workspace, or press “Analyze” on any result once; they are created automatically.",
-  "ai.unavailable": "Write with AI is not available: no AI workbench is installed."
+  "ai.unavailable": "Write with AI is not available: no AI workbench is installed.",
+  "action.aiFetch": "Get the answer",
+  "ai.system": "System prompt",
+  "ai.openReview": "Open the request to review and send it",
+  "ai.notSentYet": "Not sent yet. Open the request, read it and press Send there; then get the answer here.",
+  "ai.check.sideEffects": "Not acceptable: it calls a function with side effects (PostgreSQL only is checked).",
+  "ai.preview": "Not sent yet. Connection: {connection} · Model: {model} · about {tokens} tokens. Nothing leaves until you press Send in the AI workbench. No data is included."
 }

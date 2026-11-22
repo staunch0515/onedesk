@@ -55,7 +55,7 @@
   "setting.docFolder.hint": "A folder you authorized for files. Markdown and text files in it become reference documents.",
   "setting.docBudget": "Reference budget (tokens)",
   "setting.docBudget.hint": "At most this much of reference documents is added to a request.",
-  "error.policyOff": "AI is turned off in this environment.",
+  "error.policyOff": "AI is turned off in this environment (ai.policy = off), so nothing was read or sent. Ask whoever manages the environment to change it.",
   "error.noConnection": "No AI connection is set. Choose one in the AI workbench settings.",
   "error.connectionMissingEnv": "The AI connection “{connection}” (from the environment) was not found.",
   "error.connectionMissingDefault": "The AI connection “{connection}” (the workspace default) was not found.",
@@ -76,14 +76,13 @@
   "error.chat.other": "The AI service failed. {message}",
   "field.connection": "AI connection",
   "field.connection.hint": "Empty: the environment's, then the workspace default.",
-  "connection.default": "Environment / default",
   "error.noArtifacts": "This version cannot attach an analysis to a run.",
   "message.noRun": "The run this analysis came from is not known.",
-  "kind.settings": "AI workbench settings",
-  "settings.new": "AI workbench settings",
   "error.connectionMissingSettings": "The AI connection “{connection}” (from the AI workbench settings) was not found.",
-  "error.connectionMissingPage": "The AI connection “{connection}” was not found.",
-  "settings.note": "Nothing to set here. This item only lets other plugins (like SQL's “Write with AI”) call the AI workbench. Choose the default connection in the plugin settings.",
   "setting.connection": "Default AI connection",
-  "setting.connection.hint": "Used when neither the page nor the environment's ai.connection names one. Any connection of a provider plugin."
+  "setting.connection.hint": "Used when neither the page nor the environment's ai.connection names one. Any connection of a provider plugin.",
+  "field.system": "System prompt (sent with the request)",
+  "analysis.draftName": "Analysis draft",
+  "summary.proposed": "Proposal ready.",
+  "summary.proposedBad": "The proposal did not pass the check."
 }

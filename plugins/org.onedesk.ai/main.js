@@ -8,7 +8,6 @@ export const PLUGIN = "org.onedesk.ai";
 export const IFACE = "onedesk.ai.chat/1";
 export const KIND_ANALYSIS = "analysis";
 export const KIND_DOC = "doc";
-export const KIND_SETTINGS = "settings";
 export const MAX_DOCS = 8;
 export const POLICIES = ["off", "preview", "allow"];
 const AUDIT_KEY = "audit";
@@ -72,6 +71,17 @@ export async function requireAllowed(ctx) {
   if ((await policyOf(ctx)) === "off") throw new Error(tr(ctx, "error.policyOff"));
 }
 
+// The connections of the plugins that implement the chat interface: { id, name, kind, fields } from the host
+// (basic information only, no secrets). Returns [] when the host cannot say.
+export async function connectionList(ctx) {
+  try {
+    const all = (await ctx.host.interfaces.resources(IFACE)) || [];
+    return Array.isArray(all) ? all : all.items || [];
+  } catch (e) {
+    return [];
+  }
+}
+
 // The connection: the one chosen on the page, else the environment's `ai.connection`, else the workspace config
 // `ai.connection`, else the plugin setting `connection`. { id, name, model }.
 export async function pickConnection(ctx, given) {
@@ -91,58 +101,15 @@ export async function pickConnection(ctx, given) {
     via = "Default";
   }
   if (!wanted) {
-    wanted = await settingsConnection(ctx);
+    wanted = (await setting(ctx, "connection", "")).trim();
     via = "Settings";
   }
   if (!wanted) throw new Error(tr(ctx, "error.noConnection"));
-  let r = null;
-  try {
-    r = await ctx.host.resources.get(wanted);
-  } catch (e) {
-    r = null;
-  }
-  if (!r) {
-    for (const x of await connectionList(ctx)) if (x.id === wanted || x.name === wanted) r = x;
-  }
+  const list = await connectionList(ctx);
+  const r = list.find((x) => x.id === wanted) || list.find((x) => x.name === wanted);
   if (!r) throw new Error(tr(ctx, `error.connectionMissing${via}`, { connection: wanted }));
-  const model = r.body && typeof r.body.model === "string" ? r.body.model : "";
+  const model = r.fields && typeof r.fields.model === "string" ? r.fields.model : "";
   return { id: r.id, name: r.name || r.id, model };
-}
-
-// The default connection chosen in the plugin's settings (a resource setting; "" = none).
-export async function settingsConnection(ctx) {
-  return (await setting(ctx, "connection", "")).trim();
-}
-
-// The anchor resource the generate interface is called through (the interface needs a resource of the implementing
-// kind; nothing is stored in it): one is kept ready (created when the workspace
-// opens, and again by "Analyze" if the user deleted it). Returns its id.
-export async function ensureSettings(ctx) {
-  const all = (await ctx.host.resources.list({ kind: `${PLUGIN}:${KIND_SETTINGS}` })) || [];
-  const list = Array.isArray(all) ? all : all.items || [];
-  if (list.length > 0) return list[0].id;
-  const made = await ctx.host.resources.create({ kind: KIND_SETTINGS, name: tr(ctx, "settings.new"), body: { anchor: "" } });
-  return made.id;
-}
-
-// Every connection resource of every plugin that implements the chat interface (for the picker).
-export async function connectionList(ctx) {
-  const out = [];
-  let impls = [];
-  try {
-    impls = (await ctx.host.interfaces.list(IFACE)) || [];
-  } catch (e) {
-    return out;
-  }
-  for (const i of impls) {
-    try {
-      const all = (await ctx.host.resources.list({ kind: `${i.plugin}:${i.kind}` })) || [];
-      for (const r of Array.isArray(all) ? all : all.items || []) out.push(r);
-    } catch (e) {
-      /* a plugin whose resources cannot be listed has none to offer */
-    }
-  }
-  return out;
 }
 
 // What is kept about a send (never the content): who, when, which connection and model, how long, how much.
@@ -159,21 +126,15 @@ export async function audit(ctx, rec) {
 
 /* ---------------------------------------------------------------- K4 masking */
 
-const SENSITIVE_WORDS = ["password", "passwd", "pwd", "passphrase", "token", "secret", "credential", "credentials", "email", "mail", "phone", "mobile", "ssn", "iban", "cvv", "salt", "apikey", "passport"];
-const SENSITIVE_PARTS = ["api_key", "access_key", "private_key", "secret_key", "credit_card", "card_number", "phone_number", "id_card", "id_number", "bank_account"];
+// A column is sensitive when its name (the label and the key, lower-cased, as one string) contains any of these
+// — a substring, so passwordhash, accessToken and emailaddress are caught; over-masking is the safe side.
+const SENSITIVE_PARTS = ["password", "passwd", "pwd", "passphrase", "token", "secret", "credential", "email", "mail", "phone", "mobile", "ssn", "iban", "cvv", "salt", "key", "passport", "密码", "口令", "令牌", "密钥", "邮箱", "手机", "电话", "身份证", "银行卡", "パスワード", "トークン", "秘密", "メール", "電話"];
 const EMAIL = /[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+/g;
-const LONG_NUMBER = /\d(?:[ -]?\d){8,}/g;
+// digits with the usual separators between them: card numbers, phone numbers (+81 (90) 1234-5678, 138 0013 8000)
+const NUMBERISH = /\+?\(?\d[\d\s().-]{6,}\d/g;
 export const MASK = "***";
 
-export function wordsOf(label) {
-  return String(label || "")
-    .replace(/([a-z0-9])([A-Z])/g, "$1_$2")
-    .toLowerCase()
-    .split(/[^a-z0-9\u0080-￿]+/)
-    .filter(Boolean);
-}
-
-// `extra`: the user's own names (comma separated, from the settings): a word or a part of a name.
+// The user's own names: lower-cased substrings.
 export function parseExtra(text) {
   return String(text || "")
     .split(/[,\n;]/)
@@ -181,17 +142,14 @@ export function parseExtra(text) {
     .filter(Boolean);
 }
 
-export function isSensitiveColumn(label, extra) {
-  const words = wordsOf(label);
-  const joined = words.join("_");
-  if (words.some((w) => SENSITIVE_WORDS.includes(w))) return true;
-  if (SENSITIVE_PARTS.some((p) => joined.includes(p))) return true;
-  return (extra || []).some((e) => words.includes(e) || (e.includes("_") && joined.includes(e)));
+export function isSensitiveColumn(name, extra) {
+  const all = (Array.isArray(name) ? name : [name]).map((n) => String(n || "").toLowerCase()).join(" ");
+  return SENSITIVE_PARTS.some((p) => all.includes(p)) || (extra || []).some((e) => all.includes(e));
 }
 
 export function maskText(value, maxCell) {
   let s = value === null || value === undefined ? "" : String(value);
-  s = s.replace(EMAIL, "[email]").replace(LONG_NUMBER, "[number]");
+  s = s.replace(EMAIL, "[email]").replace(NUMBERISH, (m) => (m.replace(/\D/g, "").length < 8 || /^\d{4}-\d{2}-\d{2}\b/.test(m) ? m : "[number]"));
   if (maxCell > 0 && s.length > maxCell) s = `${s.slice(0, maxCell)}…`;
   return s;
 }
@@ -202,7 +160,7 @@ export function redactTable(output, opts) {
   const o = { maxRows: 20, maxCell: 200, extra: [], ...(opts || {}) };
   const columns = Array.isArray(output.columns) ? output.columns : [];
   const all = Array.isArray(output.rows) ? output.rows : [];
-  const hidden = columns.map((c) => isSensitiveColumn(c.label || c.key, o.extra));
+  const hidden = columns.map((c) => isSensitiveColumn([c.label, c.key], o.extra));
   const rows = all.slice(0, o.maxRows).map((r) => columns.map((_, i) => (hidden[i] ? MASK : maskText(r[i], o.maxCell))));
   return {
     columns: columns.map((c) => String(c.label || c.key)),
@@ -222,20 +180,6 @@ export function markdownTable(t) {
 }
 
 /* ---------------------------------------------------------------- K2 reference documents */
-
-const STOP = new Set(["select", "from", "where", "join", "left", "right", "inner", "outer", "group", "order", "limit", "with", "as", "on", "and", "or", "the"]);
-
-// Table names after FROM/JOIN (schema prefix and quotes dropped). Not a parser: names are search terms.
-export function tableNamesIn(sql) {
-  const out = [];
-  const re = /\b(?:from|join)\s+((?:[A-Za-z_"`][\w$"`]*\.)*[A-Za-z_"`][\w$"`]*)/gi;
-  let m;
-  while ((m = re.exec(String(sql || "")))) {
-    const name = m[1].split(".").pop().replace(/["`]/g, "");
-    if (name && !STOP.has(name.toLowerCase()) && !out.includes(name)) out.push(name);
-  }
-  return out;
-}
 
 export function searchTerms(tables, columns) {
   const out = [];
@@ -370,7 +314,12 @@ export function skeleton(sql) {
 
 const SQL_WRITES = ["insert", "update", "delete", "drop", "alter", "create", "truncate", "grant", "revoke", "merge", "call", "copy", "execute", "vacuum", "into", "comment", "reindex", "refresh"];
 
-// Only one SELECT or WITH statement passes. `reason`: empty | multiple | notSelect | writes.
+// Functions with side effects (sequences, sessions, files, large objects, other databases, locks, settings).
+// PostgreSQL semantics only: other databases are not checked and not supported.
+const SQL_EFFECT_NAMES = ["pg_terminate_backend", "pg_cancel_backend", "nextval", "setval", "pg_sleep", "pg_sleep_for", "pg_sleep_until", "set_config", "pg_notify", "pg_reload_conf", "pg_rotate_logfile", "pg_logical_emit_message", "txid_current", "pg_read_file", "pg_read_binary_file", "pg_ls_dir", "pg_stat_file", "pg_import_system_collations"];
+const SQL_EFFECT_PREFIXES = ["lo_", "dblink", "pg_advisory", "pg_create_", "pg_drop_", "pg_replication_", "pg_switch_", "pg_file_", "pg_promote", "pg_wal_replay_"];
+
+// Only one SELECT or WITH statement passes. `reason`: empty | multiple | notSelect | writes | sideEffects.
 export function checkSql(sql) {
   const flat = skeleton(sql).trim().replace(/[;\s]+$/, "");
   if (!flat) return { ok: false, reason: "empty" };
@@ -379,6 +328,7 @@ export function checkSql(sql) {
   if (!first || !["select", "with"].includes(first.toLowerCase())) return { ok: false, reason: "notSelect" };
   const words = flat.toLowerCase().match(/[a-z_]+/g) || [];
   if (words.some((w) => SQL_WRITES.includes(w))) return { ok: false, reason: "writes" };
+  if (words.some((w) => SQL_EFFECT_NAMES.includes(w) || SQL_EFFECT_PREFIXES.some((p) => w.startsWith(p)))) return { ok: false, reason: "sideEffects" };
   return { ok: true };
 }
 
@@ -418,6 +368,31 @@ export async function saveArtifact(ctx, runId, artifact) {
   const runs = ctx.host.runs;
   if (!runs || typeof runs.saveArtifact !== "function") throw new Error(tr(ctx, "error.noArtifacts"));
   return runs.saveArtifact(runId, artifact);
+}
+
+// A page event may save only for a run this plugin already has something under, so the click on "Analyze" stores
+// a draft first (what the user is looking at); saving later adds the named analysis and drops the draft.
+const DRAFT_KIND = "analysis-draft";
+export async function dropDrafts(ctx, runId) {
+  const runs = ctx.host.runs;
+  if (!runs || typeof runs.listArtifacts !== "function" || typeof runs.deleteArtifact !== "function") return;
+  try {
+    for (const a of (await runs.listArtifacts(runId)) || []) if (a.kind === DRAFT_KIND) await runs.deleteArtifact(a.id);
+  } catch (e) {
+    /* a draft left behind is harmless */
+  }
+}
+
+// The last answer of an analysis lives in the plugin's own storage until the user saves it: it is not put in the
+// resource body (which the full-text index reads).
+const lastKey = (id) => `last:${id}`;
+async function readLast(ctx, id) {
+  try {
+    const raw = await ctx.host.storage.get(lastKey(id));
+    return raw ? JSON.parse(raw) : null;
+  } catch (e) {
+    return null;
+  }
 }
 
 /* ---------------------------------------------------------------- the analysis page */
@@ -499,27 +474,80 @@ export async function syncDocs(ctx) {
   return batch.length;
 }
 
+/* ---------------------------------------------------------------- generate (K7–K9) */
+
+const IDENT = /^[\w$.\u0080-\uffff"-]{1,100}$/;
+const INSTRUCTION_MAX = 1000;
+
+// Only names go out: tables and columns that look like names, and the user's sentence with emails and long digit
+// strings masked and cut. A caller cannot carry rows through here.
+export function cleanContext(input) {
+  const instruction = maskText(String(input.instruction || "").trim(), INSTRUCTION_MAX);
+  const raw = (input.context && Array.isArray(input.context.tables) ? input.context.tables : []).slice(0, 50);
+  const tables = raw
+    .map((t) => (typeof t === "string" ? { name: t, columns: [] } : { name: String(t.name || ""), columns: Array.isArray(t.columns) ? t.columns.map(String).slice(0, 100) : [] }))
+    .filter((t) => IDENT.test(t.name))
+    .map((t) => ({ name: t.name, columns: t.columns.filter((c) => IDENT.test(c)) }));
+  return { instruction, tables };
+}
+
+// The statement is checked here, once, for whoever asks.
+function proposalOf(answer) {
+  const text = extractSql(answer.text);
+  return { text, model: answer.model || "", usage: answer.usage || null, check: checkSql(text) };
+}
+
+async function generate(ctx, input) {
+  const i = input || {};
+  // the answer to an earlier preview: only what the workbench itself sent and stored
+  if (typeof i.fetch === "string" && i.fetch) {
+    const raw = await ctx.host.storage.get(`proposal:${i.fetch}`);
+    if (!raw) return { pending: true };
+    await ctx.host.storage.remove(`proposal:${i.fetch}`);
+    try {
+      await ctx.host.resources.remove(i.fetch);
+    } catch (e) {
+      /* the draft may be gone already */
+    }
+    return JSON.parse(raw);
+  }
+  if (i.kind !== "sql") return { error: { code: "badKind", message: tr(ctx, "error.badKind") } };
+  const { instruction, tables } = cleanContext(i);
+  if (!instruction) return { error: { code: "empty", message: tr(ctx, "error.empty") } };
+  const policy = await policyOf(ctx);
+  if (policy === "off") return { error: { code: "policyOff", message: tr(ctx, "error.policyOff") } };
+  let connection;
+  try {
+    connection = await pickConnection(ctx);
+  } catch (e) {
+    return { error: { code: "noConnection", message: String(e.message || e) } };
+  }
+  const budget = await settingNumber(ctx, "docBudget", 3000);
+  const docs = await pickDocs(ctx, searchTerms(tables.map((t) => t.name), tables.flatMap((t) => t.columns)), Math.floor(budget / 2));
+  const lines = [`# ${tr(ctx, "generate.title")}`, "", instruction];
+  if (tables.length > 0) lines.push("", `## ${tr(ctx, "generate.tables")}`, "", ...tables.map((t) => (t.columns.length > 0 ? `- ${t.name}(${t.columns.join(", ")})` : `- ${t.name}`)));
+  const request = composeRequest(ctx, lines.join("\n"), docs);
+  const system = tr(ctx, "system.sql");
+  if (policy === "preview") {
+    // The preview is the workbench's own page: the user reads it there and presses Send there. The caller gets
+    // the same text to show, and asks for the answer later with `fetch`; it cannot send for the user.
+    const created = await ctx.host.resources.create({ kind: KIND_ANALYSIS, name: tr(ctx, "generate.title"), body: { mode: "sql", request, system, docs: "[]", runId: "", connectionId: "" } });
+    return { needsPreview: true, draft: created.id, request, system, connection: connection.name, model: connection.model, tokens: estimateTokens(`${system}\n${request}`) };
+  }
+  let answer;
+  try {
+    answer = await chat(ctx, connection, { system, messages: [{ role: "user", text: request }], format: "text" });
+  } catch (e) {
+    return { error: { code: "chat", message: String(e.message || e) } };
+  }
+  await audit(ctx, { kind: "generate", connection: connection.id, model: answer.model || "", chars: request.length, usage: answer.usage || null });
+  return proposalOf(answer);
+}
+
 /* ---------------------------------------------------------------- plugin */
 
 export default {
   activate(host) {
-    // The workspace opened: make sure the settings resource exists (no network, no content involved).
-    if (host.events && typeof host.events.on === "function") {
-      host.events.on("workspace.opened", async (ctx) => {
-        try {
-          await ensureSettings(ctx);
-        } catch (e) {
-          /* a failed start-up step must not break the workspace; "Analyze" tries again */
-        }
-      });
-    }
-
-    host.pages.handle("settings", {
-      async render(ctx) {
-        return { view: [{ type: "text", id: "note", text: tr(ctx, "settings.note"), tone: "muted" }], readOnly: true };
-      },
-    });
-
     host.pages.handle("doc", {
       async render(ctx) {
         const b = (ctx.resource && ctx.resource.body) || {};
@@ -530,20 +558,19 @@ export default {
     host.pages.handle("analysis", {
       async render(ctx) {
         const pick = bodyOf(ctx);
+        const sqlDraft = pick("mode", "") === "sql"; // a request made for another plugin: read only, sent as it is
         const view = [];
         const info = await connectionLine(ctx, pick("connectionId", ""));
         const docs = docsOf(pick);
         const used = chosenDocs(docs, pick);
         const full = composeRequest(ctx, pick("request", ""), used);
+        const system = sqlDraft ? pick("system", "") : tr(ctx, "system.analyze");
         const policy = await policyOf(ctx);
-        const ro = ctx.run ? { readOnly: true } : {};
-        const lines = [info.text, tr(ctx, "info.tokens", { tokens: estimateTokens(full) }), tr(ctx, `info.policy.${policy}`)];
+        const ro = ctx.run || sqlDraft ? { readOnly: true } : {};
+        const lines = [info.text, tr(ctx, "info.tokens", { tokens: estimateTokens(`${system}\n${full}`) }), tr(ctx, `info.policy.${policy}`)];
         view.push({ type: "text", id: "info", text: lines.join("\n"), tone: info.danger || policy === "off" ? "danger" : "muted" });
-        const conns = await connectionList(ctx);
-        const chosen = pick("connectionId", "");
-        const options = [{ value: "", label: ctx.t("connection.default") }, ...conns.map((r) => ({ value: r.id, label: r.name }))];
-        if (chosen && !conns.some((r) => r.id === chosen)) options.push({ value: chosen, label: chosen });
-        view.push({ type: "form", id: "connection", layout: "strip", fields: [{ name: "connectionId", label: ctx.t("field.connection"), kind: "ref", kinds: ["@implements:onedesk.ai.chat/1"], bind: "body.connectionId", options, hint: tr(ctx, "field.connection.hint"), ...ro }] });
+        view.push({ type: "form", id: "connection", layout: "strip", fields: [{ name: "connectionId", label: ctx.t("field.connection"), kind: "ref", kinds: ["@implements:onedesk.ai.chat/1"], bind: "body.connectionId", hint: tr(ctx, "field.connection.hint"), ...ro }] });
+        view.push({ type: "text", id: "system", text: `**${tr(ctx, "field.system")}**\n\n${system}`, format: "markdown" });
         view.push({ type: "form", id: "request", layout: "stack", fields: [{ name: "request", label: ctx.t("field.request"), kind: "longtext", bind: "body.request", fill: true, hint: tr(ctx, "field.request.hint"), ...ro }] });
         if (docs.length > 0) {
           view.push({
@@ -555,23 +582,27 @@ export default {
           });
         }
         view.push({ type: "text", id: "full", text: full, format: "markdown" });
-        const answer = pick("answer", "");
-        if (answer) {
-          view.push({ type: "text", id: "answerInfo", text: tr(ctx, "info.answer", { model: pick("model", ""), usage: pick("usage", "") }), tone: "muted" });
-          view.push({ type: "text", id: "answer", text: answer, format: "markdown" });
+        const last = ctx.resource && !sqlDraft ? await readLast(ctx, ctx.resource.id) : null;
+        if (last && last.answer) {
+          view.push({ type: "text", id: "answerInfo", text: tr(ctx, "info.answer", { model: last.model || "", usage: last.usage || "" }), tone: "muted" });
+          view.push({ type: "text", id: "answer", text: last.answer, format: "markdown" });
           if (!ctx.run) view.push({ type: "form", id: "keep", layout: "strip", fields: [{ name: "name", label: ctx.t("field.name"), kind: "text", param: true, placeholder: ctx.t("field.name.placeholder") }] });
         }
         return { view };
       },
 
-      // K6: keep the analysis with the run it came from.
+      // K6: keep the analysis with the run it came from — only now is the answer stored anywhere but the plugin's
+      // own storage.
       async onEvent(ctx, event) {
         if (event !== "keep") throw new Error(`unknown event ${event}`);
         const b = (ctx.resource && ctx.resource.body) || {};
-        if (!b.answer) return { message: tr(ctx, "message.nothingToKeep") };
-        const name = String((ctx.params && ctx.params.name) || "").trim() || tr(ctx, "analysis.defaultName", { date: new Date().toISOString().slice(0, 10) });
+        const last = ctx.resource ? await readLast(ctx, ctx.resource.id) : null;
+        if (!last || !last.answer) return { message: tr(ctx, "message.nothingToKeep") };
         if (!b.runId) return { message: tr(ctx, "message.noRun") };
-        await saveArtifact(ctx, b.runId, { name, kind: "analysis", data: { request: b.sent || b.request || "", answer: b.answer, connection: b.connection || "", model: b.model || "", usage: b.usage || "" } });
+        const name = String((ctx.params && ctx.params.name) || "").trim() || tr(ctx, "analysis.defaultName", { date: new Date().toISOString().slice(0, 10) });
+        await saveArtifact(ctx, b.runId, { name, kind: "analysis", data: { system: tr(ctx, "system.analyze"), request: last.sent || b.request || "", answer: last.answer, connection: last.connection || "", model: last.model || "", usage: last.usage || "" } });
+        await dropDrafts(ctx, b.runId);
+        await ctx.host.storage.remove(lastKey(ctx.resource.id));
         return { message: tr(ctx, "message.kept", { name }) };
       },
     });
@@ -579,7 +610,6 @@ export default {
     // K1 (result action): the user clicked "Analyze" on a run's result → a draft to look at, nothing sent.
     host.actions.handle("analyze", async (ctx, input) => {
       await requireAllowed(ctx);
-      await ensureSettings(ctx).catch(() => undefined);
       const runId = String((input && input.runId) || (ctx.args && ctx.args.runId) || "");
       if (!runId) throw new Error(tr(ctx, "error.noRun"));
       const read = await ctx.host.runs.read(runId);
@@ -588,89 +618,72 @@ export default {
       const maxCell = await settingNumber(ctx, "maxCell", 200);
       const extra = parseExtra(await setting(ctx, "sensitiveColumns", ""));
       const request = buildRequest(ctx, read, { maxRows, maxCell, extra });
-      // documents: by the table names of the statement and the column names of the result
+      // documents: by the name of what produced the result and the result's column names (no other plugin's
+      // resource body is read)
       let docs = [];
       if (read.output.type === "table") {
-        let tables = [];
+        let named = [];
         const rid = read.meta && read.meta.resource;
         if (rid) {
           try {
-            const r = await ctx.host.resources.get(rid);
-            tables = tableNamesIn(r && r.body && r.body.sql);
+            const found = await ctx.host.resources.search({ ids: [rid], limit: 1 });
+            const hit = Array.isArray(found) ? found[0] : found && found.items ? found.items[0] : null;
+            named = hit && hit.name ? String(hit.name).split(/[^\w\u0080-\uffff]+/).filter((w) => w.length >= 3) : [];
           } catch (e) {
-            tables = [];
+            named = [];
           }
         }
         const cols = (read.output.columns || []).map((c) => String(c.label || c.key));
-        docs = await pickDocs(ctx, searchTerms(tables, cols), await settingNumber(ctx, "docBudget", 3000));
+        docs = await pickDocs(ctx, searchTerms(named, cols), await settingNumber(ctx, "docBudget", 3000));
       }
-      const body = { request, docs: JSON.stringify(docs.slice(0, MAX_DOCS)), runId, answer: "", model: "", usage: "", connection: "", connectionId: "", sent: "" };
+      const body = { mode: "", system: "", request, docs: JSON.stringify(docs.slice(0, MAX_DOCS)), runId, connectionId: "" };
       for (let i = 0; i < MAX_DOCS; i++) body[`use${i}`] = "true";
       const created = await ctx.host.resources.create({ kind: KIND_ANALYSIS, name: tr(ctx, "analysis.defaultName", { date: new Date().toISOString().slice(0, 10) }), body });
+      // the first thing stored for the run: a page event may save only where this plugin already has something
+      try {
+        await saveArtifact(ctx, runId, { name: tr(ctx, "analysis.draftName"), kind: DRAFT_KIND, data: { analysis: created.id, request } });
+      } catch (e) {
+        /* without run attachments the draft still opens; saving the analysis will say what is missing */
+      }
       return { output: { type: "link", label: created.name || tr(ctx, "analysis.new"), target: `resource:${created.id}` }, summary: { message: tr(ctx, "summary.draft") } };
     });
 
-    // K3: only now does anything leave. The text is the user's (edited) request plus the documents ticked.
+    // K3: only now does anything leave. The text is the user's (edited) request plus the documents ticked — or,
+    // for a request another plugin asked for, exactly the text stored with the draft.
     host.actions.handle("send", async (ctx, input) => {
       await requireAllowed(ctx);
       const res = ctx.resource;
       if (!res) throw new Error(tr(ctx, "error.noRun"));
       const i = input || {};
-      const pickBody = (key, dflt) => (typeof i[`body.${key}`] === "string" ? i[`body.${key}`] : res.body && typeof res.body[key] === "string" ? res.body[key] : dflt);
-      const docs = docsOf(pickBody);
+      const sqlDraft = res.body && res.body.mode === "sql";
+      const pickBody = (key, dflt) => (!sqlDraft && typeof i[`body.${key}`] === "string" ? i[`body.${key}`] : res.body && typeof res.body[key] === "string" ? res.body[key] : dflt);
+      const docs = sqlDraft ? [] : docsOf(pickBody);
       const text = composeRequest(ctx, pickBody("request", ""), chosenDocs(docs, pickBody));
       if (!text.trim()) throw new Error(tr(ctx, "error.empty"));
+      const system = sqlDraft ? String(res.body.system || "") : tr(ctx, "system.analyze");
       const connection = await pickConnection(ctx, pickBody("connectionId", ""));
       ctx.progress(undefined, tr(ctx, "step.sending", { connection: connection.name }));
-      const answer = await chat(ctx, connection, { system: tr(ctx, "system.analyze"), messages: [{ role: "user", text }] });
-      await ctx.host.resources.update(res.id, { "body.answer": answer.text, "body.model": answer.model || "", "body.usage": usageText(answer.usage), "body.connection": connection.name, "body.sent": text });
-      await audit(ctx, { kind: "analyze", connection: connection.id, model: answer.model || "", chars: text.length, usage: answer.usage || null });
+      const answer = await chat(ctx, connection, sqlDraft ? { system, messages: [{ role: "user", text }], format: "text" } : { system, messages: [{ role: "user", text }] });
+      await audit(ctx, { kind: sqlDraft ? "generate" : "analyze", connection: connection.id, model: answer.model || "", chars: text.length, usage: answer.usage || null });
+      if (sqlDraft) {
+        // the proposal waits in the plugin's storage for the plugin that asked (generate with `fetch`)
+        const p = proposalOf(answer);
+        await ctx.host.storage.set(`proposal:${res.id}`, JSON.stringify(p));
+        return { output: { type: "text", text: p.text }, summary: { message: tr(ctx, p.check.ok ? "summary.proposed" : "summary.proposedBad") } };
+      }
+      // not in the resource body: it is kept only when the user saves the analysis
+      await ctx.host.storage.set(lastKey(res.id), JSON.stringify({ answer: answer.text, model: answer.model || "", usage: usageText(answer.usage), connection: connection.name, sent: text }));
       return { output: { type: "text", text: answer.text }, summary: { message: tr(ctx, "summary.answered", { model: answer.model || "", usage: usageText(answer.usage) }) } };
     });
 
     // K7–K9: exported for other plugins. A proposal made from the words and the names of tables and columns —
-    // never from data. Returns { text, model, usage, check } (or { error } / { needsPreview }); nothing is changed.
+    // never from data. `data`: { text, model, usage, check } | { error } | { needsPreview, draft, request, system … }
+    // | { pending } (D441: `output` is readable text, `data` what the caller reads).
     host.actions.handle("generate", async (ctx, input) => {
       const data = await generate(ctx, input);
-      // D441: `output` is readable text, `data` the structured result the caller reads.
-      const text = data.error ? data.error.message : data.needsPreview ? data.request : data.text;
+      const text = data.error ? data.error.message : data.needsPreview ? data.request : data.pending ? "" : data.text;
       return { output: { type: "text", text: String(text || "") }, data };
     });
-
-    async function generate(ctx, input) {
-      const i = input || {};
-      if (i.kind !== "sql") return { error: { code: "badKind", message: tr(ctx, "error.badKind") } };
-      const instruction = String(i.instruction || "").trim();
-      if (!instruction) return { error: { code: "empty", message: tr(ctx, "error.empty") } };
-      const policy = await policyOf(ctx);
-      if (policy === "off") return { error: { code: "policyOff", message: tr(ctx, "error.policyOff") } };
-      let connection;
-      try {
-        connection = await pickConnection(ctx);
-      } catch (e) {
-        return { error: { code: "noConnection", message: String(e.message || e) } };
-      }
-      const tables = ((i.context && i.context.tables) || []).map((t) => (typeof t === "string" ? { name: t, columns: [] } : { name: String(t.name || ""), columns: Array.isArray(t.columns) ? t.columns.map(String) : [] })).filter((t) => t.name);
-      const budget = await settingNumber(ctx, "docBudget", 3000);
-      const docs = await pickDocs(ctx, searchTerms(tables.map((t) => t.name), tables.flatMap((t) => t.columns)), Math.floor(budget / 2));
-      const lines = [`# ${tr(ctx, "generate.title")}`, "", instruction];
-      if (tables.length > 0) lines.push("", `## ${tr(ctx, "generate.tables")}`, "", ...tables.map((t) => (t.columns.length > 0 ? `- ${t.name}(${t.columns.join(", ")})` : `- ${t.name}`)));
-      const request = composeRequest(ctx, lines.join("\n"), docs);
-      const system = tr(ctx, "system.sql");
-      // preview: the first call only says what would be sent; the caller shows it and calls again with confirm.
-      if (policy === "preview" && i.confirm !== true) {
-        return { needsPreview: true, request, system, connection: connection.name, model: connection.model, tokens: estimateTokens(`${system}\n${request}`) };
-      }
-      let answer;
-      try {
-        answer = await chat(ctx, connection, { system, messages: [{ role: "user", text: request }], format: "text" });
-      } catch (e) {
-        return { error: { code: "chat", message: String(e.message || e) } };
-      }
-      await audit(ctx, { kind: "generate", connection: connection.id, model: answer.model || "", chars: request.length, usage: answer.usage || null });
-      const text = extractSql(answer.text);
-      return { text, model: answer.model || "", usage: answer.usage || null, check: checkSql(text) };
-    }
 
     // K2: folder → document resources.
     host.actions.handle("syncDocs", async (ctx) => {

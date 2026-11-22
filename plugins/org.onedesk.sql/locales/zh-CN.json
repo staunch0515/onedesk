@@ -45,7 +45,6 @@
   "field.ai": "用 AI 写",
   "field.ai.placeholder": "描述你想要的查询",
   "action.aiWrite": "用 AI 写",
-  "action.aiSend": "发给 AI",
   "action.aiAccept": "接受",
   "action.aiDiscard": "放弃",
   "ai.step": "正在问 AI…",
@@ -53,8 +52,7 @@
   "ai.noInstruction": "请先描述想要的查询。",
   "ai.noPreview": "没有等待发送的请求。",
   "ai.modelDefault": "连接里设的默认模型",
-  "ai.preview": "尚未发送。连接：{connection} · 模型：{model} · 约 {tokens} 个 token。按“发给 AI”才会发送，内容里没有数据。",
-  "ai.reviewFirst": "请先看一下请求，再发送。",
+  "ai.reviewFirst": "AI 工作台已生成请求。请在那里检查并发送。",
   "ai.proposalFrom": "由 {model} 提议。你的编辑器没有改动。",
   "ai.checkOk": "已检查：单条只读语句。按“接受”会把它放进编辑器，作为未保存的修改。",
   "ai.check.empty": "不能接受：回答是空的。",
@@ -67,6 +65,11 @@
   "ai.cannotAccept": "这个提议不能接受。",
   "ai.accepted": "已放进编辑器，尚未保存。",
   "ai.discarded": "已放弃提议。",
-  "ai.noSettings": "AI 工作台设置还不存在。请重新打开工作区，或在任一结果上点一次“分析”，它们会自动创建。",
-  "ai.unavailable": "不能用 AI 写：没有安装 AI 工作台。"
+  "ai.unavailable": "不能用 AI 写：没有安装 AI 工作台。",
+  "action.aiFetch": "取回答案",
+  "ai.system": "系统提示词",
+  "ai.openReview": "打开请求，检查后在那里发送",
+  "ai.notSentYet": "还没有发送。请打开请求，看过后在那里按“发送”；然后回到这里取回答案。",
+  "ai.check.sideEffects": "不能接受：里面调用了有副作用的函数（只按 PostgreSQL 检查）。",
+  "ai.preview": "尚未发送。连接：{connection} · 模型：{model} · 约 {tokens} 个 token。在 AI 工作台按“发送”之前不会发出任何内容，内容里没有数据。"
 }
