@@ -359,10 +359,14 @@ impl Inner {
             for f in fields.iter_mut().filter(|f| f.kind == FieldKind::Ref && f.options.is_none()) {
                 let Some(kinds) = &f.kinds else { continue };
                 let mut opts: Vec<(String, String)> = Vec::new();
-                for k in kinds {
+                // Round 18 (X15): `@implements:<interface>` stands for the connection kinds of its
+                // implementers, which a plugin that `uses` the interface may list.
+                let implemented: Vec<String> = self.expand_implements(plugin, &kinds.iter().filter(|k| k.starts_with("@implements:")).cloned().collect::<Vec<_>>());
+                let plain = kinds.iter().filter(|k| !k.starts_with("@implements:"));
+                for (k, via_interface) in plain.map(|k| (k, false)).chain(implemented.iter().map(|k| (k, true))) {
                     let full = plugin.kind_ref(k);
                     let own = self.registry.kind(&full).is_some_and(|(o, _)| o.id == plugin.id);
-                    if !(own || plugin.manifest.requires.resources || self.export_allows(plugin, &full, true)) {
+                    if !(via_interface || own || plugin.manifest.requires.resources || self.export_allows(plugin, &full, true)) {
                         continue;
                     }
                     for r in self.read(|c| store::of_kind(c, &full))? {

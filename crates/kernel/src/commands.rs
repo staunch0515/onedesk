@@ -252,6 +252,7 @@ impl Inner {
             }]);
         }
         let p = RunStartParams {
+            result_run: None,
             action: full,
             resource_id: Some(id.clone()),
             target: format!("resource:{id}"),

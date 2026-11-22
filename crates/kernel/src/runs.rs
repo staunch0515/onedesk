@@ -20,7 +20,7 @@ use crate::util::*;
 pub const METHODS: &[&str] = &[
     M::RUN_START, M::RUN_GET, M::RUN_CANCEL, M::RUN_LIST_FOR, M::RUN_TASKS, M::RUN_CLEAR_FINISHED, M::RUN_SET_KEPT,
     M::RUN_RENDER, M::PAGE_EVENT, M::PLUGIN_GET, M::PLUGIN_SET_ENABLED, M::PLUGIN_SET_SETTING, M::PLUGIN_RELOAD,
-    M::COMMAND_PALETTE, onedesk_protocol::method15::RUN_ROWS,
+    M::COMMAND_PALETTE, onedesk_protocol::method15::RUN_ROWS, onedesk_protocol::method18::RESULT_ACTIONS,
 ];
 
 /// D377: rows of a table output handed to the interface (more → `truncated`, with `total`).
@@ -56,6 +56,9 @@ pub struct ActiveRun {
     /// When `run:<id>` was last sent for a partial output; whether a trailing send is queued.
     pub partial_sent: Option<Instant>,
     pub partial_queued: bool,
+    /// Round 18 (X5): the run whose result this result-area action was clicked on; the only one
+    /// `host.runs.read` gives (to this run's own plugin).
+    pub read_run: Option<String>,
 }
 
 pub type ActiveRuns = std::sync::Mutex<HashMap<String, ActiveRun>>;
@@ -111,6 +114,10 @@ struct ActionOut {
     /// D435: the run failed, but its output and summary are kept.
     #[serde(default)]
     failed: Option<FailedIn>,
+    /// Round 18 (D441): for whoever called the action (`interfaces.call`, `actions.call`); a run ignores it.
+    #[serde(default)]
+    #[allow(dead_code)]
+    data: Option<Value>,
 }
 
 /// D435: `{ failed: { message } }` of an action's answer.
@@ -223,6 +230,9 @@ impl Inner {
                 Ok(p) => self.run_start(p, client).await.and_then(to_value),
                 Err(e) => Err(e),
             },
+            onedesk_protocol::method18::RESULT_ACTIONS => {
+                parse::<ResultActionsParams>(params).and_then(|p| self.result_actions(p)).and_then(to_value)
+            }
             onedesk_protocol::method15::RUN_ROWS => parse::<RunRowsParams>(params).and_then(|p| self.run_rows(p)).and_then(to_value),
             M::RUN_GET => parse::<RunIdParams>(params).and_then(|p| self.run_get(&p.id, true)).and_then(to_value),
             M::RUN_CANCEL => match parse::<RunIdParams>(params) {
@@ -339,6 +349,16 @@ impl Inner {
             None => None,
         };
         let resolved = self.resolve_action(&p, res.as_ref());
+        // Round 18 (X5): a result-area action is checked before any run exists.
+        if let Some(src) = &p.result_run {
+            if let Err(e) = self.check_result_run(src, resolved.map(|(pl, _)| pl), resolved.map(|(_, a)| a.id.as_str())) {
+                let _ = self
+                    .pipeline
+                    .execute(Actor::User, Command::Refused { op: "run.start".into(), object: p.action.clone(), error: e.clone() })
+                    .await;
+                return Err(e);
+            }
+        }
         let env_name = match &p.env_id {
             Some(e) => self.read(|c| store::get(c, e))?.filter(|r| r.kind == store::KIND_ENV).map(|r| r.name),
             None => None,
@@ -444,7 +464,7 @@ impl Inner {
         self.runs_active.lock().unwrap().insert(
             id.clone(),
             ActiveRun { plugin: plugin.id.clone(), token: token.clone(), last_progress: None, stopped: None, secrets: vec![], handed: vec![], partial: None,
-                        declared: action.output, partial_sent: None, partial_queued: false },
+                        declared: action.output, partial_sent: None, partial_queued: false, read_run: p.result_run.clone() },
         );
         let resource = match res {
             // A dependent sees the resource without its secret fields (round 7).
@@ -466,6 +486,9 @@ impl Inner {
         }
         // D306: secret field values never reach the plugin, nor the run's input snapshot.
         let mut input = p.input.clone();
+        if let Some(src) = &p.result_run {
+            input.insert("runId".into(), json!(src));
+        }
         if let Some(k) = kind.as_deref() {
             for f in self.secret_fields(k, res.and_then(|r| r.plugin_version.as_deref())) {
                 input.remove(&f);

@@ -48,6 +48,19 @@ pub struct Manifest {
     /// Round 16 (X13): what else activates the plugin besides being used (`ACTIVATIONS`).
     #[serde(default)]
     pub activation: Vec<String>,
+    /// Round 18 (X15): `{ "<interface>": { "actions": [...], "kind": "<own kind>" } }`
+    /// (`badImplements`); see `implements`.
+    #[serde(default, rename = "implements")]
+    pub implements_raw: Option<serde_json::Value>,
+    /// Round 18 (X15): `["<interface>", ...]` (`badImplements`); see `uses`.
+    #[serde(default, rename = "uses")]
+    pub uses_raw: Option<serde_json::Value>,
+    /// The validated `implements`, by interface name.
+    #[serde(skip)]
+    pub implements: BTreeMap<String, Implements>,
+    /// The validated `uses`.
+    #[serde(skip)]
+    pub uses: Vec<String>,
     /// The validated `depends`.
     #[serde(skip)]
     pub deps: Vec<Depend>,
@@ -67,6 +80,27 @@ pub struct Manifest {
     /// Round 11 (D379): the validated `contributes.languages`.
     #[serde(skip)]
     pub languages: Vec<LanguageDecl>,
+}
+
+/// Round 18 (X15): what a plugin offers for one interface (the kernel only compares names).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Implements {
+    /// Exported actions the interface needs.
+    pub actions: Vec<String>,
+    /// Short id of its own kind of "connection" resources.
+    pub kind: String,
+}
+
+/// Round 18 (X5): `contributes.resultActions[]`.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ResultActionDecl {
+    pub id: String,
+    pub label: String,
+    #[serde(default)]
+    pub icon: Option<String>,
+    pub output_types: Vec<OutputType>,
+    pub action: String,
 }
 
 /// One interface language a plugin provides (round 11, D379).
@@ -272,6 +306,9 @@ pub struct Contributes {
     /// Round 11 (D379): `[{ "locale", "name", "shell" }]`, checked by hand (`badLanguages`).
     #[serde(default, rename = "languages")]
     pub languages_raw: Option<serde_json::Value>,
+    /// Round 18 (X5): buttons for the result area of a finished run.
+    #[serde(default)]
+    pub result_actions: Vec<ResultActionDecl>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -908,6 +945,8 @@ pub fn parse_package(dir: &Path, bytes: &[u8], check_folder: bool) -> Result<Plu
     let has_kind = |k: &str| c.kinds.iter().any(|y| y.id == k);
     let (exported, exported_trees, exported_pages, exported_actions) = parse_exports(dir, &m)?;
     check_requires_plugins(dir, &m)?;
+    check_result_actions(dir, &m)?;
+    let (implements, uses) = parse_interfaces(dir, &m, &exported_actions)?;
     for a in &c.actions {
         for k in a.kinds.iter().flatten() {
             // Round 7: `<dependency>:<kind>` names a kind of a plugin this one depends on.
@@ -1099,6 +1138,8 @@ pub fn parse_package(dir: &Path, bytes: &[u8], check_folder: bool) -> Result<Plu
     m.exported_trees = exported_trees;
     m.exported_pages = exported_pages;
     m.exported_actions = exported_actions;
+    m.implements = implements;
+    m.uses = uses;
     Ok(Plugin { id: m.id.clone(), version: m.version.clone(), dir: dir.to_path_buf(), manifest_hash, manifest: m, locales })
 }
 
@@ -1257,6 +1298,90 @@ fn parse_exports(dir: &Path, m: &Manifest) -> Result<Exports, Rejection> {
         actions.push(id.into());
     }
     Ok((out, trees, pages, actions))
+}
+
+/// Round 18 (X5): `contributes.resultActions` — unique ids, `outputTypes` a non-empty set, `action`
+/// one of its own actions without `kinds` (`badResultActions`).
+fn check_result_actions(dir: &Path, m: &Manifest) -> Result<(), Rejection> {
+    let bad = |why: String| reject(dir, "badResultActions", why);
+    let mut seen: HashSet<&str> = HashSet::new();
+    for r in &m.contributes.result_actions {
+        if !valid_short(&r.id) || !seen.insert(r.id.as_str()) {
+            return Err(bad(format!("id {}", r.id)));
+        }
+        if r.output_types.is_empty() || r.output_types.iter().enumerate().any(|(i, t)| r.output_types[..i].contains(t)) {
+            return Err(bad(format!("{}: outputTypes", r.id)));
+        }
+        match m.contributes.actions.iter().find(|a| a.id == r.action) {
+            Some(a) if a.kinds.is_none() => {}
+            _ => return Err(bad(format!("{}: action {}", r.id, r.action))),
+        }
+    }
+    Ok(())
+}
+
+/// Round 18 (X15): an interface name is `name/version`: `[a-z0-9._-]+/[0-9]+`.
+pub fn valid_interface(n: &str) -> bool {
+    n.len() <= 128
+        && n.split_once('/').is_some_and(|(name, v)| {
+            !name.is_empty()
+                && name.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '.' | '-' | '_'))
+                && !v.is_empty()
+                && v.len() <= 6
+                && v.chars().all(|c| c.is_ascii_digit())
+        })
+}
+
+type Interfaces = (BTreeMap<String, Implements>, Vec<String>);
+
+/// Round 18 (X15): `implements` and `uses` (`badImplements`). Every listed action must be one of
+/// its `exports.actions`; `kind` one of its own kinds.
+fn parse_interfaces(dir: &Path, m: &Manifest, exported_actions: &[String]) -> Result<Interfaces, Rejection> {
+    let bad = |why: String| reject(dir, "badImplements", why);
+    let mut implements = BTreeMap::new();
+    if let Some(raw) = &m.implements_raw {
+        let o = raw.as_object().ok_or_else(|| bad("implements is not an object".into()))?;
+        for (name, v) in o {
+            if !valid_interface(name) {
+                return Err(bad(format!("interface name {name}")));
+            }
+            let e = v.as_object().ok_or_else(|| bad(format!("{name}: not an object")))?;
+            if let Some(k) = e.keys().find(|k| !matches!(k.as_str(), "actions" | "kind")) {
+                return Err(bad(format!("{name}: unknown field {k}")));
+            }
+            let list = e.get("actions").and_then(serde_json::Value::as_array).ok_or_else(|| bad(format!("{name}: actions is not a list")))?;
+            if list.is_empty() {
+                return Err(bad(format!("{name}: no actions")));
+            }
+            let mut actions: Vec<String> = Vec::new();
+            for a in list {
+                let a = a.as_str().ok_or_else(|| bad(format!("{name}: action is not text")))?;
+                if !exported_actions.iter().any(|x| x == a) {
+                    return Err(bad(format!("{name}: action {a} is not exported")));
+                }
+                if actions.iter().any(|x| x == a) {
+                    return Err(bad(format!("{name}: action {a} twice")));
+                }
+                actions.push(a.into());
+            }
+            let kind = e.get("kind").and_then(serde_json::Value::as_str).ok_or_else(|| bad(format!("{name}: kind missing")))?;
+            if !m.contributes.kinds.iter().any(|k| k.id == kind) {
+                return Err(bad(format!("{name}: {kind} is not its own kind")));
+            }
+            implements.insert(name.clone(), Implements { actions, kind: kind.into() });
+        }
+    }
+    let mut uses: Vec<String> = Vec::new();
+    if let Some(raw) = &m.uses_raw {
+        for u in raw.as_array().ok_or_else(|| bad("uses is not a list".into()))? {
+            let u = u.as_str().filter(|u| valid_interface(u)).ok_or_else(|| bad("uses: bad interface name".into()))?;
+            if uses.iter().any(|x| x == u) {
+                return Err(bad(format!("uses: {u} twice")));
+            }
+            uses.push(u.into());
+        }
+    }
+    Ok((implements, uses))
 }
 
 /// Round 7 (D342): `requires.plugins` is `{ "install": true|false }`.

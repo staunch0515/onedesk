@@ -189,6 +189,9 @@ pub enum MoveDest {
     Inside(Option<String>),
 }
 
+/// Round 18 (D442): most artifacts one plugin keeps beside one run.
+pub const MAX_ARTIFACTS_PER_RUN: i64 = 100;
+
 #[derive(Debug, Clone)]
 pub enum Command {
     Create(NewResource),
@@ -234,6 +237,10 @@ pub enum Command {
     RunDelete { id: String },
     /// Drops finished runs from the task panel.
     RunClearFinished,
+    /// Round 18 (D442): a plugin keeps `data` (JSON text) beside a run; audited as `runs.saveArtifact`.
+    ArtifactSave { id: String, run: String, plugin: String, name: String, kind: String, data: String },
+    /// Round 18 (D442): removes one of the plugin's own; audited as `runs.deleteArtifact`.
+    ArtifactDelete { id: String, plugin: String },
     /// Parameters of a plugin's state node (`enabled`, `settings.<name>`); `None` removes (D290).
     PluginState { plugin: String, set: Vec<(String, Option<String>)> },
     /// Many `PluginState`s in one transaction (start-up with many packages); audited per plugin.
@@ -525,6 +532,36 @@ impl Writer {
                     cx.audit("run.delete", &id, &json!({}))?;
                     Outcome { id: Some(id), changed: true, rows: vec![], ..Default::default() }
                 }
+                Command::ArtifactSave { id, run, plugin, name, kind, data } => {
+                    let exists: bool = cx.tx.query_row("SELECT EXISTS(SELECT 1 FROM runs WHERE id = ?1)", [&run], |r| r.get(0)).map_err(db_err)?;
+                    if !exists {
+                        return Err(not_found("run"));
+                    }
+                    let n: i64 = cx
+                        .tx
+                        .query_row("SELECT count(*) FROM run_artifacts WHERE run_id = ?1 AND plugin = ?2", params![run, plugin], |r| r.get(0))
+                        .map_err(db_err)?;
+                    if n >= MAX_ARTIFACTS_PER_RUN {
+                        return Err(err_p(ErrorCode::Conflict, &[("reason", "tooMany")]));
+                    }
+                    let bytes = data.len();
+                    cx.tx
+                        .execute(
+                            "INSERT INTO run_artifacts (id, run_id, plugin, name, kind, data, created_at) VALUES (?1,?2,?3,?4,?5,?6,?7)",
+                            params![id, run, plugin, name, kind, data, cx.at],
+                        )
+                        .map_err(db_err)?;
+                    cx.audit("runs.saveArtifact", &run, &json!({ "kind": kind, "bytes": bytes }))?;
+                    Outcome { id: Some(id), changed: true, rows: vec![], ..Default::default() }
+                }
+                Command::ArtifactDelete { id, plugin } => {
+                    let n = cx.tx.execute("DELETE FROM run_artifacts WHERE id = ?1 AND plugin = ?2", params![id, plugin]).map_err(db_err)?;
+                    if n == 0 {
+                        return Err(not_found("artifact"));
+                    }
+                    cx.audit("runs.deleteArtifact", &id, &json!({}))?;
+                    Outcome { id: Some(id), changed: true, rows: vec![], ..Default::default() }
+                }
                 Command::RunClearFinished => {
                     let n = cx.tx.execute("UPDATE runs SET in_task_panel = 0 WHERE status <> 'running' AND in_task_panel = 1", []).map_err(db_err)?;
                     Outcome { changed: n > 0, ..Default::default() }
@@ -653,6 +690,8 @@ fn describe(cmd: &Command) -> (String, String) {
         Command::RunKeep { id, .. } => ("run.keep".into(), id.clone()),
         Command::RunDelete { id } => ("run.delete".into(), id.clone()),
         Command::RunClearFinished => ("run.clearFinished".into(), String::new()),
+        Command::ArtifactSave { run, .. } => ("runs.saveArtifact".into(), run.clone()),
+        Command::ArtifactDelete { id, .. } => ("runs.deleteArtifact".into(), id.clone()),
         Command::PluginState { plugin, .. } => ("plugin.state".into(), plugin.clone()),
         Command::PluginStates(_) => ("plugin.state".into(), String::new()),
         Command::Storage { plugin, .. } => ("plugin.storage".into(), plugin.clone()),

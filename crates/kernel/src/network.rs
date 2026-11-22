@@ -21,6 +21,16 @@ pub const MAX_BODY: usize = 8 * 1024 * 1024;
 pub const MAX_REDIRECTS: usize = 5;
 pub const DEFAULT_TIMEOUT_MS: u64 = 30_000;
 pub const MAX_TIMEOUT_MS: u64 = 60_000;
+/// Round 18 (X16): the longest `timeoutMs` while an action runs.
+pub const RUN_MAX_TIMEOUT_MS: u64 = 600_000;
+/// Round 18 (X16): default and longest gap between two chunks of a streamed response.
+pub const DEFAULT_IDLE_MS: u64 = 120_000;
+pub const MAX_IDLE_MS: u64 = 600_000;
+/// Round 18 (X16): `maxBytes` of a streamed response (default / largest).
+pub const STREAM_DEFAULT_BYTES: usize = MAX_BODY;
+pub const STREAM_MAX_BYTES: usize = 64 * 1024 * 1024;
+/// Round 18 (X16): how much of an error response a streamed `request` keeps as `body`.
+pub const STREAM_KEEP: usize = 8 * 1024;
 /// The configuration / environment parameter that narrows network access (§6.3).
 pub const ALLOW_PARAM: &str = "network.allow";
 /// D316: the methods a plugin may use.
@@ -227,6 +237,147 @@ pub(crate) async fn read_text_body(mut resp: reqwest::Response, deadline: tokio:
     Ok((bytes, false))
 }
 
+/// The total time limit of a request, ms (X16): up to 10 minutes while an action runs, 60 seconds
+/// elsewhere; a stream defaults to the longest, anything else to 30 seconds.
+pub fn request_timeout(in_run: bool, stream: bool, asked: Option<u64>) -> u64 {
+    let max = if in_run { RUN_MAX_TIMEOUT_MS } else { MAX_TIMEOUT_MS };
+    asked.unwrap_or(if stream { max } else { DEFAULT_TIMEOUT_MS }).clamp(1, max)
+}
+
+/// What a streamed response left: the first `STREAM_KEEP` bytes, the total, whether `maxBytes` stopped it.
+pub(crate) struct Streamed {
+    pub head: Vec<u8>,
+    pub total: u64,
+    pub truncated: bool,
+}
+
+/// Bytes to text without ever splitting a character: an incomplete tail waits for the next block.
+#[derive(Default)]
+pub(crate) struct Utf8Chunks {
+    tail: Vec<u8>,
+}
+
+impl Utf8Chunks {
+    pub fn push(&mut self, bytes: &[u8]) -> String {
+        self.tail.extend_from_slice(bytes);
+        let mut out = String::new();
+        let mut rest: &[u8] = &self.tail;
+        loop {
+            match std::str::from_utf8(rest) {
+                Ok(s) => {
+                    out.push_str(s);
+                    rest = &[];
+                    break;
+                }
+                Err(e) => {
+                    let (good, bad) = rest.split_at(e.valid_up_to());
+                    out.push_str(std::str::from_utf8(good).unwrap_or_default());
+                    match e.error_len() {
+                        // Only the start of a character: wait for the rest.
+                        None => {
+                            rest = bad;
+                            break;
+                        }
+                        Some(n) => {
+                            out.push('\u{FFFD}');
+                            rest = &bad[n..];
+                        }
+                    }
+                }
+            }
+        }
+        self.tail = rest.to_vec();
+        out
+    }
+
+    /// The end of the body: what is left is not a character.
+    pub fn finish(&mut self) -> String {
+        let s = String::from_utf8_lossy(&self.tail).into_owned();
+        self.tail.clear();
+        s
+    }
+}
+
+/// Reads a response block by block (X16): each block goes to `sink` as text with the secrets of
+/// this request scrubbed (a secret cut between two blocks is held back until it can be);
+/// `idle` bounds the wait for each block, `deadline` the whole body, `max_bytes` its size.
+pub(crate) async fn read_stream_body(
+    mut resp: reqwest::Response,
+    deadline: tokio::time::Instant,
+    idle: Duration,
+    max_bytes: usize,
+    sink: Option<std::sync::Arc<crate::process::Stream>>,
+    secrets: &[String],
+) -> KResult<Streamed> {
+    // The stream is closed however this ends, so the plugin's pump finishes.
+    struct CloseOnDrop(Option<std::sync::Arc<crate::process::Stream>>);
+    impl Drop for CloseOnDrop {
+        fn drop(&mut self) {
+            if let Some(s) = &self.0 {
+                s.close();
+            }
+        }
+    }
+    let _close = CloseOnDrop(sink.clone());
+    let keep = secrets.iter().filter(|s| s.len() >= 3).map(|s| s.chars().count()).max().map_or(0, |n| n - 1);
+    let (mut head, mut total, mut truncated) = (Vec::new(), 0u64, false);
+    let (mut dec, mut pending) = (Utf8Chunks::default(), String::new());
+    let emit = |text: String, last: bool, pending: &mut String| {
+        pending.push_str(&text);
+        let mut v = Value::String(std::mem::take(pending));
+        crate::secrets::scrub(&mut v, secrets);
+        let mut all = v.as_str().unwrap_or_default().to_string();
+        let n = all.chars().count();
+        // Keep the last `keep` characters back (a secret may go on in the next block).
+        let cut = if last || keep == 0 {
+            all.len()
+        } else if n <= keep {
+            0
+        } else {
+            all.char_indices().nth(n - keep).map_or(all.len(), |(i, _)| i)
+        };
+        *pending = all.split_off(cut);
+        if !all.is_empty() {
+            if let Some(s) = &sink {
+                s.push(Value::String(all));
+            }
+        }
+    };
+    loop {
+        let left = deadline.saturating_duration_since(tokio::time::Instant::now());
+        let wait = left.min(idle);
+        let next = tokio::select! {
+            r = tokio::time::timeout(wait, resp.chunk()) => r.map_err(|_| err_p(ErrorCode::Invalid, &[("reason", "timeout")]))?.map_err(read_error)?,
+            _ = async { match &sink { Some(s) => s.stopped().await, None => std::future::pending().await } } => {
+                return Err(invalid("stopped"));
+            }
+        };
+        let Some(c) = next else { break };
+        let room = max_bytes.saturating_sub(total as usize);
+        let c = if c.len() > room {
+            truncated = true;
+            c.slice(..room)
+        } else {
+            c
+        };
+        total += c.len() as u64;
+        if head.len() < STREAM_KEEP {
+            let n = (STREAM_KEEP - head.len()).min(c.len());
+            head.extend_from_slice(&c[..n]);
+        }
+        let text = dec.push(&c);
+        if !text.is_empty() {
+            emit(text, false, &mut pending);
+        }
+        if truncated {
+            break;
+        }
+    }
+    let rest = dec.finish();
+    emit(rest, true, &mut pending);
+    Ok(Streamed { head, total, truncated })
+}
+
 impl Inner {
     /// Hosts the plugin may reach: its manifest's, and (with `fromResources`) the hosts of the
     /// granting fields of its own live resources.
@@ -316,13 +467,34 @@ impl Inner {
 
     pub async fn host_network(&self, p: &'static Plugin, info: &CallInfo, args: &Value) -> KResult<Value> {
         let o = args.get(0).and_then(Value::as_object).ok_or_else(|| invalid_params("request"))?;
-        let timeout = o.get("timeoutMs").and_then(Value::as_u64).unwrap_or(DEFAULT_TIMEOUT_MS).clamp(1, MAX_TIMEOUT_MS);
+        let stream = o.get("stream").and_then(Value::as_bool).unwrap_or(false);
+        // Round 18 (X16): the long limits are for actions (a run); a stream is only read in one.
+        let in_run = info.run_id.is_some();
+        if stream && !in_run {
+            return Err(denied("notInRun"));
+        }
+        let timeout = request_timeout(in_run, stream, o.get("timeoutMs").and_then(Value::as_u64));
+        // The action's own time budget does not run while a long request waits (as for programs).
+        let _hold = (stream || timeout > MAX_TIMEOUT_MS).then(|| info.hold.enter_wait());
         let deadline = tokio::time::Instant::now() + Duration::from_millis(timeout);
         let sent = self.http_open(p, info, o, Request { default_method: "GET", methods: METHODS, deadline, file: None }).await?;
         let (status, out_headers) = (sent.resp.status().as_u16(), sent.headers());
-        let (bytes, truncated) = read_text_body(sent.resp, deadline).await?;
+        let mut streamed = None;
+        let (bytes, truncated) = if stream {
+            let idle = Duration::from_millis(o.get("idleTimeoutMs").and_then(Value::as_u64).unwrap_or(DEFAULT_IDLE_MS).clamp(1, MAX_IDLE_MS));
+            let max_bytes = o.get("maxBytes").and_then(Value::as_u64).map_or(STREAM_DEFAULT_BYTES, |m| (m as usize).clamp(1, STREAM_MAX_BYTES));
+            let sink = o.get("streamId").and_then(Value::as_str).map(|sid| self.procs.stream(info.run_id.as_deref().unwrap_or_default(), sid));
+            let r = read_stream_body(sent.resp, deadline, idle, max_bytes, sink, &sent.used).await?;
+            streamed = Some(r.total);
+            (r.head, r.truncated)
+        } else {
+            read_text_body(sent.resp, deadline).await?
+        };
         let url = &sent.url;
-        let summary = json!({ "method": sent.method, "pathLength": url.path().len() + url.query().map_or(0, |q| q.len() + 1), "status": status });
+        let mut summary = json!({ "method": sent.method, "pathLength": url.path().len() + url.query().map_or(0, |q| q.len() + 1), "status": status });
+        if stream {
+            summary["stream"] = json!(true);
+        }
         let _ = self
             .pipeline
             .execute(p.actor(), Command::CountedAudit { run: info.run_id.clone(), op: "network.request".into(), object: sent.host, summary, failed: status >= 400, error: None })
@@ -334,6 +506,14 @@ impl Inner {
             "body": String::from_utf8_lossy(&bytes),
             "truncated": truncated,
         });
+        if let Some(total) = streamed {
+            // X16: the body went to `onChunk`; an error response keeps its first 8 KB here.
+            let kept = if (200..300).contains(&status) { String::new() } else { String::from_utf8_lossy(&bytes).into_owned() };
+            out["body"] = json!(kept);
+            out["text"] = json!(kept);
+            out["bytes"] = json!(total);
+            out["streamed"] = json!(true);
+        }
         // §7.5: the original value of a substituted secret never reaches the plugin.
         crate::secrets::scrub(&mut out, &sent.used);
         Ok(out)
@@ -461,6 +641,29 @@ impl Inner {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_ten_minute_limit_is_for_actions_only() {
+        assert_eq!(request_timeout(true, false, Some(900_000)), 600_000);
+        assert_eq!(request_timeout(true, false, Some(120_000)), 120_000);
+        assert_eq!(request_timeout(false, false, Some(900_000)), 60_000, "outside a run: as before");
+        assert_eq!(request_timeout(false, false, Some(120_000)), 60_000);
+        assert_eq!(request_timeout(true, false, None), 30_000);
+        assert_eq!(request_timeout(true, true, None), 600_000, "a stream defaults to the longest");
+        assert_eq!(request_timeout(true, false, Some(0)), 1);
+    }
+
+    #[test]
+    fn text_is_never_cut_inside_a_character() {
+        let mut d = Utf8Chunks::default();
+        let bytes = "a€b".as_bytes(); // € = e2 82 ac
+        assert_eq!(d.push(&bytes[..2]), "a");
+        assert_eq!(d.push(&bytes[2..3]), "");
+        assert_eq!(d.push(&bytes[3..]), "€b");
+        assert_eq!(d.push(&[0xff, b'x']), "\u{FFFD}x", "an invalid byte is replaced");
+        assert_eq!(d.push(&[0xe2, 0x82]), "");
+        assert_eq!(d.finish(), "\u{FFFD}", "a half character at the end of the body");
+    }
 
     #[test]
     fn patterns_match_hosts_ports_and_subdomains() {

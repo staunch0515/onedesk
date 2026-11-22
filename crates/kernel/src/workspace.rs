@@ -26,6 +26,7 @@ pub const MIGRATIONS: &[(&str, &str)] = &[
     ("0010_refs_ever", include_str!("../migrations/0010_refs_ever.sql")),
     ("0011_audit_counts_last", include_str!("../migrations/0011_audit_counts_last.sql")),
     ("0012_resources_parent", include_str!("../migrations/0012_resources_parent.sql")),
+    ("0013_run_artifacts", include_str!("../migrations/0013_run_artifacts.sql")),
 ];
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -586,7 +587,36 @@ mod tests {
             .collect();
         assert!(plans.iter().any(|p| p.contains("resources_parent")), "{plans:?}");
         let v: String = conn.query_row("SELECT value FROM meta WHERE key = 'schema_version'", [], |r| r.get(0)).unwrap();
-        assert_eq!(v, "12");
+        assert_eq!(v, MIGRATIONS.len().to_string());
+    }
+
+    #[test]
+    fn migration_0013_adds_run_artifacts_that_go_with_their_run() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        let tx = conn.transaction().unwrap();
+        for (_, stmt_text) in &MIGRATIONS[..12] {
+            tx.execute_batch(stmt_text).unwrap();
+        }
+        tx.execute("INSERT INTO meta (key, value) VALUES ('schema_version', '12')", []).unwrap();
+        tx.execute(
+            "INSERT INTO runs (id, seq, title, icon, plugin, action, action_label, actor, source, started_at, status)
+             VALUES ('r1', 1, 't', 'i', 'p', 'a', '{}', 'user', 'manual', 0, 'success'), ('r2', 2, 't', 'i', 'p', 'a', '{}', 'user', 'manual', 0, 'success')",
+            [],
+        )
+        .unwrap();
+        tx.commit().unwrap();
+        migrate(&mut conn).unwrap();
+        let n: i64 = conn.query_row("SELECT count(*) FROM runs", [], |r| r.get(0)).unwrap();
+        assert_eq!(n, 2, "existing runs are kept");
+        for (id, run) in [("a1", "r1"), ("a2", "r1"), ("a3", "r2")] {
+            conn.execute("INSERT INTO run_artifacts (id, run_id, plugin, name, kind, data, created_at) VALUES (?1, ?2, 'p', 'n', 'k', '1', 0)", [id, run]).unwrap();
+        }
+        conn.execute("DELETE FROM runs WHERE id = 'r1'", []).unwrap();
+        let left: Vec<String> =
+            conn.prepare("SELECT id FROM run_artifacts").unwrap().query_map([], |r| r.get(0)).unwrap().map(|r| r.unwrap()).collect();
+        assert_eq!(left, ["a3"], "the run's artifacts go with it");
+        let v: String = conn.query_row("SELECT value FROM meta WHERE key = 'schema_version'", [], |r| r.get(0)).unwrap();
+        assert_eq!(v, "13");
     }
 
     #[test]

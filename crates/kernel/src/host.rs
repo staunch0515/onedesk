@@ -139,6 +139,10 @@ impl Inner {
             // D336: an event handler does what a page handler does, but no network and no programs.
             "network" if op == "request" && info.event => Err(denied("notInRun")),
             "network" if op == "request" => self.host_network(plugin, info, &args).await,
+            // Round 18 (X16): the pump of `onChunk` (a run only; an event handler has no run).
+            "network" if op == "output" => self.stream_poll(info, &args).await,
+            "network" if op == "stop" => self.stream_stop(info, &args),
+            "interfaces" => self.host_interfaces(plugin, info, op, &args).await,
             "process" => self.host_process(plugin, info, op, &args).await,
             "transfer" => self.host_transfer(plugin, info, op, &args).await,
             "secrets" if op == "get" => self.host_secret_get(plugin, info, &args).await,
@@ -158,6 +162,8 @@ impl Inner {
                 self.run_partial(run, arg(&args, 0))?;
                 Ok(Value::Null)
             }
+            "runs" if matches!(op, "saveArtifact" | "listArtifacts" | "getArtifact" | "deleteArtifact") => self.host_artifacts(plugin, info, op, &args).await,
+            "runs" if op == "read" => self.host_runs_read(plugin, info, &args).await,
             "runs" if op == "progress" => {
                 if let Some(run) = &info.run_id {
                     self.run_progress(run, args.get(0).and_then(Value::as_f64), args.get(1).and_then(Value::as_str).map(String::from)).await;

@@ -77,6 +77,26 @@ impl Inner {
         if callers.len() > MAX_DEPTH || callers.iter().any(|c| c == &callee.id) {
             return Err(err_p(ErrorCode::Denied, &[("reason", "callDepth"), ("action", &full)]));
         }
+        self.invoke_callee(p, info, run, callee, action, resource, callers, input, "actions.call", full).await
+    }
+
+    /// Runs `action` of `callee` inside the caller's run (shared by `actions.call` and, round 18,
+    /// `interfaces.call`): its own sandbox and grants, the run's cancellation, the caller's budget
+    /// kept (or held by the caller), audited as `audit_op` with the callee as actor.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) async fn invoke_callee(
+        &self,
+        p: &'static Plugin,
+        info: &CallInfo,
+        run: String,
+        callee: &'static Plugin,
+        action: &crate::manifest::ActionDef,
+        resource: Option<crate::store::Row>,
+        callers: Vec<String>,
+        input: Value,
+        audit_op: &str,
+        full: String,
+    ) -> KResult<Value> {
         if crate::runs::json_size(&input) > crate::runs::MAX_INPUT_BYTES {
             return Err(invalid("tooLarge"));
         }
@@ -114,6 +134,12 @@ impl Inner {
         }
         let ms = started.elapsed().as_millis() as u64;
         let res = match res {
+            // D441: `data` goes to the caller as it is, at most 1 MB.
+            Ok(v) if v.get("data").is_some_and(|d| crate::runs::json_size(d) > crate::round18::ARTIFACT_MAX_BYTES) => {
+                let mut e = err_p(ErrorCode::PluginError, &[("reason", "badOutput")]);
+                e.detail = Some("data is over 1 MB".into());
+                Err(e)
+            }
             Ok(v) => self.hand_over_file(callee, p, Some(&run), v).await,
             Err(SandboxError::Host(e)) => Err(e),
             Err(SandboxError::Cancelled) => Err(err_p(ErrorCode::Invalid, &[("reason", "cancelled")])),
@@ -148,7 +174,7 @@ impl Inner {
             e
         });
         let summary = json!({ "caller": p.id, "ms": ms, "ok": res.is_ok() });
-        let cmd = Command::Audit { op: "actions.call".into(), object: full.clone(), summary };
+        let cmd = Command::Audit { op: audit_op.into(), object: full.clone(), summary };
         let _ = self.pipeline.execute(callee.actor(), cmd).await;
         res
     }

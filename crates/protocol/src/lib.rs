@@ -1216,6 +1216,30 @@ pub struct SearchQueryParams {
     pub limit: Option<u32>,
     /// Only this kind (full kind name).
     pub kind: Option<String>,
+    /// Round 18 (X6): `all` (default, every word) or `any` (at least one word).
+    pub mode: Option<SearchMode>,
+    /// Round 18 (X6): `none` (default) or `relevance` (best match first).
+    pub rank: Option<SearchRank>,
+    /// Round 18 (X6): only these kinds (full names); with `kind`, both must hold.
+    pub kinds: Option<Vec<String>>,
+}
+
+/// Round 18 (X6): which words of a search must hit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum SearchMode {
+    All,
+    Any,
+}
+
+/// Round 18 (X6): how hits are ordered.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum SearchRank {
+    None,
+    Relevance,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -1481,6 +1505,10 @@ pub struct RunStartParams {
     pub params: BTreeMap<String, String>,
     /// Current interface language; handed to the action as `ctx.locale` and kept with the run.
     pub locale: Option<String>,
+    /// Round 18 (X5): set when the user clicked a result-area action: the run whose result it is.
+    /// The action must be declared in `resultActions`; it gets `input.runId` and may read that
+    /// one run with `host.runs.read` while it executes.
+    pub result_run: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -2121,6 +2149,39 @@ pub struct RunExportParams {
 pub struct RunExportResult {
     pub path: String,
     pub rows: u32,
+}
+
+/// Methods of round 18 (X5).
+pub mod method18 {
+    /// `ResultActionsParams` → `Vec<ResultAction>`: the result-area actions of a finished run.
+    pub const RESULT_ACTIONS: &str = "result.actions";
+}
+
+#[skip_serializing_none]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, optional_fields)]
+pub struct ResultActionsParams {
+    pub run_id: String,
+    /// Language of `label` (default `en-US`).
+    pub locale: Option<String>,
+}
+
+/// Round 18 (X5): one button of the result area (`contributes.resultActions`).
+#[skip_serializing_none]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, optional_fields)]
+pub struct ResultAction {
+    pub plugin: String,
+    pub id: String,
+    /// Full action name `<plugin>:<action>`: the `action` of `run.start`.
+    pub action: String,
+    pub label: String,
+    pub icon: Option<String>,
+    pub enabled: bool,
+    /// `readonly` or `noExport` when not enabled.
+    pub disabled_reason: Option<String>,
 }
 
 /// Methods of round 15 (D414).

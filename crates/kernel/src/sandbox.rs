@@ -418,6 +418,48 @@ const BOOTSTRAP: &str = r#"
     if (err) throw err.e;
     return res;
   };
+  // `network.request` with `onChunk` (round 18, X16): like `onOutput`, a pump polls the blocks
+  // of the response and hands them over one by one, in order; the answer comes after the last.
+  const runNetwork = async (callId, opts) => {
+    const o = Object.assign({}, opts || {});
+    const on = o.onChunk;
+    delete o.onChunk;
+    delete o.streamId;
+    if (typeof on !== "function") return call(callId, "network.request", [o]);
+    if (o.stream !== true) {
+      const e = new Error("onChunk needs stream: true");
+      e.code = "invalidParams";
+      throw e;
+    }
+    const sid = "n" + (++streamSeq);
+    o.streamId = sid;
+    let failure;
+    const pump = (async () => {
+      for (;;) {
+        const batch = await call(callId, "network.output", [sid]);
+        if (batch === null) return;
+        for (const chunk of batch) {
+          if (failure !== undefined) continue;
+          try {
+            await on(chunk);
+          } catch (e) {
+            failure = { e };
+            call(callId, "network.stop", [sid]).catch(() => {});
+          }
+        }
+      }
+    })();
+    let res, err;
+    try {
+      res = await call(callId, "network.request", [o]);
+    } catch (e) {
+      err = { e };
+    }
+    await pump.catch(() => {});
+    if (failure) throw failure.e;
+    if (err) throw err.e;
+    return res;
+  };
   const makeHost = (callId) => {
     const c = (m) => (...a) => call(callId, m, a);
     return Object.freeze({
@@ -433,7 +475,10 @@ const BOOTSTRAP: &str = r#"
         remove: c("files.remove"), open: c("files.open"), reveal: c("files.reveal"), find: c("files.find"),
         addRoot: c("files.addRoot"), replaceRoot: c("files.replaceRoot"), removeRoot: c("files.removeRoot"),
       }),
-      runs: Object.freeze({ partial: c("runs.partial") }),
+      runs: Object.freeze({ partial: c("runs.partial"), read: c("runs.read"),
+        saveArtifact: c("runs.saveArtifact"), listArtifacts: c("runs.listArtifacts"),
+        getArtifact: c("runs.getArtifact"), deleteArtifact: c("runs.deleteArtifact") }),
+      interfaces: Object.freeze({ call: c("interfaces.call"), list: c("interfaces.list") }),
       ui: Object.freeze({ open: c("ui.open"), notify: c("ui.notify"), copy: c("ui.copy"), openExternal: c("ui.openExternal") }),
       params: Object.freeze({ get: c("params.get"), config: c("params.config") }),
       storage: Object.freeze({
@@ -442,7 +487,7 @@ const BOOTSTRAP: &str = r#"
       }),
       settings: Object.freeze({ get: c("settings.get") }),
       util: Object.freeze({ sleep: c("util.sleep") }),
-      network: Object.freeze({ request: c("network.request") }),
+      network: Object.freeze({ request: (opts) => runNetwork(callId, opts) }),
       secrets: Object.freeze({ get: c("secrets.get") }),
       plugins: Object.freeze({ requestInstall: c("plugins.requestInstall"), list: c("plugins.list") }),
       process: Object.freeze({ run: (opts) => runProcess(callId, opts), ready: c("process.ready") }),
