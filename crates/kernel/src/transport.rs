@@ -53,7 +53,7 @@ impl Session {
 
     async fn run(&self, r: Request) -> String {
         let hello = r.method == method::HELLO;
-        let res = self.kernel.request(r.client, &r.method, r.params).await;
+        let res = self.kernel.request_as(r.actor.as_deref(), r.client, &r.method, r.params).await;
         if hello && res.is_ok() {
             self.greeted.store(true, Ordering::SeqCst);
         }

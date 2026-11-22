@@ -55,6 +55,9 @@ pub struct SearchOpts {
     pub limit: Option<u32>,
     #[serde(default)]
     pub offset: Option<u32>,
+    /// Round 19: only what an AI client may see (`ai_visible`). Never from the wire.
+    #[serde(skip)]
+    pub ai_only: bool,
 }
 
 /// What a kind's `drop` answers.
@@ -223,6 +226,9 @@ impl Inner {
             }
             // Round 16 (parity A4): nor a resource whose source is gone.
             None => wheres.push("r.deleted_at IS NULL AND r.state <> 'missing'".into()),
+        }
+        if o.ai_only {
+            wheres.push("r.ai_visible = 1".into());
         }
         if let Some(k) = kinds {
             let i = push(&mut args, serde_json::to_string(k).map_err(internal)?);

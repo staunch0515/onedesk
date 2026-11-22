@@ -14,6 +14,7 @@ mod host;
 mod i18n;
 pub mod kernel;
 mod kind_children;
+pub mod mcp;
 pub mod workspace_settings;
 pub mod manifest;
 mod pages;

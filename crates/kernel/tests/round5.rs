@@ -672,6 +672,12 @@ async fn known_parameters_are_listed() {
             ("process.allow".into(), "list".into(), "allowList".into(), json!(["config", "env"])),
             ("protection.readonly".into(), "boolean".into(), "deny".into(), json!(["config", "env"])),
             ("protection.no_export".into(), "boolean".into(), "deny".into(), json!(["config", "env"])),
+            // Round 19 (D448): what the kernel lets an AI client do.
+            ("mcp.enabled".into(), "boolean".into(), "plain".into(), json!(["config"])),
+            ("mcp.rate_per_minute".into(), "number".into(), "plain".into(), json!(["config"])),
+            ("mcp.max_rows".into(), "number".into(), "plain".into(), json!(["config"])),
+            ("mcp.allow_free_query".into(), "boolean".into(), "plain".into(), json!(["config"])),
+            ("mcp.env".into(), "ref".into(), "plain".into(), json!(["config"])),
         ]
     );
 }

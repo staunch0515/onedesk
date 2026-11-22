@@ -82,6 +82,12 @@ pub fn known() -> Vec<KnownParam> {
         p(crate::process::ALLOW_PARAM, ParamType::List, PolicyMerge::AllowList, &["config", "env"]),
         p(READONLY, ParamType::Boolean, PolicyMerge::Deny, &["config", "env"]),
         p(NO_EXPORT, ParamType::Boolean, PolicyMerge::Deny, &["config", "env"]),
+        // Round 19 (D448): what the kernel lets an AI client do (MCP); workspace configuration only.
+        p(crate::mcp::P_ENABLED, ParamType::Boolean, PolicyMerge::Plain, &["config"]),
+        p(crate::mcp::P_RATE, ParamType::Number, PolicyMerge::Plain, &["config"]),
+        p(crate::mcp::P_MAX_ROWS, ParamType::Number, PolicyMerge::Plain, &["config"]),
+        p(crate::mcp::P_FREE_QUERY, ParamType::Boolean, PolicyMerge::Plain, &["config"]),
+        p(crate::mcp::P_ENV, ParamType::Ref, PolicyMerge::Plain, &["config"]),
     ]
 }
 

@@ -258,3 +258,34 @@ fn sigterm_ends_the_programs_and_a_killed_workers_programs_end_at_the_next_start
     w2.kill().unwrap();
     w2.wait().unwrap();
 }
+
+/// Round 19: the headless way `onedesk-mcp` uses when the application is closed — no window, one
+/// socket, every request the AI client's.
+#[test]
+fn worker_started_for_an_ai_client_takes_every_request_as_the_ais() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (ws, sock) = (tmp.path().join("ws"), tmp.path().join("w.sock"));
+    let mut child = {
+        let mut cmd = Command::new(env!("CARGO_BIN_EXE_onedesk-worker"));
+        cmd.arg("--workspace").arg(&ws).arg("--plugins").arg(fixtures()).arg("--socket").arg(&sock).arg("--ai-client").arg("claude desktop")
+            .stdin(Stdio::null())
+            .stderr(Stdio::piped())
+            .env("ONEDESK_SECRET_STORE", "memory");
+        cmd.spawn().unwrap()
+    };
+    let mut c = Conn::open(&sock, &mut child);
+    let st = c.call("mcp.status", json!({})).unwrap();
+    assert_eq!(st["enabled"], false, "off until the workspace says so");
+    let e = c.call("page.save", json!({ "target": "new:test.alpha:note", "changes": { "name": "x" } })).unwrap_err();
+    assert_eq!(e["params"]["reason"], "aiNotAllowed", "{e}");
+    let e = c.call("workspace.setConfig", json!({ "name": "mcp.enabled", "value": "true" })).unwrap_err();
+    assert_eq!(e["params"]["reason"], "aiNotAllowed", "{e}");
+    let e = c.call("mcp.tools", json!({})).unwrap_err();
+    assert_eq!(e["params"]["reason"], "aiOff", "{e}");
+    drop(c);
+    assert!(wait_exit(&mut child, Duration::from_secs(10)).success(), "exits when the connection closes");
+    // The audit of its refusals names who asked.
+    let conn = rusqlite::Connection::open(ws.join("workspace.db")).unwrap();
+    let n: i64 = conn.query_row("SELECT count(*) FROM audit WHERE actor = 'ai:claude desktop' AND op = 'mcp.refused'", [], |r| r.get(0)).unwrap();
+    assert_eq!(n, 2);
+}

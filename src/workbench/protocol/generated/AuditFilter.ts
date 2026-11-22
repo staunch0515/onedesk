@@ -9,4 +9,8 @@ sinceMs?: number, actor?: string, operation?: string, result?: AuditResult, text
 /**
  * Default 200, at most 1000; newest first.
  */
-limit?: number, };
+limit?: number, 
+/**
+ * Round 19: actor type (`ai`, `user`, `plugin`…): rows whose actor is it or starts with `<it>:`.
+ */
+source?: string, };

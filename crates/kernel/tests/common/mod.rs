@@ -38,6 +38,8 @@ pub fn test_config() -> KernelConfig {
         // Never the real Trash, never Finder (tests that use them set their own).
         trash_dir: Some(std::env::temp_dir().join("onedesk-test-trash-unset")),
         opener: onedesk_kernel::Opener::none(),
+        mcp_wait: Duration::from_secs(5),
+        ai_only: None,
     }
 }
 
@@ -187,9 +189,20 @@ impl Client {
         }
     }
 
+    /// A request the main process stamps as an AI client's (`actor: ai:<name>`).
+    pub async fn call_ai(&self, name: &str, method: &str, params: Value) -> Result<Value, ProtocolError> {
+        let id = NEXT.fetch_add(1, Ordering::SeqCst);
+        let req = Request { id, method: method.into(), params, client: None, actor: Some(format!("ai:{name}")) };
+        let r = self.raw(serde_json::to_string(&req).unwrap(), id).await;
+        match r.error {
+            Some(e) => Err(e),
+            None => Ok(r.result.unwrap_or(Value::Null)),
+        }
+    }
+
     pub async fn call_as(&self, client: Option<&str>, method: &str, params: Value) -> Result<Value, ProtocolError> {
         let id = NEXT.fetch_add(1, Ordering::SeqCst);
-        let req = Request { id, method: method.into(), params, client: client.map(String::from) };
+        let req = Request { id, method: method.into(), params, client: client.map(String::from), actor: None };
         let r = self.raw(serde_json::to_string(&req).unwrap(), id).await;
         assert_eq!(r.id, id);
         match r.error {

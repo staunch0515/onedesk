@@ -44,6 +44,10 @@ pub struct KernelConfig {
     pub trash_dir: Option<std::path::PathBuf>,
     /// Round 17 (X18): opens a path with its default program or reveals it in Finder.
     pub opener: Opener,
+    /// Round 19: how long `mcp.call` waits for a run to end before answering `running`.
+    pub mcp_wait: std::time::Duration,
+    /// Round 19: every request of this kernel is an AI client's (`onedesk-worker --ai-client`).
+    pub ai_only: Option<String>,
 }
 
 /// Round 17 (X18): what `files.open` (`reveal: false`) and `files.reveal` (`true`) call.
@@ -105,6 +109,8 @@ impl Default for KernelConfig {
             plugin_idle: DEFAULT_PLUGIN_IDLE,
             trash_dir: None,
             opener: Opener::system(),
+            mcp_wait: std::time::Duration::from_secs(30),
+            ai_only: None,
         }
     }
 }
@@ -177,6 +183,8 @@ pub(crate) struct Inner {
     pub(crate) languages_seen: Mutex<Option<Vec<onedesk_protocol::LanguageInfo>>>,
     /// Round 17 (D430): plugin warnings already written (each once).
     pub(crate) warned: Mutex<std::collections::HashSet<String>>,
+    /// Round 19: rate-limit memory of the AI clients.
+    pub(crate) mcp: crate::mcp::McpState,
 }
 
 pub(crate) fn parse<T: DeserializeOwned>(v: Value) -> KResult<T> {
@@ -265,6 +273,7 @@ impl Kernel {
             state_queries: AtomicU64::new(0),
             languages_seen: Mutex::new(None),
             warned: Mutex::new(Default::default()),
+            mcp: Default::default(),
         });
         // Round 13 (D400): a new workspace copies the settings it was created with, once.
         let init = inner.read(|c| Ok(crate::workspace_settings::take_init_settings(&inner.ws.dir, c))).ok().flatten();
@@ -327,7 +336,27 @@ impl Kernel {
 
     /// Handles one request. `hello` gating per connection is the transport's job.
     pub async fn request(&self, client: Option<String>, method: &str, params: Value) -> KResult<Value> {
-        self.inner.handle(client, method, params).await
+        self.request_as(None, client, method, params).await
+    }
+
+    /// `request` for the actor the envelope names (`ai:<client>`; round 19). A kernel started
+    /// with `ai_only` takes every request as that AI client's, whatever the envelope says.
+    pub async fn request_as(&self, actor: Option<&str>, client: Option<String>, method: &str, params: Value) -> KResult<Value> {
+        let ai = match (&self.inner.cfg.ai_only, actor) {
+            (Some(name), _) => Some(crate::mcp::clean_client(name)),
+            (None, Some(a)) => Some(crate::mcp::ai_client(a)?),
+            (None, None) => None,
+        };
+        match ai {
+            Some(c) => self.inner.ai_request(&c, client, method, params).await,
+            None => self.inner.handle(client, method, params).await,
+        }
+    }
+
+    /// Runs a command for an actor, as the kernel's own code does (tests: what the writer refuses).
+    #[doc(hidden)]
+    pub async fn execute_for_test(&self, actor: Actor, cmd: Command) -> KResult<Outcome> {
+        self.inner.execute(actor, cmd).await
     }
 
     /// Finishes queued writes and stops the writer thread; drops every plugin runtime.
@@ -548,6 +577,10 @@ impl Inner {
                 to_value(HelloResult { protocol: PROTOCOL_VERSION.into(), workspace: self.info() })
             }
             M::WORKSPACE_INFO => to_value(self.info()),
+            onedesk_protocol::method19::MCP_STATUS => to_value(self.mcp_status()?),
+            onedesk_protocol::method19::RESOURCE_SET_AI_VISIBLE => to_value(self.set_ai_visible(parse(params)?).await?),
+            // Round 19: the AI's tools are for the AI actor only.
+            onedesk_protocol::method19::MCP_TOOLS | onedesk_protocol::method19::MCP_CALL => Err(denied("aiOnly")),
             M::TREE_LIST => to_value(self.tree_list()),
             M::TREE_CHILDREN => to_value(self.tree_children(parse(params)?, client).await?),
             M::TREE_PATH => to_value(self.tree_path(parse(params)?, client).await?),
@@ -810,6 +843,7 @@ impl Inner {
             created_by: r.created_by.clone(),
             updated_at: r.updated_at,
             updated_by: r.updated_by.clone(),
+            ai_visible: Some(self.read(|c| store::is_ai_visible(c, &r.id))?),
         })
     }
 

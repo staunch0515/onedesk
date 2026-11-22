@@ -2548,6 +2548,7 @@ version = "0.2.0"
 dependencies = [
  "onedesk-kernel",
  "onedesk-protocol",
+ "rusqlite",
  "serde_json",
  "tempfile",
  "tokio",

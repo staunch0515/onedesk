@@ -20,4 +20,8 @@ createdAt: number,
 /**
  * Actor as text: `user`, `core`, `plugin:<id>@<version>` (§4.1).
  */
-createdBy: string, updatedAt: number, updatedBy: string, };
+createdBy: string, updatedAt: number, updatedBy: string, 
+/**
+ * Round 19 (D448): whether an AI client may see this resource. Always sent; absent = false.
+ */
+aiVisible?: boolean, };

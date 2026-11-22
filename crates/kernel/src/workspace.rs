@@ -27,6 +27,7 @@ pub const MIGRATIONS: &[(&str, &str)] = &[
     ("0011_audit_counts_last", include_str!("../migrations/0011_audit_counts_last.sql")),
     ("0012_resources_parent", include_str!("../migrations/0012_resources_parent.sql")),
     ("0013_run_artifacts", include_str!("../migrations/0013_run_artifacts.sql")),
+    ("0014_ai_visible_default_off", include_str!("../migrations/0014_ai_visible_default_off.sql")),
 ];
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -616,7 +617,7 @@ mod tests {
             conn.prepare("SELECT id FROM run_artifacts").unwrap().query_map([], |r| r.get(0)).unwrap().map(|r| r.unwrap()).collect();
         assert_eq!(left, ["a3"], "the run's artifacts go with it");
         let v: String = conn.query_row("SELECT value FROM meta WHERE key = 'schema_version'", [], |r| r.get(0)).unwrap();
-        assert_eq!(v, "13");
+        assert_eq!(v, MIGRATIONS.len().to_string());
     }
 
     #[test]

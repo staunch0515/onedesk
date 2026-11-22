@@ -334,7 +334,13 @@ impl Inner {
         Some((plugin, plugin.action(&short)?))
     }
 
-    pub async fn run_start(&self, mut p: RunStartParams, client: Option<String>) -> KResult<String> {
+    pub async fn run_start(&self, p: RunStartParams, client: Option<String>) -> KResult<String> {
+        self.run_start_as(p, client, None).await
+    }
+
+    /// `run_start`; `ai`: the AI client the kernel runs it for (round 19) — not read-only
+    /// checked (its actions are declared read-only), recorded as `ai:<client>`, out of the task panel.
+    pub(crate) async fn run_start_as(&self, mut p: RunStartParams, client: Option<String>, ai: Option<&str>) -> KResult<String> {
         // Review #11 (D444): a result-area action runs in the environment of the run it was clicked
         // on, whatever the interface says — so the protections are those of that run's.
         if let Some(src) = &p.result_run {
@@ -343,10 +349,13 @@ impl Inner {
         }
         // D327: a run writes its record, so read-only refuses the whole run (with the tab's environment).
         if let Err(e) = self.read(|c| Ok(crate::policy::check(c, crate::policy::READONLY, p.env_id.as_deref())))? {
-            let _ = self
-                .pipeline
-                .execute(Actor::User, Command::Refused { op: "run.start".into(), object: p.action.clone(), error: e.clone() })
-                .await;
+            // An AI call's refusal is audited by `mcp.call` itself.
+            if ai.is_none() {
+                let _ = self
+                    .pipeline
+                    .execute(Actor::User, Command::Refused { op: "run.start".into(), object: p.action.clone(), error: e.clone() })
+                    .await;
+            }
             return Err(e);
         }
         let id = new_id();
@@ -395,7 +404,8 @@ impl Inner {
             tab_id: Some(p.tab_id.clone()),
             env_id: p.env_id.clone(),
             env_name,
-            source: "manual".into(),
+            source: if ai.is_some() { "ai".into() } else { "manual".into() },
+            actor: ai.map(|c| format!("ai:{c}")).unwrap_or_default(),
             status: "running".into(),
             params: serde_json::to_value(&p.params).map_err(internal)?,
             input: {
@@ -410,15 +420,15 @@ impl Inner {
                 };
                 Value::Object(p.input.clone().into_iter().filter(|(k, _)| !fields.contains(k)).collect())
             },
-            in_task_panel: true,
+            in_task_panel: ai.is_none(),
             ..Default::default()
         };
-        self.pipeline.execute(Actor::User, Command::RunInsert(Box::new(row))).await?;
+        self.pipeline.execute(if ai.is_some() { Actor::Core } else { Actor::User }, Command::RunInsert(Box::new(row))).await?;
         self.run_events(&id);
 
         // Every failure from here on is an `error` run, not a protocol error (D288); a kernel
         // fault after the row exists also ends the run instead of leaving it `running` (#8).
-        if let Err(e) = self.run_launch(&id, &p, res.as_ref(), resolved, client).await {
+        if let Err(e) = self.run_launch(&id, &p, res.as_ref(), resolved, client, ai).await {
             self.run_end(&id, None, "error", None, Some(run_error("pluginError", "", e.detail.or(Some(format!("{:?}", e.code))))), None).await;
         }
         Ok(id)
@@ -431,6 +441,7 @@ impl Inner {
         res: Option<&Row>,
         resolved: Option<(&'static Plugin, &'static ActionDef)>,
         client: Option<String>,
+        ai: Option<&str>,
     ) -> KResult<()> {
         let id = id.to_string();
         let Some((plugin, action)) = resolved else {
@@ -489,6 +500,9 @@ impl Inner {
         };
         let mut ctx = json!({ "target": p.target, "resource": resource, "envId": p.env_id, "params": p.params, "runId": id,
                           "locale": p.locale });
+        if let Some(c) = ai {
+            ctx["ai"] = json!({ "client": c });
+        }
         // Round 16 e2e #20: an action run on a provided tree's node page gets the node, as the
         // page's `render` does — only when the tree is the running plugin's own.
         if let crate::pages::Target::Node { tree, key } = crate::pages::parse_target(&p.target) {

@@ -2,6 +2,9 @@
 //!
 //! `onedesk-worker --workspace <dir> --plugins <dir> --socket <path> [--builtin <id>@<version>]…`
 //!
+//! `--ai-client <name>` (round 19): every request on the connection is that AI client's (no window,
+//! no user): the headless way `onedesk-mcp` runs when the application is closed.
+//!
 //! `--builtin` (repeatable, D313): built-in packages the main process copied; only these are
 //! confirmed without asking.
 //!
@@ -25,6 +28,7 @@ struct Args {
     plugins: PathBuf,
     socket: PathBuf,
     builtin: Vec<String>,
+    ai_client: Option<String>,
 }
 
 fn parse_args() -> Result<Args, String> {
@@ -32,6 +36,7 @@ fn parse_args() -> Result<Args, String> {
     let mut plugins = None;
     let mut socket = None;
     let mut builtin = Vec::new();
+    let mut ai_client = None;
     let mut it = std::env::args().skip(1);
     while let Some(a) = it.next() {
         if a == "--builtin" {
@@ -40,6 +45,10 @@ fn parse_args() -> Result<Args, String> {
                 return Err(format!("--builtin expects <id>@<version>, got {v}"));
             }
             builtin.push(v);
+            continue;
+        }
+        if a == "--ai-client" {
+            ai_client = Some(it.next().ok_or("--ai-client needs a value")?);
             continue;
         }
         let slot = match a.as_str() {
@@ -51,8 +60,8 @@ fn parse_args() -> Result<Args, String> {
         *slot = Some(PathBuf::from(it.next().ok_or_else(|| format!("{a} needs a value"))?));
     }
     match (workspace, plugins, socket) {
-        (Some(workspace), Some(plugins), Some(socket)) => Ok(Args { workspace, plugins, socket, builtin }),
-        _ => Err("usage: onedesk-worker --workspace <dir> --plugins <dir> --socket <path> [--builtin <id>@<version>]…".into()),
+        (Some(workspace), Some(plugins), Some(socket)) => Ok(Args { workspace, plugins, socket, builtin, ai_client }),
+        _ => Err("usage: onedesk-worker --workspace <dir> --plugins <dir> --socket <path> [--builtin <id>@<version>]… [--ai-client <name>]".into()),
     }
 }
 
@@ -90,7 +99,7 @@ fn main() -> ExitCode {
         Err(e) => return fail(format!("runtime: {e}")),
     };
     rt.block_on(async move {
-        let mut cfg = KernelConfig { builtin: args.builtin.clone(), plugin_idle: plugin_idle(), ..KernelConfig::default() };
+        let mut cfg = KernelConfig { builtin: args.builtin.clone(), plugin_idle: plugin_idle(), ai_only: args.ai_client.clone(), ..KernelConfig::default() };
         test_hooks(&mut cfg, |k| std::env::var(k).ok());
         // Round 9: listen before opening the workspace. With thousands of plugin packages opening
         // takes seconds; the main process may connect meanwhile (the connection waits in the

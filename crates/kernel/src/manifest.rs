@@ -104,6 +104,51 @@ pub struct ResultActionDecl {
     pub action: String,
 }
 
+/// Round 19 (D448): `contributes.actions[].ai` — the action may be run by an AI client.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ActionAi {
+    /// Must be `true`: the plugin answers for the action being read-only.
+    pub read_only: bool,
+    /// Text key: what the action does, for the AI.
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub params: Vec<AiParam>,
+    /// Another action of this plugin that names the parameters of a resource (`describe`).
+    #[serde(default)]
+    pub describe: Option<String>,
+}
+
+/// One parameter an AI may pass (§2.3 of round19-protocol).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AiParam {
+    pub name: String,
+    #[serde(rename = "type")]
+    pub ty: String,
+    #[serde(default)]
+    pub required: bool,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub options: Option<Vec<String>>,
+    #[serde(default)]
+    pub default: Option<String>,
+}
+
+/// Round 19 (D448): `contributes.aiTools[]`.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AiToolDecl {
+    pub name: String,
+    pub description: String,
+    pub input_schema: serde_json::Value,
+    pub action: String,
+    #[serde(default)]
+    pub free_query: bool,
+}
+
 /// One interface language a plugin provides (round 11, D379).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LanguageDecl {
@@ -310,6 +355,9 @@ pub struct Contributes {
     /// Round 18 (X5): buttons for the result area of a finished run.
     #[serde(default)]
     pub result_actions: Vec<ResultActionDecl>,
+    /// Round 19 (D448): read-only tools for AI clients.
+    #[serde(default)]
+    pub ai_tools: Vec<AiToolDecl>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -339,6 +387,9 @@ pub struct ActionDef {
     /// A text key the shell shows before running (D289).
     #[serde(default)]
     pub confirm: Option<String>,
+    /// Round 19 (D448): an AI client may run it (read-only).
+    #[serde(default)]
+    pub ai: Option<ActionAi>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -959,6 +1010,7 @@ pub fn parse_package(dir: &Path, bytes: &[u8], check_folder: bool) -> Result<Plu
     let (exported, exported_trees, exported_pages, exported_actions) = parse_exports(dir, &m)?;
     check_requires_plugins(dir, &m)?;
     check_result_actions(dir, &m)?;
+    check_ai(dir, &m)?;
     let (implements, uses) = parse_interfaces(dir, &m, &exported_actions)?;
     for a in &c.actions {
         for k in a.kinds.iter().flatten() {
@@ -1341,6 +1393,121 @@ fn check_result_actions(dir: &Path, m: &Manifest) -> Result<(), Rejection> {
         match m.contributes.actions.iter().find(|a| a.id == r.action) {
             Some(a) if a.kinds.is_none() => {}
             _ => return Err(bad(format!("{}: action {}", r.id, r.action))),
+        }
+    }
+    Ok(())
+}
+
+fn valid_ai_name(n: &str, max: usize) -> bool {
+    let mut c = n.chars();
+    c.next().is_some_and(|f| f.is_ascii_alphabetic() || f == '_')
+        && n.len() <= max
+        && n.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+/// Round 19: a parameter declaration (`ParamDecl`) of an AI action.
+fn check_ai_params(params: &[AiParam], bad: &dyn Fn(String) -> Rejection, what: &str) -> Result<(), Rejection> {
+    if params.len() > 32 {
+        return Err(bad(format!("{what}: too many params")));
+    }
+    let mut seen: HashSet<&str> = HashSet::new();
+    for p in params {
+        if !valid_ai_name(&p.name, 64) || !seen.insert(p.name.as_str()) {
+            return Err(bad(format!("{what}: param {}", p.name)));
+        }
+        match p.ty.as_str() {
+            "text" | "number" | "boolean" => {}
+            "enum" if p.options.as_ref().is_some_and(|o| !o.is_empty()) => {}
+            t => return Err(bad(format!("{what}: param {} type {t}", p.name))),
+        }
+    }
+    Ok(())
+}
+
+/// Round 19 (D448): JSON Schema subset an `aiTools` entry may use.
+fn check_schema(v: &serde_json::Value, top: bool) -> Result<(), String> {
+    let o = v.as_object().ok_or("schema is not an object")?;
+    for (k, x) in o {
+        match k.as_str() {
+            "type" => {
+                let t = x.as_str().ok_or("type")?;
+                if !matches!(t, "object" | "string" | "number" | "integer" | "boolean" | "array") {
+                    return Err(format!("type {t}"));
+                }
+                if top && t != "object" {
+                    return Err("top level must be an object".into());
+                }
+            }
+            "properties" => {
+                for (_, sub) in x.as_object().ok_or("properties")? {
+                    check_schema(sub, false)?;
+                }
+            }
+            "items" => check_schema(x, false)?,
+            "required" => {
+                if !x.as_array().is_some_and(|a| a.iter().all(|s| s.is_string())) {
+                    return Err("required".into());
+                }
+            }
+            "additionalProperties" => {
+                if !x.is_boolean() {
+                    return Err("additionalProperties".into());
+                }
+            }
+            "enum" => {
+                if !x.is_array() {
+                    return Err("enum".into());
+                }
+            }
+            "minimum" | "maximum" => {
+                if !x.is_number() {
+                    return Err(k.clone());
+                }
+            }
+            "minLength" | "maxLength" => {
+                if !x.is_u64() {
+                    return Err(k.clone());
+                }
+            }
+            "description" | "default" | "title" => {}
+            other => return Err(format!("keyword {other}")),
+        }
+    }
+    if top && o.get("type").and_then(|t| t.as_str()) != Some("object") {
+        return Err("top level must be an object".into());
+    }
+    Ok(())
+}
+
+/// Round 19 (D448): `actions[].ai` and `contributes.aiTools` (`badAiAction`, `badAiTools`).
+fn check_ai(dir: &Path, m: &Manifest) -> Result<(), Rejection> {
+    let bad = |why: String| reject(dir, "badAiAction", why);
+    for a in &m.contributes.actions {
+        let Some(ai) = &a.ai else { continue };
+        if !ai.read_only {
+            return Err(bad(format!("{}: readOnly must be true", a.id)));
+        }
+        if a.confirm.is_some() {
+            return Err(bad(format!("{}: an AI action has no confirm", a.id)));
+        }
+        check_ai_params(&ai.params, &bad, &a.id)?;
+        if let Some(d) = &ai.describe {
+            match m.contributes.actions.iter().find(|x| &x.id == d) {
+                Some(t) if t.ai.as_ref().is_none_or(|x| x.describe.is_none()) && *d != a.id => {}
+                _ => return Err(bad(format!("{}: describe {d}", a.id))),
+            }
+        }
+    }
+    let bad = |why: String| reject(dir, "badAiTools", why);
+    let mut seen: HashSet<&str> = HashSet::new();
+    for t in &m.contributes.ai_tools {
+        if !valid_ai_name(&t.name, 40) || t.name.contains("__") || t.name.starts_with('_') || !t.name.chars().next().is_some_and(|c| c.is_ascii_lowercase()) || t.name.chars().any(|c| c.is_ascii_uppercase()) || !seen.insert(t.name.as_str()) {
+            return Err(bad(format!("name {}", t.name)));
+        }
+        check_schema(&t.input_schema, true).map_err(|e| bad(format!("{}: inputSchema: {e}", t.name)))?;
+        match m.contributes.actions.iter().find(|a| a.id == t.action) {
+            Some(a) if a.kinds.is_none() && a.ai.is_some() => {}
+            _ => return Err(bad(format!("{}: action {}", t.name, t.action))),
         }
     }
     Ok(())

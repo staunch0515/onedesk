@@ -23,6 +23,9 @@ pub enum Actor {
     User,
     Core,
     Plugin { id: String, version: String },
+    /// Round 19 (D448): an AI client (MCP). Writes nothing: the pipeline refuses every command
+    /// of it except the audit rows the kernel writes about its calls.
+    Ai { client: String },
 }
 
 impl Actor {
@@ -31,6 +34,7 @@ impl Actor {
             Actor::User => "user".into(),
             Actor::Core => "core".into(),
             Actor::Plugin { id, version } => format!("plugin:{id}@{version}"),
+            Actor::Ai { client } => format!("ai:{client}"),
         }
     }
 }
@@ -205,6 +209,8 @@ pub enum Command {
     Delete { id: String },
     /// Record-only audit entry for writes outside the database (e.g. a plugin writing a file).
     Audit { op: String, object: String, summary: Value },
+    /// Round 19: sets `ai_visible` on these resources (one audit row).
+    AiVisible { ids: Vec<String>, visible: bool },
     /// D368: an audit row whose result is not `ok`: a host call that was cancelled or timed out
     /// (`result` = `cancelled` / `timeout`).
     Stopped { op: String, object: String, summary: Value, result: String },
@@ -470,6 +476,11 @@ impl Writer {
 
     fn transact(&mut self, actor: &Actor, cmd: Command) -> KResult<Outcome> {
         let rules = self.rules.read().unwrap().clone();
+        // Round 19 (D448): an AI client writes nothing. Not a method list: whatever reaches the
+        // writer for it is refused here; only the audit rows about its own calls pass.
+        if matches!(actor, Actor::Ai { .. }) && !matches!(cmd, Command::Stopped { .. } | Command::Refused { .. }) {
+            return Err(err_p(ErrorCode::Denied, &[("reason", "aiReadOnly")]));
+        }
         let tx = self.conn.transaction().map_err(db_err)?;
         let mut out = {
             let mut cx = Tx { tx: &tx, actor, rules: &rules, at: now_ms(), touched: Default::default(), indexed: Default::default() };
@@ -502,6 +513,7 @@ impl Writer {
                 Command::Undelete { id } => cx.undelete(&id)?,
                 Command::Purge { id } => cx.purge(&id)?,
                 Command::Meta { id, favorite, touch } => cx.meta(&id, favorite, touch)?,
+                Command::AiVisible { ids, visible } => cx.ai_visible(&ids, visible)?,
                 Command::Startup => cx.startup()?,
                 Command::InitSettings(s) => cx.init_settings(&s)?,
                 Command::RunInsert(r) => cx.run_insert(*r)?,
@@ -682,6 +694,7 @@ fn describe(cmd: &Command) -> (String, String) {
         Command::Undelete { id } => ("resource.undelete".into(), id.clone()),
         Command::Purge { id } => ("resource.purge".into(), id.clone()),
         Command::Meta { id, .. } => ("resource.meta".into(), id.clone()),
+        Command::AiVisible { ids, .. } => ("resource.aiVisible".into(), ids.first().cloned().unwrap_or_default()),
         Command::Startup => ("workspace.startup".into(), String::new()),
         Command::InitSettings(_) => (crate::workspace_settings::AUDIT_INIT_SETTINGS.into(), String::new()),
         Command::RunInsert(r) => ("run.start".into(), r.id.clone()),
@@ -795,6 +808,7 @@ impl Tx<'_> {
             // The protocol layer keeps users away from hidden trees (plugin state is only written
             // through `plugin.grantFolder` / `revokeFolder`).
             Actor::User | Actor::Core => Ok(()),
+            Actor::Ai { .. } => Err(err_p(ErrorCode::Denied, &[("reason", "aiReadOnly")])),
         }
     }
 
@@ -1534,6 +1548,26 @@ impl Tx<'_> {
         Ok(Outcome { id: Some(id.to_string()), changed: true, rows: doomed, ..Default::default() })
     }
 
+    /// Round 19 (D448): `ai_visible` of live resources the user sees in a tree.
+    fn ai_visible(&mut self, ids: &[String], visible: bool) -> KResult<Outcome> {
+        let mut rows = Vec::new();
+        for id in ids {
+            let row = self.live(id)?;
+            if row.tree.is_none() || row.tree.as_deref() == Some(TREE_PLUGIN_STATE) {
+                return Err(not_found("resource"));
+            }
+            let n = self
+                .tx
+                .execute("UPDATE resources SET ai_visible = ?2 WHERE id = ?1 AND ai_visible <> ?2", params![id, i64::from(visible)])
+                .map_err(db_err)?;
+            if n > 0 {
+                rows.push(row);
+            }
+        }
+        self.audit("resource.aiVisible", ids.first().map(String::as_str).unwrap_or(""), &json!({ "visible": visible, "count": rows.len() }))?;
+        Ok(Outcome { id: ids.first().cloned(), changed: !rows.is_empty(), rows, ..Default::default() })
+    }
+
     fn meta(&mut self, id: &str, favorite: Option<bool>, touch: bool) -> KResult<Outcome> {
         let row = self.live(id)?;
         if row.tree.as_deref() == Some(TREE_PLUGIN_STATE) {
@@ -1637,7 +1671,9 @@ impl Tx<'_> {
     fn run_insert(&mut self, mut r: store::RunRow) -> KResult<Outcome> {
         r.seq = self.tx.query_row("SELECT COALESCE(MAX(seq), 0) + 1 FROM runs", [], |x| x.get(0)).map_err(db_err)?;
         r.started_at = self.at;
-        r.actor = self.actor.as_text();
+        if r.actor.is_empty() {
+            r.actor = self.actor.as_text();
+        }
         let j = |v: &Value| v.to_string();
         let o = |v: &Option<Value>| v.as_ref().map(|v| v.to_string());
         self.tx

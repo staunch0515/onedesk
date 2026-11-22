@@ -587,6 +587,10 @@ impl Inner {
         if let Some(a) = &f.actor {
             push("actor = ?", json!(a), &mut wheres);
         }
+        if let Some(src) = &f.source {
+            // Round 19: an actor type — `ai` is `ai:<client>`.
+            push("(actor = ? OR substr(actor, 1, length(?) + 1) = ? || ':')", json!(src), &mut wheres);
+        }
         if let Some(o) = &f.operation {
             push("op = ?", json!(o), &mut wheres);
         }

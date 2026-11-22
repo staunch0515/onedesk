@@ -128,7 +128,7 @@ impl Conn {
             }
             pending.insert(id, tx);
         }
-        let mut line = serde_json::to_string(&Request { id, method: method.to_string(), params, client }).expect("request serializes");
+        let mut line = serde_json::to_string(&Request { id, method: method.to_string(), params, client, actor: None }).expect("request serializes");
         line.push('\n');
         if self.write.lock().await.write_all(line.as_bytes()).await.is_err() {
             self.pending.lock().unwrap().remove(&id);

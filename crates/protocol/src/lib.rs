@@ -75,6 +75,9 @@ pub struct Request {
     /// Client id (one per window or browser). Set by the main process when forwarding; the
     /// kernel keeps interface state per client (§9.2) and treats the actor as the local user.
     pub client: Option<String>,
+    /// Round 19: `ai:<client name>` when the request comes from an AI client. Set by the main
+    /// process or the MCP program, never trusted from a window.
+    pub actor: Option<String>,
 }
 
 #[skip_serializing_none]
@@ -435,6 +438,8 @@ pub struct Resource {
     pub created_by: String,
     pub updated_at: i64,
     pub updated_by: String,
+    /// Round 19 (D448): whether an AI client may see this resource. Always sent; absent = false.
+    pub ai_visible: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -1305,6 +1310,8 @@ pub struct AuditFilter {
     pub text: Option<String>,
     /// Default 200, at most 1000; newest first.
     pub limit: Option<u32>,
+    /// Round 19: actor type (`ai`, `user`, `plugin`…): rows whose actor is it or starts with `<it>:`.
+    pub source: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -2462,6 +2469,84 @@ pub struct SnapshotParam {
 pub struct PluginEnabledState {
     pub plugin: String,
     pub enabled: bool,
+}
+
+/* ================================================================== round 19 (D448)
+   MCP: the AI actor, read-only tools, `mcp.*` policy. See docs/handoff/round19-protocol.md. */
+
+pub mod method19 {
+    /// `SetAiVisibleParams` → `SetAiVisibleResult`.
+    pub const RESOURCE_SET_AI_VISIBLE: &str = "resource.setAiVisible";
+    /// No params → `McpStatus`.
+    pub const MCP_STATUS: &str = "mcp.status";
+    /// No params → `McpTool[]` (AI only).
+    pub const MCP_TOOLS: &str = "mcp.tools";
+    /// `McpCallParams` → `McpCallResult` (AI only).
+    pub const MCP_CALL: &str = "mcp.call";
+    pub const ALL: &[&str] = &[RESOURCE_SET_AI_VISIBLE, MCP_STATUS, MCP_TOOLS, MCP_CALL];
+}
+
+#[skip_serializing_none]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, optional_fields)]
+pub struct SetAiVisibleParams {
+    pub id: String,
+    pub visible: bool,
+    /// For a group: every live descendant too.
+    pub with_children: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct SetAiVisibleResult {
+    pub changed: u32,
+}
+
+#[skip_serializing_none]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, optional_fields)]
+pub struct McpStatus {
+    pub enabled: bool,
+    pub rate_per_minute: u32,
+    pub max_rows: u32,
+    pub allow_free_query: bool,
+    pub env_id: Option<String>,
+    pub env_name: Option<String>,
+    pub tools: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct McpTool {
+    pub name: String,
+    pub description: String,
+    #[ts(type = "Record<string, unknown>")]
+    pub input_schema: Value,
+}
+
+#[skip_serializing_none]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, optional_fields)]
+pub struct McpCallParams {
+    pub name: String,
+    #[ts(type = "Record<string, unknown> | undefined")]
+    pub arguments: Option<Value>,
+}
+
+#[skip_serializing_none]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, optional_fields)]
+pub struct McpCallResult {
+    #[ts(type = "unknown")]
+    pub content: Value,
+    pub truncated: bool,
+    pub rows: Option<u64>,
 }
 
 #[cfg(test)]

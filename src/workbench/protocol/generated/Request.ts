@@ -6,4 +6,9 @@ export type Request = { id: number, method: string, params: JsonValue,
  * Client id (one per window or browser). Set by the main process when forwarding; the
  * kernel keeps interface state per client (§9.2) and treats the actor as the local user.
  */
-client?: string, };
+client?: string, 
+/**
+ * Round 19: `ai:<client name>` when the request comes from an AI client. Set by the main
+ * process or the MCP program, never trusted from a window.
+ */
+actor?: string, };

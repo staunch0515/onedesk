@@ -228,6 +228,11 @@ pub fn is_favorite(conn: &Connection, id: &str) -> rusqlite::Result<bool> {
         != 0)
 }
 
+/// Round 19: whether an AI client may see the resource.
+pub fn is_ai_visible(conn: &Connection, id: &str) -> rusqlite::Result<bool> {
+    Ok(conn.query_row("SELECT ai_visible FROM resources WHERE id = ?1", [id], |r| r.get::<_, i64>(0)).optional()?.unwrap_or(0) != 0)
+}
+
 /// Live favorites, most recently used first.
 pub fn favorites(conn: &Connection) -> rusqlite::Result<Vec<Row>> {
     let cols: String = COLUMNS.split(", ").map(|c| format!("r.{}", c.trim())).collect::<Vec<_>>().join(", ");

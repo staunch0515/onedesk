@@ -18,7 +18,7 @@
 - 新迁移 `0014_ai_visible_default_off.sql`：`UPDATE resources SET ai_visible = 0`（已有数据全置 0），并建触发器 `resources_ai_visible_off AFTER INSERT ON resources WHEN NEW.ai_visible <> 0` 把新行置 0（SQLite 改不了列默认值；0001 不动）。之后只有 `resource.setAiVisible` 能打开。
 - 协议新增（外壳用，操作者 `user`）：
   - 请求 `resource.setAiVisible`，入参 `SetAiVisibleParams { id: string, visible: boolean, withChildren?: boolean }`（`withChildren` 对分组：连同所有未删除的下级一起设）；返回 `{ changed: number }`（改了几条）。只能对用户在树里看得到的资源用（隐藏树、环境、配置节点、已删除的 → `notFound/resource`）。审计 `resource.aiVisible`，`summary { visible, count }`。发 `tree:<tree>` 与 `audit` 事件。
-  - `Resource`（`resource.get` 的返回）新增 `aiVisible: boolean`（`optional_fields`，总是给）。`ResourceInfo` 不加。
+  - `Resource`（`resource.get` 的返回）新增 `aiVisible`（TS 里是可选 `aiVisible?: boolean`，内核总是给；缺省当 false，所以 mock 可以先不写）。`ResourceInfo` 不加。
 - AI 永远看不到：`ai_visible = 0`、已删除、`state = missing`、不在“存储树”里（环境、配置、插件状态）的资源——搜不到、`describe` 读不到（一律 `notFound/resource`，不泄露存在）、`run` 跑不了。
 
 ## 2. 清单
@@ -41,7 +41,7 @@
 - 没有 `ai`（或 `readOnly` 不是 `true`）的动作，AI 一律不能运行（`denied/notAiAction`）。
 - 只有带 `kinds`（作用于资源）的动作能被通用工具 `run` 运行；不带 `kinds` 的动作只能经 `aiTools` 运行。
 - 带 `confirm` 的动作不能有 `ai`（写错 → 安装拒绝 `badAiAction`）。`ai.describe` 指向的动作必须存在、`kinds` 包含同类型或不带 `kinds`，且**自己不能再有 `ai.describe`**。
-- 写错（`readOnly` 不是 true、参数声明不合 2.3、`description` 键不存在）→ 安装拒绝 `badAiAction`，`detail` 说明。
+- 写错（`readOnly` 不是 true、参数声明不合 2.3、`describe` 指向不存在/有链条）→ 安装拒绝 `badAiAction`，`detail` 说明；`ai` 里缺 `readOnly` 是清单格式错（`schema`）。文字键不存在时显示键本身（不拒绝）。插件要在 `contributes.locales` 里声明语言文件，给 AI 的说明才有英语文字。
 
 ### 2.2 `contributes.aiTools`
 
@@ -68,7 +68,7 @@
 
 ### 2.4 动态参数 `ai.describe`
 
-`describe` 工具要列一条资源可用动作的参数时：有 `ai.describe` 的，内核以 `pure`（写类宿主调用被拒）、不带环境、无网络的方式调用那个动作，`ctx.resource` 是该资源，`input = {}`，期望返回 `{ output: {type:"none"}, params: ParamDecl[] , description?: string }`；格式不对或抛错 → 该动作的参数返回空数组并带 `paramsError: <码>`，不让整个 `describe` 失败。只有静态 `ai.params` 的就用静态的。
+`describe` 工具要列一条资源可用动作的参数时：有 `ai.describe` 的，内核以 `pure`（写类宿主调用被拒）、不带环境、无网络的方式调用那个动作，`ctx.resource` 是该资源，`input = {}`，期望返回 `{ output: {type:"none"}, data: { params: ParamDecl[], description?: string } }`（用已有的 `data` 字段，同 `actions.call`）；格式不对或抛错 → 该动作的参数返回空数组并带 `paramsError: <码>`，不让整个 `describe` 失败。只有静态 `ai.params` 的就用静态的。
 
 ## 3. 工作区策略 `mcp.policy`（内核读，D448④）
 
@@ -82,7 +82,7 @@
 | `mcp.allow_free_query` | boolean | `false` | 允许 `freeQuery: true` 的插件工具 |
 | `mcp.env` | ref | 空 | “AI 用的环境”：一个环境资源的 id（`kinds: ["core:env"]`）。空 = 不带环境运行；指向不存在/已删除的环境 → `run` 报 `invalid/aiEnvMissing`。AI 的入参里**没有**环境，也选不了 |
 
-`protection.no_export` 对 AI 照样有效：该环境（含祖先）或工作区配置禁止导出时，`run`、`get_run` 和所有 `aiTools` 拒绝，`denied/noExport`（带 `layer`、`layerName`，同现有）。`protection.readonly` 不拦 AI 的运行（它们只读；运行记录由内核写）。
+`protection.no_export` 对 AI 照样有效：该环境（含祖先）或工作区配置禁止导出时，`run`、`get_run` 和所有 `aiTools` 拒绝，`denied/noExport`（带 `layer`、`layerName`，同现有）。`protection.readonly` 同样拦 AI 的运行（`denied/readonly`，带 `layer`、`layerName`）：运行要写运行记录，规则同 D327；`search`/`describe` 不受影响。
 
 只读请求 `mcp.status`（AI 和用户都可调）：返回 `McpStatus { enabled: boolean, ratePerMinute: number, maxRows: number, allowFreeQuery: boolean, envId?: string, envName?: string, tools: number }`，让外壳 AI 设置页和 `onedesk-mcp` 启动时探测；不记审计、不计限流。
 
@@ -153,7 +153,7 @@
 | `denied` / `aiOnly` | 非 AI 调 `mcp.call`/`mcp.tools` |
 | `denied` / `notAiAction` | 动作没声明 `ai.readOnly`，或不在该类型上 |
 | `denied` / `aiFreeQuery` | 自由查询工具，`mcp.allow_free_query` 关 |
-| `denied` / `noExport`，`layer`、`layerName` | 环境/配置禁止导出 |
+| `denied` / `noExport`、`readonly`，`layer`、`layerName` | 环境/配置禁止导出；工作区只读时的运行 |
 | `notFound` / `resource`、`run`、`tool` | 对象不存在、不可见、不是自己的运行 |
 | `invalidParams` / `badArguments`，`path`、`rule` | JSON Schema 校验失败 |
 | `invalidParams` / `needAction` | `run` 没给动作而有多个 |
@@ -171,3 +171,11 @@
 
 - **新增**（内核/协议/主进程源码里不许出现）：`run_sql`、`list_tables`、`sqlpool`、`search_queries`、`describe_query`、`run_query`（都是具体工具/插件的名字；通用工具名 `search`/`describe`/`run`/`get_run` 不禁，它们是内核的）。
 - **不要**把 `mcp` 加成内核禁用词：`mcp.*` 是内核自己的方法名和参数名。
+
+## 9. 实现备注（内核会话补）
+
+- 搜索：`mcp.call search` 内部用 `mode: any`、`rank: relevance`，并在 SQL 里加 `ai_visible = 1`（`SearchOpts.ai_only`，不能从线上设置）。
+- `Request.actor` 在主进程转发时由主进程盖章；`onedesk-worker --ai-client` 时内核无视信封。
+- 工作区策略的 `mcp.env` 在 `params.known` 里登记为 `ref`；AI 设置页读写用 `workspace.getConfig` / `workspace.setConfig`。
+- `crates/host/src/lib.rs` 里 `Request { … }` 字面量被迫加了 `actor: None`（一行，`r19-mcp` 合并时注意）。
+- lint：`scripts/check-arch.mjs` 的禁用词 `ai` 会拦内核里的操作者 `ai`，需 tests 会话放行（已报协调会话）。
