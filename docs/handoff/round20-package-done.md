@@ -33,3 +33,7 @@
 
 ## 补：欢迎页间距（协调会话转 r20-polish 的发现）
 欢迎页四个“新建 …”链接每项一个 `link` 节点，外壳把每个 `link` 画在 `Pane pad="md"` 里，所以纵向间距大。改为 `pad="sm"`（`src/workbench/parts/view-nodes.tsx`，一行，只用设计 token）。注意这是 `link` 节点的通用画法，ai/datasource/sql/link 插件里的 link 列表也同样变紧。未重新截图确认；`.app` 需重打才含此改动。
+
+## 补：重打（集成分支 f9700a6）与窗口内验证
+- 合并 `claude/onedesk-r20`（f9700a6）后重打 `.app`（`scripts/build-app.sh`），签名同前（adhoc / spctl rejected），`scripts/smoke-app.sh` 全部 ok。路径：`/Users/chloe/onedesk/repo/target/release/bundle/macos/OneDesk.app`；备份（未在外置盘上签名，仅复制）：`/Volumes/XDisk/BigDisk/OneDesk-1.0.0.app`。
+- **未完成：`.app` 窗口截图（欢迎页、插件页、SQL 查询页）和窗口内崩溃重启提示。** 本会话的 shell 没有“屏幕录制”权限：`screencapture -l <窗口号>` 与 `-R` 都报 `could not create image`，也没有可用的桌面控制工具去点界面，所以 `docs/screenshots/app/` 没有产出。需要有屏幕录制权限的会话或用户手动：启动 `.app`（建议 `ONEDESK_DATA_DIR=$(mktemp -d /tmp/od-shot.XXXXXX) ONEDESK_SECRET_STORE=memory`）后用 ⌘⇧4 截图。
