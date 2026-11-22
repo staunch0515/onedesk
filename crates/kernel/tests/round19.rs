@@ -39,6 +39,11 @@ export default { activate(host) {
     await t("secret", () => ctx.host.secrets.get("pw"));
     await t("storage", () => ctx.host.storage.set("k", "v"));
     await t("post", () => ctx.host.network.request({ url: "http://127.0.0.1:1/", method: "POST", body: "x" }));
+    await t("upload", () => ctx.host.transfer.upload({ url: "http://127.0.0.1:1/", from: "x" }));
+    await t("download", () => ctx.host.transfer.download({ url: "http://127.0.0.1:1/", to: "tmp/x" }));
+    await t("captureAbs", () => ctx.host.transfer.capture({ program: "x", to: "/tmp/x" }));
+    await t("captureUp", () => ctx.host.transfer.capture({ program: "x", to: "tmp/../../x" }));
+    await t("captureOwn", () => ctx.host.transfer.capture({ program: "x", to: "tmp/x.csv" }));
     await t("list", async () => { out.listed = (await ctx.host.resources.list({ kind: "query" })).map((r) => r.name).sort(); });
     await t("get", async () => { out.got = ctx.params.other ? (await ctx.host.resources.get(ctx.params.other)) !== null : null; });
     return { output: { type: "text", text: JSON.stringify(out) } };
@@ -656,6 +661,10 @@ async fn inside_an_ais_run_the_plugin_may_read_and_nothing_more_whatever_it_decl
     for k in ["create", "update", "open", "notify", "secret", "post"] {
         assert_eq!(o[k], "aiRun", "{k}: {o}");
     }
+    for k in ["upload", "download", "captureAbs", "captureUp"] {
+        assert_eq!(o[k], "aiRun", "{k}: {o}");
+    }
+    assert_ne!(o["captureOwn"], "aiRun", "D451: capturing a program's output into its own data folder is let through to the usual checks: {o}");
     assert_eq!(o["storage"], "ok", "its own storage stays");
     assert_eq!(o["listed"], json!(["q1"]), "only what is visible to AI: {o}");
     assert_eq!(o["got"], false, "a resource not visible to AI reads as not there");
@@ -719,7 +728,7 @@ async fn a_ban_on_export_stops_what_gives_data_out_and_nothing_else() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn the_rate_limit_counts_each_client_over_a_minute() {
+async fn the_rate_limit_counts_all_ai_clients_together_over_a_minute() {
     let (env, c) = world(&[ON, ("mcp.rate_per_minute", "2")]).await;
     call_ok(&c, "search", json!({ "query": "a" })).await;
     call_ok(&c, "search", json!({ "query": "a" })).await;
@@ -727,13 +736,16 @@ async fn the_rate_limit_counts_each_client_over_a_minute() {
     assert_eq!(code(&e), "denied/aiRateLimit");
     assert_eq!(e.params["limit"], "2");
     assert!(e.params["retryAfterMs"].parse::<u64>().unwrap() > 0);
-    // Another client has its own count; `mcp.tools` and `mcp.status` are not counted.
-    c.call_ai("other", "mcp.call", json!({ "name": "search", "arguments": { "query": "a" } })).await.unwrap();
+    // D451: another client name buys no new window; `mcp.tools` and `mcp.status` are not counted.
+    let e = c.call_ai("other", "mcp.call", json!({ "name": "search", "arguments": { "query": "a" } })).await.unwrap_err();
+    assert_eq!(code(&e), "denied/aiRateLimit");
+    let e = c.call_ai("tester-9f3a", "mcp.call", json!({ "name": "search", "arguments": { "query": "a" } })).await.unwrap_err();
+    assert_eq!(code(&e), "denied/aiRateLimit");
     c.call_ai(CLIENT, "mcp.tools", json!({})).await.unwrap();
     c.call_ai(CLIENT, "mcp.status", json!({})).await.unwrap();
     // The refusal is audited as one.
     let rows = audit(&env, "mcp.call");
-    assert_eq!(rows.iter().filter(|r| r.3 == "failed:denied" && r.2["reason"] == "aiRateLimit").count(), 1);
+    assert!(rows.iter().any(|r| r.3 == "failed:denied" && r.2["reason"] == "aiRateLimit"));
     // The ceiling is the policy's: 600 at most, 1 at least, text is the default.
     c.ok("workspace.setConfig", json!({ "name": "mcp.rate_per_minute", "value": "100000" })).await;
     assert_eq!(c.ok("mcp.status", json!({})).await["ratePerMinute"], 600);

@@ -152,7 +152,7 @@
 | `denied` / `aiReadOnly` | 管线收到 AI 的写命令 |
 | `denied` / `aiOnly` | 非 AI 调 `mcp.call`/`mcp.tools` |
 | `denied` / `notAiAction` | 动作没声明 `ai.readOnly`，或不在该类型上 |
-| `denied` / `aiFreeQuery` | 自由查询工具，`mcp.allow_free_query` 关 |
+| `notFound` / `tool`（`what=tool`） | 自由查询工具在 `mcp.allow_free_query` 关着时不列出、也不泄露存在性，调用得到这个；`denied/aiFreeQuery` 只是内核里的纵深防御，正常到不了 |
 | `denied` / `noExport`、`readonly`，`layer`、`layerName` | 环境/配置禁止导出；工作区只读时的运行 |
 | `notFound` / `resource`、`run`、`tool` | 对象不存在、不可见、不是自己的运行 |
 | `invalidParams` / `badArguments`，`path`、`rule` | JSON Schema 校验失败 |
@@ -198,3 +198,8 @@
 - **审计**：`object`/`resource`/`runId`/`tool` 截到 80 字符；`aiOff`、`aiRateLimit`、`aiNotAllowed`、未知工具这几类拒绝，同一客户端同一原因每秒最多写 1 行，被省掉的次数记在下一条的 `summary.suppressed`。
 - **`run` 参数**：一律按动作声明（静态 `ai.params` 或 `ai.describe` 的答复）校验：名字、类型、枚举、必填（没给 `params` 也检查）、≤ 32 个键、值 ≤ 1000 字符；没有声明的动作不接受任何参数。插件 `describe` 的答复按 §2.3 清理并截断（描述 400、选项 ≤ 50 个每个 ≤ 200），格式不对 → `describe` 里 `paramsError`、`run` 里 `pluginError/badOutput`。
 - `get_run` 再查一次资源可见性（用户关掉后读不了，`notFound/run`）；`run` 等结束用事件通知，不轮询。
+
+## 11. D451（内核会话）
+
+- AI 运行里 `transfer.capture` 放行，限于：`to` 是相对路径（不以 `/`、`~` 开头、不含 `..`）、没有 `url`——即把插件已被允许运行的程序的输出捕获到自己数据目录；`transfer.progress`/`stop` 放行；`transfer.download`/`upload` 与写到授权文件夹的 `capture` 仍 `denied/aiRun`。程序白名单等原有检查照常。
+- 限流按工作区内**所有** `ai:*` 客户端合计（审计里的 `mcp.call` 行 + 在途数），客户端名换了也没有新窗口；`mcp.rate_per_minute` 的含义因此是“整个工作区每分钟”。
