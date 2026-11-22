@@ -476,16 +476,16 @@ SELECT :n, :kind, :day, :free`;
   it("describes the parameters: name, type, required, description, choices", async () => {
     const res = await registry(plugin).actions.aiParams(ctxOf(fakeHost(), { resource: { id: "r1", body: { sql: SQL } } }), {});
     expect(res.output).toEqual({ type: "none" });
-    expect(res.params).toEqual([
+    expect(res.data.params).toEqual([
       { name: "n", type: "number", required: true, description: "how many" },
       { name: "kind", type: "enum", required: false, options: ["a", "b"] },
       { name: "day", type: "text", required: false, description: "Format YYYY-MM-DD." },
       { name: "free", type: "text", required: false },
     ]);
     const zh = await registry(plugin).actions.aiParams(ctxOf(fakeHost(), { locale: "zh-CN", resource: { id: "r1", body: { sql: SQL } } }), {});
-    expect(zh.params[2].description).toBe("格式 YYYY-MM-DD。");
+    expect(zh.data.params[2].description).toBe("格式 YYYY-MM-DD。");
     const none = await registry(plugin).actions.aiParams(ctxOf(fakeHost(), { resource: { id: "r1", body: {} } }), {});
-    expect(none.params).toEqual([]);
+    expect(none.data.params).toEqual([]);
   });
 
   it("an AI run (empty input) runs the saved text on the saved data source, through the read-only query action", async () => {

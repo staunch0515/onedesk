@@ -775,7 +775,7 @@ describe("catalog: for AI clients (round 19)", () => {
     const { host } = fakeHost(FILES);
     const res = await registry().actions.aiParams(await entryCtx(host), {});
     expect(res.output).toEqual({ type: "none" });
-    const by = Object.fromEntries(res.params.map((p: any) => [p.name, p]));
+    const by = Object.fromEntries(res.data.params.map((p: any) => [p.name, p]));
     expect(Object.keys(by).sort()).toEqual(["as_of", "since", "status"]);
     expect(by.since.type).toBe("text");
     expect(by.since.description).toContain("YYYY-MM-DDTHH:MM");
@@ -789,7 +789,7 @@ describe("catalog: for AI clients (round 19)", () => {
     const ctx: Record<string, any> = await entryCtx(host);
     host.files = { roots: async () => { throw hostError("denied", {}); }, readText: async () => { throw hostError("denied", {}); } };
     const res = await registry().actions.aiParams({ ...ctx, host: { ...ctx.host, files: host.files } }, {});
-    expect(Array.isArray(res.params)).toBe(true);
+    expect(Array.isArray(res.data.params)).toBe(true);
   });
 
   it("has the new texts in every language", () => {

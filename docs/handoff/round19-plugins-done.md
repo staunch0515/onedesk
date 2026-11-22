@@ -14,14 +14,26 @@
 - 译文：三个插件的 `locales/` 英、中、日都补了（`ai.*`、`action.aiParams` 等），测试要求三种语言键齐全。
 - 测试：`plugins/org.onedesk.{sql,catalog,table}/main.test.ts` 各新增 “for AI clients” 一节（声明、参数说明、空入参运行、自由查询每条拒绝且拒绝时不碰数据源、行数上限、译文）。`pnpm typecheck`、`pnpm lint`、`pnpm test` 通过（1137 个）。
 
-## 还没做：第⑤项（真内核走一遍）
+## 第⑤项：真内核走一遍（已做）
 
-提交时内核会话的 `ActionDef.ai`、`aiTools` 解析还在它自己的工作树里未提交（`crates/kernel/src/manifest.rs`），我的工作树里的内核还不认识 `ai` 字段（`ActionDef` 是 `deny_unknown_fields`），所以现在**装不上**这些清单，也不能用真内核跑。待内核提交并入集成分支后，要在真内核上确认：
-1. 三个插件的清单通过安装检查（`badAiAction`/`badAiTools`）；特别是 `ai.describe` 指向的 `aiParams` 不带 kinds、无 `ai`，是否被接受。
-2. `mcp.call describe` 对 SQL 查询和目录条目给出 `aiParams` 的参数；`run` 空 `input` 时 SQL 能读到 `ctx.resource.body`（假 host 里 `ctx.resource` 是我假设有的）。
-3. `describe` 的纯调用里 `ctx.t`、`ctx.locale` 可用（用于格式说明）。
-4. `run_sql` 在 `mcp.allow_free_query` 关时 `tools/list` 里没有；开时 `ctx.host.actions.call(datasource:query)` 带 `inline` 正常。
-5. “带 kinds 的动作不能用于节点”：`aiListTables`/`aiRunSql` 不带 kinds，是否会被当成要选资源的动作。
+方法：无界面 `onedesk-worker`（`CARGO_TARGET_DIR=/Users/chloe/onedesk/repo/target`，合并 `claude/onedesk-r19` 后重建）加全部内置插件；先以用户身份起一次（`mcp.enabled`、数据源、SQL 查询、`resource.setAiVisible`、给目录插件授权放映射文件的文件夹），再用 `--ai-client probe` 重起，直接对着行格式的套接字发 `mcp.tools`、`mcp.call`。脚本在会话草稿目录，不入库。
+
+发现并修掉的问题：
+1. **`describe` 的动态参数放错了地方**：协议文档写 `{output, params}`，内核实际读 `{output, data: {params, description?}}`（`crates/kernel/src/mcp.rs` `describe_params`），我按文档写时 describe 给出 `paramsError: badOutput`。已改成 `data.params`（SQL、目录两个 `aiParams`），vitest 同步。协议文档 §2.4 应改成 `data`（内核会话的文档，没动）。
+2. 其余假 host 看不出的点都没问题：
+
+| 检查 | 结果 |
+|---|---|
+| 22 个内置插件全部安装通过（含 `ai`、`aiTools`、`aiParams` 不带 kinds） | 通过 |
+| `mcp.tools`：自由查询关时只有 `search describe run get_run org_onedesk_table__list_tables`；开 `mcp.allow_free_query` 后多 `org_onedesk_table__run_sql`；关着时直接调 `run_sql` → `notFound/tool` | 通过 |
+| `search` 只找到 `ai_visible` 的 SQL 查询 | 通过 |
+| `describe`：`run` 的参数 `n`（number、必填、说明 “how many”）、`status`（enum，options new/paid） | 修后通过 |
+| `run` 空 `input`：用已保存的正文，`params` 值（`n:5, status:"paid"`）渲染进语句并交给数据源（本机没有数据库，得到数据源的 “Connection refused”，说明走到了 `datasource:query`）；`n:"abc"` → 插件的参数检查文字 | 通过 |
+| `list_tables`：授权文件夹里的 `mapping.yaml` → 2 行（实体、表、字段、列、说明、类型） | 通过 |
+| `run_sql`：`delete from t` → “Only SELECT or WITH…”；`select 1; select 2` → “Only one statement…”；`select 1` 到达数据源 | 通过 |
+| 不带 kinds 的 `aiListTables`/`aiRunSql` 不被当成资源动作 | 通过 |
+
+没有真的数据库可连，所以没验证“成功返回行”“行数上限在数据源侧生效”“超时”；这部分由数据源的既有测试和我的单元测试（入参 `maxRows`、`timeoutMs`）覆盖。目录条目的 `describe` 与 SQL 同一实现，真内核里没单独走。
 
 ## 范围外 / 需要决定
 

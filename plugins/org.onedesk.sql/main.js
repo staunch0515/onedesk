@@ -515,7 +515,7 @@ export default {
     // Called by the kernel for the AI client's `describe` (manifest `ai.describe`): no run, nothing written.
     host.actions.handle("aiParams", async (ctx) => {
       const sql = String((ctx.resource && ctx.resource.body && ctx.resource.body.sql) || "");
-      return { output: { type: "none" }, params: aiParamDecls(ctx, sql) };
+      return { output: { type: "none" }, data: { params: aiParamDecls(ctx, sql) } };
     });
 
     host.actions.handle("run", async (ctx, input) => {

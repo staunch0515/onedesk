@@ -1243,7 +1243,7 @@ export default {
       const used = paramNames(ex.sql);
       const decls = declsWithAsOf(entry, ex.versioned);
       const listed = used.map((n) => decls.find((d) => d.name === n) || { name: n, type: "text", required: false, description: "", values: [], max: 0 });
-      return { output: { type: "none" }, params: aiParamDecls(ctx, listed) };
+      return { output: { type: "none" }, data: { params: aiParamDecls(ctx, listed) } };
     });
 
     host.actions.handle("run", async (ctx) => {
