@@ -1,6 +1,36 @@
-# 协调工作交接（2026-11-16，由上一个协调会话写给下一个）
+# 协调工作交接（2026-11-16 起；最新一节在最前面）
 
-上一个协调会话和三个开发会话的上下文都快满了，用户要求换新会话。这份文件是接手所需的全部；不需要之前的对话。
+这份文件是接手所需的全部；不需要之前的对话。
+
+## 0000. 第六个协调会话交给第七个（2026-11-22）——开第十八轮（AI）
+
+**现在的位置**
+- main 在 `5df3985`（已推送）：第十六轮（A、E、G、H，`round16-acceptance.md`）、第十七轮（I、J、L、硬盘文件、API 连接，`round17-acceptance.md`）都已验收、完整检查通过、合并。
+- 用户 2026-11-21 决定：阶段 7、8、9 暂不开发，先做完成版 v1.0（D425、D426）。剩下的轮次见 `docs/redesign/v1-plan.md`：**18 AI** → 19 MCP（`ai-interface.md`，D415）→ 20 发布收尾。
+- 第十八轮的设计已经用户确认：`docs/redesign/ai-plugins.md`（D426）。要点：三个插件 `org.onedesk.ai`（工作台，K1–K10）、`org.onedesk.ai.anthropic`（默认模型 `claude-haiku-5-5`，`anthropic-version: 2026-10-21`，第一版就做流式 SSE）、`org.onedesk.ai.ollama`（`/api/chat` NDJSON 流式）；内核补 X5（resultActions）、X6（任一词命中＋相关度排序＋限定类型）、X15（插件接口 `implements`/`uses`）、X16（运行中 `network.request` 时限到 10 分钟、`stream: true` 按块交回、部分输出用已有的 `runs.partial`）。
+- 协调分支：`claude/onedesk-coord-7`（从 main 切出，本文件在上面）。第十六、十七轮的工作树、分支、会话都已清理和归档。磁盘约剩 24G。
+
+**这两轮新学到的（照做）**
+1. 每轮开工时协调会话先写 `docs/handoff/roundN-plan.md`（范围、内核要补的项、分工表、完成标准），并要求内核会话**第一次提交就把协议名字写进 `roundN-protocol.md`**。没写出来之前别的会话会各猜各的，第十七轮因此返工了两次。
+2. 合并前先在一个**集成分支**上合（第十七轮用 `claude/onedesk-r17`），上一轮收尾和这一轮开发互不干扰。
+3. 各会话共用主检出的 `target/`（`CARGO_TARGET_DIR=/Users/chloe/onedesk/repo/target`），只有内核会话在自己工作树里建 `target/`（约 10–19G）。**共享 `target/` 里的 devhost 是最后一个构建它的分支**，跑上一轮的 e2e 要单独构建。
+4. devhost 用 `--plugins <目录>` 指定插件（不认 `ONEDESK_BUILTIN_PLUGINS`，否则加载 `target/bundle-inputs` 里的旧插件）。启动：`ONEDESK_SECRET_STORE=memory target/debug/onedesk-devhost --data-dir <scratchpad> --port <端口> --token <令牌> --plugins $PWD/plugins`。
+5. 测试钩子：`ONEDESK_TRASH_DIR`、`ONEDESK_OPEN_LOG` 只在 `ONEDESK_TEST_HOOKS=1` 时生效（D433）。真废纸篓走 NSFileManager（D434）。
+6. 临时 PostgreSQL：`/opt/homebrew/opt/postgresql@17/bin`；`pg_ctl` 要 `LC_ALL=en_US.UTF-8`，`-k` 的套接字目录路径不能太长（用 `/private/tmp/claude-501`）。Playwright chromium 已装。
+7. 完整检查：`E2E_PORT=1432 ONEDESK_DEVHOST_BIN=$PWD/target/debug/onedesk-devhost pnpm check`（约 12 分钟，后台跑；跑时不要在这份检出里切分支或合并）；跑完 `git checkout -- docs/screenshots`。
+8. 独立审查用 Agent 开只读 Opus 子代理，每轮都查出了必须修的（第十七轮：插件借 `files.open` 执行任意程序、只改大小写改名删源文件、命令参数注入等）。不要省。亲自验收也每轮都发现了测试没覆盖的问题（第十七轮：非零退出算成功、废纸篓被 TCC 拦下、数据源必填挡住测试连接）。
+9. 假 host 测不出“插件在运行外调用 actions.call”“树节点 label 是对象”“带 kinds 的动作不能用于节点”这类问题——每个插件都要在真内核上走一遍。
+10. 磁盘会满：每轮合并后删上一轮工作树（或至少它们的 `target/`）。删除前告诉用户。
+11. 合并到 main、推送、删除、归档都要用户同意（用户每次都答“合并并推送”/“归档”，但仍要问）。
+12. 子会话经常停在“需要用户批准”的请求上，只有用户能答；协调会话不能代答，告诉用户是哪个会话。会话间消息会排队，回复常常顺序错乱——合并前核对提交号和内容。
+
+**第十八轮建议分工**（照第十七轮的格式写进 `round18-plan.md`）
+- 内核（Opus）：X5、X6、X15、X16。X15、X16 是新的宿主接口，名字先写进 `round18-protocol.md`。
+- 外壳（Sonnet）：结果区“分析”按钮、流式部分输出的显示、预览页的交互。
+- 服务商插件（Sonnet）：`org.onedesk.ai.anthropic`、`org.onedesk.ai.ollama`（测试用本机假 SSE/NDJSON 服务，绝不调真 API，绝不花用户的钱）。
+- AI 工作台（Opus）：`org.onedesk.ai`，K1–K10；SQL 插件的“用 AI 写”入口。
+- 测试（Sonnet）：假服务商夹具、e2e、译文。
+- 审查子代理用 Opus。
 
 ## 000. 第十五轮已合并（第五个协调会话，2026-11-19）
 
