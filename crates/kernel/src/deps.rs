@@ -239,6 +239,7 @@ impl Inner {
                     action: Some(p.full(&a.id)),
                     confirm: a.confirm.as_deref().map(|k| p.label(k)),
                     command: None,
+                    ignore_required: None,
                 });
             }
         }
@@ -264,6 +265,7 @@ impl Inner {
                 action: Some(p.full(&a.id)),
                 confirm: a.confirm.as_deref().map(|k| p.label(k)),
                 command: None,
+                ignore_required: None,
             })
             .collect()
     }

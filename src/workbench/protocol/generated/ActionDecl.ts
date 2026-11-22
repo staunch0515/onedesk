@@ -15,4 +15,8 @@ confirm?: Label,
  * Round 17 (D429): instead of `action`, the full command id `<pluginId>:<name>` this item
  * executes (`command.execute` with the page as context and the page's inputs as `args`).
  */
-command?: string, };
+command?: string, 
+/**
+ * Round 17 (D436): when true, the shell checks no required fields before this item.
+ */
+ignoreRequired?: boolean, };

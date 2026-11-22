@@ -653,6 +653,8 @@ pub struct ActionDecl {
     /// Round 17 (D429): instead of `action`, the full command id `<pluginId>:<name>` this item
     /// executes (`command.execute` with the page as context and the page's inputs as `args`).
     pub command: Option<String>,
+    /// Round 17 (D436): when true, the shell checks no required fields before this item.
+    pub ignore_required: Option<bool>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
