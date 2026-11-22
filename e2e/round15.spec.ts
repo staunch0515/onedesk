@@ -317,9 +317,24 @@ test("D1: nothing outside a plain read-only SELECT gets through: psql commands, 
     ["DELETE FROM orders", /Only SELECT, WITH/],
   ];
   for (const [sql, why] of tries) {
-    await sqlBox(page).fill(sql);
-    await runBtn(page).click();
-    await expect(page.getByText(why).first(), sql).toBeVisible({ timeout: 30_000 });
+    // Every statement here is refused, so repeating fill+Run is harmless. One full-suite run saw the refusal text not appear
+    // within 30 s for the COPY line: a Run pressed before the editor's new text reached the page's draft runs the previous
+    // text. Redo the pair with a short deadline instead of one long wait.
+    let attempt = 0;
+    await expect(async () => {
+      attempt++;
+      await sqlBox(page).fill(sql);
+      await expect(sqlBox(page)).toHaveValue(sql);
+      await runBtn(page).click();
+      try {
+        await expect(page.getByText(why).first(), sql).toBeVisible({ timeout: 8_000 });
+      } catch (e) {
+        // evidence for the next person: what the page showed when the refusal did not come
+        const shown = await page.getByRole("tabpanel").first().innerText().catch(() => "(no tabpanel)");
+        console.log(`D1 retry ${attempt} for ${JSON.stringify(sql.slice(0, 40))}: run buttons=${await page.getByRole("button", { name: /^(Run|Cancel)/ }).allInnerTexts()}; page text: ${shown.replace(/\s+/g, " ").slice(0, 300)}`);
+        throw e;
+      }
+    }).toPass({ timeout: 45_000 });
   }
   expect(existsSync(marker), "no local command ran").toBe(false);
   const count = execFileSync(path.join(pg.bin, "psql"), ["-X", "-A", "-t", "-h", path.join(pg.dir, "sock"), "-p", String(pg.port), "-U", "postgres", "-d", DB1, "-c", "SELECT count(*) FROM orders"], { encoding: "utf8" });

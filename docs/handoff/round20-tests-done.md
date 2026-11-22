@@ -47,3 +47,11 @@
 - week1 的 K1 断言恢复为 `test.fixme("files: clicking a granted folder row opens no page tab (K1)")`，不再靠删断言变绿。
 - 缺陷记录（外壳/files 插件）：复现——启动 devhost，授权一个含子目录的文件夹给 files 插件，在 Files 树里展开它，点击该文件夹行（不是展开箭头）；约 1/5 次会开出标题为文件夹名（如 “docs”）的页签且不会自己关闭，预期是文件夹没有页面。疑似归属：files 插件给文件夹/根节点都带了 `target`（`plugins/org.onedesk.files/main.js` 约 299、355 行），外壳 `side-panel.tsx` 的 `activate` 对有 `target` 的节点直接 `actions.open`，页面解析为“无页面”后没有收回页签的路径偶发不触发。
 - 合并 r20 后外壳多出第二个 “New” 按钮（欢迎页），`round3/round4/workbench/week1` 里 `getByRole("button",{name:"New",exact:true}).click()` 触发严格模式冲突，已改 `.first()`。
+
+## 合并 r20 后的复测与 round15 D1（拒绝语句）
+
+- 合并 `claude/onedesk-r20` 后，第一次完整 e2e 里 round15 D1 有一次 30 s 等不到 `/Only SELECT, WITH/`（COPY … TO PROGRAM 那条，前面五条都过）；协调会话的完整 `pnpm check` 里也出现一次。整个文件单跑 20/20，加重复 5 轮（100 条）、加 8 路 CPU 压力下重复 6 轮（120 条）都没有再现。
+- **根因没有被证实**。能排除的：内核错误文案变化（单跑同一文案能出现，D454 去栈不影响 `error.notRead`）；被拒语句执行了本地命令（`pwned` 标记文件检查在后面，未触发）。最像的是“填入新 SQL 后立刻点 Run，页面草稿尚未收到新文本，运行的是上一条文本”，或 Run 按钮在上一条结果收尾时未就绪；这两条在页面里都观察不到，无法确证。
+- 处理：每条被拒语句改成 `fill` → 断言文本框值 → 点 Run → 8 s 内等拒绝提示，失败则整组重做（被拒语句重复执行无副作用，不放宽超时，总上限 45 s）；每次重试会 `console.log` 当时的 Run/Cancel 按钮和结果区文字（`D1 retry …`），下次再出现可直接读到现场。
+- 这条用例仍然断言“没有本地命令执行”和“orders 行数不变”，安全判定没放松。
+- 复测（提交见下）：完整 `pnpm e2e` 连跑 3 次 406 通过 / 0 失败 / 5 跳过（3 条既有 + 新 `.app` 冒烟 + week1 的 K1 `test.fixme`）；3 次里没有出现过 `D1 retry`，即第一次就通过。
