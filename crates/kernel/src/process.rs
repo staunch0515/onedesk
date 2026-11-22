@@ -233,8 +233,10 @@ impl Procs {
         had
     }
 
-    pub(crate) fn stream(&self, run: &str, sid: &str) -> Arc<Stream> {
-        self.streams.lock().unwrap().entry(format!("{run}\n{sid}")).or_default().clone()
+    /// Round 18 (review #12): the key holds the plugin, so two plugins in one run (an interface call)
+    /// cannot meet on the same stream id.
+    pub(crate) fn stream(&self, run: &str, plugin: &str, sid: &str) -> Arc<Stream> {
+        self.streams.lock().unwrap().entry(format!("{run}\n{plugin}\n{sid}")).or_default().clone()
     }
 
     /// A run ended: its streams are forgotten and programs it left running are ended (review #2).
@@ -811,18 +813,18 @@ impl Inner {
                 self.emit(topic2::AUDIT, None, None);
                 res
             }
-            "output" => self.stream_poll(info, args).await,
-            "stop" => self.stream_stop(info, args),
+            "output" => self.stream_poll(p, info, args).await,
+            "stop" => self.stream_stop(p, info, args),
             _ => Err(err_p(ErrorCode::UnknownMethod, &[("method", &format!("process.{op}"))])),
         }
     }
 
     /// The next batch of a stream of this run (`null` once it is closed): `process.output`,
     /// `transfer.progress`.
-    pub(crate) async fn stream_poll(&self, info: &CallInfo, args: &Value) -> KResult<Value> {
+    pub(crate) async fn stream_poll(&self, p: &Plugin, info: &CallInfo, args: &Value) -> KResult<Value> {
         let run = info.run_id.as_deref().ok_or_else(|| denied("notInRun"))?;
         let sid = args.get(0).and_then(Value::as_str).ok_or_else(|| invalid_params("stream"))?;
-        let st = self.procs.stream(run, sid);
+        let st = self.procs.stream(run, &p.id, sid);
         loop {
             let n = st.notify.notified();
             let batch: Vec<Value> = st.queue.lock().unwrap().drain(..).collect();
@@ -830,7 +832,7 @@ impl Inner {
                 return Ok(Value::Array(batch));
             }
             if st.closed.load(Ordering::SeqCst) {
-                self.procs.streams.lock().unwrap().remove(&format!("{run}\n{sid}"));
+                self.procs.streams.lock().unwrap().remove(&format!("{run}\n{}\n{sid}", p.id));
                 return Ok(Value::Null);
             }
             n.await;
@@ -838,10 +840,10 @@ impl Inner {
     }
 
     /// The plugin's callback failed: the call the stream belongs to stops (`process.stop`, `transfer.stop`).
-    pub(crate) fn stream_stop(&self, info: &CallInfo, args: &Value) -> KResult<Value> {
+    pub(crate) fn stream_stop(&self, p: &Plugin, info: &CallInfo, args: &Value) -> KResult<Value> {
         let run = info.run_id.as_deref().ok_or_else(|| denied("notInRun"))?;
         let sid = args.get(0).and_then(Value::as_str).ok_or_else(|| invalid_params("stream"))?;
-        let st = self.procs.stream(run, sid);
+        let st = self.procs.stream(run, &p.id, sid);
         st.stop.store(true, Ordering::SeqCst);
         st.stop_notify.notify_waiters();
         Ok(Value::Null)
@@ -865,7 +867,7 @@ impl Inner {
         }
         let sid = o.get("stream").and_then(Value::as_str);
         let stream = match (&info.run_id, sid) {
-            (Some(run), Some(sid)) => Some(self.procs.stream(run, sid)),
+            (Some(run), Some(sid)) => Some(self.procs.stream(run, &p.id, sid)),
             _ => None,
         };
         let _close = CloseOnDrop(stream.clone());
@@ -1089,6 +1091,15 @@ impl Inner {
 #[cfg(test)]
 mod search_tests {
     use super::*;
+
+    #[test]
+    fn two_plugins_never_share_a_stream_of_one_run() {
+        let p = Procs::default();
+        let a = p.stream("run1", "t.a", "n1");
+        assert!(Arc::ptr_eq(&a, &p.stream("run1", "t.a", "n1")));
+        assert!(!Arc::ptr_eq(&a, &p.stream("run1", "t.b", "n1")));
+        assert!(!Arc::ptr_eq(&a, &p.stream("run2", "t.a", "n1")));
+    }
 
     #[test]
     fn search_paths_try_the_highest_version_first_then_in_order() {

@@ -87,8 +87,9 @@ pub struct Manifest {
 pub struct Implements {
     /// Exported actions the interface needs.
     pub actions: Vec<String>,
-    /// Short id of its own kind of "connection" resources.
-    pub kind: String,
+    /// Short id of its own kind of "connection" resources; none (D445): the interface has no
+    /// anchor resource and `interfaces.call` needs none.
+    pub kind: Option<String>,
 }
 
 /// Round 18 (X5): `contributes.resultActions[]`.
@@ -572,6 +573,10 @@ pub fn permission_atoms(m: &Manifest) -> BTreeSet<String> {
     }
     if r.plugins_install() {
         a.insert("plugins".to_string());
+    }
+    // Review #5 (D444): using an interface lets it read the implementers' connections and call them.
+    for u in &m.uses {
+        a.insert(format!("uses:{u}"));
     }
     // D347: kinds of other plugins it reads through their exports are a permission.
     for k in foreign_kinds(m) {
@@ -1385,11 +1390,17 @@ fn parse_interfaces(dir: &Path, m: &Manifest, exported_actions: &[String]) -> Re
                 }
                 actions.push(a.into());
             }
-            let kind = e.get("kind").and_then(serde_json::Value::as_str).ok_or_else(|| bad(format!("{name}: kind missing")))?;
-            if !m.contributes.kinds.iter().any(|k| k.id == kind) {
-                return Err(bad(format!("{name}: {kind} is not its own kind")));
-            }
-            implements.insert(name.clone(), Implements { actions, kind: kind.into() });
+            let kind = match e.get("kind") {
+                None => None,
+                Some(k) => {
+                    let k = k.as_str().ok_or_else(|| bad(format!("{name}: kind is not text")))?;
+                    if !m.contributes.kinds.iter().any(|x| x.id == k) {
+                        return Err(bad(format!("{name}: {k} is not its own kind")));
+                    }
+                    Some(k.to_string())
+                }
+            };
+            implements.insert(name.clone(), Implements { actions, kind });
         }
     }
     let mut uses: Vec<String> = Vec::new();

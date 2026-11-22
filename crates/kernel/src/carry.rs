@@ -160,12 +160,12 @@ fn timed_out() -> ProtocolError {
 impl Inner {
     pub async fn host_transfer(&self, p: &'static Plugin, info: &CallInfo, op: &str, args: &Value) -> KResult<Value> {
         match op {
-            "progress" => self.stream_poll(info, args).await,
-            "stop" => self.stream_stop(info, args),
+            "progress" => self.stream_poll(p, info, args).await,
+            "stop" => self.stream_stop(p, info, args),
             "download" | "upload" | "capture" => {
                 let o = args.get(0).cloned().unwrap_or(Value::Null);
                 let stream = match (&info.run_id, o.get("progress").and_then(Value::as_str)) {
-                    (Some(run), Some(sid)) => Some(self.procs.stream(run, sid)),
+                    (Some(run), Some(sid)) => Some(self.procs.stream(run, &p.id, sid)),
                     _ => None,
                 };
                 let _close = CloseOnDrop(stream.clone());

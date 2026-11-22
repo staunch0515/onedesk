@@ -237,9 +237,33 @@ impl Inner {
                 let list: Vec<Value> = self
                     .implementers(&interface)
                     .into_iter()
-                    .map(|i| json!({ "plugin": i.id, "kind": i.full(&i.manifest.implements[&interface].kind), "label": i.manifest.name }))
+                    .map(|i| {
+                        let kind = i.manifest.implements[&interface].kind.as_deref().map(|k| i.full(k));
+                        json!({ "plugin": i.id, "kind": kind, "label": i.manifest.name })
+                    })
                     .collect();
                 Ok(Value::Array(list))
+            }
+            // Review #1 (D444): the connections of the implementers, without secrets; `uses` is the permission.
+            "resources" => {
+                if !p.manifest.uses.contains(&interface) {
+                    return Err(err_p(ErrorCode::Denied, &[("reason", "notUsed"), ("interface", &interface)]));
+                }
+                let mut out = Vec::new();
+                for i in self.implementers(&interface) {
+                    let Some(k) = i.manifest.implements[&interface].kind.as_deref().map(|k| i.full(k)) else { continue };
+                    for r in self.read(|c| store::of_kind(c, &k))? {
+                        if r.deleted_at.is_some() {
+                            continue;
+                        }
+                        let secret = self.secret_fields(&r.kind, r.plugin_version.as_deref());
+                        let fields: serde_json::Map<String, Value> =
+                            r.body.iter().filter(|(n, v)| !secret.contains(&format!("body.{n}")) && n.as_str() != crate::params::PARAMS_KEY && v.get("secret").is_none()).map(|(n, v)| (n.clone(), v.clone())).collect();
+                        out.push(json!({ "id": r.id, "name": r.name, "kind": r.kind, "fields": fields }));
+                    }
+                }
+                out.sort_by(|a, b| a["name"].as_str().cmp(&b["name"].as_str()).then(a["id"].as_str().cmp(&b["id"].as_str())));
+                Ok(Value::Array(out))
             }
             "call" => self.interface_call(p, info, &interface, args).await,
             _ => Err(err_p(ErrorCode::UnknownMethod, &[("method", &format!("interfaces.{op}"))])),
@@ -253,21 +277,27 @@ impl Inner {
         let run = info.run_id.clone().ok_or_else(|| denied("notInRun"))?;
         let action_name = args.get(1).and_then(Value::as_str).ok_or_else(|| invalid_params("action must be a string"))?.to_string();
         let input = args.get(2).cloned().unwrap_or(Value::Null);
-        let rid = args
-            .get(3)
-            .and_then(|o| o.get("resource"))
-            .and_then(Value::as_str)
-            .ok_or_else(|| invalid_params("resource must be a resource id"))?;
-        let resource = self.read(|c| store::get(c, rid))?.filter(|r| r.deleted_at.is_none()).ok_or_else(|| not_found("resource"))?;
         let full = format!("{interface}:{action_name}");
-        if self.implementers(interface).is_empty() {
+        let impls = self.implementers(interface);
+        if impls.is_empty() {
             return Err(invalid("noImplementation"));
         }
-        // The resource is handled by the version it is bound to (§7.6), whoever implements.
-        let owner = self.registry.kind_at(&resource.kind, resource.plugin_version.as_deref()).map(|(o, _)| o);
-        let short = crate::manifest::Registry::split(&resource.kind).map(|(_, k)| k.to_string()).unwrap_or_default();
-        let Some(callee) = owner.filter(|o| o.manifest.implements.get(interface).is_some_and(|i| i.kind == short)) else {
-            return Err(invalid("wrongInterface"));
+        let given = args.get(3).and_then(|o| o.get("resource"));
+        // D445: an interface without a connection kind needs no resource: its implementer is called as it is.
+        let anchorless = if given.is_none_or(Value::is_null) { impls.iter().copied().find(|i| i.manifest.implements[interface].kind.is_none()) } else { None };
+        let (callee, resource) = match anchorless {
+            Some(callee) => (callee, None),
+            None => {
+                let rid = given.and_then(Value::as_str).ok_or_else(|| invalid_params("resource must be a resource id"))?;
+                let resource = self.read(|c| store::get(c, rid))?.filter(|r| r.deleted_at.is_none()).ok_or_else(|| not_found("resource"))?;
+                // The resource is handled by the version it is bound to (§7.6), whoever implements.
+                let owner = self.registry.kind_at(&resource.kind, resource.plugin_version.as_deref()).map(|(o, _)| o);
+                let short = crate::manifest::Registry::split(&resource.kind).map(|(_, k)| k.to_string()).unwrap_or_default();
+                let Some(callee) = owner.filter(|o| o.manifest.implements.get(interface).is_some_and(|i| i.kind.as_deref() == Some(short.as_str()))) else {
+                    return Err(invalid("wrongInterface"));
+                };
+                (callee, Some(resource))
+            }
         };
         let imp = &callee.manifest.implements[interface];
         if !self.plugin_enabled(&callee.id) || !imp.actions.contains(&action_name) {
@@ -276,7 +306,7 @@ impl Inner {
             return Err(e);
         }
         let action = callee.action(&action_name).ok_or_else(|| invalid("noImplementation"))?;
-        if let Some(kinds) = &action.kinds {
+        if let (Some(kinds), Some(resource)) = (&action.kinds, &resource) {
             if !kinds.iter().any(|k| callee.kind_ref(k) == resource.kind) {
                 return Err(err_p(ErrorCode::Denied, &[("reason", "wrongKind"), ("action", &full)]));
             }
@@ -288,7 +318,7 @@ impl Inner {
         }
         // The caller's own budget waits (like a program): the callee has one of its own.
         let _hold = info.hold.enter_wait();
-        self.invoke_callee(p, info, run, callee, action, Some(resource), callers, input, "interfaces.call", full).await
+        self.invoke_callee(p, info, run, callee, action, resource, callers, input, "interfaces.call", full).await
     }
 
     /// `ViewField.kinds` entries `@implements:<interface>`: the connection kinds of the plugins
@@ -298,7 +328,7 @@ impl Inner {
         for k in kinds {
             match k.strip_prefix("@implements:") {
                 Some(i) if plugin.manifest.uses.iter().any(|u| u == i) => {
-                    out.extend(self.implementers(i).into_iter().map(|p| p.full(&p.manifest.implements[i].kind)));
+                    out.extend(self.implementers(i).into_iter().filter_map(|p| p.manifest.implements[i].kind.as_deref().map(|k| p.full(k))));
                 }
                 Some(_) => {}
                 None => out.push(k.clone()),

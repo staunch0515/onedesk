@@ -478,7 +478,7 @@ const BOOTSTRAP: &str = r#"
       runs: Object.freeze({ partial: c("runs.partial"), read: c("runs.read"),
         saveArtifact: c("runs.saveArtifact"), listArtifacts: c("runs.listArtifacts"),
         getArtifact: c("runs.getArtifact"), deleteArtifact: c("runs.deleteArtifact") }),
-      interfaces: Object.freeze({ call: c("interfaces.call"), list: c("interfaces.list") }),
+      interfaces: Object.freeze({ call: c("interfaces.call"), list: c("interfaces.list"), resources: c("interfaces.resources") }),
       ui: Object.freeze({ open: c("ui.open"), notify: c("ui.notify"), copy: c("ui.copy"), openExternal: c("ui.openExternal") }),
       params: Object.freeze({ get: c("params.get"), config: c("params.config") }),
       storage: Object.freeze({

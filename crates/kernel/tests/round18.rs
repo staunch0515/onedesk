@@ -115,6 +115,13 @@ async fn server() -> (u16, Server) {
                         tokio::time::sleep(Duration::from_millis(80)).await;
                         put(&mut s, k.as_bytes()[cut..].to_vec()).await;
                     }
+                    "/errkey" => {
+                        // The key as sent, percent-encoded and in base64, behind enough text to cut in the middle.
+                        let k = key.clone();
+                        let body = format!("{}{k}|{}|{}|{}", "y".repeat(8185), onedesk_kernel::secrets::percent(&k), onedesk_kernel::secrets::base64(k.as_bytes()), "tail".repeat(10));
+                        let code = if head.contains("x-plain") { "200 OK" } else { "500 Internal Server Error" };
+                        put(&mut s, format!("{}{body}", hdr(code)).into_bytes()).await;
+                    }
                     "/slow" => {
                         tokio::time::sleep(Duration::from_millis(2500)).await;
                         put(&mut s, format!("{}done", hdr("200 OK")).into_bytes()).await;
@@ -427,7 +434,7 @@ fn user_manifest(result_actions: Value) -> Value {
     let a = |id: &str, out: &str| json!({ "id": id, "label": id, "output": out });
     json!({
         "depends": [{ "id": "t.prov", "version": ">=0.1.0" }],
-        "uses": ["t.chat/1"],
+        "uses": ["t.chat/1", "t.gen/1"],
         "requires": { "resources": true },
         "contributes": {
             "kinds": [{ "id": "note", "label": "Note", "icon": "box", "tree": "resources", "newName": "n" }],
@@ -450,7 +457,8 @@ async fn world18(result_actions: Value) -> (Env, Client) {
     pkg(&root, "t.prov", json!({
         "implements": iface(json!(["chat", "models", "test"])),
         "contributes": {
-            "kinds": [{ "id": "conn", "label": "Conn", "icon": "box", "tree": "resources", "newName": "c" },
+            "kinds": [{ "id": "conn", "label": "Conn", "icon": "box", "tree": "resources", "newName": "c",
+                       "fields": { "key": { "type": "secret" }, "model": { "type": "text" } } },
                       { "id": "plain", "label": "Plain", "icon": "box", "tree": "resources", "newName": "p" }],
             "actions": [a("chat", "text"), a("models", "text"), a("test", "text"), a("secret", "text"), a("readit", "text")],
             "commands": [{ "id": "probe", "label": "p" }]
@@ -465,6 +473,20 @@ async fn world18(result_actions: Value) -> (Env, Client) {
         "exports": { "actions": ["chat"] }
     }), r#"export default { activate(host) { host.actions.handle("chat", async (ctx, input) => ({ echo: input.msg, resource: ctx.resource && ctx.resource.id })); } };"#);
     pkg(&root, "t.user", user_manifest(result_actions), USER_MAIN);
+    // Uses an interface and nothing else: no `depends`, no `requires.resources`.
+    pkg(&root, "t.thin", json!({
+        "uses": ["t.chat/1"],
+        "contributes": { "actions": [a("ask", "text")], "commands": [{ "id": "probe", "label": "p" }] }
+    }), r#"export default { activate(host) {
+      host.commands.handle("probe", probe);
+      host.actions.handle("ask", async (ctx, input) => text(await tryIt(() => ctx.host.interfaces.call("t.chat/1", "chat", { msg: "thin" }, input.opts))));
+    } };"#);
+    // An interface without a connection kind (D445).
+    pkg(&root, "t.gen", json!({
+        "implements": { "t.gen/1": { "actions": ["gen"] } },
+        "contributes": { "actions": [a("gen", "text")] },
+        "exports": { "actions": ["gen"] }
+    }), r#"export default { activate(host) { host.actions.handle("gen", async (ctx, input) => ({ output: { type: "text", text: "g" }, data: { got: input.x, resource: ctx.resource || null, caller: ctx.caller } })); } };"#);
     pkg(&root, "t.other", json!({
         "contributes": { "pages": [{ "id": "p" }], "actions": [a("ask", "text")], "commands": [{ "id": "probe", "label": "p" }] }
     }), OTHER_MAIN);
@@ -551,6 +573,8 @@ async fn manifests_with_bad_result_actions_or_interfaces_are_rejected() {
     }
     let im = |v: Value| reason(json!({}), json!({ "implements": v }));
     assert_eq!(im(json!({ "t.chat/1": { "actions": ["chat"], "kind": "conn" } })), "ok");
+    assert_eq!(im(json!({ "t.chat/1": { "actions": ["chat"] } })), "ok", "D445: no kind, no anchor resource");
+    assert_eq!(im(json!({ "t.chat/1": { "actions": ["chat"], "kind": 1 } })), "badImplements");
     for bad in [
         json!([]),
         json!({ "t.chat": { "actions": ["chat"], "kind": "conn" } }),
@@ -558,7 +582,6 @@ async fn manifests_with_bad_result_actions_or_interfaces_are_rejected() {
         json!({ "t.chat/1": { "actions": ["hid"], "kind": "conn" } }),
         json!({ "t.chat/1": { "actions": ["chat", "chat"], "kind": "conn" } }),
         json!({ "t.chat/1": { "actions": ["chat"], "kind": "nope" } }),
-        json!({ "t.chat/1": { "actions": ["chat"] } }),
         json!({ "t.chat/1": { "actions": ["chat"], "kind": "conn", "x": 1 } }),
     ] {
         assert_eq!(im(bad.clone()), "badImplements", "{bad}");
@@ -830,7 +853,11 @@ async fn ranked_search_any_word_relevance_and_kinds() {
     assert!(scores.windows(2).all(|w| w[0] >= w[1]) && scores[0] > 0.0, "{scores:?}");
     let notes = hits.iter().find(|h| h["id"] == b.as_str()).unwrap();
     assert_eq!((notes["name"].as_str(), notes["kind"].as_str()), (Some("Notes"), Some("t.prov:conn")));
-    assert!(notes["snippet"].as_str().unwrap().contains("orders"), "{notes}");
+    assert_eq!(notes["snippet"], "", "review #4: a kind of another plugin gives no body text: {notes}");
+    // Its own kinds do.
+    make(&c, "t.user:note", "Mine", Some("my orders are here")).await;
+    let s = out(&run(&c, "t.user:search", json!({ "opts": { "query": "orders", "kinds": ["note"] } })).await);
+    assert!(s["ok"][0]["snippet"].as_str().unwrap().contains("orders"), "{s}");
     // Without ranking the scores are 0.
     let s = out(&run(&c, "t.user:search", json!({ "opts": { "query": "orders", "limit": 1 } })).await);
     assert_eq!((s["ok"].as_array().unwrap().len(), s["ok"][0]["score"].as_f64()), (1, Some(0.0)), "{s}");
@@ -841,7 +868,7 @@ async fn ranked_search_any_word_relevance_and_kinds() {
     assert_eq!(s["error"], "invalidParams", "{s}");
     // A kind written short is the plugin's own: t.user has `note` and none match.
     let s = out(&run(&c, "t.user:search", json!({ "opts": { "query": "orders", "kinds": ["note"] } })).await);
-    assert_eq!(s["ok"], json!([]), "{s}");
+    assert_eq!(s["ok"].as_array().map(Vec::len), Some(1), "{s}");
     // Too many words.
     let many = (0..17).map(|i| format!("w{i}x")).collect::<Vec<_>>().join(" ");
     let s = out(&run(&c, "t.user:search", json!({ "opts": { "query": many, "mode": "any" } })).await);
@@ -999,4 +1026,155 @@ async fn a_resource_setting_names_a_connection_of_an_implementer() {
     }
     set("").await.unwrap();
     assert_eq!(c.probe("t.user", "settings.get", json!(["conn"])).await["ok"], "");
+}
+
+/* ------------------------------------------------------------------ review round */
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn using_an_interface_is_a_permission_and_builtin_plugins_stay_confirmed() {
+    let plain = |uses: Value| {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("plugins");
+        std::fs::create_dir_all(&root).unwrap();
+        let mut e = json!({ "contributes": { "actions": [{ "id": "go", "label": "g", "output": "text" }] } });
+        if !uses.is_null() {
+            e["uses"] = uses;
+        }
+        pkg(&root, "t.x", e, "export default { activate(host) { host.actions.handle('go', async () => ({ output: { type: 'text', text: 'ran' } })); } };");
+        (tmp, root)
+    };
+    let load = |root: &Path| onedesk_kernel::manifest::load_package(&root.join("t.x").join("0.1.0")).unwrap();
+    let (_t0, r0) = plain(Value::Null);
+    let (_t1, r1) = plain(json!(["t.chat/1"]));
+    let (_t2, r2) = plain(json!(["t.chat/1", "t.gen/1"]));
+    let (p0, p1, p2) = (load(&r0), load(&r1), load(&r2));
+    assert!(p0.permissions().is_empty());
+    assert!(p1.permissions().contains("uses:t.chat/1"), "{:?}", p1.permissions());
+    let fp = |p: &onedesk_kernel::manifest::Plugin| onedesk_kernel::manifest::perm_fingerprint(&p.permissions());
+    assert!(fp(&p0) != fp(&p1) && fp(&p1) != fp(&p2), "a change of what it uses is a change of permissions");
+    let shown = p2.permission_list(|_| false);
+    assert_eq!(shown.iter().filter(|x| x.id == "uses").count(), 1, "{shown:?}");
+    assert_eq!(shown.iter().find(|x| x.id == "uses").unwrap().detail, "t.chat/1, t.gen/1");
+    // Not built in: it waits for the user. Built in: it does not.
+    for (builtin, expected) in [(false, "error"), (true, "success")] {
+        let (tmp, root) = plain(json!(["t.chat/1"]));
+        let mut cfg = config_for(&root);
+        cfg.builtin = if builtin { vec!["t.x@0.1.0".to_string()] } else { vec![] };
+        let env = open_exact(tmp, &root, cfg);
+        let c = Client::in_proc(env.kernel.clone());
+        c.hello().await;
+        let r = run(&c, "t.x:go", json!({})).await;
+        assert_eq!(r["status"], expected, "builtin={builtin}: {r}");
+        if !builtin {
+            assert_eq!(r["error"]["code"], "pluginDisabled", "waits for the user: {r}");
+        }
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn interface_resources_need_only_uses_and_never_show_secrets() {
+    let (_env, c) = world18(analyze_decl()).await;
+    let r = c.ok("page.save", json!({ "target": "new:t.prov:conn", "changes": { "name": "c1", "body.model": "m-1", "body.key": "sk-very-secret" } })).await;
+    let id = r["page"]["resourceId"].as_str().unwrap().to_string();
+    make(&c, "t.prov:plain", "p1", None).await;
+    let l = c.probe("t.thin", "interfaces.resources", json!(["t.chat/1"])).await;
+    let items = l["ok"].as_array().unwrap_or_else(|| panic!("{l}"));
+    assert_eq!(items.len(), 1, "only connections of implementers: {l}");
+    assert_eq!((items[0]["id"].as_str(), items[0]["name"].as_str(), items[0]["kind"].as_str()), (Some(id.as_str()), Some("c1"), Some("t.prov:conn")));
+    assert_eq!(items[0]["fields"]["model"], "m-1", "{l}");
+    assert!(items[0]["fields"].get("key").is_none() && !l.to_string().contains("sk-very-secret"), "{l}");
+    // It can use them too, with no `depends` and no `requires.resources`.
+    let o = out(&run(&c, "t.thin:ask", json!({ "opts": { "resource": id } })).await);
+    assert_eq!(o["ok"]["echo"], "thin", "{o}");
+    // Not declared: refused.
+    let l = c.probe("t.other", "interfaces.resources", json!(["t.chat/1"])).await;
+    assert_eq!(l["params"]["reason"], "notUsed", "{l}");
+    let l = c.probe("t.thin", "interfaces.resources", json!(["t.gen/1"])).await;
+    assert_eq!(l["params"]["reason"], "notUsed", "{l}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn an_interface_without_a_kind_needs_no_resource() {
+    let (_env, c) = world18(analyze_decl()).await;
+    let conn = make(&c, "t.prov:conn", "c1", None).await;
+    async fn ask(c: &Client, opts: Value) -> Value {
+        out(&run(c, "t.user:ask", json!({ "iface": "t.gen/1", "action": "gen", "input": { "x": 7 }, "opts": opts })).await)
+    }
+    let o = ask(&c, json!({})).await;
+    assert_eq!(o["ok"]["data"], json!({ "got": 7, "resource": null, "caller": "t.user" }), "{o}");
+    let o = ask(&c, Value::Null).await;
+    assert_eq!(o["ok"]["data"]["got"], 7, "{o}");
+    // A resource given anyway must be one of the interface's kind: this one is not.
+    let o = ask(&c, json!({ "resource": conn })).await;
+    assert_eq!((o["error"].as_str(), o["params"]["reason"].as_str()), (Some("invalid"), Some("wrongInterface")), "{o}");
+    // An action it does not list.
+    let o = out(&run(&c, "t.user:ask", json!({ "iface": "t.gen/1", "action": "nope" })).await);
+    assert_eq!(o["params"]["reason"], "noImplementation", "{o}");
+    // The interface with a kind still wants one.
+    let o = out(&run(&c, "t.user:ask", json!({})).await);
+    assert_eq!(o["error"], "invalidParams", "{o}");
+    // Listing: no kind; and `@implements:` of it expands to nothing.
+    let l = out(&run(&c, "t.user:list", json!({ "iface": "t.gen/1" })).await);
+    assert_eq!(l["ok"], json!([{ "plugin": "t.gen", "kind": null, "label": "t.gen" }]), "{l}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_clicked_result_action_runs_in_the_source_runs_environment() {
+    let (_env, c) = world18(analyze_decl()).await;
+    let root = c.ok("tree.children", json!({ "tree": "env" })).await["nodes"][0]["key"].as_str().unwrap().to_string();
+    let mut envs = Vec::new();
+    for n in ["Prod", "Dev"] {
+        let eff = c.ok("command.execute", json!({ "id": "env.newChild", "context": { "tree": "env", "nodeKey": root, "args": { "name": n } } })).await;
+        envs.push(eff[0]["key"].as_str().unwrap().to_string());
+    }
+    let (prod, dev) = (envs[0].clone(), envs[1].clone());
+    let start = |env: &str| c.ok("run.start", json!({ "action": "t.user:emit", "target": "core:none", "tabId": "t", "envId": env }));
+    let from_prod = finish(&c, start(&prod).await.as_str().unwrap()).await;
+    let from_dev = finish(&c, start(&dev).await.as_str().unwrap()).await;
+    // The environment the shell names is ignored: the run's own is used.
+    let id = c
+        .ok("run.start", json!({ "action": "t.user:analyze", "target": "core:none", "tabId": "t", "resultRun": from_dev["id"], "envId": prod }))
+        .await;
+    let r = finish(&c, id.as_str().unwrap()).await;
+    assert_eq!((r["status"].as_str(), r["envId"].as_str()), (Some("success"), Some(dev.as_str())), "{r}");
+    // A protection of the source run's environment holds, even when the shell names no environment.
+    c.ok("params.set", json!({ "node": prod, "name": "protection.readonly", "value": "true", "type": "boolean" })).await;
+    let e = c.call("run.start", json!({ "action": "t.user:analyze", "target": "core:none", "tabId": "t", "resultRun": from_prod["id"] })).await.unwrap_err();
+    assert_eq!(code(&e), "denied/readonly");
+    let e = c
+        .call("run.start", json!({ "action": "t.user:analyze", "target": "core:none", "tabId": "t", "resultRun": from_prod["id"], "envId": dev }))
+        .await
+        .unwrap_err();
+    assert_eq!(code(&e), "denied/readonly", "naming another environment does not lift it");
+    // And another source is untouched.
+    let id = c.ok("run.start", json!({ "action": "t.user:analyze", "target": "core:none", "tabId": "t", "resultRun": from_dev["id"] })).await;
+    assert_eq!(finish(&c, id.as_str().unwrap()).await["status"], "success");
+    let l = c.ok("result.actions", json!({ "runId": from_prod["id"] })).await;
+    assert_eq!(l[0]["disabledReason"], "readonly", "{l}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn an_error_body_is_scrubbed_before_it_is_cut_and_encodings_go_too() {
+    let (env, c, port, _) = net_world(Duration::from_secs(20)).await;
+    let secret = "p@ss w/ord+1&more";
+    c.ok("secrets.set", json!({ "name": "k", "value": secret })).await;
+    let enc = (onedesk_kernel::secrets::percent(secret), onedesk_kernel::secrets::base64(secret.as_bytes()));
+    let check = |text: &str| {
+        for bad in [secret, "p@ss", enc.0.as_str(), enc.1.as_str(), &enc.1[..8], &enc.0[..8]] {
+            assert!(!text.contains(bad), "{bad:?} leaked in {}", &text[text.len().saturating_sub(120)..]);
+        }
+    };
+    // Streamed, an error status: the key straddles the 8 KB cut.
+    let o = out(&run(&c, "t.net:stream", json!({ "port": port, "path": "/errkey", "headers": { "x-key": "{{secret:k}}" } })).await);
+    let body = o["r"]["ok"]["body"].as_str().unwrap_or_else(|| panic!("{o}"));
+    assert_eq!(o["r"]["ok"]["status"], 500);
+    assert!(body.len() <= 8192 + 8 && body.contains("***"), "{}", body.len());
+    check(body);
+    let chunks: String = o["chunks"].as_array().unwrap().iter().map(|v| v.as_str().unwrap()).collect();
+    check(&chunks);
+    assert_eq!(chunks.matches("***").count(), 3, "all three forms are scrubbed in what the callback gets: {}", &chunks[chunks.len().saturating_sub(100)..]);
+    // Not streamed.
+    let o = out(&run(&c, "t.net:plain", json!({ "port": port, "path": "/errkey", "opts": { "headers": { "x-key": "{{secret:k}}" } } })).await);
+    check(o["ok"]["body"].as_str().unwrap());
+    let _ = env;
 }

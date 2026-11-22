@@ -246,7 +246,8 @@ pub fn request_timeout(in_run: bool, stream: bool, asked: Option<u64>) -> u64 {
 
 /// What a streamed response left: the first `STREAM_KEEP` bytes, the total, whether `maxBytes` stopped it.
 pub(crate) struct Streamed {
-    pub head: Vec<u8>,
+    /// The first `STREAM_KEEP` bytes of the text, already scrubbed (review #13).
+    pub head: String,
     pub total: u64,
     pub truncated: bool,
 }
@@ -320,9 +321,9 @@ pub(crate) async fn read_stream_body(
     }
     let _close = CloseOnDrop(sink.clone());
     let keep = secrets.iter().filter(|s| s.len() >= 3).map(|s| s.chars().count()).max().map_or(0, |n| n - 1);
-    let (mut head, mut total, mut truncated) = (Vec::new(), 0u64, false);
+    let (mut head, mut total, mut truncated) = (String::new(), 0u64, false);
     let (mut dec, mut pending) = (Utf8Chunks::default(), String::new());
-    let emit = |text: String, last: bool, pending: &mut String| {
+    let emit = |text: String, last: bool, pending: &mut String, head: &mut String| {
         pending.push_str(&text);
         let mut v = Value::String(std::mem::take(pending));
         crate::secrets::scrub(&mut v, secrets);
@@ -337,6 +338,13 @@ pub(crate) async fn read_stream_body(
             all.char_indices().nth(n - keep).map_or(all.len(), |(i, _)| i)
         };
         *pending = all.split_off(cut);
+        if head.len() < STREAM_KEEP {
+            let mut n = (STREAM_KEEP - head.len()).min(all.len());
+            while !all.is_char_boundary(n) {
+                n -= 1;
+            }
+            head.push_str(&all[..n]);
+        }
         if !all.is_empty() {
             if let Some(s) = &sink {
                 s.push(Value::String(all));
@@ -361,20 +369,16 @@ pub(crate) async fn read_stream_body(
             c
         };
         total += c.len() as u64;
-        if head.len() < STREAM_KEEP {
-            let n = (STREAM_KEEP - head.len()).min(c.len());
-            head.extend_from_slice(&c[..n]);
-        }
         let text = dec.push(&c);
         if !text.is_empty() {
-            emit(text, false, &mut pending);
+            emit(text, false, &mut pending, &mut head);
         }
         if truncated {
             break;
         }
     }
     let rest = dec.finish();
-    emit(rest, true, &mut pending);
+    emit(rest, true, &mut pending, &mut head);
     Ok(Streamed { head, total, truncated })
 }
 
@@ -480,13 +484,15 @@ impl Inner {
         let sent = self.http_open(p, info, o, Request { default_method: "GET", methods: METHODS, deadline, file: None }).await?;
         let (status, out_headers) = (sent.resp.status().as_u16(), sent.headers());
         let mut streamed = None;
+        // Review #13: what is scrubbed — the secrets as sent and in their usual encodings.
+        let scrub_values = crate::secrets::with_variants(&sent.used);
         let (bytes, truncated) = if stream {
             let idle = Duration::from_millis(o.get("idleTimeoutMs").and_then(Value::as_u64).unwrap_or(DEFAULT_IDLE_MS).clamp(1, MAX_IDLE_MS));
             let max_bytes = o.get("maxBytes").and_then(Value::as_u64).map_or(STREAM_DEFAULT_BYTES, |m| (m as usize).clamp(1, STREAM_MAX_BYTES));
-            let sink = o.get("streamId").and_then(Value::as_str).map(|sid| self.procs.stream(info.run_id.as_deref().unwrap_or_default(), sid));
-            let r = read_stream_body(sent.resp, deadline, idle, max_bytes, sink, &sent.used).await?;
+            let sink = o.get("streamId").and_then(Value::as_str).map(|sid| self.procs.stream(info.run_id.as_deref().unwrap_or_default(), &p.id, sid));
+            let r = read_stream_body(sent.resp, deadline, idle, max_bytes, sink, &scrub_values).await?;
             streamed = Some(r.total);
-            (r.head, r.truncated)
+            (r.head.into_bytes(), r.truncated)
         } else {
             read_text_body(sent.resp, deadline).await?
         };
@@ -515,7 +521,7 @@ impl Inner {
             out["streamed"] = json!(true);
         }
         // §7.5: the original value of a substituted secret never reaches the plugin.
-        crate::secrets::scrub(&mut out, &sent.used);
+        crate::secrets::scrub(&mut out, &scrub_values);
         Ok(out)
     }
 

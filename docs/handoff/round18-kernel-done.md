@@ -51,6 +51,20 @@
 - 回答协调会话的两个问题见 `round18-protocol.md` §9.8（`depends.optional` 没有；环境 ref 参数没有清单声明，建议的做法）。
 - 一处改动现有测试：`migration_0012_…` 的最后一句版本号断言改为 `MIGRATIONS.len()`（新增迁移后不再是 12）。
 
+## 审查后的修改（D444、D445；见 `round18-protocol.md` §9.9）
+
+| # | 做了什么 | 测试（`round18.rs`） |
+|---|---|---|
+| 5 | 权限原子 `uses:<接口>`（`manifest.rs` `permission_atoms`），指纹变、安装升级列出；内置插件仍自动确认 | `using_an_interface_is_a_permission_and_builtin_plugins_stay_confirmed`（非内置未确认→`pluginDisabled`，内置→成功；`permission_list` 里有 `uses`；指纹变化） |
+| 1 | `interfaces.resources(接口)`，`fields` 去掉密钥字段/`{secret}`/参数表，只要 `uses` | `interface_resources_need_only_uses_and_never_show_secrets`（`t.thin` 没有 `depends`、没有 `requires.resources` 也能列和调用；密钥值不出现；未声明 `notUsed`） |
+| 4 | 新写法 `snippet` 只给自己的/可经导出读的类型 | `ranked_search_…`（别人的类型空串，自己的有片段） |
+| 17 | `implements` 的 `kind` 可省（`Implements.kind: Option`），无 `resource` 直接调；`list` 的 `kind: null` | `an_interface_without_a_kind_needs_no_resource`、清单测试 |
+| 11 | `run.start` 带 `resultRun` 时环境取来源运行的 | `a_clicked_result_action_runs_in_the_source_runs_environment`（外壳传别的环境被忽略；来源环境只读时即使不传环境也被拒） |
+| 12 | 流键加插件 id（`process.rs` `Procs::stream(run, plugin, sid)`） | 单元 `two_plugins_never_share_a_stream_of_one_run` |
+| 13 | 非 2xx 正文先抹除再截 8KB；抹除表加百分号和 base64 形式（`secrets::with_variants`） | `an_error_body_is_scrubbed_before_it_is_cut_and_encodings_go_too`（密钥跨 8KB 边界；流式与非流式；原值、百分号、base64 都不出现） |
+
+交接给外壳（`r18-shell`）：权限里多了 id `uses`，要配文字；`plugin.get` 的权限列表因此多一项。
+
 ## 与任务书/上文的差别（已在 §9 写明并通知协调会话）
 
 - 点击用 `run.start` + `resultRun`（没有 `action.call`）；`result.actions` 多返回 `action`（完整名）。
