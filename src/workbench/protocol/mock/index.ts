@@ -44,7 +44,7 @@ const DB_KEY = "onedesk.workbench.mock.v3";
 const WORKSPACES_KEY = "onedesk.workbench.mock.workspaces";
 const UI_PREFIX = "onedesk.workbench.ui.";
 
-type OutSpec = { kind: "table"; dataset: string; rows: number; seed: number } | { kind: "text"; text: string };
+type OutSpec = { kind: "table"; dataset: string; rows: number; seed: number } | { kind: "text"; text: string; format?: "markdown" };
 interface StoredRun extends Omit<Run, "output"> {
   out?: OutSpec;
 }
@@ -1023,7 +1023,7 @@ export function createMockClient(options: MockOptions = {}): ProtocolClient {
 
   function outputOf(run: StoredRun): RunOutput | undefined {
     if (!run.out) return run.status === "success" ? { type: "none" } : undefined;
-    if (run.out.kind === "text") return { type: "text", text: run.out.text };
+    if (run.out.kind === "text") return (run.out.format ? { type: "text", text: run.out.text, format: run.out.format } : { type: "text", text: run.out.text }) as RunOutput;
     const { columns, rows } = generateTable(run.out.dataset, Math.min(run.out.rows, 1000), run.out.seed, run.startedAt);
     return { type: "table", columns, rows, total: run.out.rows, truncated: run.out.rows > 1000 };
   }
@@ -1040,6 +1040,7 @@ export function createMockClient(options: MockOptions = {}): ProtocolClient {
     run.endedAt = Date.now();
     run.progress = undefined;
     run.out = result.out;
+    run.partial = undefined;
     run.error = result.error;
     run.cancellable = false;
     run.summary = { rows: result.rows, message: result.message, durationMs: run.endedAt - run.startedAt };
@@ -1122,6 +1123,21 @@ export function createMockClient(options: MockOptions = {}): ProtocolClient {
           row?.state === "missing" || String(req.input["body.driver"]) === "sqlite"
             ? fail({ code: "SQLITE_CANTOPEN", message: "unable to open database file", detail: `sqlite3: ${String(req.input["body.database"] ?? "")}: unable to open database file`, hint: "Check that the file exists and that OneDesk may read its folder." })
             : finish(run, { status: "success", out: { kind: "text", text: `Connected to ${host}:${String(req.input["body.port"] ?? "")} in 38 ms\nServer: ${String(req.input["body.driver"]) === "postgres" ? "PostgreSQL 16.4" : "MySQL 8.0.36"} · TLS 1.3 · user ${String(req.input["body.user"] ?? "")}\nRead-only: yes` }, message: "Connected in 38 ms" }),
+      );
+      return run.id;
+    }
+
+    if (req.action === "generate" || req.action === "org.onedesk.ai:analyze") {
+      // Round 18 (X17): an AI-style run whose text arrives piece by piece as `Run.partial` (the whole text so far each time).
+      const full = "## Summary\n\nOrders grew **12%** week over week.\n\n- Most growth came from repeat customers\n- Refunds stayed flat\n\n```sql\nSELECT 1;\n```";
+      animate(
+        run,
+        3000,
+        (f) => {
+          run.partial = { type: "text", text: full.slice(0, Math.ceil(full.length * f)), format: "markdown" } as RunOutput;
+          return "Generating…";
+        },
+        () => finish(run, { status: "success", out: { kind: "text", text: full, format: "markdown" }, message: "Generated" }),
       );
       return run.id;
     }
@@ -1974,10 +1990,20 @@ export function createMockClient(options: MockOptions = {}): ProtocolClient {
       },
     },
 
+    result: {
+      async actions(runId) {
+        await wait(6);
+        const run = db.runs.find((r) => r.id === runId);
+        if (!run || run.status !== "success" || (run.out?.kind !== "table" && run.out?.kind !== "text")) return [];
+        const blocked = protections().includes("noExport");
+        return [{ plugin: "org.onedesk.ai", id: "analyze", action: "org.onedesk.ai:analyze", label: "Analyze with AI", icon: "sparkles", enabled: !blocked, ...(blocked ? { disabledReason: "noExport" } : {}) }];
+      },
+    },
     run: {
       async start(request) {
         await wait(15);
         guardWrite();
+        if (request.resultRun && !db.runs.some((r) => r.id === request.resultRun && r.status === "success")) throw new KernelError("invalid", { reason: "badResultRun" });
         return startRun(request);
       },
       async export(id, path) {
