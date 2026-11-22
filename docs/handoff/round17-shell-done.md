@@ -76,3 +76,14 @@ devhost（`ONEDESK_SECRET_STORE=memory`，临时数据目录，`target` 用共�
 - 运行中的部分输出不要求 `appearance: "terminal"`：纯文字、普通表格也按行显示（`partialLinesOf`）。
 - 有部分输出时终端块占满宽度（以前居中缩成一小块），取消按钮仍居中。
 - vitest（`round17-terminal.test.tsx`）：运行中显示已有行、下一份替换上一份、结束后换成最终输出、没收到 partial 前仍显示 “Running…”。
+
+## round11.spec.ts:343 “Unsaved” 偶发失败：是测试写法，不是外壳
+
+结论：外壳没有问题，需要测试会话改 `e2e/round11.spec.ts` 第 383 行。
+
+- 失败现场（`test-results/round11-…/` 的最后一帧）：页面已保存——“Saved”提示在、保存按钮灰、标签和页头都没有 Unsaved 标记、Revision 为 2。
+- 失败的是 `page.getByText("Unsaved")`：它**不区分大小写、按子串匹配**，而编辑器里正好有草稿内容 `UNSAVED TAIL`。编辑器渲染出两个元素（高亮层 `PRE` 和 `TEXTAREA`，都含这段文字），所以始终是 2 个。开头的 3 个是 2 个编辑器元素 + 页头的“Unsaved”标记（保存后标记消失，剩 2 个）。
+- 通过的那几次，只是编辑器在保存后重新读取页面时恰好有一瞬是空的（count 为 0 被轮询抓到），属于时机。我在集成分支 `3713f35` 上单独跑 5 次、整份 spec 跑 3 次、加 CPU 压力 15 次都通过；用 `evaluateAll` 打印验证了“宽匹配”命中的正是 `PRE` 与 `TEXTAREA`。
+- 修法：第 383 行改成精确匹配（同文件第 298 行已经是这么写的）：
+  `await expect(page.getByText("Unsaved", { exact: true })).toHaveCount(0, { timeout: 15_000 });`
+  第 353 行的 `.first()` 可以不动；若想更稳，也用 `{ exact: true }`。

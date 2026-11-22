@@ -66,6 +66,44 @@ describe("required parameter fields (D414)", () => {
   });
 });
 
+describe("required fields and the actions they stop (D436)", () => {
+  const form = { type: "form", id: "p", layout: "strip", label: "Parameters", fields: [{ name: "id", label: "Id", kind: "text", param: true, required: true }, { name: "body", label: "Body", kind: "text", bind: "body" }] };
+  const setup = async (actions: unknown[]) => {
+    const { vi } = await import("vitest");
+    const start = vi.fn(async () => "run1");
+    const save = vi.fn(async () => ({ page: { ...descriptor, basis: "2" } }));
+    const base = kernelLikeClient(createMockClient({ fresh: true, quiet: true }), {});
+    const client = { ...base, run: { ...base.run, start }, page: { ...base.page, save } };
+    const page = { ...descriptor, view: [form], actions, values: { body: "a" } } as unknown as PageDescriptor;
+    const { store } = renderInShell(client, <ViewPage tab={tab} descriptor={page} />);
+    store.set({ tabs: [tab], activeTabId: "t1", drafts: { t1: { body: "b" } } });
+    return { start, save };
+  };
+  it("an empty required parameter does not stop saving", async () => {
+    const { fireEvent, screen, waitFor } = await import("@testing-library/react");
+    const { save, start } = await setup([{ id: "save", label: "Save", role: "save" }, { id: "run", label: "Run", role: "run", action: "p:run" }]);
+    fireEvent.click(screen.getByRole("button", { name: /Save/ }));
+    await waitFor(() => expect(save).toHaveBeenCalled());
+    expect(start).not.toHaveBeenCalled();
+  });
+  it("still stops a run", async () => {
+    const { fireEvent, screen, waitFor } = await import("@testing-library/react");
+    const { save, start } = await setup([{ id: "save", label: "Save", role: "save" }, { id: "run", label: "Run", role: "run", action: "p:run" }]);
+    fireEvent.click(screen.getByRole("button", { name: /Run/ }));
+    await waitFor(() => expect(screen.getByText("Fill in: Id")).toBeTruthy());
+    expect(start).not.toHaveBeenCalled();
+    expect(save).not.toHaveBeenCalled();
+  });
+  it("an action that declares ignoreRequired is not stopped by any required field", async () => {
+    const { fireEvent, screen, waitFor } = await import("@testing-library/react");
+    const { save, start } = await setup([{ id: "save", label: "Save", role: "save", ignoreRequired: true }, { id: "export", label: "Export all", role: "run", action: "p:exportAll", ignoreRequired: true }]);
+    fireEvent.click(screen.getByRole("button", { name: /Export all/ }));
+    await waitFor(() => expect(start).toHaveBeenCalled());
+    fireEvent.click(screen.getByRole("button", { name: /Save/ }));
+    await waitFor(() => expect(save).toHaveBeenCalled());
+  });
+});
+
 describe("a page button that declares a command (D429)", () => {
   it("runs the command on this page with the input values as args, and does not start a run", async () => {
     const { fireEvent, screen, waitFor } = await import("@testing-library/react");
