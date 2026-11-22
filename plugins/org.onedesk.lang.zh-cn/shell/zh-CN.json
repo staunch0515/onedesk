@@ -956,5 +956,6 @@
   "kernel.error.reason.aiEnvMissing": "为 AI 运行选择的环境已经不存在了。",
   "kernel.audit.resource.aiVisible": "更改 AI 可见性",
   "kernel.audit.mcp.call": "AI 工具调用",
-  "kernel.audit.mcp.refused": "AI 请求被拒绝"
+  "kernel.audit.mcp.refused": "AI 请求被拒绝",
+  "kernel.error.reason.aiRun": "由 AI 客户端发起的运行里不允许这个操作。"
 }
