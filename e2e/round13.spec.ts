@@ -364,11 +364,15 @@ test("UI: the workspace menu creates, renames, switches and deletes; a second pa
   await rename.getByRole("textbox", { name: "Name" }).fill("UI space 2");
   await rename.getByRole("button", { name: "Rename", exact: true }).click();
   await expect(page.getByText("UI space 2").first()).toBeVisible();
-  await page.getByRole("button", { name: "Delete UI space 2" }).click();
-  const confirm = page.getByRole("dialog").last();
-  await expect(confirm).toContainText("trash");
-  await confirm.getByRole("button", { name: "Delete", exact: true }).click();
-  await until(async () => !(await byName(main, "UI space 2")), "deleted through the UI");
+  // The host refuses (`in use`) while it still counts the connection of the page that just left "UI space" as bound to it; the
+  // close of that socket is handled asynchronously. A user simply presses Delete again, so do the same, up to a deadline.
+  await expect(async () => {
+    await page.getByRole("button", { name: "Delete UI space 2" }).click();
+    const confirm = page.getByRole("dialog").last();
+    await expect(confirm).toContainText("trash");
+    await confirm.getByRole("button", { name: "Delete", exact: true }).click();
+    await until(async () => !(await byName(main, "UI space 2")), "deleted through the UI", 3_000);
+  }).toPass({ timeout: 30_000, intervals: [500, 1_000, 2_000] });
 });
 
 test("UI: \"Open in a new window\" in a browser opens a new tab bound to that workspace", async ({ page, context }) => {

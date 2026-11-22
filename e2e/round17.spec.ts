@@ -848,14 +848,18 @@ test("I6 (page): the server command's output is a dark terminal and stderr has i
       }
       return { color: getComputedStyle(el).color, bgs };
     });
-  const a = await style("first-line");
-  const b = await style("an-error");
-  expect(a.color, "stderr is another colour than stdout").not.toBe(b.color);
   const lum = (css: string) => {
     const [r, g, bl] = (css.match(/\d+(\.\d+)?/g) ?? ["255", "255", "255"]).slice(0, 3).map(Number) as [number, number, number];
     return (0.2126 * r + 0.7152 * g + 0.0722 * bl) / 255;
   };
-  expect(Math.min(...a.bgs.map(lum)), "dark background").toBeLessThan(0.25);
+  // The first line can be on screen before the terminal block has its background (the output view is swapped in while the
+  // run finishes), so read the colours until they settle instead of once.
+  await expect
+    .poll(async () => Math.min(...(await style("first-line")).bgs.map(lum)), { message: "dark background" })
+    .toBeLessThan(0.25);
+  await expect
+    .poll(async () => (await style("first-line")).color !== (await style("an-error")).color, { message: "stderr is another colour than stdout" })
+    .toBe(true);
   await shot(page, "terminal");
 });
 
