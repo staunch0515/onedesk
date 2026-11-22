@@ -24,9 +24,13 @@ fn builtin_plugins_dir() -> Option<PathBuf> {
     if let Some(p) = std::env::var_os("ONEDESK_BUILTIN_PLUGINS") {
         return Some(PathBuf::from(p));
     }
-    let dev = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../plugins");
-    if cfg!(debug_assertions) && dev.is_dir() {
-        return Some(dev);
+    // Debug builds only: the checkout's plugins. Release builds must not embed the builder's path.
+    #[cfg(debug_assertions)]
+    {
+        let dev = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../plugins");
+        if dev.is_dir() {
+            return Some(dev);
+        }
     }
     // Release bundle: `OneDesk.app/Contents/Resources/plugins`.
     let exe = std::env::current_exe().ok()?;
