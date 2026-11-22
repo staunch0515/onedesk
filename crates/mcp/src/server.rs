@@ -42,7 +42,7 @@ pub fn process_suffix() -> String {
     SUFFIX
         .get_or_init(|| {
             let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.subsec_nanos()).unwrap_or(0);
-            format!("{:06x}", (u64::from(std::process::id()) * 2_654_435_761 ^ u64::from(nanos)) & 0xff_ffff)
+            format!("{:06x}", ((u64::from(std::process::id()) * 2_654_435_761) ^ u64::from(nanos)) & 0xff_ffff)
         })
         .clone()
 }
