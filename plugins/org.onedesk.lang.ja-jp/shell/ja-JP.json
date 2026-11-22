@@ -835,6 +835,7 @@
   "kernel.audit.workspace.initSettings": "別のワークスペースから設定をコピーしました",
   "kernel.error.reason.mainProcessOnly": "アプリ本体だけが行えます。",
   "kernel.label.ui.theme": "外観",
+  "kernel.label.ui.language": "表示言語",
   "kernel.label.ui.density": "表示密度",
   "kernel.label.network.allow": "許可するネットワークホスト",
   "kernel.label.process.allow": "許可するプログラム",

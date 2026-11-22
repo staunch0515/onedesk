@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { startInstall } from "./install-dialogs";
-import { Badge, Banner, ContextMenu, EmptyState, IconButton, Input, LoadingState, SidePanel, Tree, useToast, type MenuEntry, type TreeDropPosition, type TreeRow } from "../../design";
+import { Badge, Banner, ContextMenu, DropdownMenu, EmptyState, IconButton, Input, LoadingState, SidePanel, Tree, useToast, type MenuEntry, type TreeDropPosition, type TreeRow } from "../../design";
 import { useI18n } from "../i18n";
 import { isSourceMissing, loadBatch, loadLevel, loadMore, type Level, type MenuCommand, type TreeInfo, type TreeNode } from "../protocol";
 import { useUi, useWorkbench } from "../state/context";
@@ -340,6 +340,12 @@ export function TreePanel({ tree }: { tree: TreeInfo }) {
   const title = tx(tree.title);
   const demo = client.demo?.tree(tree.id) ?? false;
   const rootLoading = !levels.has(ROOT);
+  // A tree with many toolbar buttons (the resources tree has one "new <kind>" per kind) would push its title and the expand/collapse
+  // buttons out of the narrow panel: past a few, the rest go into one "New" menu.
+  const TOOLBAR_INLINE_MAX = 4;
+  const crowded = tree.toolbar.length > TOOLBAR_INLINE_MAX;
+  const inline = crowded ? tree.toolbar.filter((c) => c.id === "node.newGroup") : tree.toolbar;
+  const overflow = crowded ? tree.toolbar.filter((c) => c.id !== "node.newGroup") : [];
 
   return (
     <SidePanel
@@ -362,9 +368,16 @@ export function TreePanel({ tree }: { tree: TreeInfo }) {
           {tree.id === "plugins" && client.app && (
             <IconButton icon="package-plus" size="sm" label={t("install.action")} onClick={() => void startInstall(client, store, actions)} />
           )}
-          {tree.toolbar.map((c) => (
+          {inline.map((c) => (
             <IconButton key={c.id} icon={c.icon ?? "circle"} size="sm" label={tx(c.label)} disabled={c.disabled} onClick={() => void actions.command(c.id, { tree: tree.id, nodeKey: selected })} />
           ))}
+          {overflow.length > 0 && (
+            <DropdownMenu
+              trigger={<IconButton icon="plus" size="sm" label={t("topbar.new")} />}
+              align="end"
+              items={overflow.map((c) => ({ key: c.id, label: tx(c.label), icon: c.icon, disabled: c.disabled, onSelect: () => void actions.command(c.id, { tree: tree.id, nodeKey: selected }) }))}
+            />
+          )}
           <IconButton icon="chevrons-up-down" size="sm" label={t("tree.expandAll")} onClick={expandAll} />
           <IconButton icon="chevrons-down-up" size="sm" label={t("tree.collapseAll")} onClick={() => actions.setExpanded(tree.id, [])} />
         </>

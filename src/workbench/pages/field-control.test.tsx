@@ -46,7 +46,7 @@ describe("ui.language on the configuration page (D379)", () => {
     const onChange = vi.fn();
     const lang: ViewField = { name: "ui.language", label: "ui.language", kind: "text", bind: "params.ui.language" };
     renderInShell(client, <FieldControl field={lang} value="zh-CN" onChange={onChange} size="md" readOnly={false} />);
-    const box = await screen.findByRole("combobox", { name: "ui.language" });
+    const box = await screen.findByRole("combobox", { name: "Interface language" });
     expect(box.textContent).toBe("zh-CN");
     fireEvent.keyDown(box, { key: "Enter" });
     expect((await screen.findAllByRole("option")).map((o) => o.textContent)).toEqual(["English", "日本語", "zh-CN"]);

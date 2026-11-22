@@ -24,7 +24,7 @@ export interface FrameProps {
 /** The frame shared by every page: breadcrumb, title, actions, environment, info panel, result area (§9). */
 export function Frame({ tab, descriptor, meta, actions, children, panel }: FrameProps) {
   const { client, store, actions: wb } = useWorkbench();
-  const { t, tx } = useI18n();
+  const { t, tx, pageTitle } = useI18n();
   const infoOpen = useUi((s) => s.infoOpen);
   const infoWidth = useUi((s) => s.infoWidth);
   const panelOpen = useUi((s) => s.panelOpen);
@@ -54,7 +54,7 @@ export function Frame({ tab, descriptor, meta, actions, children, panel }: Frame
 
   const crumbs = descriptor.breadcrumb.map((c, i) => ({
     key: `${i}-${c.label}`,
-    label: c.label,
+    label: pageTitle(c.label),
     icon: c.icon,
     onClick: c.target ? () => wb.open(c.target!) : c.tree && c.key ? () => void wb.reveal(c.tree!, c.key!) : undefined,
   }));
@@ -69,7 +69,7 @@ export function Frame({ tab, descriptor, meta, actions, children, panel }: Frame
       header={
         <PageTitleBar
           icon={descriptor.icon}
-          title={descriptor.title}
+          title={pageTitle(descriptor.title)}
           meta={
             <>
               {descriptor.kindLabel && <Badge>{tx(descriptor.kindLabel)}</Badge>}
