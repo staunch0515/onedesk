@@ -90,22 +90,25 @@ const grepData = (word: string): string => {
     return "";
   }
 };
-const ids = {} as Record<"anth" | "ollama" | "settings" | "ds" | "query" | "textRun" | "tableRun" | "analysis" | "analysisRun" | "sql" | "keepRun", string>;
-/** R18_SOFT=1 (while the integration branch still has the known defects of round18-tests-done.md): log instead of failing. */
+const ids = {} as Record<"anth" | "ollama" | "ds" | "query" | "textRun" | "tableRun" | "analysis" | "analysisRun" | "sql" | "keepRun", string>;
+/**
+ * An assertion about a defect another session is fixing: it does not stop the serial run (later cases need the state), it is
+ * collected and the last test fails with the whole list. So every assertion is real — nothing is skipped or tolerated.
+ */
+const defects: string[] = [];
+const note = (name: string, e: unknown) => defects.push(`${name}: ${String((e as Error).message).split("\n").slice(0, 3).join(" | ").slice(0, 300)}`);
 const finding = (name: string, fn: () => void) => {
   try {
     fn();
   } catch (e) {
-    if (!process.env.R18_SOFT) throw e;
-    console.log(`FINDING ${name}: ${String((e as Error).message).split("\n").slice(0, 3).join(" | ").slice(0, 300)}`);
+    note(name, e);
   }
 };
 const findingA = async (name: string, fn: () => Promise<void>) => {
   try {
     await fn();
   } catch (e) {
-    if (!process.env.R18_SOFT) throw e;
-    console.log(`FINDING ${name}: ${String((e as Error).message).split("\n").slice(0, 3).join(" | ").slice(0, 300)}`);
+    note(name, e);
   }
 };
 const chats = () => ai.requests.filter((r) => r.method === "POST");
@@ -116,9 +119,9 @@ const userText = (r: { body: any }): string => {
 };
 
 /** A result: the statement runs on the throw-away PostgreSQL. */
-const runSql = async (page: Page, sql: string, name: string): Promise<RunInfo> => {
+const runSql = async (page: Page, sql: string, name: string, extra: Record<string, unknown> = {}): Promise<RunInfo> => {
   const rid = await create(page, SQLK, { name, "body.sql": sql, "body.source": ids.ds });
-  return runRes(page, rid, "run", { input: { "body.sql": sql, "body.source": ids.ds } });
+  return runRes(page, rid, "run", { input: { "body.sql": sql, "body.source": ids.ds }, ...extra });
 };
 const CLICK_ENV = async (page: Page) => nodeId(page, "env", "Default");
 /** What the shell does when the user clicks a result-area button: run.start with `resultRun`. */
@@ -127,6 +130,8 @@ const resourceOf = (run: RunInfo) => String(run.output?.target ?? "").replace(/^
 const resultActionsOf = (page: Page, runId: string) => call<{ plugin: string; id: string; action: string; label: string; enabled: boolean; disabledReason?: string }[]>(page, "result.actions", { runId });
 const sendAnalysis = (page: Page, id: string, input: Record<string, unknown> = {}, extra: Record<string, unknown> = {}) => runRes(page, id, `${AI}:send`, { input, ...extra });
 const newAnalysis = (page: Page, request: string, extra: Record<string, unknown> = {}) => create(page, `${AI}:analysis`, { name: "Draft", "body.request": request, ...extra });
+const syncDocs = async (page: Page) => waitRun(page, await startRaw(page, `${AI}:syncDocs`, `page:${AI}`));
+const setDefaultConnection = (page: Page, id: string) => call(page, "plugin.setSetting", { plugin: AI, name: "connection", value: id });
 const setEnv = async (page: Page, name: string, value: string) => call(page, "params.set", { node: await CLICK_ENV(page), name, value });
 const unsetEnv = async (page: Page, name: string) => call(page, "params.unset", { node: await CLICK_ENV(page), name });
 
@@ -200,20 +205,20 @@ test("X15: no `uses` → denied/notUsed; with `uses`: list shows both providers,
 
 /* ------------------------------------------------------------------ K10 settings, K2 documents */
 
-test("K10: the settings resource holds the default connection; the connection picker lists the provider connections by name", async ({ page }) => {
+test("K10: the default connection is a plugin setting (a resource reference); the pickers list the provider connections by name; the uses permission is listed", async ({ page }) => {
   await openKernel(page, host);
-  // the workbench may create the settings resource itself; make one only when there is none
-  const found = await call<any>(page, "search.query", { text: "AI", kinds: [`${AI}:settings`] }).catch(() => ({ items: [] }));
-  const existing = (found.items ?? []).find((i: any) => String(i.kind).endsWith(":settings"));
-  ids.settings = existing?.id ?? (await create(page, `${AI}:settings`, { name: "AI settings", "body.connection": ids.anth }));
-  await call(page, "page.save", { target: `resource:${ids.settings}`, changes: { "body.connection": ids.anth } });
-  expect((await getRes(page, ids.settings)).body.connection).toBe(ids.anth);
-  const view = JSON.stringify((await call<any>(page, "page.resolve", { target: `resource:${ids.settings}` })).view);
+  await setDefaultConnection(page, ids.anth);
+  const draft = await newAnalysis(page, "Picker test");
+  const view = JSON.stringify((await call<any>(page, "page.resolve", { target: `resource:${draft}` })).view);
   expect(view).toContain("@implements:onedesk.ai.chat/1");
-  finding("connection picker shows names", () => {
-    expect(view, "options carry the connection names, not only ids").toContain("Fake Anthropic");
-    expect(view).toContain("Fake Ollama");
-  });
+  expect(view, "options carry the connection names, not only ids").toContain("Fake Anthropic");
+  expect(view).toContain("Fake Ollama");
+  expect(view, "the AI workbench's own default is named on the page").toContain("Fake Anthropic");
+  // #5: `uses` of someone else's interface is a permission the user sees (install/upgrade), for both users of an interface
+  const perms = async (plugin: string) => (await call<{ permissions?: { id: string; detail: string }[] }>(page, "plugin.get", { plugin })).permissions?.filter((x) => x.id === "uses").map((x) => x.detail) ?? [];
+  expect((await perms(AI)).join(" ")).toContain("onedesk.ai.chat/1");
+  expect((await perms("org.onedesk.sql")).join(" ")).toContain("onedesk.ai.generate/1");
+  expect(await perms("org.test.nouses")).toEqual([]);
 });
 
 test("K2/X6: an authorised documents folder becomes document resources; relevance search finds them by any word, best first, limited to the kind", async ({ page }) => {
@@ -224,13 +229,13 @@ test("K2/X6: an authorised documents folder becomes document resources; relevanc
   mkdirSync(path.join(docsDir, "sub"));
   writeFileSync(path.join(docsDir, "sub", "notes.txt"), "orders orders orders customer amount\n");
   writeFileSync(path.join(docsDir, "image.png"), "not a document");
-  const before = await runRes(page, ids.settings, `${AI}:syncDocs`);
+  const before = await syncDocs(page);
   expect(before.status).toBe("error"); // no folder set
   await call(page, "plugin.setSetting", { plugin: AI, name: "docFolder", value: docsDir });
-  const notAuthorized = await runRes(page, ids.settings, `${AI}:syncDocs`);
+  const notAuthorized = await syncDocs(page);
   expect(notAuthorized.status, "a folder the user did not authorize is refused").toBe("error");
   await call(page, "plugin.grantFolder", { plugin: AI, path: docsDir });
-  const sync = await runRes(page, ids.settings, `${AI}:syncDocs`);
+  const sync = await syncDocs(page);
   expect(sync.status, JSON.stringify(sync.error)).toBe("success");
   expect(sync.output.text).toMatch(/^4 /); // md and txt, subfolders too; the png is not a document
   const kind = `${AI}:doc`;
@@ -252,7 +257,7 @@ test("K2/X6: an authorised documents folder becomes document resources; relevanc
   expect(onlyDocs.map((i) => i.name)).not.toContain("orders note");
   // a change in the folder: a removed file disappears on the next sync
   rmSync(path.join(docsDir, "unrelated.md"));
-  await runRes(page, ids.settings, `${AI}:syncDocs`);
+  await syncDocs(page);
   expect((await q({ text: "gardening", kinds: [kind] })).length).toBe(0);
 });
 
@@ -340,6 +345,24 @@ test("K4/K3: masking before anything leaves — sensitive columns, e-mails, long
   await call(page, "plugin.setSetting", { plugin: AI, name: "maxRows", value: "20" });
 });
 
+test("K4/#7: sensitive columns are found by part of the name (passwordhash, accesstoken, emailaddress), by Chinese and Japanese words, and by the key as well as the label", async ({ page }) => {
+  await openKernel(page, host);
+  const run = await runSql(
+    page,
+    `SELECT 'hash-AAA' AS passwordhash, 'tok-BBB' AS accesstoken, 'mail-CCC' AS emailaddress, 'mima-DDD' AS "密码", 'shouji-EEE' AS "手机号", 'denwa-FFF' AS "電話番号", 'api-GGG' AS "ApiKey", 'plain-visible' AS city`,
+    "Sensitive names",
+  );
+  expect(run.status, JSON.stringify(run.error)).toBe("success");
+  const made = await getRes(page, resourceOf(await clickAction(page, run.id)));
+  const req: string = made.body.request;
+  for (const v of ["hash-AAA", "tok-BBB", "mail-CCC", "mima-DDD", "shouji-EEE", "denwa-FFF", "api-GGG"]) expect(req, `${v} must be masked`).not.toContain(v);
+  expect(req).toContain("plain-visible");
+  // phone-like numbers in an ordinary column are masked as well
+  const phone = await runSql(page, `SELECT 'call +86 138 0013 8000 or (415) 555-0132' AS note`, "Phones");
+  const p = (await getRes(page, resourceOf(await clickAction(page, phone.id)))).body.request as string;
+  expect(p).not.toMatch(/138 0013 8000|555-0132/);
+});
+
 test("K3: nothing is sent before Send; Send sends exactly the (edited) text; unticked documents stay out; the answer streams into the partial output", async ({ page }) => {
   await openKernel(page, host);
   // documents were picked by the statement's table/column names: a query on orders
@@ -380,10 +403,7 @@ test("K3: nothing is sent before Send; Send sends exactly the (edited) text; unt
   expect(lastChat().body.model).toBe("claude-haiku-5-5");
   expect(lastChat().body.thinking, "no thinking field").toBeUndefined();
   expect(lastChat().body.temperature, "no sampling parameters").toBeUndefined();
-  const after = await getRes(page, draft);
-  expect(after.body.answer).toBe("One two three four");
-  expect(after.body.model).toBeTruthy();
-  expect(after.body.sent).toContain("EDITED REQUEST ABOUT ORDERS");
+  expect((await getRes(page, draft)).body.answer, "the answer is not written into the resource body until the user saves it").toBeUndefined();
   ids.analysisRun = done.id;
   ids.textRun = done.id;
   ids.analysis = draft;
@@ -414,13 +434,14 @@ test("K3: a connection written on the page beats the environment's, which beats 
   // a resource that is no AI connection is said so in words
   const wrong = await sendAnalysis(page, d, { "body.connectionId": ids.ds });
   expect(wrong.status).toBe("error");
-  expect(wrong.error?.message).toMatch(/not an AI connection|chat/i);
+  finding("a non-AI resource on the page is said in words, not as a raw text key", () => expect(wrong.error?.message).not.toMatch(/^error\./));
+  expect(wrong.error?.message).toBeTruthy();
   // nothing chosen anywhere → words telling where to choose
-  await call(page, "page.save", { target: `resource:${ids.settings}`, changes: { "body.connection": "" } });
+  await setDefaultConnection(page, "");
   const none = await sendAnalysis(page, d);
   expect(none.status).toBe("error");
   expect(none.error?.message).toMatch(/No AI connection/);
-  await call(page, "page.save", { target: `resource:${ids.settings}`, changes: { "body.connection": ids.anth } });
+  await setDefaultConnection(page, ids.anth);
 });
 
 /* ------------------------------------------------------------------ providers: errors, refusal, cancel */
@@ -453,8 +474,7 @@ test("X16/K5: provider errors are mapped (401, 429+retry-after, 529, too long, r
   expect(ok.status, "after errors the connection works again").toBe("success");
   for (const r of [r401, r429, r529, tooLong, refused, mid]) expect(JSON.stringify(r)).not.toContain(KEY);
   // the answer of a failed send is not stored
-  const stored = await getRes(page, d);
-  expect(stored.body.answer).toBe("fine");
+  expect((await getRes(page, d)).body.answer, "a failed send stores nothing").toBeUndefined();
 });
 
 test("X16: cancelling a streaming run ends it at once (the connection is dropped, not drained)", async ({ page }) => {
@@ -472,7 +492,6 @@ test("X16: cancelling a streaming run ends it at once (the connection is dropped
   const r = await waitRun(page, runId, 100);
   expect(r.status).toBe("cancelled");
   expect(Date.now() - t0).toBeLessThan(3000);
-  expect((await getRes(page, d)).body.answer ?? "").not.toContain("p5");
   ai.set({ kind: "ok" });
 });
 
@@ -485,8 +504,6 @@ test("X16: Ollama — NDJSON lines are joined, the loading line shows nothing wr
   expect(r.status, JSON.stringify(r.error)).toBe("success");
   expect(r.output.text).toBe("Hello wörld ✓");
   expect(lastChat().path).toBe("/api/chat");
-  const stored = await getRes(page, d);
-  expect(stored.body.usage).toBe("12 / 3");
   ai.set({ kind: "error", status: 404, body: { error: "model 'llama3.2:latest' not found" } });
   const missing = await sendAnalysis(page, d);
   expect(missing.status).toBe("error");
@@ -518,18 +535,19 @@ test("K6: the analysis is kept with the run it analyses (run_artifacts); the aud
   expect(sent.status, JSON.stringify(sent.error)).toBe("success");
   ids.keepRun = source.id;
   const rows = () => dbq(`SELECT name || '|' || kind || '|' || plugin || '|' || data FROM run_artifacts WHERE run_id = '${source.id}'`).trim();
-  let kept: unknown = null;
-  try {
-    kept = await call(page, "page.event", { target: `resource:${draft}`, event: "keep", context: { params: { name: "Seven analysis" } } });
-  } catch (e) {
-    kept = String(e);
-  }
-  finding("Keep on a fresh analysis saves it with the run (saveArtifact from a page event needs an earlier artifact)", () => {
-    expect(JSON.stringify(kept)).toContain("Seven analysis");
-    expect(rows()).toContain("Seven analysis|analysis|org.onedesk.ai|");
-    expect(rows()).toContain("SEVEN-MARKER");
-    expect(rows()).not.toContain(KEY);
-  });
+  // analyzing already left a draft attachment: that is what lets the page event save the first real one (review #3)
+  expect(rows()).toContain("|org.onedesk.ai|");
+  const kept = await call<{ message?: string }>(page, "page.event", { target: `resource:${draft}`, event: "keep", context: { params: { name: "Seven analysis" } } });
+  expect(JSON.stringify(kept)).toContain("Seven analysis");
+  expect(rows()).toContain("Seven analysis|analysis|org.onedesk.ai|");
+  expect(rows()).toContain("SEVEN-MARKER"); // the answer
+  expect(rows()).toMatch(/connection|model/); // connection, model and usage go with it
+  expect(rows()).not.toContain(KEY);
+  // the user keeps the run and then deletes it: the analysis goes with it
+  await call(page, "run.setKept", { id: source.id, kept: true, name: "Analysed" });
+  await call(page, "command.execute", { id: "run.delete", context: { args: { run: source.id, confirmed: true } } });
+  expect(dbq(`SELECT count(*) FROM runs WHERE id = '${source.id}'`).trim()).toBe("0");
+  expect(rows(), "the analysis is deleted with its run").toBe("");
   // audit: what was done, never what was said
   const audit = JSON.stringify(await call(page, "audit.list", {}));
   expect(audit).toContain("runs.read");
@@ -562,31 +580,63 @@ test("D442: an artifact kept in a result-area click lives with its run: listed, 
 
 /* ------------------------------------------------------------------ K7–K9 generate SQL */
 
-test("K7/K8/K9: “Write with AI” in the SQL page — a proposal made from words and table names (no data); checked; accepted into the editor as an unsaved change", async ({ page }) => {
+test("K7/K9 + #6: “Write with AI” under preview — the workbench makes the request and shows it; only the user's Send on that page sends it, exactly that text; no rows go; accepting puts the proposal into the editor as an unsaved change", async ({ page }) => {
   await openKernel(page, host);
   ids.sql = await create(page, SQLK, { name: "Ask AI", "body.sql": "SELECT * FROM orders", "body.source": ids.ds });
-  const write = (instruction: string, over: Record<string, unknown> = {}) =>
-    runRes(page, ids.sql, "org.onedesk.sql:aiWrite", { params: { aiInstruction: instruction }, input: { "body.sql": "SELECT * FROM orders", "body.source": ids.ds }, ...over });
-  // preview first (the default policy): the first run only says what would be sent
+  const write = (instruction: string) =>
+    runRes(page, ids.sql, "org.onedesk.sql:aiWrite", { params: { aiInstruction: instruction }, input: { "body.sql": "SELECT * FROM orders", "body.source": ids.ds } });
   ai.set({ kind: "ok", pieces: ["```sql\nSELECT customer, sum(amount) FROM orders GROUP BY customer\n```"] });
   const before = chats().length;
-  const first = await write("total amount per customer");
+  const first = await write("total amount per customer, ask jane@example.com about 4111111111111111");
   expect(first.status, JSON.stringify(first.error)).toBe("success");
   expect(chats().length, "policy preview: nothing sent yet").toBe(before);
-  const preview = JSON.stringify(first.output) + JSON.stringify(await call(page, "page.resolve", { target: `resource:${ids.sql}` }));
-  expect(preview).toContain("total amount per customer");
-  const send = await runRes(page, ids.sql, "org.onedesk.sql:aiSend", { input: { "body.sql": "SELECT * FROM orders", "body.source": ids.ds } });
+  // the preview is the workbench's own page (a draft analysis); the SQL page links to it
+  const sqlView = JSON.stringify((await call<any>(page, "page.resolve", { target: `resource:${ids.sql}` })).view);
+  const draft = /"target":"resource:([0-9a-f]+)"/.exec(sqlView)?.[1];
+  expect(draft, "the SQL page links to the preview draft").toBeTruthy();
+  const dr = await getRes(page, draft!);
+  expect(dr.body.request).toContain("total amount per customer");
+  expect(dr.body.request).toContain("orders"); // table names go
+  expect(dr.body.request, "e-mails and long numbers in the sentence are masked").not.toContain("jane@example.com");
+  expect(dr.body.request).not.toContain("4111111111111111");
+  expect(String(dr.body.system), "the preview shows the system prompt too").not.toBe("");
+  // before the user sends there, the SQL side has no answer to fetch
+  const early = await runRes(page, ids.sql, "org.onedesk.sql:aiFetch");
+  expect(JSON.stringify(early.output) + JSON.stringify(early.error)).toMatch(/not sent|send/i);
+  expect(chats().length).toBe(before);
+  // the user presses Send on the preview page
+  const send = await runRes(page, draft!, `${AI}:send`);
   expect(send.status, JSON.stringify(send.error)).toBe("success");
   expect(chats().length).toBe(before + 1);
   const body = userText(lastChat());
-  expect(body).toContain("total amount per customer");
-  expect(body).toContain("orders"); // table names go
-  expect(body).not.toMatch(/\bann\b|\bbob\b|o'neil/); // rows never do (K7)
+  expect(body.trimEnd(), "what was sent is what the preview showed").toBe(String(dr.body.request).trimEnd());
+  expect(body).not.toMatch(/\bann\b|\bbob\b|o'neil/); // rows never go (K7)
   expect(body).not.toContain("10.50");
-  // K8/K9: the proposal passes the check; accepting puts it in the editor as an unsaved change, the saved resource is untouched
+  const fetched = await runRes(page, ids.sql, "org.onedesk.sql:aiFetch");
+  expect(fetched.status, JSON.stringify(fetched.error)).toBe("success");
+  // K9: accepting puts it into the editor as an unsaved change; the saved resource is untouched
   const accept = await call<{ changes?: Record<string, string>; message?: string }>(page, "page.event", { target: `resource:${ids.sql}`, event: "aiAccept" });
   expect(accept.changes?.["body.sql"]).toBe("SELECT customer, sum(amount) FROM orders GROUP BY customer");
   expect((await getRes(page, ids.sql)).body.sql, "nothing saved by accepting").toBe("SELECT * FROM orders");
+});
+
+test("#6: a caller cannot send for the user — `confirm:true` is ignored under preview; names that are not identifiers and rows in `context` do not travel", async ({ page }) => {
+  await openKernel(page, host);
+  const n0 = chats().length;
+  ai.set({ kind: "ok", pieces: ["SELECT 1"] });
+  const gen = await waitRun(
+    page,
+    await startRaw(page, `${AI}:generate`, `page:${AI}`, {
+      input: { kind: "sql", instruction: "count orders", confirm: true, context: { tables: [{ name: "orders", columns: ["id", "ann@example.com", "x; DROP TABLE y"] }, { name: "bad name; DROP", columns: [] }], rows: [["ann", "10.50"]] } },
+    }),
+  );
+  expect(gen.status, JSON.stringify(gen.error)).toBe("success");
+  expect(chats().length, "confirm:true from a caller must not skip the preview").toBe(n0);
+  const shown = String(gen.output?.text ?? "");
+  expect(shown).toContain("count orders");
+  expect(shown).not.toContain("ann@example.com");
+  expect(shown).not.toContain("DROP");
+  expect(shown).not.toMatch(/10\.50|\bann\b/);
 });
 
 test("K8: a proposal that is not one single SELECT/WITH cannot be accepted; rejecting leaves the editor alone", async ({ page }) => {
@@ -632,7 +682,9 @@ test("K10: ai.policy — off refuses analysis, sending and generating; preview i
   const n0 = chats().length;
   await setEnv(page, "ai.policy", "off");
   const env = await CLICK_ENV(page);
-  const click = await clickAction(page, ids.tableRun, `${AI}:analyze`, { envId: env });
+  // the environment of a result-area click is the source run's (D444 ④): the source ran in Default
+  const src = await runSql(page, "SELECT 1 AS one", "Policy source", { envId: env });
+  const click = await clickAction(page, src.id, `${AI}:analyze`, { envId: env });
   expect(click.status).toBe("error");
   expect(click.error?.message).toMatch(/turned off/i);
   const send = await sendAnalysis(page, d, {}, { envId: env });
@@ -705,4 +757,8 @@ test("shell: the result area shows an Analyze button on a table; the preview pag
   await findingA("the finished answer is shown as readable Markdown, like the partial one was", async () => {
     await expect(page.getByRole("heading", { name: "Summary" })).toBeVisible({ timeout: 2000 });
   });
+});
+
+test("no assertion about a known defect failed along the way", () => {
+  expect(defects, defects.join("\n")).toEqual([]);
 });
