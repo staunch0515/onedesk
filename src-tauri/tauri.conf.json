@@ -40,7 +40,8 @@
       "icons/icon.png"
     ],
     "externalBin": [
-      "binaries/onedesk-worker"
+      "binaries/onedesk-worker",
+      "binaries/onedesk-mcp"
     ],
     "resources": {
       "../target/bundle-inputs/plugins": "plugins"

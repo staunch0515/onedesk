@@ -28,6 +28,7 @@ pub mod data_dir;
 pub mod external;
 pub mod index;
 pub mod install;
+pub mod mcp_socket;
 pub mod plugins;
 pub mod process_groups;
 pub mod workspaces;
@@ -119,7 +120,8 @@ impl Conn {
         self.closed.load(Ordering::SeqCst)
     }
 
-    async fn send(&self, id: u64, method: &str, params: Value, client: Option<String>) -> Result<Response, SendError> {
+    async fn send(&self, id: u64, method: &str, params: Value, client: Option<String>, actor: Option<String>) -> Result<Response, SendError> {
+        let _ = &actor; // stamped into the request once `Request.actor` exists (round 19 protocol)
         let (tx, rx) = oneshot::channel();
         {
             let mut pending = self.pending.lock().unwrap();
@@ -182,7 +184,24 @@ struct Started {
     socket: PathBuf,
 }
 
+/// How long the main process waits for a workspace lock held by someone else — the headless `onedesk-mcp` worker
+/// (round 19). That worker lets go after a few idle seconds, so a short wait is enough.
+const LOCK_WAIT: Duration = Duration::from_secs(30);
+/// The `HostError` text of a worker that exited with 3 (workspace locked).
+pub const LOCKED_MESSAGE: &str = "workspace is locked by another worker (exit 3)";
+
+/// `spawn_worker_once`, trying again while the workspace is locked by another worker (an AI client using it headless).
 async fn spawn_worker(cfg: &HostConfig, shared: &Shared) -> Result<Started, HostError> {
+    let deadline = Instant::now() + LOCK_WAIT;
+    loop {
+        match spawn_worker_once(cfg, shared).await {
+            Err(e) if e.0 == LOCKED_MESSAGE && Instant::now() < deadline => tokio::time::sleep(Duration::from_millis(300)).await,
+            other => return other,
+        }
+    }
+}
+
+async fn spawn_worker_once(cfg: &HostConfig, shared: &Shared) -> Result<Started, HostError> {
     let workspace = workspace_path(&cfg.data_dir, &shared.folder);
     // The kernel rewrites `workspace.json` when it opens the workspace; the window position is ours to keep, on a
     // restart after a crash as much as at the first start.
@@ -237,7 +256,7 @@ async fn spawn_worker(cfg: &HostConfig, shared: &Shared) -> Result<Started, Host
             Err(_) => {
                 if let Ok(Some(status)) = child.try_wait() {
                     return Err(HostError(match status.code() {
-                        Some(3) => "workspace is locked by another worker (exit 3)".to_string(),
+                        Some(3) => LOCKED_MESSAGE.to_string(),
                         _ => {
                             // Give the reader task a moment to deliver the last line.
                             tokio::time::sleep(Duration::from_millis(50)).await;
@@ -257,7 +276,7 @@ async fn spawn_worker(cfg: &HostConfig, shared: &Shared) -> Result<Started, Host
     let conn = Conn::new(write);
     tokio::spawn(read_loop(read, conn.clone(), shared.events.clone(), shared.folder.clone()));
     let params = serde_json::to_value(HelloParams { protocol: PROTOCOL_VERSION.to_string() }).expect("hello params");
-    let resp = match conn.send(shared.next_id(), "hello", params, None).await {
+    let resp = match conn.send(shared.next_id(), "hello", params, None, None).await {
         Ok(r) => r,
         Err(_) => return Err(HostError("worker closed the connection during hello".into())),
     };
@@ -327,6 +346,11 @@ impl Slot {
 
     /// Sends one request to the worker (waiting for a restarting one).
     async fn forward(&self, client: Option<&str>, method: &str, params: Value) -> Result<Value, ProtocolError> {
+        self.forward_as(client, None, method, params).await
+    }
+
+    /// `actor`: the operator the main process vouches for (an AI connection, round 19); the worker trusts it.
+    async fn forward_as(&self, client: Option<&str>, actor: Option<String>, method: &str, params: Value) -> Result<Value, ProtocolError> {
         let id = self.shared.next_id();
         let mut rx = self.shared.current.subscribe();
         let deadline = tokio::time::Instant::now() + WAIT_FOR_WORKER;
@@ -336,7 +360,7 @@ impl Slot {
                 Ok(Ok(c)) => c.clone().expect("checked by wait_for"),
                 _ => return Err(err(ErrorCode::WorkerGone, "worker is not running")),
             };
-            match conn.send(id, method, params.clone(), client.map(str::to_string)).await {
+            match conn.send(id, method, params.clone(), client.map(str::to_string), actor.clone()).await {
                 Ok(resp) => {
                     return match resp.error {
                         Some(e) => Err(e),
@@ -373,6 +397,8 @@ pub struct Host {
     /// Workspace operations (create, switch, bind, rename, delete) one at a time, so a delete cannot slip between
     /// a switch's worker start and its binding.
     ops: tokio::sync::Mutex<()>,
+    /// `client` -> `ai:<name>` for connections that came in on the MCP socket; their requests are stamped with it (round 19).
+    ai_clients: Mutex<HashMap<String, String>>,
     secrets: SecretStoreHandle,
 }
 
@@ -411,6 +437,7 @@ impl Host {
             bindings: Mutex::new(HashMap::new()),
             active: Mutex::new(first.clone()),
             ops: tokio::sync::Mutex::new(()),
+            ai_clients: Mutex::new(HashMap::new()),
             secrets,
         });
         host.slot_for(&first).await.map_err(|e| HostError(e.detail.unwrap_or_else(|| format!("{:?}", e.code))))?;
@@ -511,6 +538,7 @@ impl Host {
             // A client's rescan (a package copied in by hand) takes the same road as ours: refresh the index, add the
             // built-in list. Its own parameters are ignored; only the main process knows what is built in.
             "plugin.rescan" => return self.rescan(client).await,
+            mcp_socket::APP_MCP_INFO => return Ok(mcp_socket::info()),
             _ => {}
         }
         self.forward(client, method, params).await
@@ -640,7 +668,8 @@ impl Host {
     /// Sends one request to the worker of the workspace `client` uses.
     async fn forward(&self, client: Option<&str>, method: &str, params: Value) -> Result<Value, ProtocolError> {
         let slot = self.slot_for(&self.bound(client)).await?;
-        slot.forward(client, method, params).await
+        let actor = client.and_then(|c| self.ai_clients.lock().unwrap().get(c).cloned());
+        slot.forward_as(client, actor, method, params).await
     }
 
     /// Closes every worker connection so they can finish their transactions and exit; kills them after a grace period.
@@ -756,6 +785,11 @@ impl Host {
         }
     }
 
+    /// Marks `client` as an AI connection named `name`: every request it makes reaches the worker as `ai:<name>`.
+    pub fn mark_ai_client(&self, client: &str, name: &str) {
+        self.ai_clients.lock().unwrap().insert(client.to_string(), format!("ai:{name}"));
+    }
+
     /// The workspace folder a window or tab (`client`) uses now.
     pub fn client_folder(&self, client: &str) -> String {
         self.bound(Some(client))
@@ -790,6 +824,7 @@ impl Host {
     /// A window or tab went away: its worker stops when nobody else uses it.
     pub async fn unbind_client(&self, client: &str) {
         let _one_at_a_time = self.ops.lock().await;
+        self.ai_clients.lock().unwrap().remove(client);
         let old = self.bindings.lock().unwrap().remove(client);
         if let Some(folder) = old {
             // A connection that merely ends (a short rpc connection, a page reload) does not stop the worker of the
