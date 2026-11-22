@@ -149,17 +149,17 @@
             "icon": "save-all"
           },
           {
+            "id": "import",
+            "role": "event",
+            "label": "action.import",
+            "icon": "link"
+          },
+          {
             "id": "backup",
             "role": "run",
             "action": "backup",
             "label": "action.backup",
             "icon": "archive-restore"
-          },
-          {
-            "id": "import",
-            "role": "event",
-            "label": "action.import",
-            "icon": "link"
           }
         ],
         "resultTabs": [

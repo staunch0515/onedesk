@@ -331,6 +331,8 @@ describe("datasource: manifest", () => {
     expect(m.contributes.actions.map((a: any) => a.id).sort()).toEqual(["backup", "query", "test"]);
     expect(m.contributes.actions.find((a: any) => a.id === "backup")).toMatchObject({ kinds: ["source"], output: "link", saveFirst: true });
     expect(m.contributes.pages[0].actions.find((a: any) => a.id === "backup")).toMatchObject({ role: "run", action: "backup" });
+    // The action bar shows the first four; the rest go under "More actions". Import stays a button (e2e round15 F6).
+    expect(m.contributes.pages[0].actions.map((a: any) => a.id).slice(0, 4)).toEqual(["test", "save", "save-test", "import"]);
   });
 });
 
@@ -566,7 +568,12 @@ describe("datasource: backup action and page", () => {
     const form = ssh.view.find((n: any) => n.id === "backup");
     expect(form.fields.map((f: any) => f.name)).toEqual(["backupName", "backupContainer", "backupPort", "backupUser"]);
     expect(form.fields.every((f: any) => f.param === true)).toBe(true);
-    expect(form.fields[0]).toMatchObject({ placeholder: "shop_copy", required: true, maxLength: 63 });
+    expect(form.fields[0]).toMatchObject({ placeholder: "shop_copy", maxLength: 63 });
+    // The shell refuses every run of the page while a required field is empty: the backup fields (empty unless
+    // backing up) must not stop Test connection (e2e fake-tools / round15 F3).
+    const required = ssh.view.flatMap((n: any) => (n.type === "form" ? n.fields : [])).filter((f: any) => f.required).map((f: any) => f.name);
+    expect(required.every((name: string) => !name.startsWith("backup") && name !== "importUrl")).toBe(true);
+    expect(form.fields.some((f: any) => f.required)).toBe(false);
     const direct = await pages.editor.render(ctxOf(fakeHost(), { resource: SOURCE }));
     expect(direct.view.some((n: any) => n.id === "backup")).toBe(false);
     const run = await pages.editor.render(ctxOf(fakeHost(), { resource: SSH, run: { id: "r", action: "backup", input: {}, params: PLAN } }));
