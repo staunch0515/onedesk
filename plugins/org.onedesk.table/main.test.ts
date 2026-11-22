@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 // @ts-ignore plain JS module, no types
-import plugin, { freeQueryProblem, tableRows, getChunked, putChunked, rememberSent, sentOf, snapshot, atSql, changesSql, currentSql, deletedSql, existingSet, historySql, isMissing, prefixesOf, rowsSql, selectList, timeLiteral, treeChildren, treePath } from "./main.js";
+import plugin, { forbiddenName, freeQueryProblem, tableRows, getChunked, putChunked, rememberSent, sentOf, snapshot, atSql, changesSql, currentSql, deletedSql, existingSet, historySql, isMissing, prefixesOf, rowsSql, selectList, timeLiteral, treeChildren, treePath } from "./main.js";
 import { checkActionResult, checkView, hostError, onlyKeys, registry, RENDER_KEYS, TREE_NODE_KEYS } from "../_testing/view-check";
 
 const load = (f: string) => JSON.parse(readFileSync(new URL(`./locales/${f}.json`, import.meta.url), "utf8")) as Record<string, string>;
@@ -456,5 +456,61 @@ describe("table: for AI clients (round 19)", () => {
       expect(ZH[k], k).toBeTruthy();
       expect(JA[k], k).toBeTruthy();
     }
+  });
+});
+
+describe("table: free query forbidden functions (D450)", () => {
+  const bad = (sql: string, name?: string) => {
+    expect(freeQueryProblem(sql), sql).toBe("forbiddenFunction");
+    if (name) expect(forbiddenName(sql), sql).toBe(name);
+  };
+  it("refuses server-acting, file-reading and text-running functions, however they are spelled", () => {
+    bad("SELECT pg_terminate_backend(1)", "pg_terminate_backend");
+    bad("SELECT PG_TERMINATE_BACKEND(1)", "PG_TERMINATE_BACKEND");
+    bad('SELECT "pg_terminate_backend"(1)', "pg_terminate_backend");
+    bad('SELECT pg_catalog."Pg_Cancel_Backend"(1)');
+    bad("SELECT pg_catalog.pg_terminate_backend(pid) FROM pg_stat_activity", "pg_terminate_backend");
+    bad('SELECT "pg_catalog"."pg_terminate_backend"(1)');
+    bad("select  pg_cancel_backend /* x */ (1)");
+    bad("SELECT pg_cancel_backend\n(1)");
+    bad("SELECT dblink('host=x', 'select 1')");
+    bad("SELECT * FROM dblink_exec('x','y') AS t(a text)");
+    bad("SELECT pg_read_file('/etc/passwd')");
+    bad("SELECT pg_read_binary_file('/etc/passwd')");
+    bad("SELECT lo_import('/etc/passwd')");
+    bad("SELECT lo_export(1, '/tmp/x')");
+    bad("SELECT * FROM pg_ls_dir('/')");
+    bad("SELECT * FROM pg_ls_logdir()");
+    bad("SELECT pg_sleep(100)");
+    bad("SELECT pg_advisory_lock(1)");
+    bad("SELECT set_config('x','y',false)");
+    bad("SELECT query_to_xml('select pg_terminate_backend(1)', true, true, '')");
+    bad("SELECT database_to_xml(true, true, '')");
+    bad("WITH a AS (SELECT pg_terminate_backend(1)) SELECT * FROM a");
+    bad("SELECT (SELECT pg_read_file('x'))");
+    bad("SELECT 1 FROM t WHERE x = (SELECT lo_import('f'))");
+    bad("(SELECT 1) UNION (SELECT pg_sleep(1)::int)");
+    bad("SELECT 1 /* a */ FROM /* b */ pg_catalog . pg_ls_dir ('x')");
+  });
+  it("refuses COPY anywhere and names spelled with a Unicode escape", () => {
+    expect(freeQueryProblem("COPY (SELECT 1) TO PROGRAM 'x'")).toBe("notSelect");
+    bad("WITH a AS (SELECT 1) COPY a TO '/tmp/x'");
+    expect(freeQueryProblem('SELECT U&"pg_terminate_b\\0061ckend"(1)')).toBe("unicodeEscape");
+    expect(freeQueryProblem('SELECT u&"x" FROM t')).toBe("unicodeEscape");
+  });
+  it("lets ordinary queries through, including names only inside strings and comments", () => {
+    expect(freeQueryProblem("SELECT 'pg_terminate_backend', \"copied\", \"lo\", a.lower_name, 'x lo_import' FROM t")).toBeNull();
+    expect(freeQueryProblem("SELECT 1 -- pg_sleep(1)\n, 2 /* pg_read_file */")).toBeNull();
+    expect(freeQueryProblem("SELECT $$ pg_sleep(1) $$, E'pg_ls_dir\\'' FROM t")).toBeNull();
+    expect(freeQueryProblem("SELECT count(*), now(), coalesce(a, b), pg_typeof(a), current_setting('x') FROM shop.orders")).toBeNull();
+    expect(freeQueryProblem("SELECT lower(a), copy_count, load_x FROM t")).toBeNull();
+  });
+  it("the plugin refuses with the name in its text, in each language, and never reaches the data source", async () => {
+    const { host } = fakeHost();
+    await expect(registry(plugin).actions.aiRunSql(ctxOf(host, { runId: "f1" }), { sql: "SELECT pg_catalog.pg_terminate_backend(1)" })).rejects.toThrow("“pg_terminate_backend” is not allowed");
+    await expect(registry(plugin).actions.aiRunSql(ctxOf(host, { runId: "f2", locale: "zh-CN" }), { sql: "SELECT pg_sleep(1)" })).rejects.toThrow("“pg_sleep”不允许");
+    await expect(registry(plugin).actions.aiRunSql(ctxOf(host, { runId: "f3", locale: "ja-JP" }), { sql: "SELECT lo_import('x')" })).rejects.toThrow("「lo_import」は自由クエリでは使えません");
+    expect(host.actions.call).not.toHaveBeenCalled();
+    for (const l of [EN, ZH, JA]) expect(l["ai.tool.runSql"]).toMatch(/read-only database role|只读的数据库角色|読み取り専用のデータベースロール/);
   });
 });

@@ -39,3 +39,13 @@
 
 - `run_sql` 没有把语句限制在“映射过的表”上：从语句里认表名不可靠（子查询、CTE、别名），真正的边界是只读事务、AI 环境指向的数据源和账号。如需限制，要么由数据库账号给只读且只授权映射表，要么内核/插件另定规则。
 - 假设 `describe` 的动态参数动作返回 `{output:{type:"none"}, params}`（协议 §2.4）；`output:"none"` 的动作清单上已有先例（`OutputType::None`）。
+
+## D450⑥：自由查询的函数黑名单（已做）
+
+`org.onedesk.table` 的 `run_sql`（`aiRunSql`）在“单条 SELECT/WITH”之后，再按词检查（`sqlWords`/`forbiddenName`，在 `freeQueryProblem` 里）：
+- 词取自字符串、注释、美元引号之外的文本，`"带引号的名字"` 取引号里的内容（`""` 还原），不分大小写，schema 前缀因按词拆开所以无效（`pg_catalog.pg_terminate_backend`、`"pg_catalog"."Pg_Cancel_Backend"`、注释/换行隔开都拦得住）。
+- 精确：`copy`、`pg_sleep`、`pg_terminate_backend`、`pg_cancel_backend`、`set_config`、`pg_reload_conf`、`query_to_xml`、`cursor_to_xml`、`pg_notify` 等；前缀：`dblink*`、`pg_read_*`（含 `pg_read_file`/`pg_read_binary_file`）、`pg_ls_*`、`lo_*`（`lo_import`/`lo_export`）、`pg_advisory_*`、`pg_file_*`、`pg_replication_*`、`pg_logical_*`…；含 `_to_xml` 的（`query_to_xml`、`database_to_xml` 能把字符串当 SQL 跑）。
+- `U&"…"` 写法的名字（能用转义拼出别的名字）整体拒绝：`ai.sql.unicodeEscape`。
+- 错误文字 `ai.sql.forbiddenFunction`（带名字）英中日；`ai.tool.runSql`（给 AI 的说明，也是用户在清单里看到的）末尾写明“自由查询的数据源请使用只读数据库角色”。
+- 已知限度：这是词法黑名单，挡不住 PostgreSQL 将来新增的或扩展里的有副作用函数，也挡不住字符串里的 SQL 被某个没列入的函数执行；根本边界仍是只读事务 + 只读数据库角色。
+- vitest：大小写、带引号标识符、schema 前缀、注释和换行隔开、子查询/CTE/UNION 里、`COPY`、`U&""`、以及字符串/注释里出现名字不误拦。

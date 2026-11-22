@@ -59,7 +59,7 @@
   "action.aiListTables": "列出表（AI）",
   "action.aiRunSql": "自由查询（AI）",
   "ai.tool.listTables": "列出映射过的表及其列（实体、表、字段、列、说明）。",
-  "ai.tool.runSql": "在 AI 环境的数据库上只读运行一条 SELECT 或 WITH 语句。表名和列名请用 list_tables 给出的。",
+  "ai.tool.runSql": "在 AI 环境的数据库上只读运行一条 SELECT 或 WITH 语句。表名和列名请用 list_tables 给出的。自由查询所用的数据源请使用只读的数据库角色。",
   "ai.tablesListed": "已列出 {count} 列",
   "ai.col.entity": "实体",
   "ai.col.table": "表",
@@ -71,5 +71,7 @@
   "ai.sql.tooLong": "语句太长。",
   "ai.sql.backslash": "不允许反斜杠命令。",
   "ai.sql.severalStatements": "只允许一条语句。",
-  "ai.sql.notSelect": "只允许 SELECT 或 WITH 语句。"
+  "ai.sql.notSelect": "只允许 SELECT 或 WITH 语句。",
+  "ai.sql.forbiddenFunction": "“{name}”不允许出现在自由查询里（它会作用于服务器或读取文件）。",
+  "ai.sql.unicodeEscape": "自由查询里不允许写成 U&\"…\" 的名字。"
 }
