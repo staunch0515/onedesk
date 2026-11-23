@@ -513,6 +513,24 @@ pub struct ViewField {
     /// Round 15 (D414): for a `ref` field, the kinds it may point at (full `<pluginId>:<kind>`, or
     /// the page's own plugin's short name).
     pub kinds: Option<Vec<String>>,
+    /// Round 21 (D462): writing help for this field. Absent = the shell offers it on editable
+    /// `text`, `longtext` and `code` fields whenever an assist provider is installed.
+    #[serde(default)]
+    pub assist: Option<FieldAssist>,
+}
+
+/// Round 21 (D462, docs/redesign/ai-assist.md §5): how the shell's writing help treats one field.
+#[skip_serializing_none]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[ts(export, optional_fields)]
+pub struct FieldAssist {
+    /// `true`: no writing help on this field.
+    pub off: Option<bool>,
+    /// What the field should contain, for the helper (e.g. "a read-only SQL query").
+    pub hint: Option<Label>,
+    /// `text` | `markdown` | `json` | `code:<language>`; absent = from the field kind.
+    pub format: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -2226,6 +2244,46 @@ pub struct RunRowsResult {
     pub total: u64,
 }
 
+/* ================================================================== round 21 (D462)
+   Writing help ("assist", docs/redesign/ai-assist.md). The kernel knows only the interface name: the
+   plugin implementing it decides how help is produced. */
+
+/// The interface an assist provider implements (no connection kind; action `assist`).
+pub const ASSIST_INTERFACE: &str = "onedesk.assist/1";
+
+pub mod method21 {
+    /// (no params) → `AssistProvider`.
+    pub const ASSIST_PROVIDER: &str = "assist.provider";
+    /// `AssistStartParams` → run id (string): the provider's `assist` action runs as a normal run.
+    pub const ASSIST_START: &str = "assist.start";
+}
+
+/// Whether writing help is available: an enabled plugin implements `ASSIST_INTERFACE`.
+#[skip_serializing_none]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, optional_fields)]
+pub struct AssistProvider {
+    pub available: bool,
+    pub plugin: Option<String>,
+    pub label: Option<Label>,
+}
+
+#[skip_serializing_none]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, optional_fields)]
+pub struct AssistStartParams {
+    /// The page the help is for (its environment and protections apply).
+    pub target: String,
+    pub tab_id: String,
+    pub env_id: Option<String>,
+    pub locale: Option<String>,
+    /// What the provider's contract asks for (ai-assist.md §9); handed to the action as its input.
+    #[serde(default)]
+    pub input: JsonMap,
+}
+
 /// Methods of round 7 (D345): install requests made by plugins, answered by the interface.
 /// `plugin.checkRemove` (`PluginVersionParams`) lets the main process ask before removing a
 /// version: `conflict/dependents` when enabled plugins depend on it (D344).
@@ -2593,6 +2651,7 @@ mod tests {
                 required: None,
                 max_length: None,
                 kinds: None,
+                assist: None,
             }],
         };
         assert_eq!(

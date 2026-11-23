@@ -1562,6 +1562,9 @@ fn read_js_files(dir: &Path) -> Result<HashMap<String, String>, String> {
     while let Some(rel) = stack.pop() {
         for e in std::fs::read_dir(dir.join(&rel)).map_err(|e| e.to_string())? {
             let e = e.map_err(|e| e.to_string())?;
+            if crate::util::is_junk_name(&e.file_name()) {
+                continue;
+            }
             let ft = e.file_type().map_err(|e| e.to_string())?;
             let r = rel.join(e.file_name());
             if ft.is_dir() {
@@ -1586,6 +1589,25 @@ mod tests {
             assert_eq!(valid_locale(Some(bad)), None, "{bad}");
         }
         assert_eq!(valid_locale(None), None);
+    }
+
+    #[test]
+    fn package_reading_skips_appledouble_and_ds_store() {
+        let tmp = tempfile::tempdir().unwrap();
+        let d = tmp.path();
+        std::fs::create_dir_all(d.join("lib")).unwrap();
+        std::fs::write(d.join("main.js"), "export default {};").unwrap();
+        std::fs::write(d.join("lib/a.js"), "1").unwrap();
+        // AppleDouble files are binary, `._x.js` has a `.js` extension.
+        std::fs::write(d.join("._main.js"), [0u8, 5, 0x16, 7, 0xff, 0xfe]).unwrap();
+        std::fs::write(d.join("lib/._a.js"), [0xffu8, 0xfe]).unwrap();
+        std::fs::write(d.join(".DS_Store"), [0xffu8]).unwrap();
+        std::fs::create_dir_all(d.join("._locales")).unwrap();
+        std::fs::write(d.join("._locales/x.js"), [0xffu8]).unwrap();
+        let files = read_js_files(d).unwrap();
+        let mut names: Vec<_> = files.keys().cloned().collect();
+        names.sort();
+        assert_eq!(names, vec!["lib/a.js", "main.js"]);
     }
 
     #[test]

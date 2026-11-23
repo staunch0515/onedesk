@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 // @ts-ignore plain JS module, no types
-import plugin, { MAX_DESCRIPTION, MAX_NAME, MAX_PACKAGES, MAX_PROBES, clean, compareVersions, statusOf } from "./main.js";
+import plugin, { MAX_DESCRIPTION, MAX_NAME, MAX_PACKAGES, MAX_PROBES, PACKAGE_FILE, clean, compareVersions, statusOf } from "./main.js";
 import { RENDER_KEYS, TREE_NODE_KEYS, TREE_PAGE_KEYS, checkView, hostError, onlyKeys, registry } from "../_testing/view-check";
 
 const ROOT = "/Users/me/market";
@@ -291,6 +291,49 @@ describe("market: status", () => {
     expect(field.bind).toBeUndefined();
     expect(out.values).toBeUndefined();
     expect(checkView(out.view)).toEqual([]);
+  });
+});
+
+describe("market: package files (D461)", () => {
+  it("reads id and version from <id>-<version>.odplugin; other names are not packages", () => {
+    const parse = (n: string) => PACKAGE_FILE.exec(n)?.slice(1, 3) ?? null;
+    expect(parse("org.example.notes-0.2.0.odplugin")).toEqual(["org.example.notes", "0.2.0"]);
+    expect(parse("org.example.two-words-1.10.3-beta.1.odplugin")).toEqual(["org.example.two-words", "1.10.3-beta.1"]);
+    expect(parse("org.example.notes.odplugin")).toBeNull();
+    expect(parse("org.example.notes-0.2.0.zip")).toBeNull();
+    expect(parse("readme.txt")).toBeNull();
+  });
+
+  it("lists package files at the top of an authorized folder next to package folders, with their status, and offers them", async () => {
+    const { pages } = registry(plugin);
+    const files = fakeFiles({
+      [`${ROOT}/com.example.zip-1.2.0.odplugin`]: "PK",
+      [`${ROOT}/com.example.same-1.0.0.odplugin`]: "PK",
+      [`${ROOT}/notes.txt`]: "x",
+      ...pkgFiles(`${ROOT}/new`, "com.example.new", "1.0.0", "New", "d"),
+    });
+    const plugins = { list: async () => [{ id: "com.example.same", name: "Same", versions: ["1.0.0"], active: "1.0.0" }] };
+    const out = await pages.browse.render(ctxOf({ files, plugins }));
+    expect(checkView(out.view)).toEqual([]);
+    const rows = rowsOf(out);
+    expect(rows.map((r) => [r[0], r[1], r[3]])).toEqual([
+      ["com.example.same", "1.0.0", "Installed 1.0.0"],
+      ["com.example.zip", "1.2.0", "Not installed"],
+      ["New", "1.0.0", "Not installed"],
+    ]);
+    expect(rows[1]![2]).toContain("com.example.zip-1.2.0.odplugin");
+    const options = out.view.find((n: any) => n.id === "pick").fields[0].options;
+    expect(options.map((o: any) => o.value)).toEqual([`${ROOT}/com.example.zip-1.2.0.odplugin`, `${ROOT}/new`]);
+  });
+
+  it("installing a package file asks the framework with the file's path", async () => {
+    const { pages } = registry(plugin);
+    const requestInstall = vi.fn(async () => ({ outcome: "installed", id: "com.example.zip", version: "1.2.0" }));
+    const host = { plugins: { requestInstall, list: async () => [] }, files: fakeFiles({}) };
+    const file = `${ROOT}/com.example.zip-1.2.0.odplugin`;
+    const out = await pages.browse.onEvent(ctxOf(host, { params: { pick: file }, draft: {} }), "install");
+    expect(requestInstall).toHaveBeenCalledWith({ folder: file });
+    expect(out.message).toBe("Installed com.example.zip 1.2.0.");
   });
 });
 

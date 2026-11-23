@@ -19,7 +19,8 @@
   "exports": {
     "actions": [
       "analyze",
-      "generate"
+      "generate",
+      "assist"
     ]
   },
   "contributes": {
@@ -97,6 +98,14 @@
         "id": "syncDocs",
         "label": "action.syncDocs",
         "icon": "refresh-cw",
+        "output": "text",
+        "saveFirst": false,
+        "confirm": null
+      },
+      {
+        "id": "assist",
+        "label": "action.assist",
+        "icon": "sparkles",
         "output": "text",
         "saveFirst": false,
         "confirm": null
@@ -223,6 +232,11 @@
     "onedesk.ai.generate/1": {
       "actions": [
         "generate"
+      ]
+    },
+    "onedesk.assist/1": {
+      "actions": [
+        "assist"
       ]
     }
   }

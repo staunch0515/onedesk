@@ -23,6 +23,13 @@ pub fn err_d(code: ErrorCode, detail: impl Into<String>) -> ProtocolError {
     ProtocolError { code, params: BTreeMap::new(), detail: Some(detail.into()) }
 }
 
+/// Files a file system adds beside a package's own (AppleDouble `._*` from copying to exFAT/FAT or
+/// a zip, Finder's `.DS_Store`): never part of a package, never read or copied.
+pub fn is_junk_name(name: &std::ffi::OsStr) -> bool {
+    let n = name.to_string_lossy();
+    n.starts_with("._") || n == ".DS_Store"
+}
+
 pub fn internal(e: impl std::fmt::Display) -> ProtocolError {
     err_d(ErrorCode::Internal, e.to_string())
 }

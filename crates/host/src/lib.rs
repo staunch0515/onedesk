@@ -31,6 +31,7 @@ pub mod install;
 pub mod mcp_socket;
 pub mod plugins;
 pub mod process_groups;
+pub mod unpack;
 pub mod workspaces;
 pub mod ws;
 
@@ -332,6 +333,18 @@ impl Shared {
 }
 
 /// Brings `plugins/.index` up to date (D364). A failure only costs the cache: the kernel scans directly without it.
+/// A package file unpacked for one request (D456); the folder is removed on drop.
+struct Unpacked {
+    dir: PathBuf,
+    root: PathBuf,
+}
+
+impl Drop for Unpacked {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.dir);
+    }
+}
+
 fn refresh_index(plugin_root: &Path, builtin: &[String]) {
     if let Err(e) = index::refresh(plugin_root, builtin) {
         eprintln!("onedesk-host: could not refresh plugins/.index: {e}");
@@ -571,7 +584,28 @@ impl Host {
     /// `app.inspectPlugin`: the worker reads and validates the folder; nothing is copied.
     async fn inspect_plugin(&self, client: Option<&str>, params: Value) -> Result<Value, ProtocolError> {
         let folder = parse::<PluginFolderRef>(params)?;
-        self.forward(client, "plugin.inspect", json!({ "folder": folder.folder })).await
+        // D456: a package file is unpacked first; the worker looks at the unpacked folder, which is then deleted.
+        let unpacked = self.unpack_if_file(&folder.folder)?;
+        let path = unpacked.as_ref().map(|u| u.root.to_string_lossy().into_owned()).unwrap_or(folder.folder);
+        self.forward(client, "plugin.inspect", json!({ "folder": path })).await
+    }
+
+    /// D456: when `path` is a package file (`.odplugin`/`.zip`), unpacks it into `plugins/.tmp/unpacked-…` and
+    /// returns the package folder inside; the folder is removed when the returned value is dropped. A folder
+    /// path gives `None` (the usual folder checks follow).
+    fn unpack_if_file(&self, path: &str) -> Result<Option<Unpacked>, ProtocolError> {
+        let file = PathBuf::from(path);
+        if !file.is_absolute() || !unpack::is_package_file(&file) {
+            return Ok(None);
+        }
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let tmp = install::tmp_dir(&self.data_dir.join("plugins"));
+        std::fs::create_dir_all(&tmp).map_err(|e| err(ErrorCode::Internal, format!("unpack plugin: {e}")))?;
+        let dir = tmp.join(format!("unpacked-{}-{n}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let root = unpack::unpack(&file, &dir, install::MAX_PACKAGE_BYTES).map_err(|p| invalid(p.reason()))?;
+        Ok(Some(Unpacked { dir, root }))
     }
 
     /// `plugin.rescan` with the built-in list (D313).
@@ -602,9 +636,15 @@ impl Host {
     /// COPY once more. Only if all three still agree does it move into `plugins/<id>/<version>`, get
     /// rescanned and recorded as confirmed with that fingerprint. Any difference deletes the copy and refuses.
     async fn install_plugin(&self, client: Option<&str>, params: Value) -> Result<Value, ProtocolError> {
-        let wanted = parse::<AppInstallParams>(params)?;
+        let mut wanted = parse::<AppInstallParams>(params)?;
         if !install::safe_segment(&wanted.id) || !install::safe_segment(&wanted.version) {
             return Err(invalid("badTarget"));
+        }
+        // D456: a package file is unpacked again (not reused from the inspection), and the unpacked folder goes
+        // through every check below exactly like a folder the user named; it is deleted when this returns.
+        let _unpacked = self.unpack_if_file(&wanted.folder)?;
+        if let Some(u) = &_unpacked {
+            wanted.folder = u.root.to_string_lossy().into_owned();
         }
         let src = PathBuf::from(&wanted.folder);
         install::check_package(&src, install::MAX_PACKAGE_BYTES).map_err(|p| invalid(p.reason()))?;

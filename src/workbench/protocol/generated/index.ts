@@ -1,6 +1,8 @@
 export type * from "./ActionDecl";
 export type * from "./ActionRole";
 export type * from "./AppInstallParams";
+export type * from "./AssistProvider";
+export type * from "./AssistStartParams";
 export type * from "./AuditFacets";
 export type * from "./AuditFilter";
 export type * from "./AuditResult";
@@ -23,6 +25,7 @@ export type * from "./EnvView";
 export type * from "./ErrorCode";
 export type * from "./EventMessage";
 export type * from "./ExportResult";
+export type * from "./FieldAssist";
 export type * from "./FieldKind";
 export type * from "./FieldOption";
 export type * from "./FormLayout";

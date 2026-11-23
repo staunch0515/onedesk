@@ -33,5 +33,6 @@
   "truncated": "Scan stopped: too many folders to look through (limit {max}).",
   "message.cooldown": "The last request was not completed. Try again in {seconds} s.",
   "reason.incomplete": "The manifest is missing required fields.",
-  "reason.mismatch": "The manifest does not match its folder (id or version differs)."
+  "reason.mismatch": "The manifest does not match its folder (id or version differs).",
+  "file.description": "Package file {file}: the name, description and permissions are shown before installing."
 }

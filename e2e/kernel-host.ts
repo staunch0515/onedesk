@@ -1,13 +1,37 @@
 /** Shared by the real-kernel specs: devhost lifecycle, page helpers, raw protocol calls. */
 import { spawn, type ChildProcess } from "node:child_process";
+import { existsSync, mkdirSync, readdirSync, rmSync, symlinkSync } from "node:fs";
 import path from "node:path";
 import net from "node:net";
 import { randomBytes } from "node:crypto";
 import { expect, type Page } from "@playwright/test";
 
 export const ROOT = path.resolve(import.meta.dirname, "..");
-export const OUT = path.join(ROOT, "docs/screenshots");
+export const OUT = path.join(ROOT, "test-results/screenshots");
 export const DEVHOST = process.env.ONEDESK_DEVHOST_BIN ?? path.join(ROOT, "target/debug/onedesk-devhost");
+
+/** Official plugins: bundled (plugins/) and external (plugins-external/, D456). The kernel specs load both. */
+export const PLUGIN_ROOTS = [path.join(ROOT, "plugins"), path.join(ROOT, "plugins-external")];
+
+/** Puts a link to every entry of both plugin folders into `into` (which must exist). */
+export function linkAllPlugins(into: string): void {
+  for (const r of PLUGIN_ROOTS) {
+    if (!existsSync(r)) continue;
+    for (const n of readdirSync(r)) if (!n.startsWith(".") && !existsSync(path.join(into, n))) symlinkSync(path.join(r, n), path.join(into, n));
+  }
+}
+
+let merged: string | null = null;
+/** One folder (per test process) that links every official plugin: the default for `startHost`. */
+export function allPlugins(): string {
+  if (merged) return merged;
+  const dir = path.join(ROOT, "test-results", `all-plugins-${process.pid}`);
+  rmSync(dir, { recursive: true, force: true });
+  mkdirSync(dir, { recursive: true });
+  linkAllPlugins(dir);
+  merged = dir;
+  return dir;
+}
 
 export type Host = { proc: ChildProcess; port: number; token: string; dataDir: string };
 
@@ -23,7 +47,7 @@ async function freePort(): Promise<number> {
 }
 
 /** `pluginsDir`: e.g. the copy from `FakeTools.preparePlugins` (fake ssh/docker). `env`: extra environment for the devhost (e.g. ONEDESK_PLUGIN_IDLE_MS); the secret store is always the in-memory one. */
-export async function startHost(dataDir: string, env: Record<string, string> = {}, pluginsDir: string = path.join(ROOT, "plugins")): Promise<Host> {
+export async function startHost(dataDir: string, env: Record<string, string> = {}, pluginsDir: string = allPlugins()): Promise<Host> {
   const port = await freePort();
   const token = randomBytes(16).toString("hex");
   const proc = spawn(DEVHOST, ["--data-dir", dataDir, "--port", String(port), "--token", token, "--plugins", pluginsDir], {

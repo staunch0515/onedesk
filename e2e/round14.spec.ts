@@ -93,7 +93,9 @@ test("D2: a link, a prompt, a note and an HTTP request are created from the page
   await page.getByRole("textbox", { name: "Content", exact: true }).fill("Quarterly roadmap with the aurora project");
   await save();
   await page.getByRole("tab", { name: /Welcome/ }).click();
-  await entry(page, "New HTTP request").click();
+  // D456: HTTP requests are an external plugin; they are created from the New menu, not the welcome page
+  await page.getByRole("button", { name: "New", exact: true }).first().click();
+  await page.getByRole("menuitem", { name: /HTTP request/i }).first().click();
   await page.getByRole("textbox", { name: "Address", exact: true }).fill(`${srv.url}/echo`);
   await save();
 

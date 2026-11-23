@@ -3,12 +3,14 @@
 # it runs the app with a temporary data dir and ONEDESK_SECRET_STORE=memory (no keychain).
 # Usage: scripts/smoke-app.sh [path/to/OneDesk.app]
 #   default app: $CARGO_TARGET_DIR/release/bundle/macos/OneDesk.app (or ./target/…)
-# Checks: version 1.0.0 · ad-hoc signature valid · worker/mcp/plugins inside · launch · main process alive ·
+# Checks: version (= src-tauri/tauri.conf.json) · ad-hoc signature valid · worker/mcp/plugins inside · launch · main process alive ·
 #   window exists (skipped with a note when macOS does not let us list windows) · mcp.sock bound ·
 #   `onedesk-mcp --print-config` · killing the worker brings a new one · quit.
 # Exit 0 = all passed, 1 = a check failed. Output: one "ok:" / "FAIL:" / "skip:" line per check.
 set -u
 tgt="${CARGO_TARGET_DIR:-$(cd "$(dirname "$0")/.." && pwd)/target}"
+# the universal release build (scripts/release-mac.sh) when there is one, else the host-architecture build
+[ -d "$tgt/universal-apple-darwin/release/bundle/macos/OneDesk.app" ] && [ -z "${1:-}" ] && set -- "$tgt/universal-apple-darwin/release/bundle/macos/OneDesk.app"
 app="${1:-$tgt/release/bundle/macos/OneDesk.app}"
 fail=0
 ok()   { echo "ok: $*"; }
@@ -18,7 +20,8 @@ skip() { echo "skip: $*"; }
 macos="$app/Contents/MacOS"
 
 ver="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Contents/Info.plist" 2>/dev/null)"
-[ "$ver" = "1.0.0" ] && ok "version $ver" || bad "version is '$ver', expected 1.0.0"
+want="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["version"])' "$(dirname "$0")/../src-tauri/tauri.conf.json")"
+[ "$ver" = "$want" ] && ok "version $ver" || bad "version is '$ver', expected $want"
 codesign --verify --deep --strict "$app" 2>/dev/null && ok "ad-hoc signature valid" || bad "codesign --verify failed"
 for f in onedesk-worker onedesk-mcp; do [ -x "$macos/$f" ] && ok "$f present" || bad "$f missing"; done
 n="$(find "$app/Contents/Resources/plugins" -name manifest.json -maxdepth 2 2>/dev/null | wc -l | tr -d ' ')"

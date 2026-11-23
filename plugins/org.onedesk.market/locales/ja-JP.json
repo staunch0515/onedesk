@@ -33,5 +33,6 @@
   "truncated": "スキャンを中止しました：調べるフォルダーが多すぎます（上限 {max}）。",
   "message.cooldown": "前のリクエストが完了していません。{seconds} 秒後にもう一度お試しください。",
   "reason.incomplete": "マニフェストに必須項目がありません。",
-  "reason.mismatch": "マニフェストがフォルダーと一致しません（id または version が異なります）。"
+  "reason.mismatch": "マニフェストがフォルダーと一致しません（id または version が異なります）。",
+  "file.description": "パッケージファイル {file}：インストール前に名前・説明・権限が表示されます。"
 }

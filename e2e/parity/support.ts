@@ -11,7 +11,7 @@ import type { Page } from "@playwright/test";
 import { ROOT, rpc, type Host } from "../kernel-host";
 import type { Pg } from "../pg-fixture";
 
-export const EVID = path.join(ROOT, "docs/screenshots/parity");
+export const EVID = path.join(ROOT, "test-results/screenshots/parity");
 mkdirSync(EVID, { recursive: true });
 const RESULTS = path.join(EVID, "results.json");
 

@@ -456,7 +456,7 @@ describe("ai: generate (K7–K9)", () => {
     expect((await gen(host)).check).toEqual({ ok: false, reason: "notSelect" });
   });
   it("implements the generate interface without a kind (no anchor resource, D445) and uses the chat interface; reads other resources only through its own permission", () => {
-    expect(manifest.implements).toEqual({ "onedesk.ai.generate/1": { actions: ["generate"] } });
+    expect(manifest.implements).toEqual({ "onedesk.ai.generate/1": { actions: ["generate"] }, "onedesk.assist/1": { actions: ["assist"] } });
     expect(manifest.activation).toBeUndefined();
     expect(manifest.contributes.kinds.map((k: any) => k.id)).toEqual(["analysis", "doc"]);
     expect(manifest.requires).toEqual({ files: true, resources: true });
@@ -469,9 +469,9 @@ describe("ai: generate (K7–K9)", () => {
     expect(st).toMatchObject({ type: "resource", kinds: ["@implements:onedesk.ai.chat/1"], default: "" });
   });
   it("is exported and declared", () => {
-    expect(manifest.exports.actions).toEqual(["analyze", "generate"]);
-    expect(manifest.contributes.actions.map((a: any) => a.id).sort()).toEqual(["analyze", "generate", "send", "syncDocs"]);
-    expect(Object.keys(registry(plugin).actions).sort()).toEqual(["analyze", "generate", "send", "syncDocs"]);
+    expect(manifest.exports.actions).toEqual(["analyze", "generate", "assist"]);
+    expect(manifest.contributes.actions.map((a: any) => a.id).sort()).toEqual(["analyze", "assist", "generate", "send", "syncDocs"]);
+    expect(Object.keys(registry(plugin).actions).sort()).toEqual(["analyze", "assist", "generate", "send", "syncDocs"]);
   });
 });
 

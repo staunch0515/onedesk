@@ -220,6 +220,7 @@ fn param_form(r: &Row, ref_options: &dyn Fn(&str) -> Option<Vec<FieldOption>>) -
             required: None,
             max_length: None,
             kinds: None,
+            assist: None,
         });
     }
     (vec![ViewNode::Form { id: "params".into(), layout: FormLayout::Stack, label: None, fields }], values)

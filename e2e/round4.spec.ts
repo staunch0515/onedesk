@@ -196,7 +196,7 @@ test("removing a version that resources use asks first; they show as plugin miss
   await shot(page, "plugin-missing");
 
   // install the removed version again from the built-in package folder
-  await lookInside(page, path.join(ROOT, "plugins/org.onedesk.sample"));
+  await lookInside(page, path.join(ROOT, "plugins-external/org.onedesk.sample"));
   await page.getByRole("dialog").getByRole("button", { name: "Install", exact: true }).click();
   await expect(page.getByRole("dialog")).toHaveCount(0);
   await expect.poll(async () => (await bodyOf(page, rid)).state).toBe("ok");

@@ -85,5 +85,17 @@
   "field.system": "System prompt (sent with the request)",
   "analysis.draftName": "Analysis draft",
   "summary.proposed": "Proposal ready.",
-  "summary.proposedBad": "The proposal did not pass the check."
+  "summary.proposedBad": "The proposal did not pass the check.",
+  "action.assist": "Writing help",
+  "assist.system.field": "You help the user write one field of a page in OneDesk, a desktop workbench. Follow the instruction. Reply with only the new content of the field, in the format named in the request and in the user's language; no explanations, no greetings.",
+  "assist.system.fill": "You help the user fill in a page in OneDesk, a desktop workbench. Follow the instruction. Reply with only one JSON object: its keys are the field names given in backticks, its values are the new contents as strings, in each field's format and the user's language. Leave out fields you would not change.",
+  "assist.request.instruction": "Instruction",
+  "assist.request.noInstruction": "(no instruction: improve or complete the content)",
+  "assist.request.field": "Field to write: {label} ({format})",
+  "assist.request.empty": "(empty)",
+  "assist.request.context": "Other fields on the page",
+  "assist.request.fields": "Fields",
+  "assist.error.badField": "That field cannot be written with AI.",
+  "assist.error.noFields": "This page has no field AI can write.",
+  "assist.error.badAnswer": "The answer could not be read as field values. Try again."
 }

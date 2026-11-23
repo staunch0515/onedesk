@@ -2,10 +2,9 @@
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { expect, test, type Page } from "@playwright/test";
-import { DEVHOST, openKernel, rpc, startHost, stopHost, type Host } from "../kernel-host";
+import { DEVHOST, openKernel, rpc, startHost, stopHost, type Host, allPlugins } from "../kernel-host";
 import { DB1, PG_PASSWORD, PG_USER, pgBinOrNull, startPg, type Pg } from "../pg-fixture";
 import { FakeTools } from "../fake-tools";
-import { ROOT } from "../kernel-host";
 import { mkBase, row, seedParity, shot, unverified } from "./support";
 import { existsSync } from "node:fs";
 
@@ -69,7 +68,7 @@ test.beforeAll(async () => {
   writeFileSync(path.join(catalog, "mapping.yaml"), MAPPING);
   fake = new FakeTools(path.join(base, "fake"), pgBinOrNull);
   fake.remoteDockerShim();
-  const plugins = fake.preparePlugins(path.join(ROOT, "plugins"), path.join(base, "plugins"), path.join(base, "data"));
+  const plugins = fake.preparePlugins(allPlugins(), path.join(base, "plugins"), path.join(base, "data"));
   host = await startHost(path.join(base, "data"), {}, plugins);
 });
 test.afterAll(async () => {

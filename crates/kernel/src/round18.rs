@@ -218,7 +218,7 @@ impl Inner {
     /* ---------------------------------------------------------------- X15 */
 
     /// The enabled plugins implementing `interface`, by id.
-    fn implementers(&self, interface: &str) -> Vec<&'static Plugin> {
+    pub(crate) fn implementers(&self, interface: &str) -> Vec<&'static Plugin> {
         let mut ids = self.registry.ids();
         ids.sort();
         ids.iter()

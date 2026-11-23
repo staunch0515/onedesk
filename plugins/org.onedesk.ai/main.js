@@ -3,6 +3,7 @@
 // an analysis with its run (K6), and an exported `generate` for other plugins (K7–K9, a proposal, never data).
 // It never talks to a provider directly: the chat goes through the plugin interface `onedesk.ai.chat/1` to the
 // connection resource the user picked (ctx.host.interfaces.call). Sandbox rules: no console, timers or fetch.
+import { assist } from "./assist.js";
 
 export const PLUGIN = "org.onedesk.ai";
 export const IFACE = "onedesk.ai.chat/1";
@@ -684,6 +685,9 @@ export default {
       const text = data.error ? data.error.message : data.needsPreview ? data.request : data.pending ? "" : data.text;
       return { output: { type: "text", text: String(text || ""), format: "markdown" }, data };
     });
+
+    // D462: writing help for every page (the shell's ✨ buttons; interface onedesk.assist/1, see assist.js).
+    host.actions.handle("assist", (ctx, input) => assist(ctx, input, { tr, policyOf, pickConnection, chat, audit, maskText, isSensitiveColumn, estimateTokens, MASK }));
 
     // K2: folder → document resources.
     host.actions.handle("syncDocs", async (ctx) => {

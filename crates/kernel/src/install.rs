@@ -214,6 +214,8 @@ impl Inner {
     }
 
     /// The folder must be one the plugin can read: granted to it, its package, its `plugin-data`.
+    /// D461: a plugin package FILE there (`.odplugin`, or `.zip`) is accepted too; the main process unpacks it
+    /// before the usual inspection, and the user still confirms what is inside.
     fn request_folder(&self, plugin: &Plugin, raw: &str) -> KResult<PathBuf> {
         let path = Path::new(raw);
         if !path.is_absolute() {
@@ -228,7 +230,7 @@ impl Inner {
         if !inside {
             return Err(outside_grant(raw));
         }
-        if !real.is_dir() {
+        if !real.is_dir() && !is_package_file(&real) {
             return Err(invalid("notFolder"));
         }
         Ok(real)
@@ -348,6 +350,12 @@ impl Inner {
         }
         self.emit(topic7::INSTALL_REQUESTS, None, None);
     }
+}
+
+/// D461: a plugin package file (zip) by its extension: `.odplugin`, or `.zip`.
+fn is_package_file(p: &Path) -> bool {
+    let ext = p.extension().and_then(|e| e.to_str()).map(str::to_ascii_lowercase);
+    p.is_file() && matches!(ext.as_deref(), Some("odplugin") | Some("zip"))
 }
 
 #[cfg(test)]

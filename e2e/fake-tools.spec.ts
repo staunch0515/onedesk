@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { expect, test, type Page } from "@playwright/test";
 import { FakeTools } from "./fake-tools";
-import { DEVHOST, openKernel, ROOT, rpc, startHost, stopHost, type Host } from "./kernel-host";
+import { DEVHOST, openKernel, rpc, startHost, stopHost, type Host, allPlugins } from "./kernel-host";
 import { pgBinOrNull } from "./pg-fixture";
 
 test.use({ viewport: { width: 1280, height: 800 }, locale: "en-US" });
@@ -19,7 +19,7 @@ test.beforeAll(async () => {
   else test.skip(!existsSync(DEVHOST), `onedesk-devhost not built at ${DEVHOST}`);
   base = realpathSync(mkdtempSync(path.join(tmpdir(), "od-fake-")));
   fake = new FakeTools(path.join(base, "fake"), pgBinOrNull);
-  host = await startHost(path.join(base, "data"), {}, fake.preparePlugins(path.join(ROOT, "plugins"), path.join(base, "plugins"), path.join(base, "data")));
+  host = await startHost(path.join(base, "data"), {}, fake.preparePlugins(allPlugins(), path.join(base, "plugins"), path.join(base, "data")));
 });
 test.afterAll(async () => {
   if (host) await stopHost(host);

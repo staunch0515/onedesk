@@ -1,12 +1,18 @@
-import { readFileSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
-const dir = (p: string) => new URL(`../${p}`, import.meta.url);
+// Official plugins live in plugins/ (bundled) and plugins-external/ (D456); both are checked.
+const ROOTS = [new URL("../", import.meta.url), new URL("../../plugins-external/", import.meta.url)];
+const dir = (p: string) => {
+  const [first] = p.split("/");
+  const root = ROOTS.find((r) => first && existsSync(new URL(first, r))) ?? ROOTS[0]!;
+  return new URL(p, root);
+};
 const read = (p: string) => JSON.parse(readFileSync(dir(p), "utf8")) as Record<string, string>;
 const holes = (s: string) => (s.replace(/\{\{[^{}]*\}\}/g, "").match(/\{[a-zA-Z_]+\}/g) ?? []).sort().join();
 
 // Every built-in plugin: English, Chinese and Japanese carry the same keys, and the manifest names all three files.
-const PLUGINS = readdirSync(dir("")).filter((d) => d.startsWith("org.onedesk.")).sort();
+const PLUGINS = ROOTS.flatMap((r) => (existsSync(r) ? readdirSync(r) : [])).filter((d) => d.startsWith("org.onedesk.")).sort();
 
 describe.each(PLUGINS)("%s locales", (p) => {
   it("en-US, zh-CN and ja-JP have the same keys and {holes}", () => {

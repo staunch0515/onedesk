@@ -22,8 +22,8 @@ export default defineConfig({
   },
   test: {
     environment: "node",
-    include: ["src/**/*.test.{ts,tsx}", "plugins/**/*.test.ts"],
-    exclude: ["node_modules/**"],
+    include: ["src/**/*.test.{ts,tsx}", "plugins/**/*.test.ts", "plugins-external/**/*.test.ts"],
+    exclude: ["node_modules/**", "**/._*"], // ._* : macOS AppleDouble files on exFAT disks
     coverage: {
       provider: "v8",
       include: ["src/workbench/protocol/**/*.ts"],

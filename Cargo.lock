@@ -2482,7 +2482,7 @@ checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
 
 [[package]]
 name = "onedesk"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "onedesk-host",
  "onedesk-protocol",
@@ -2496,8 +2496,10 @@ dependencies = [
 
 [[package]]
 name = "onedesk-host"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
+ "crc32fast",
+ "flate2",
  "futures-util",
  "libc",
  "onedesk-kernel",
@@ -2511,7 +2513,7 @@ dependencies = [
 
 [[package]]
 name = "onedesk-kernel"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "bytes",
  "http-body",
@@ -2534,7 +2536,7 @@ dependencies = [
 
 [[package]]
 name = "onedesk-mcp"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "libc",
  "onedesk-host",
@@ -2548,7 +2550,7 @@ dependencies = [
 
 [[package]]
 name = "onedesk-protocol"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -2558,7 +2560,7 @@ dependencies = [
 
 [[package]]
 name = "onedesk-worker"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "onedesk-kernel",
  "onedesk-protocol",

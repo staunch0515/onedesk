@@ -16,7 +16,7 @@
  *  - scp     : copies from/to `remoteHome`
  *  - docker-exec / docker-cp : run the command locally / copy into `containerFs`
  */
-import { chmodSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
 export type Step = { out: string } | { err: string } | { sleep: number };
@@ -117,7 +117,8 @@ export class FakeTools {
     rmSync(outDir, { recursive: true, force: true });
     mkdirSync(outDir, { recursive: true });
     for (const name of readdirSync(realPlugins)) {
-      const src = path.join(realPlugins, name);
+      // realpath: `realPlugins` may be a folder of links (kernel-host allPlugins); a copy must copy the real files
+      const src = realpathSync(path.join(realPlugins, name));
       if (!statSync(src).isDirectory()) continue;
       const mf = path.join(src, "manifest.json");
       let manifest: { id?: string; requires?: { programs?: { name: string; source: string; path?: string; searchPaths?: string[] }[] } } | null = null;

@@ -85,5 +85,17 @@
   "field.system": "系统提示词（随请求一起发送）",
   "analysis.draftName": "分析草稿",
   "summary.proposed": "提议已就绪。",
-  "summary.proposedBad": "这个提议没有通过检查。"
+  "summary.proposedBad": "这个提议没有通过检查。",
+  "action.assist": "写作辅助",
+  "assist.system.field": "你在桌面工作台 OneDesk 里帮用户写页面上的一个字段。按说明写。只回复这个字段的新内容，使用请求里写明的格式和用户的语言；不要解释，不要寒暄。",
+  "assist.system.fill": "你在桌面工作台 OneDesk 里帮用户填写一个页面。按说明写。只回复一个 JSON 对象：键是请求里反引号中的字段名，值是新内容（字符串），使用各字段的格式和用户的语言。不需要改的字段不要列出。",
+  "assist.request.instruction": "说明",
+  "assist.request.noInstruction": "（没有说明：改进或补全内容）",
+  "assist.request.field": "要写的字段：{label}（{format}）",
+  "assist.request.empty": "（空）",
+  "assist.request.context": "页面上的其他字段",
+  "assist.request.fields": "字段",
+  "assist.error.badField": "这个字段不能用 AI 写。",
+  "assist.error.noFields": "这个页面没有 AI 能写的字段。",
+  "assist.error.badAnswer": "回答无法读成字段值，请重试。"
 }

@@ -7,10 +7,11 @@
  *    Allowed literals: 0, 1 (unitless), 100%/50% and other percentages, `none`, `auto`, `inherit`, `currentColor`, `transparent`.
  *  - TSX in src/workbench, src/design must not use inline `style=` (exception: a line ending with
  *    `// od-allow-inline-style: <reason>`), nor hex colors / px values in string literals.
- *  - plugins/ must not contain CSS, TSX/JSX or HTML, nor inline styles / class names in JS (they return view trees only).
+ *  - plugins/ and plugins-external/ must not contain CSS, TSX/JSX or HTML, nor inline styles / class names in JS (they return view trees only).
  */
 import { readFileSync, readdirSync, statSync, existsSync } from "node:fs";
 import { join, relative, resolve, dirname, sep } from "node:path";
+import { packageDirs, uiProblems } from "./plugin-rules.mjs";
 
 const root = resolve(dirname(new URL(import.meta.url).pathname), "..");
 const src = join(root, "src");
@@ -61,17 +62,8 @@ for (const dir of ["workbench", "design"]) {
   }
 }
 
-// Plugins render only through view trees
-const pluginsDir = join(root, "plugins");
-for (const f of walk(pluginsDir, /\.(css|scss|less|tsx|jsx|html)$/)) errors.push(`${rel(f)}: 插件不得包含 CSS、TSX/JSX 或 HTML，只能返回视图树`);
-for (const f of walk(pluginsDir, /\.(js|mjs|ts)$/)) {
-  if (/\.test\.ts$/.test(f)) continue;
-  readFileSync(f, "utf8").split("\n").forEach((line, i) => {
-    const code = line.replace(/\/\/.*$/, "");
-    if (/\b(style|className)\s*[:=]|\.style\b|innerHTML/.test(code)) errors.push(`${rel(f)}:${i + 1}: 插件不得使用样式、class 或 HTML`);
-    if (/["'`][^"'`]*#[0-9a-fA-F]{3,8}\b[^"'`]*["'`]/.test(code) || /["'`]\s*-?\d+px\s*["'`]/.test(code)) errors.push(`${rel(f)}:${i + 1}: 插件中写死颜色或像素值`);
-  });
-}
+// Plugins render only through view trees (bundled and external, D456; rule in plugin-rules.mjs)
+for (const dir of [...packageDirs(join(root, "plugins")), ...packageDirs(join(root, "plugins-external"))]) errors.push(...uiProblems(dir, rel));
 
 if (errors.length) {
   console.error(`界面规范检查失败（${errors.length}）：\n- ${errors.join("\n- ")}`);

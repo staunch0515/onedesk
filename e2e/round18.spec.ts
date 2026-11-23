@@ -5,12 +5,12 @@
  * The two test plugins in fixtures/r18-plugins call the plugin interface without / with `uses`.
  */
 import { execFileSync } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { expect, test, type Page } from "@playwright/test";
 import { startFakeAi, type FakeAi } from "../plugins/_testing/fake-ai/server";
-import { DEVHOST, openKernel, OUT, ROOT, rpc, startHost, stopHost, ui, type Host } from "./kernel-host";
+import { DEVHOST, openKernel, OUT, ROOT, rpc, startHost, stopHost, ui, type Host, linkAllPlugins } from "./kernel-host";
 import { DB1, PG_PASSWORD, PG_SKIP_REASON, PG_USER, startPg, type Pg } from "./pg-fixture";
 
 test.use({ viewport: { width: 1280, height: 800 }, locale: "en-US" });
@@ -44,7 +44,7 @@ test.beforeAll(async () => {
   // the real plugins (symlinks) plus the two probe plugins
   const plugins = path.join(base, "plugins");
   mkdirSync(plugins);
-  for (const n of readdirSync(path.join(ROOT, "plugins"))) symlinkSync(path.join(ROOT, "plugins", n), path.join(plugins, n));
+  linkAllPlugins(plugins);
   for (const n of readdirSync(path.join(ROOT, "e2e/fixtures/r18-plugins"))) cpSync(path.join(ROOT, "e2e/fixtures/r18-plugins", n), path.join(plugins, n), { recursive: true });
   host = await startHost(path.join(base, "data"), { ONEDESK_TEST_HOOKS: "1" }, plugins);
 });

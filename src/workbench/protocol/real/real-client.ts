@@ -1,4 +1,4 @@
-import type { ConnectionState, EventMessage, HelloResult, TreePage } from "../generated";
+import type { AssistProvider, ConnectionState, EventMessage, HelloResult, TreePage } from "../generated";
 import type { ProtocolClient } from "../client";
 import type { ExportResult, ImportPreview, ImportResult, KnownParam, RefInfo, RunExportResult, InstallPreview, InstallRequest, PluginVersionParams, SecretInfo, UndoUpgradeResult, UpgradeResult, PageEventResult, PaletteCommand, PluginDetail, Run, ViewNode, TreeMoveResult, AuditFacets, AuditFilter, McpInfo, McpStatus, AuditRow, EnvOption, EnvView, HistoryEntry, ResolvedParam, ResultAction, SearchHit, CommandContext, CommandEffect, NewItem, PageContext, PageDescriptor, PageSaveResult, PluginGrants, Resource, TreeInfo, TreeNode, WorkspaceEntry, WorkspacesResult, WorkspaceInfo, LanguageInfo, ShellTexts } from "../types";
 import { EventBus } from "./event-bus";
@@ -23,6 +23,7 @@ export interface KernelClient {
   page: Pick<ProtocolClient["page"], "resolve" | "save" | "event">;
   run: ProtocolClient["run"];
   result: ProtocolClient["result"];
+  assist?: ProtocolClient["assist"];
   command: ProtocolClient["command"];
   plugin: Pick<ProtocolClient["plugin"], "grants" | "grantFolder" | "revokeFolder" | "replaceFolder" | "get" | "setEnabled" | "setSetting" | "reload" | "activateVersion" | "setPinned" | "undoUpgrade" | "confirmPermissions" | "installRequests" | "answerInstallRequest">;
   app: NonNullable<ProtocolClient["app"]>;
@@ -145,6 +146,10 @@ export async function createKernelClient(transport: Transport, locale?: () => st
     },
     result: {
       actions: async (runId) => (await call<ResultAction[] | null>("result.actions", { runId })) ?? [],
+    },
+    assist: {
+      provider: () => call<AssistProvider>("assist.provider"),
+      start: (p) => call<string>("assist.start", compact({ locale: locale?.(), target: p.target, tabId: p.tabId, envId: p.envId, input: p.input })),
     },
     run: {
       start: (request) => call<string>("run.start", compact({ locale: locale?.(), action: request.action, resourceId: request.resourceId, target: request.target, tabId: request.tabId, envId: request.envId, input: request.input, params: request.params, resultRun: request.resultRun })),

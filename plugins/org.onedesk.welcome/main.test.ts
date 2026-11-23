@@ -22,9 +22,8 @@ describe("welcome plugin", () => {
       "new:org.onedesk.note:note",
       "new:org.onedesk.link:link",
       "new:org.onedesk.prompt:prompt",
-      "new:org.onedesk.http:request",
     ]);
-    expect(ENTRIES).toHaveLength(4);
+    expect(ENTRIES).toHaveLength(3);
   });
 
   it("picks the current locale's text from the label", async () => {
