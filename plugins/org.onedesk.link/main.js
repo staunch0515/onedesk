@@ -45,7 +45,7 @@ export default {
               layout: "stack",
               fields: [
                 { name: "url", label: ctx.t("field.url"), kind: "text", bind: "body.url", placeholder: ctx.t("field.url.placeholder"), ...ro },
-                { name: "profile", label: ctx.t("field.profile"), kind: "text", bind: "body.profile", hint: ctx.t("field.profile.hint"), ...ro },
+                { name: "profile", label: ctx.t("field.profile"), kind: "text", bind: "body.profile", hint: ctx.t("field.profile.hint"), assist: { off: true }, ...ro },
               ],
             },
           ],

@@ -26,11 +26,11 @@ const preview = (over: Partial<InstallPreview> = {}): InstallPreview => ({
   ...over,
 });
 
-function setup(p: InstallPreview, pick?: () => Promise<string | null>) {
+function setup(p: InstallPreview, pick?: () => Promise<string | null>, pickPackage?: () => Promise<string | null>) {
   const app = { inspectPlugin: vi.fn(async () => p), installPlugin: vi.fn(async () => ({ plugin: p.id, version: p.version })), removePlugin: vi.fn(async () => undefined) };
   const confirmPermissions = vi.fn(async () => undefined);
   const base = kernelLikeClient(createMockClient({ fresh: true, quiet: true }), { app });
-  const client = { ...base, platform: pick ? { pickFolder: pick } : undefined, plugin: { ...base.plugin, confirmPermissions } };
+  const client = { ...base, platform: pick || pickPackage ? { pickFolder: pick, pickPackageFile: pickPackage } : undefined, plugin: { ...base.plugin, confirmPermissions } };
   const { store } = renderInShell(client, <InstallDialogs />);
   return { app, confirmPermissions, store, client };
 }
@@ -65,7 +65,7 @@ describe("install flow", () => {
     const bad = preview({ valid: false, problem: { code: "invalid", params: { reason: "schema" } }, permissions: [] });
     const { app, store, client } = setup(bad);
     await act(async () => inspectFolder(client, store, "/bad"));
-    expect(await screen.findByText("This folder cannot be installed")).toBeTruthy();
+    expect(await screen.findByText("This package cannot be installed")).toBeTruthy();
     expect(screen.getByText("The package was refused")).toBeTruthy();
     expect((screen.getByRole("button", { name: "Install" }) as HTMLButtonElement).disabled).toBe(true);
     expect(app.installPlugin).not.toHaveBeenCalled();
@@ -80,7 +80,16 @@ describe("install flow", () => {
     fireEvent.click(screen.getByRole("button", { name: "Look inside" }));
     await waitFor(() => expect(app.inspectPlugin).toHaveBeenCalledWith("/Users/me/pkg"));
     const desktop = setup(preview(), async () => "/picked");
-    await act(async () => startInstall(desktop.client, desktop.store, { fail: () => undefined }));
+    await act(async () => startInstall(desktop.client, desktop.store, { fail: () => undefined }, "folder"));
     expect(desktop.app.inspectPlugin).toHaveBeenCalledWith("/picked");
+  });
+
+  it("D456: on the desktop, Install a plugin picks a package file; a platform without that picker asks for a path", async () => {
+    const desktop = setup(preview(), async () => "/picked-folder", async () => "/Users/me/org.example.web-0.2.0.odplugin");
+    await act(async () => startInstall(desktop.client, desktop.store, { fail: () => undefined }));
+    expect(desktop.app.inspectPlugin).toHaveBeenCalledWith("/Users/me/org.example.web-0.2.0.odplugin");
+    const older = setup(preview(), async () => "/picked-folder");
+    await act(async () => startInstall(older.client, older.store, { fail: () => undefined }));
+    expect(older.store.get().install).toEqual({ stage: "path" });
   });
 });

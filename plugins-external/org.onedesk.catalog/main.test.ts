@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 // @ts-ignore plain JS module, no types
 import plugin, { formatIndex, indexChildren, INDEX_FILE, parseIndex, TREE_PAGE, rememberSent, sentOf, asOfExpr, checks, expand, groupsOf, normalizeMapping, paramDeclLines, paramNames, parseEntry, parseMapping, parseYaml, placeholders, quoteIdent, renderSql, splitHeader, sync, treeChildren, treePath, versionedSubquery } from "./main.js";
-import { checkActionResult, checkView, hostError, onlyKeys, RENDER_KEYS, TREE_NODE_KEYS } from "../_testing/view-check";
+import { checkActionResult, checkView, hostError, onlyKeys, RENDER_KEYS, TREE_NODE_KEYS } from "../../plugins/_testing/view-check";
 
 const load = (f: string) => JSON.parse(readFileSync(new URL(`./locales/${f}.json`, import.meta.url), "utf8")) as Record<string, string>;
 const EN = load("en-US");

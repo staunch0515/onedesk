@@ -10,7 +10,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { expect, test, type Page } from "@playwright/test";
 import { FakeTools } from "./fake-tools";
-import { DEVHOST, OUT, openKernel, ROOT, rpc, startHost, stopHost, ui, type Host } from "./kernel-host";
+import { DEVHOST, OUT, openKernel, ROOT, rpc, startHost, stopHost, ui, type Host, allPlugins } from "./kernel-host";
 import { DB1, PG_SKIP_REASON, pgBinOrNull, startPg, type Pg } from "./pg-fixture";
 
 test.use({ viewport: { width: 1280, height: 800 }, locale: "en-US" });
@@ -49,7 +49,7 @@ test.beforeAll(async () => {
   });
   await new Promise<void>((r) => api.listen(0, "127.0.0.1", r));
   apiPort = (api.address() as import("node:net").AddressInfo).port;
-  const plugins = fake.preparePlugins(path.join(ROOT, "plugins"), path.join(base, "plugins"), path.join(base, "data"));
+  const plugins = fake.preparePlugins(allPlugins(), path.join(base, "plugins"), path.join(base, "data"));
   host = await startHost(path.join(base, "data"), { ONEDESK_TEST_HOOKS: "1", ONEDESK_TRASH_DIR: trashDir, ONEDESK_OPEN_LOG: openLog }, plugins);
 });
 test.afterAll(async () => {
@@ -368,7 +368,7 @@ test("J1: each step that fails stops the run and names the step; later steps do 
 test("J2: docker is looked for in fixed places; when it is not there the run says so (no PATH is read)", async ({ page }) => {
   await openKernel(page, host);
   // The real manifests (not the copy with fakes): docker is a system program with searchPaths, never found through PATH.
-  const m = JSON.parse(readFileSync(path.join(ROOT, "plugins/org.onedesk.datasource/manifest.json"), "utf8"));
+  const m = JSON.parse(readFileSync(path.join(ROOT, "plugins-external/org.onedesk.datasource/manifest.json"), "utf8"));
   const dk = m.requires.programs.find((p: { name: string }) => p.name === "docker");
   expect(dk.source).toBe("system");
   expect(dk.searchPaths.join(" ")).toMatch(/Docker\.app/);

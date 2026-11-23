@@ -1,4 +1,5 @@
-// Plugin market (local): scans plugin packages in authorized folders, lists their state and asks the
+// Plugin market (local): scans plugin packages in authorized folders (unpacked folders, and package files
+// `<id>-<version>.odplugin` at the top of a folder, D461), lists their state and asks the
 // framework to install one with host.plugins.requestInstall. It only reads display fields of manifests;
 // permissions are listed by the framework's own confirmation dialog.
 // Sandbox rules: no console, timers or fetch; everything goes through ctx.host.
@@ -59,17 +60,33 @@ export function clean(value, max) {
   return Array.from(value.replace(UNSAFE, "").trim()).slice(0, max).join("");
 }
 
-async function listDirs(ctx, path) {
-  const out = [];
+// A package file's name: `<id>-<version>.odplugin` (D456). The id may contain "-"; the version starts with a digit.
+export const PACKAGE_FILE = /^([a-z0-9][a-z0-9._-]*?)-(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)\.odplugin$/i;
+
+// Visible entries of a folder, sorted by name: { dirs, files }.
+async function listEntries(ctx, path) {
+  const dirs = [];
+  const files = [];
   let offset = 0;
   for (let i = 0; i < MAX_LIST_PAGES; i++) {
     const page = await ctx.host.files.list(path, { offset, limit: PAGE_SIZE });
-    for (const e of page.entries) if (e.dir && !e.hidden && !e.name.startsWith(".")) out.push(e);
+    for (const e of page.entries) if (!e.hidden && !e.name.startsWith(".")) (e.dir ? dirs : files).push(e);
     if (page.next === undefined || page.next === null) break;
     offset = page.next;
   }
-  out.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
-  return out;
+  const byName = (a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
+  return { dirs: dirs.sort(byName), files: files.sort(byName) };
+}
+
+async function listDirs(ctx, path) {
+  return (await listEntries(ctx, path)).dirs;
+}
+
+// A package file found by name; what is inside is shown by the framework's confirmation dialog before anything is installed.
+function filePackage(file) {
+  const m = PACKAGE_FILE.exec(file.name);
+  if (!m) return null;
+  return { folder: file.path, label: clean(file.name, MAX_NAME), id: m[1], version: m[2], file: true };
 }
 
 // Reads `<dir>/manifest.json`. Returns { found: false } only when the file does not exist; other problems
@@ -128,10 +145,17 @@ export async function scan(ctx, roots) {
   };
   outer: for (const root of roots) {
     let dirs;
+    let files;
     try {
-      dirs = await listDirs(ctx, root.path);
+      ({ dirs, files } = await listEntries(ctx, root.path));
     } catch (err) {
       continue;
+    }
+    for (const f of files) {
+      const pkg = filePackage(f);
+      if (!pkg) continue;
+      if (!probe()) break outer;
+      if (!add(pkg)) break outer;
     }
     for (const d of dirs) {
       if (!probe()) break outer;
@@ -186,6 +210,7 @@ function statusText(ctx, st) {
 // What the table needs of a scanned package, already cleaned (this is what is cached).
 async function entryOf(ctx, pkg) {
   if (pkg.unavailable) return { folder: pkg.folder, name: pkg.label, description: "", unavailable: pkg.unavailable };
+  if (pkg.file) return { folder: pkg.folder, id: clean(pkg.id, MAX_NAME), version: clean(pkg.version, MAX_NAME), name: clean(pkg.id, MAX_NAME), description: tr(ctx, "file.description", { file: pkg.label }) };
   const info = await describe(ctx, pkg);
   return { folder: pkg.folder, id: clean(pkg.id, MAX_NAME), version: clean(pkg.version, MAX_NAME), name: info.name, description: info.description };
 }

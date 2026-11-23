@@ -85,5 +85,17 @@
   "field.system": "システムプロンプト（リクエストと一緒に送信）",
   "analysis.draftName": "分析の下書き",
   "summary.proposed": "提案ができました。",
-  "summary.proposedBad": "この提案は確認を通りませんでした。"
+  "summary.proposedBad": "この提案は確認を通りませんでした。",
+  "action.assist": "書き込み補助",
+  "assist.system.field": "あなたはデスクトップ作業台 OneDesk で、ページの 1 つのフィールドを書くのを手伝います。指示に従ってください。リクエストに書かれた形式とユーザーの言語で、フィールドの新しい内容だけを返してください。説明やあいさつは不要です。",
+  "assist.system.fill": "あなたはデスクトップ作業台 OneDesk でページの入力を手伝います。指示に従ってください。JSON オブジェクトを 1 つだけ返してください。キーはバッククォートで示したフィールド名、値は新しい内容（文字列）で、各フィールドの形式とユーザーの言語で書きます。変更しないフィールドは含めないでください。",
+  "assist.request.instruction": "指示",
+  "assist.request.noInstruction": "（指示なし：内容を改善または補完する）",
+  "assist.request.field": "書くフィールド：{label}（{format}）",
+  "assist.request.empty": "（空）",
+  "assist.request.context": "ページのほかのフィールド",
+  "assist.request.fields": "フィールド",
+  "assist.error.badField": "このフィールドは AI で書けません。",
+  "assist.error.noFields": "このページには AI が書けるフィールドがありません。",
+  "assist.error.badAnswer": "回答をフィールドの値として読めませんでした。もう一度お試しください。"
 }

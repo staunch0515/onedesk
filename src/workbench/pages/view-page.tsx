@@ -14,6 +14,7 @@ import { TOKENIZERS } from "../parts/sql-tokens";
 import { ViewNodes } from "../parts/view-nodes";
 import { Badge, FactRow } from "../../design";
 import { RunKeepBar } from "../parts/run-keep-bar";
+import { AssistDialog, assistable, assistableFields, useAssistAvailable, type AssistRequest } from "../parts/assist";
 
 const EMPTY: Record<string, unknown> = {};
 
@@ -169,6 +170,8 @@ export function ViewPage({ tab, descriptor: initial }: { tab: TabState; descript
   const [busy, setBusy] = useState<string | null>(null);
   const [ask, setAsk] = useState<ActionDecl | null>(null);
   const [addingParam, setAddingParam] = useState(false);
+  const [assistRequest, setAssistRequest] = useState<AssistRequest | null>(null);
+  const assistOn = useAssistAvailable();
   const running = useQuery((c) => (tab.runId ? c.run.get(tab.runId) : Promise.resolve(null)), [tab.runId], tab.runId ? [`run:${tab.runId}`] : []);
   const isRunning = running.data?.status === "running";
   // The plugin that owns this resource's type: its own actions are named in full too, and are not "foreign" (D351).
@@ -386,6 +389,31 @@ export function ViewPage({ tab, descriptor: initial }: { tab: TabState; descript
   }));
   if (isConfig) items.push({ key: "params.add", label: t("params.add"), icon: "plus", onSelect: () => setAddingParam(true) });
 
+  // D462 writing help: every editable text field (✨ by its label) and the whole page ("Fill with AI"); the answer is
+  // a proposal, accepted into the draft like typing.
+  const canAssist = assistOn && kernelPage;
+  const helpable = canAssist ? assistableFields(descriptor.view, readOnly) : [];
+  const assistField = (f: ViewField) => ({
+    name: f.bind ?? f.name,
+    label: tx(f.label),
+    kind: f.kind,
+    language: f.language,
+    hint: f.assist?.hint ? tx(f.assist.hint) : f.hint ? tx(f.hint) : undefined,
+    format: f.assist?.format,
+    value: fieldValue(f),
+  });
+  const assistPage = { title: descriptor.title, kind: descriptor.kindLabel ? tx(descriptor.kindLabel) : "" };
+  const askField = (f: ViewField) => setAssistRequest({ mode: "field", field: f.bind ?? f.name, fields: helpable.map(assistField), page: assistPage });
+  // Several fields: one button fills them all. One field that fills the page (an editor without a label row): the
+  // button is its ✨. One labelled field: its own ✨ is enough.
+  if (helpable.length > 1) {
+    items.push({ key: "assist", label: t("assist.action"), icon: "sparkles", onSelect: () => setAssistRequest({ mode: "fill", fields: helpable.map(assistField), page: assistPage }) });
+  } else if (helpable.length === 1 && helpable[0]!.fill) {
+    items.push({ key: "assist", label: t("assist.field"), icon: "sparkles", onSelect: () => askField(helpable[0]!) });
+  }
+  const assistButton = (f: ViewField) =>
+    canAssist && assistable(f, readOnly) ? <IconButton icon="sparkles" size="sm" label={t("assist.field")} onClick={() => askField(f)} /> : undefined;
+
   const hasFill = descriptor.view.some((n) => (n.type === "form" && n.fields.some((f) => f.fill)) || (n.type === "text" && n.mono) || n.type === "table");
   const renderForm = (node: Extract<ViewNode, { type: "form" }>) => {
     // Several forms on one page, one of them filling the rest: the others keep their own height instead of being squeezed into each other.
@@ -435,7 +463,7 @@ export function ViewPage({ tab, descriptor: initial }: { tab: TabState; descript
         {rest.length > 0 && (
           <Pane grow={!fill && !stacked} scroll={!stacked} pad="lg" gap="md" width="form">
             {rest.map((f) => (
-              <FormField key={f.name} label={tx(f.label)} required={f.required} requiredMark="*" description={f.hint ? tx(f.hint) : undefined}>
+              <FormField key={f.name} label={tx(f.label)} required={f.required} requiredMark="*" description={f.hint ? tx(f.hint) : undefined} labelAside={assistButton(f)}>
                 <FieldControl field={f} size="md" readOnly={readOnly} value={fieldValue(f)} secret={secretOf(f)} onChange={(v) => setBound(f.bind ?? f.name, v)} />
               </FormField>
             ))}
@@ -486,6 +514,7 @@ export function ViewPage({ tab, descriptor: initial }: { tab: TabState; descript
         {descriptor.view.map((node) => (node.type === "form" ? renderForm(node) : <ViewNodes key={node.id} nodes={[node]} onRowAction={(event, row) => void rowEvent(event, row)} />))}
       </Pane>
     </Frame>
+      <AssistDialog tab={tab} request={assistRequest} onClose={() => setAssistRequest(null)} onAccept={(values) => Object.entries(values).forEach(([bind, value]) => setBound(bind, value))} />
       {isConfig && (
         <AddParamDialog
           layer="config"

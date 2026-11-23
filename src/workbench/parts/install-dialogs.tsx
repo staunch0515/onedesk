@@ -9,12 +9,13 @@ import { PagesNotice } from "./pages-notice";
 import { ProgramsNotice } from "./programs-notice";
 
 /**
- * Starts installing a plugin package: the system folder dialog on the desktop, a path box in the
- * browser. Nothing is copied until the user confirms what the folder holds (`InstallPreview`).
+ * Starts installing a plugin package: on the desktop the system dialog for a package file
+ * (`<id>-<version>.odplugin`, D456) or, with `from: "folder"`, for an unpacked package folder; in the browser
+ * a path box that takes either. Nothing is copied until the user confirms what the package holds (`InstallPreview`).
  */
-export async function startInstall(client: ProtocolClient, store: Store, actions: Pick<Actions, "fail">): Promise<void> {
+export async function startInstall(client: ProtocolClient, store: Store, actions: Pick<Actions, "fail">, from: "package" | "folder" = "package"): Promise<void> {
   try {
-    const pick = client.platform?.pickFolder;
+    const pick = from === "folder" ? client.platform?.pickFolder : client.platform?.pickPackageFile;
     if (!pick) return void store.set({ install: { stage: "path" } });
     const folder = await pick();
     if (folder) await inspectFolder(client, store, folder);

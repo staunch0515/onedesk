@@ -105,6 +105,9 @@ export type {
   WorkspaceInfo,
   LanguageInfo,
   I18nShellResult as ShellTexts,
+  AssistProvider,
+  AssistStartParams,
+  FieldAssist,
 } from "./generated";
 
 /**

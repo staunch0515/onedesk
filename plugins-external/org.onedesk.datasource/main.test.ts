@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 // @ts-ignore plain JS module, no types
 import plugin, { BACKUP_STEPS, backupPlanOf, backupToLocal, checkBackup, dockerArgs, dumpSpec, safeContainer, safeDbName, stampOf, suggestDbName, captureReadonly, checkConnection, connectionOf, errorText, parseConnectionUrl, parseCsv, NULL_TEXT, positiveInt, processSpec, readonlyScript, refuse, scanSql, runReadonly, safePart } from "./main.js";
-import { RENDER_KEYS, checkActionResult, checkView, hostError, onlyKeys, registry } from "../_testing/view-check";
+import { RENDER_KEYS, checkActionResult, checkView, hostError, onlyKeys, registry } from "../../plugins/_testing/view-check";
 
 const load = (f: string) => JSON.parse(readFileSync(new URL(`./locales/${f}.json`, import.meta.url), "utf8")) as Record<string, string>;
 const EN = load("en-US");

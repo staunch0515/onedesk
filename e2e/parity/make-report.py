@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Builds docs/handoff/round20-parity.md from docs/screenshots/parity/results.json (run: python3 e2e/parity/make-report.py)."""
+"""Builds test-results/screenshots/parity/rows.md from test-results/screenshots/parity/results.json (run: python3 e2e/parity/make-report.py)."""
 import json, re, sys
 root = __file__.rsplit("/e2e/", 1)[0]
-res = json.load(open(f"{root}/docs/screenshots/parity/results.json"))
+res = json.load(open(f"{root}/test-results/screenshots/parity/results.json"))
 sp = open(f"{root}/docs/redesign/sqlpool-parity.md").read()
 rows = []
 for line in sp.splitlines():
@@ -18,5 +18,5 @@ for r, title in rows:
     cnt[v["verdict"]] = cnt.get(v["verdict"], 0) + 1
     ev = v.get("evidence") or ""
     out.append(f"| {r} | {title} | **{v['verdict']}** | {clean(v['note'])[:520]} | {ev} |")
-open(f"{root}/docs/handoff/_parity_rows.md", "w").write("\n".join(out) + "\n")
+open(f"{root}/test-results/screenshots/parity/rows.md", "w").write("\n".join(out) + "\n")
 print(cnt, "of", len(rows))

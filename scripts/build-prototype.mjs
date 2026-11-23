@@ -1,4 +1,4 @@
-// Builds the workbench prototype into ONE self-contained HTML file (docs/prototype/workbench.html) that opens
+// Builds the workbench prototype into ONE self-contained HTML file (dist/prototype/workbench.html) that opens
 // by double-click, with no server and no network. Run: pnpm prototype:build
 import { build } from "vite";
 import react from "@vitejs/plugin-react";
@@ -46,8 +46,8 @@ html = html.replace(scriptTag, "");
 html = html.replace("</body>", () => `<script type="module">${js}</script></body>`);
 if (/(src|href)="\.\/assets\//.test(html)) throw new Error("An asset reference is left in the HTML");
 
-const dest = join(root, "docs", "prototype");
+const dest = join(root, "dist", "prototype");
 mkdirSync(dest, { recursive: true });
 writeFileSync(join(dest, "workbench.html"), html);
 rmSync(outDir, { recursive: true, force: true });
-console.log(`docs/prototype/workbench.html  ${(html.length / 1024 / 1024).toFixed(2)} MB`);
+console.log(`dist/prototype/workbench.html  ${(html.length / 1024 / 1024).toFixed(2)} MB`);

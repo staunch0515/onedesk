@@ -571,5 +571,5 @@ test("E3/E5 (screen): the run history has two groups, a kept result sits under S
   await expect(page.getByRole("treeitem", { name: /Screen result/ })).toBeVisible();
   await page.getByRole("treeitem", { name: /Screen result/ }).dblclick();
   await expect(page.getByRole("tab", { name: /Screen result|recent orders/i }).first()).toBeVisible();
-  await page.screenshot({ path: "docs/screenshots/round16/saved-result.png" });
+  await page.screenshot({ path: "test-results/screenshots/round16/saved-result.png" });
 });

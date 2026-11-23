@@ -6,10 +6,12 @@
  *     (note, sql, postgres, ssh, docker, psql, video, ffmpeg) as whole words.
  *  2. crates/kernel must not depend on tauri.
  *  3. src/workbench must not import plugins/; only main.tsx may import protocol/mock.
- *  4. plugins/<id>: no imports outside the package, no browser/sandbox-absent globals.
+ *  4. plugins/<id> and plugins-external/<id>: no imports outside the package, no browser/sandbox-absent globals
+ *     (the rule itself is in plugin-rules.mjs, shared with `pnpm plugin:check`).
  */
 import { readFileSync, readdirSync, statSync, existsSync } from "node:fs";
 import { stripAllowedAi } from "./check-arch-ai.mjs";
+import { archProblems } from "./plugin-rules.mjs";
 import { join, relative, resolve, dirname, sep } from "node:path";
 
 const root = resolve(dirname(new URL(import.meta.url).pathname), "..");
@@ -27,17 +29,18 @@ const importsOf = (code) =>
   [...code.matchAll(/(?:import|export)\s[^'"]*?from\s*['"]([^'"]+)['"]|import\(\s*['"]([^'"]+)['"]\s*\)|^\s*import\s*['"]([^'"]+)['"]/gm)].map((m) => m[1] ?? m[2] ?? m[3]);
 const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
-// ---- plugins: ids and kind names come from the manifests every run
-const pluginsDir = join(root, "plugins");
+// ---- plugins: ids and kind names come from the manifests every run (bundled and external, D456)
+const pluginRoots = [join(root, "plugins"), join(root, "plugins-external")];
 const plugins = [];
-if (existsSync(pluginsDir)) {
+for (const pluginsDir of pluginRoots) {
+  if (!existsSync(pluginsDir)) continue;
   for (const d of readdirSync(pluginsDir)) {
     const mf = join(pluginsDir, d, "manifest.json");
     if (!existsSync(mf)) continue;
     try {
       const m = JSON.parse(readFileSync(mf, "utf8"));
       const kinds = (m.contributes?.kinds ?? []).map((k) => k.id);
-      plugins.push({ dir: d, id: m.id, kinds });
+      plugins.push({ dir: join(pluginsDir, d), id: m.id, kinds });
     } catch (e) {
       errors.push(`${rel(mf)}: manifest.json 不是合法 JSON（${e.message}）`);
     }
@@ -104,36 +107,17 @@ for (const f of walk(wb, /\.(ts|tsx)$/)) {
   const isMain = f === join(wb, "main.tsx");
   const isTest = /\.test\.tsx?$/.test(f);
   for (const spec of importsOf(readFileSync(f, "utf8"))) {
-    if (/(^|\/)plugins(\/|$)/.test(spec) && spec.startsWith(".")) errors.push(`${rel(f)}: 外壳不得 import plugins/ ("${spec}")`);
+    if (/(^|\/)plugins(-external)?(\/|$)/.test(spec) && spec.startsWith(".")) errors.push(`${rel(f)}: 外壳不得 import plugins/ ("${spec}")`);
     const toMock = /(^|\/)mock(\/|$)/.test(spec) && (/protocol\/mock/.test(spec) || f.includes(`${sep}protocol${sep}`));
     if (toMock && !isMain && !isTest && !f.includes(`${sep}protocol${sep}mock${sep}`)) errors.push(`${rel(f)}: 只有 main.tsx 可以 import protocol/mock ("${spec}")`);
   }
 }
 
 // ---- 4: plugin packages
-const SANDBOX_ABSENT = /(?<![\w.$])(console|setTimeout|setInterval|fetch|XMLHttpRequest|window|document|localStorage|require|process)\s*[.(]/;
 let pluginFiles = 0;
 for (const p of plugins) {
-  const dir = join(pluginsDir, p.dir);
-  for (const f of walk(dir, /\.(js|mjs|ts|tsx)$/)) {
-    pluginFiles++;
-    const isTest = /\.test\.ts$/.test(f);
-    const code = readFileSync(f, "utf8");
-    for (const spec of importsOf(code)) {
-      if (isTest && (spec === "vitest" || spec === "node:fs" || spec === "node:path" || spec === "node:url" || spec.startsWith("../_testing/") || spec.startsWith("../../src/workbench/protocol/generated"))) continue;
-      if (spec.startsWith(".")) {
-        const target = resolve(dirname(f), spec);
-        if (target === dir || target.startsWith(dir + sep)) continue;
-      }
-      errors.push(`${rel(f)}: 插件只能 import 自己文件夹内的文件，发现 "${spec}"`);
-    }
-    if (!isTest) {
-      code.split("\n").forEach((line, i) => {
-        const l = line.replace(/\/\/.*$/, "");
-        if (SANDBOX_ABSENT.test(l)) errors.push(`${rel(f)}:${i + 1}: 沙箱里没有这个全局对象 → ${line.trim()}`);
-      });
-    }
-  }
+  pluginFiles += walk(p.dir, /\.(js|mjs|ts|tsx)$/).length;
+  errors.push(...archProblems(p.dir, rel));
 }
 
 if (errors.length) {

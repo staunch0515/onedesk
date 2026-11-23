@@ -155,12 +155,12 @@ test("protocol: workspace.info lists the welcome page as the startup page", asyn
 
 /* ------------------------------------------------------------------ welcome page */
 
-test("shell: the first start (no tab) shows the welcome page with the four entries; each creates its type", async ({ page }) => {
+test("shell: the first start (no tab) shows the welcome page with the bundled entries; each creates its type", async ({ page }) => {
   await intercept(page);
   await openKernel(page, host);
   await expect(page.getByRole("heading", { name: "Welcome to OneDesk" })).toBeVisible({ timeout: 20_000 });
   await shot(page, "welcome");
-  const entries = ["New note", "New link", "New prompt", "New HTTP request"];
+  const entries = ["New note", "New link", "New prompt"];
   for (const e of entries) await expect(page.getByRole("link", { name: e }).or(page.getByRole("button", { name: e })).first()).toBeVisible();
 
   // each entry opens an unsaved item of its type: its own editor field appears
@@ -173,9 +173,8 @@ test("shell: the first start (no tab) shows the welcome page with the four entri
   await page.getByRole("tab", { name: /Welcome/ }).click();
   await entry("New prompt").click();
   await expect(page.getByRole("textbox", { name: "Prompt", exact: true })).toBeVisible();
-  await page.getByRole("tab", { name: /Welcome/ }).click();
-  await entry("New HTTP request").click();
-  await expect(page.getByRole("textbox", { name: "Address", exact: true })).toBeVisible();
+  // D456: HTTP requests are an external plugin now; the welcome page offers only the bundled types
+  await expect(page.getByRole("link", { name: "New HTTP request" })).toHaveCount(0);
 });
 
 test("shell: a start that has tabs does not open the welcome page again", async ({ page }) => {

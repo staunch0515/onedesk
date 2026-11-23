@@ -523,6 +523,18 @@ async fn request_folders_stay_inside_what_the_plugin_can_read() {
     assert_eq!(req["folder"], outside_path.join("pkg").display().to_string());
     w.c.ok("plugin.answerInstallRequest", json!({ "id": req["id"], "outcome": "declined" })).await;
     wait_run(&w.c, &run).await;
+    // D461: a package file in a granted folder is accepted (the main process unpacks it); any other file is not.
+    let file = outside_path.join("org.example.x-1.0.0.odplugin");
+    std::fs::write(&file, b"PK").unwrap();
+    let run = ask(&w.c, &file.display().to_string()).await;
+    let req = next_request(&w.c).await;
+    assert_eq!(req["folder"], file.display().to_string());
+    w.c.ok("plugin.answerInstallRequest", json!({ "id": req["id"], "outcome": "declined" })).await;
+    wait_run(&w.c, &run).await;
+    let other = outside_path.join("notes.txt");
+    std::fs::write(&other, b"x").unwrap();
+    let r = wait_run(&w.c, &ask(&w.c, &other.display().to_string()).await).await;
+    assert_eq!(out(&r), json!({ "error": "invalid", "reason": "notFolder" }));
 }
 
 #[tokio::test]

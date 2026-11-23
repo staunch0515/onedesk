@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 // @ts-ignore plain JS module, no types
 import plugin, { BIG_ROWS, buildBigRows, buildRows, fillParams, hash, paramKind, paramNames, tidy } from "./main.js";
 import { readFileSync } from "node:fs";
-import { EVENT_RESULT_KEYS, RENDER_KEYS, checkActionResult, checkView, onlyKeys, registry } from "../_testing/view-check";
+import { EVENT_RESULT_KEYS, RENDER_KEYS, checkActionResult, checkView, onlyKeys, registry } from "../../plugins/_testing/view-check";
 
 const load = (f: string) => JSON.parse(readFileSync(new URL(`./locales/${f}.json`, import.meta.url), "utf8")) as Record<string, string>;
 const EN = load("en-US");

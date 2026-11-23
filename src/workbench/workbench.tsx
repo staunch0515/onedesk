@@ -162,7 +162,12 @@ export function Workbench({ settings, languages, onSetting: storeSetting }: Work
           { id: "ai-settings", label: t("ai.title"), icon: "bot", keywords: ["mcp", "claude"], onSelect: () => actions.open(AI_SETTINGS_TARGET) },
           { id: "workspace.export", label: t("transfer.export"), icon: "folder-output", onSelect: () => void startExport(client, store, actions, (resources, folder) => toast({ tone: "success", title: t("transfer.exportDone", { resources, folder }) })) },
           { id: "workspace.import", label: t("transfer.import"), icon: "folder-input", onSelect: () => void startImport(client, store, actions) },
-          ...(client.app ? [{ id: "install", label: t("install.action"), icon: "package-plus", onSelect: () => void startInstall(client, store, actions) }] : []),
+          ...(client.app
+            ? [
+                { id: "install", label: t("install.action"), icon: "package-plus", onSelect: () => void startInstall(client, store, actions) },
+                { id: "install.folder", label: t("install.fromFolder"), icon: "folder-cog", onSelect: () => void startInstall(client, store, actions, "folder") },
+              ]
+            : []),
           { id: "view.side", label: t("palette.toggleSide"), icon: "panel-left", shortcut: ["⌘", "B"], onSelect: () => store.set((x) => ({ sideOpen: !x.sideOpen })) },
           { id: "view.panel", label: t("palette.togglePanel"), icon: "panel-bottom", shortcut: ["⌘", "J"], onSelect: () => store.set((x) => ({ panelOpen: !x.panelOpen })) },
           { id: "view.info", label: t("palette.toggleInfo"), icon: "panel-right", onSelect: () => store.set((x) => ({ infoOpen: !x.infoOpen })) },

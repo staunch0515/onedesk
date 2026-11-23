@@ -6,9 +6,9 @@ import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 // @ts-ignore plain JS module, no types
-import * as command from "../org.onedesk.command/main.js";
+import * as command from "../../plugins-external/org.onedesk.command/main.js";
 // @ts-ignore plain JS module, no types
-import * as script from "../org.onedesk.script/main.js";
+import * as script from "../../plugins-external/org.onedesk.script/main.js";
 
 const { REMOTE_RUNNER } = command;
 const PLUGINS = [

@@ -4,13 +4,13 @@
  * Same two connections as round19.spec.ts: the devhost (user) for the setup, `onedesk-mcp` headless for the AI side.
  */
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, symlinkSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { expect, test } from "@playwright/test";
 import { AiWorker, UserKernel } from "./_mcp/kernel-conn";
 import { connectMcp } from "./_mcp/mcp-client";
-import { DEVHOST, ROOT } from "./kernel-host";
+import { DEVHOST, ROOT, linkAllPlugins } from "./kernel-host";
 import { DB1, PG_PASSWORD, PG_SKIP_REASON, PG_TRUST_USER, startPg, type Pg } from "./pg-fixture";
 
 test.describe.configure({ mode: "serial" });
@@ -35,7 +35,7 @@ test.beforeAll(async () => {
   pg = await startPg(path.join(base, "pg"));
   const plugins = path.join(base, "plugins");
   mkdirSync(plugins);
-  for (const n of readdirSync(path.join(ROOT, "plugins"))) symlinkSync(path.join(ROOT, "plugins", n), path.join(plugins, n));
+  linkAllPlugins(plugins);
   user = new UserKernel(dataDir, plugins);
 });
 test.afterAll(async () => {

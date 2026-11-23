@@ -1,11 +1,11 @@
 /** Round 20 parity batch 6: row K11 (the MCP service) with the real `onedesk-mcp` binary, application closed (headless worker path), real PostgreSQL. */
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { expect, test } from "@playwright/test";
 import { UserKernel } from "../_mcp/kernel-conn";
 import { connectMcp } from "../_mcp/mcp-client";
-import { DEVHOST, ROOT } from "../kernel-host";
+import { DEVHOST, ROOT, linkAllPlugins } from "../kernel-host";
 import { DB1, PG_TRUST_USER, startPg, type Pg } from "../pg-fixture";
 import { changed, mkBase, oracle, row, seedParity, unverified } from "./support";
 
@@ -38,7 +38,7 @@ test.beforeAll(async () => {
   seedParity(pg, DB1);
   const plugins = path.join(base, "plugins");
   mkdirSync(plugins);
-  for (const n of readdirSync(path.join(ROOT, "plugins"))) symlinkSync(path.join(ROOT, "plugins", n), path.join(plugins, n));
+  linkAllPlugins(plugins);
   const catalog = path.join(base, "catalog");
   mkdirSync(catalog);
   writeFileSync(path.join(catalog, "mapping.yaml"), "entities:\n  order:\n    table: orders\n    columns:\n      id: id\n      customer: customer\n      amount: amount\n");

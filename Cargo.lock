@@ -2498,6 +2498,8 @@ dependencies = [
 name = "onedesk-host"
 version = "1.0.0"
 dependencies = [
+ "crc32fast",
+ "flate2",
  "futures-util",
  "libc",
  "onedesk-kernel",

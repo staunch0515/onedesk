@@ -1,4 +1,4 @@
-// Welcome plugin: one standalone startup page. It lists the four "new" entries of the built-in plugins.
+// Welcome plugin: one standalone startup page. It lists the "new" entries of the bundled plugins (D456: HTTP requests moved to plugins-external).
 // There is no host interface yet to ask which plugins are enabled, so every entry is always shown
 // (an entry whose plugin is off simply cannot create anything) — see the hand-over note.
 
@@ -6,7 +6,6 @@ export const ENTRIES = [
   { id: "note", label: "entry.note", target: "new:org.onedesk.note:note" },
   { id: "link", label: "entry.link", target: "new:org.onedesk.link:link" },
   { id: "prompt", label: "entry.prompt", target: "new:org.onedesk.prompt:prompt" },
-  { id: "http", label: "entry.http", target: "new:org.onedesk.http:request" },
 ];
 
 function tr(ctx, key) {

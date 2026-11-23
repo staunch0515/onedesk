@@ -1,4 +1,6 @@
 import type {
+  AssistProvider,
+  AssistStartParams,
   ProtocolError,
   InstallAnswer,
   InstallPreview,
@@ -94,7 +96,7 @@ export interface ProtocolClient {
     shell(locale: string): Promise<ShellTexts>;
   };
 
-  readonly platform?: { /** Opens an address in the system browser; the main process checks the protocol again (D380). Absent in a plain browser. */ openExternal?: (url: string) => Promise<void>; pickFolder?: () => Promise<string | null>; pickSaveFile?: (name?: string) => Promise<string | null> };
+  readonly platform?: { /** Opens an address in the system browser; the main process checks the protocol again (D380). Absent in a plain browser. */ openExternal?: (url: string) => Promise<void>; pickFolder?: () => Promise<string | null>; /** D456: a plugin package file (.odplugin). */ pickPackageFile?: () => Promise<string | null>; pickSaveFile?: (name?: string) => Promise<string | null> };
 
   readonly demo?: { tree(id: string): boolean; target(target: string): boolean };
 
@@ -236,6 +238,13 @@ export interface ProtocolClient {
   };
 
   /** Round 18 (X5): buttons a plugin adds to a run's result; clicking one is `run.start` with `action` = `ResultAction.action` and `resultRun` = the run. */
+  /** Round 21 (D462): writing help. Absent in the demo; `provider().available` says whether a plugin offers it. */
+  assist?: {
+    provider(): Promise<AssistProvider>;
+    /** Starts the provider's `assist` action as a run for the page; resolves with the run id. */
+    start(params: Omit<AssistStartParams, "locale">): Promise<string>;
+  };
+
   result: {
     /** What can be done with this run's result now (`result.actions`); the list is empty for runs without a result. */
     actions(runId: string): Promise<ResultAction[]>;

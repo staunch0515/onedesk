@@ -21,6 +21,7 @@ pub const METHODS: &[&str] = &[
     M::RUN_START, M::RUN_GET, M::RUN_CANCEL, M::RUN_LIST_FOR, M::RUN_TASKS, M::RUN_CLEAR_FINISHED, M::RUN_SET_KEPT,
     M::RUN_RENDER, M::PAGE_EVENT, M::PLUGIN_GET, M::PLUGIN_SET_ENABLED, M::PLUGIN_SET_SETTING, M::PLUGIN_RELOAD,
     M::COMMAND_PALETTE, onedesk_protocol::method15::RUN_ROWS, onedesk_protocol::method18::RESULT_ACTIONS,
+    onedesk_protocol::method21::ASSIST_PROVIDER, onedesk_protocol::method21::ASSIST_START,
 ];
 
 /// D377: rows of a table output handed to the interface (more → `truncated`, with `total`).
@@ -235,6 +236,11 @@ impl Inner {
             }
             onedesk_protocol::method15::RUN_ROWS => parse::<RunRowsParams>(params).and_then(|p| self.run_rows(p)).and_then(to_value),
             M::RUN_GET => parse::<RunIdParams>(params).and_then(|p| self.run_get(&p.id, true)).and_then(to_value),
+            onedesk_protocol::method21::ASSIST_PROVIDER => to_value(self.assist_provider()),
+            onedesk_protocol::method21::ASSIST_START => match parse::<onedesk_protocol::AssistStartParams>(params) {
+                Ok(p) => self.assist_start(p, client).await.and_then(to_value),
+                Err(e) => Err(e),
+            },
             M::RUN_CANCEL => match parse::<RunIdParams>(params) {
                 Ok(p) => self.run_cancel(&p.id).await.map(|_| Value::Null),
                 Err(e) => Err(e),
@@ -332,6 +338,41 @@ impl Inner {
             .and_then(|i| i.action.clone());
         let short = via_page.unwrap_or_else(|| p.action.clone());
         Some((plugin, plugin.action(&short)?))
+    }
+
+    /// D462: the plugin offering writing help: enabled, implements `ASSIST_INTERFACE` without a
+    /// connection kind, with an action `assist` (the first by id when several do).
+    fn assist_plugin(&self) -> Option<&'static Plugin> {
+        let iface = onedesk_protocol::ASSIST_INTERFACE;
+        self.implementers(iface).into_iter().find(|p| {
+            let i = &p.manifest.implements[iface];
+            i.kind.is_none() && i.actions.iter().any(|a| a == "assist") && p.action("assist").is_some()
+        })
+    }
+
+    pub fn assist_provider(&self) -> onedesk_protocol::AssistProvider {
+        match self.assist_plugin() {
+            Some(p) => onedesk_protocol::AssistProvider { available: true, plugin: Some(p.id.clone()), label: Some(p.label(&p.manifest.name)) },
+            None => onedesk_protocol::AssistProvider { available: false, plugin: None, label: None },
+        }
+    }
+
+    /// D462 `assist.start`: the provider's `assist` action as an ordinary run for the page (`target`),
+    /// with the page's environment — so read-only, protections, cancel, history and audit are a run's.
+    pub async fn assist_start(&self, p: onedesk_protocol::AssistStartParams, client: Option<String>) -> KResult<String> {
+        let plugin = self.assist_plugin().ok_or_else(|| invalid("noProvider"))?;
+        let run = RunStartParams {
+            action: plugin.full("assist"),
+            resource_id: None,
+            target: p.target,
+            tab_id: p.tab_id,
+            env_id: p.env_id,
+            input: p.input,
+            params: Default::default(),
+            locale: p.locale,
+            result_run: None,
+        };
+        self.run_start(run, client).await
     }
 
     pub async fn run_start(&self, p: RunStartParams, client: Option<String>) -> KResult<String> {

@@ -13,13 +13,13 @@
  * The real-app socket path (the .app serving mcp.sock) is not in the devhost: it is checked by hand (round19-acceptance).
  */
 import { execFileSync } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, symlinkSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { expect, test } from "@playwright/test";
 import { connectMcp, type SpawnSpec, type StdioMcpClient } from "./_mcp/mcp-client";
 import { AiWorker, RpcError, UserKernel } from "./_mcp/kernel-conn";
-import { DEVHOST, openKernel, OUT, ROOT, ui } from "./kernel-host";
+import { DEVHOST, openKernel, OUT, ROOT, ui, linkAllPlugins } from "./kernel-host";
 
 test.describe.configure({ mode: "serial" });
 test.setTimeout(180_000);
@@ -42,7 +42,7 @@ test.beforeAll(async () => {
   dataDir = path.join(base, "data");
   pluginsDir = path.join(base, "plugins");
   mkdirSync(pluginsDir);
-  for (const n of readdirSync(path.join(ROOT, "plugins"))) symlinkSync(path.join(ROOT, "plugins", n), path.join(pluginsDir, n));
+  linkAllPlugins(pluginsDir);
   for (const n of readdirSync(path.join(ROOT, "e2e/fixtures/r19-plugins"))) cpSync(path.join(ROOT, "e2e/fixtures/r19-plugins", n), path.join(pluginsDir, n), { recursive: true });
   user = new UserKernel(dataDir, pluginsDir);
 });

@@ -1,7 +1,9 @@
 /** Test helper (not a plugin): mirrors the kernel's strict ViewNode validation. */
 import type { ViewNode } from "../../src/workbench/protocol/generated";
 
-const FIELD_KEYS = new Set(["name", "label", "kind", "bind", "param", "options", "presets", "fill", "language", "hint", "placeholder", "envValue", "envSource", "readOnly", "required", "maxLength", "kinds"]);
+const FIELD_KEYS = new Set(["name", "label", "kind", "bind", "param", "options", "presets", "fill", "language", "hint", "placeholder", "envValue", "envSource", "readOnly", "required", "maxLength", "kinds", "assist"]);
+// D462: `assist` holds only these (FieldAssist in crates/protocol).
+const ASSIST_KEYS = new Set(["off", "hint", "format"]);
 const KINDS = new Set(["text", "longtext", "code", "number", "boolean", "date", "datetime", "enum", "secret", "time", "ref"]);
 const NODE_KEYS: Record<string, string[]> = {
   form: ["type", "id", "layout", "label", "fields"],
@@ -29,6 +31,10 @@ export function checkView(view: unknown): string[] {
       if (n.layout !== "strip" && n.layout !== "stack") errs.push("bad layout");
       for (const f of (n.fields as Record<string, unknown>[]) ?? []) {
         for (const k of Object.keys(f)) if (!FIELD_KEYS.has(k)) errs.push(`unknown field key ${k}`);
+        if (f.assist !== undefined) {
+          if (typeof f.assist !== "object" || f.assist === null || Array.isArray(f.assist)) errs.push("assist must be an object");
+          else for (const k of Object.keys(f.assist)) if (!ASSIST_KEYS.has(k)) errs.push(`unknown assist key ${k}`);
+        }
         if (!KINDS.has(String(f.kind))) errs.push(`bad field kind ${String(f.kind)}`);
         if (typeof f.name !== "string" || !isLabel(f.label)) errs.push("field needs name and label");
       }

@@ -6,7 +6,7 @@
 import path from "node:path";
 import { expect, test, type Page } from "@playwright/test";
 
-const OUT = path.resolve(import.meta.dirname, "../docs/screenshots");
+const OUT = path.resolve(import.meta.dirname, "../test-results/screenshots");
 const EXTRA = process.env.WB_SHOT_DIR; // optional: also save 1600×1000 shots here for review
 
 const tab = (page: Page, name: string) => page.locator("[data-tab-id]", { hasText: name });
