@@ -1,4 +1,4 @@
-import { useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useWorkbench } from "../state/context";
 import { clamp, LIMITS, DEFAULT_LAYOUT } from "../state/store";
 
@@ -25,3 +25,15 @@ export function useResize(key: SizeKey, direction: 1 | -1) {
 }
 
 export const isMac = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform);
+
+/** Whether the window is at least `min` px wide; follows resizing. */
+export function useWindowAtLeast(min: number): boolean {
+  const [wide, setWide] = useState(() => typeof window !== "undefined" && window.innerWidth >= min);
+  useEffect(() => {
+    const update = () => setWide(window.innerWidth >= min);
+    update();
+    window.addEventListener("resize", update);
+    return () => window.removeEventListener("resize", update);
+  }, [min]);
+  return wide;
+}

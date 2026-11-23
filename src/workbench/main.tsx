@@ -18,11 +18,14 @@ import { createMixedClient } from "./protocol/mixed-client";
 import { createMockClient } from "./protocol/mock";
 import { connectKernel } from "./protocol/real";
 import { openStartupPage } from "./state/startup";
+import { pickLayout } from "./state/layout-mode";
 import { createStore, type LayoutState } from "./state/store";
 
 async function start() {
   const query = new URLSearchParams(window.location.search);
   const reset = query.has("reset");
+  // Prototype of layout step 2: `?layout=classic` shows the current layout for comparison.
+  document.documentElement.dataset.layout = pickLayout(query);
   let client: ProtocolClient;
   let startupError: string | undefined;
   try {

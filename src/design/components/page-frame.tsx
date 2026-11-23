@@ -81,15 +81,62 @@ export function Breadcrumb({ items, label }: BreadcrumbProps) {
 export interface PageTitleBarProps {
   icon: string;
   title: ReactNode;
+  /**
+   * The path to the object (without the object itself). Given (layout step 2): no title row — the breadcrumb row ends
+   * with the object's name in bold as the page heading, then the badges; the next row has `lead` (the environment)
+   * first, then the actions, and the aside (info toggle) at its right end.
+   */
+  crumbs?: BreadcrumbItem[];
+  crumbsLabel?: string;
   /** Badges after the title. */
   meta?: ReactNode;
   /** Action bar. */
   actions?: ReactNode;
   /** Right end: environment selector, info toggle. */
   aside?: ReactNode;
+  /** With `crumbs`: first in the actions row, before the actions (the environment selector). */
+  lead?: ReactNode;
 }
 
-export function PageTitleBar({ icon, title, meta, actions, aside }: PageTitleBarProps) {
+export function PageTitleBar({ icon, title, crumbs, crumbsLabel, meta, actions, aside, lead }: PageTitleBarProps) {
+  if (crumbs) {
+    return (
+      <header className="od-titlebar od-titlebar--crumbs">
+        <div className="od-titlebar__row">
+          <nav className="od-titlebar__heading od-titlebar__crumbs" aria-label={crumbsLabel}>
+            {crumbs.map((item) => (
+              <Fragment key={item.key}>
+                {item.onClick ? (
+                  <button type="button" className="od-crumbs__item od-crumbs__item--link" onClick={item.onClick}>
+                    {item.icon && <Icon name={item.icon} size="sm" />}
+                    <span className="od-crumbs__label">{item.label}</span>
+                  </button>
+                ) : (
+                  <span className="od-crumbs__item">
+                    {item.icon && <Icon name={item.icon} size="sm" />}
+                    <span className="od-crumbs__label">{item.label}</span>
+                  </span>
+                )}
+                <Icon name="chevron-right" size="xs" className="od-crumbs__sep" />
+              </Fragment>
+            ))}
+            <span className="od-titlebar__current" aria-current="page">
+              <Icon name={icon} size="sm" className="od-titlebar__icon" />
+              <h1 className="od-titlebar__title">{title}</h1>
+            </span>
+            {meta && <div className="od-titlebar__meta">{meta}</div>}
+          </nav>
+        </div>
+        {(lead || actions || aside) && (
+          <div className="od-titlebar__actions-row">
+            {lead && <div className="od-titlebar__lead">{lead}</div>}
+            {actions && <div className="od-titlebar__actions">{actions}</div>}
+            {aside && <div className="od-titlebar__aside">{aside}</div>}
+          </div>
+        )}
+      </header>
+    );
+  }
   return (
     <header className="od-titlebar">
       <div className="od-titlebar__heading">
@@ -179,15 +226,17 @@ export interface InfoPanelProps {
   closeLabel?: string;
   children: ReactNode;
   label?: string;
+  /** Which side of the content it is on (the close icon points that way). Default left. */
+  side?: "left" | "right";
 }
 
-/** Info panel on the left of the page content (§9.3). Its width is set by the Sized wrapper and never follows the content. */
-export function InfoPanel({ title, onClose, closeLabel, children, label }: InfoPanelProps) {
+/** Info panel beside the page content (§9.3). Its width is set by the Sized wrapper and never follows the content. */
+export function InfoPanel({ title, onClose, closeLabel, children, label, side = "left" }: InfoPanelProps) {
   return (
     <aside className="od-info" aria-label={label}>
       <div className="od-info__header">
         <h2 className="od-info__title">{title}</h2>
-        {onClose && closeLabel && <IconButton icon="panel-left-close" label={closeLabel} size="sm" onClick={onClose} />}
+        {onClose && closeLabel && <IconButton icon={side === "left" ? "panel-left-close" : "panel-right-close"} label={closeLabel} size="sm" onClick={onClose} />}
       </div>
       <div className="od-info__body">{children}</div>
     </aside>

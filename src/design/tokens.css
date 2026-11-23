@@ -149,6 +149,16 @@
   /* Workbench (activity bar, side panel, tab strip, status bar, splitters, grid, code editor) */
   --activity-bar-width: 48px;
   --activity-item-size: 36px;
+  /* Layout step 2: the wide activity panel (all views as large icons). */
+  --activity-wide-width: 280px;
+  --activity-tile-width: 76px;
+  --activity-tile-icon: 40px;
+  /* The rows at the top of a tab (tab strip, breadcrumb, actions) share one size; the new layout sets it. */
+  --chrome-row-height: var(--tabstrip-height);
+  --chrome-text: var(--text-sm);
+  --chrome-leading: var(--leading-sm);
+  --chrome-icon: var(--icon-md);
+  --chrome-control-height: var(--control-height-sm);
   --statusbar-height: 24px;
   --tabstrip-height: 36px;
   --tab-min-width: 104px;
@@ -216,6 +226,18 @@
   --menu-item-height: 26px;
   --tree-row-height: 22px;
   --grid-row-height: 24px;
+}
+
+/* ------------------------------------------------------------------ layout step 2 (prototype)
+ * <html data-layout="new">: the tab strip, the breadcrumb row and the actions row share one height, one text size,
+ * one icon size and one control height (the side panel's title row follows the tab strip, so the two stay level). */
+:root[data-layout="new"] {
+  --chrome-row-height: 32px;
+  --chrome-text: var(--text-xs);
+  --chrome-leading: var(--leading-xs);
+  --chrome-icon: var(--icon-sm);
+  --chrome-control-height: 26px;
+  --tabstrip-height: var(--chrome-row-height);
 }
 
 /* ------------------------------------------------------------------ light theme */

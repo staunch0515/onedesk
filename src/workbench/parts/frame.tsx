@@ -4,7 +4,8 @@ import { useI18n } from "../i18n";
 import { isSourceMissing, type NodeState, type PageDescriptor } from "../protocol";
 import { useQuery, useUi, useWorkbench } from "../state/context";
 import type { TabState } from "../state/store";
-import { useResize } from "./hooks";
+import { useResize, useWindowAtLeast } from "./hooks";
+import { INFO_LEFT_MIN_WIDTH, layoutMode } from "../state/layout-mode";
 import { InfoPanelPart } from "./info-panel";
 
 const STATE_TONE: Record<NodeState, Tone> = { ok: "neutral", disabled: "neutral", "missing-plugin": "warning", broken: "danger", conflict: "warning", "load-failed": "danger" };
@@ -31,7 +32,10 @@ export function Frame({ tab, descriptor, meta, actions, children, panel }: Frame
   const panelHeight = useUi((s) => s.panelHeight);
   const dirty = useUi((s) => Object.keys(s.drafts[tab.id] ?? {}).length > 0);
   const envs = useQuery((c) => (descriptor.usesEnv ? c.params.envOptions() : Promise.resolve([])), [descriptor.usesEnv], ["env", "tree:environments"]);
-  const infoResize = useResize("infoWidth", 1);
+  const classic = layoutMode() === "classic";
+  // New layout: on a wide window the info panel sits left of the content (near the tree), otherwise on the right.
+  const infoLeft = useWindowAtLeast(INFO_LEFT_MIN_WIDTH) || classic;
+  const infoResize = useResize("infoWidth", infoLeft ? 1 : -1);
   const panelResize = useResize("panelHeight", -1);
   const stateName: Record<NodeState, string> = {
     ok: "",
@@ -63,13 +67,33 @@ export function Frame({ tab, descriptor, meta, actions, children, panel }: Frame
   const showInfo = descriptor.hasInfo && Boolean(descriptor.resourceId);
   const envMissing = descriptor.usesEnv && tab.envId !== null && envs.data !== undefined && !envs.data.some((e) => e.id === tab.envId);
 
+  const envSelect = descriptor.usesEnv ? (
+    <TitleBarSlot>
+      <Select
+        size="sm"
+        aria-label={t("page.environment")}
+        placeholder={t("page.pickEnvironment")}
+        invalid={envMissing || !tab.envId}
+        value={envMissing ? undefined : (tab.envId ?? undefined)}
+        onValueChange={(envId) => wb.updateTab(tab.id, { envId })}
+        options={(envs.data ?? []).map((e) => ({ value: e.id, label: `${" ".repeat(e.depth)}${e.name}`, icon: "layers" }))}
+      />
+    </TitleBarSlot>
+  ) : null;
+  const infoToggle = showInfo ? (
+    <IconButton icon={infoLeft ? (infoOpen ? "panel-left-close" : "panel-left-open") : infoOpen ? "panel-right-close" : "panel-right-open"} size="sm" label={infoOpen ? t("info.hide") : t("info.show")} aria-pressed={infoOpen} onClick={() => store.set({ infoOpen: !infoOpen })} />
+  ) : null;
+
   return (
     <PageFrame
-      breadcrumb={<Breadcrumb label={t("page.breadcrumb")} items={crumbs} />}
+      // New layout: no breadcrumb row; the breadcrumb is the start of the title row, with the page's name in bold.
+      breadcrumb={classic ? <Breadcrumb label={t("page.breadcrumb")} items={crumbs} /> : undefined}
       header={
         <PageTitleBar
           icon={descriptor.icon}
           title={pageTitle(descriptor.title)}
+          crumbs={classic ? undefined : crumbs.slice(0, -1)}
+          crumbsLabel={t("page.breadcrumb")}
           meta={
             <>
               {descriptor.kindLabel && <Badge>{tx(descriptor.kindLabel)}</Badge>}
@@ -84,25 +108,13 @@ export function Frame({ tab, descriptor, meta, actions, children, panel }: Frame
             </>
           }
           actions={actions && actions.length > 0 ? <ActionBar items={actions} moreLabel={t("page.more")} label={t("page.actions")} /> : undefined}
+          // New layout: the environment comes first in the actions row (the most important choice); classic: in the aside.
+          lead={classic ? undefined : envSelect}
           aside={
-            descriptor.usesEnv || showInfo ? (
+            (classic && envSelect) || infoToggle ? (
               <>
-                {descriptor.usesEnv && (
-                  <TitleBarSlot>
-                    <Select
-                      size="sm"
-                      aria-label={t("page.environment")}
-                      placeholder={t("page.pickEnvironment")}
-                      invalid={envMissing || !tab.envId}
-                      value={envMissing ? undefined : (tab.envId ?? undefined)}
-                      onValueChange={(envId) => wb.updateTab(tab.id, { envId })}
-                      options={(envs.data ?? []).map((e) => ({ value: e.id, label: `${" ".repeat(e.depth)}${e.name}`, icon: "layers" }))}
-                    />
-                  </TitleBarSlot>
-                )}
-                {showInfo && (
-                  <IconButton icon={infoOpen ? "panel-left-close" : "panel-left-open"} size="sm" label={infoOpen ? t("info.hide") : t("info.show")} aria-pressed={infoOpen} onClick={() => store.set({ infoOpen: !infoOpen })} />
-                )}
+                {classic && envSelect}
+                {infoToggle}
               </>
             ) : undefined
           }
@@ -146,7 +158,7 @@ export function Frame({ tab, descriptor, meta, actions, children, panel }: Frame
         ) : undefined
       }
     >
-      {showInfo && infoOpen && (
+      {showInfo && infoOpen && infoLeft && (
         <>
           <Sized axis="x" size={infoWidth}>
             <InfoPanelPart resourceId={descriptor.resourceId!} />
@@ -155,6 +167,14 @@ export function Frame({ tab, descriptor, meta, actions, children, panel }: Frame
         </>
       )}
       <Pane grow>{children}</Pane>
+      {showInfo && infoOpen && !infoLeft && (
+        <>
+          <Splitter axis="x" label={t("info.resize")} {...infoResize} />
+          <Sized axis="x" size={infoWidth}>
+            <InfoPanelPart resourceId={descriptor.resourceId!} side="right" />
+          </Sized>
+        </>
+      )}
     </PageFrame>
   );
 }

@@ -1012,6 +1012,10 @@ export const enUS = {
   "kernel.confirm.run.delete.confirm.ok": "Delete result",
   "kernel.runFallback": "The run failed (reason: {code}).",
   "link.openFailed": "The system could not open the link: {reason}",
+  "activity.wide": "Show all views as icons",
+  "activity.narrow": "Back to the icon column",
+  "activity.filter": "Find a view",
+  "activity.noMatch": "No view matches",
 } as const;
 
 export type MessageKey = keyof typeof enUS;

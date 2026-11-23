@@ -1,7 +1,8 @@
-import type { ButtonHTMLAttributes, ReactNode, Ref } from "react";
+import { useState, type ButtonHTMLAttributes, type ReactNode, type Ref } from "react";
 import { cx } from "./cx";
 import { Icon } from "./icon";
 import { IconButton } from "./icon-button";
+import { Input } from "./input";
 import { Progress } from "./spinner";
 import { Tooltip } from "./tooltip";
 import "./workbench.css";
@@ -67,10 +68,78 @@ export interface ActivityBarProps {
   activeKey: string | null;
   onSelect: (key: string) => void;
   label: string;
+  /**
+   * Layout step 2. Defined: a button at the top switches between the icon column (false) and a wide panel that shows
+   * every view as a large icon with its name, with a search on top (true). Undefined: no switch.
+   */
+  wide?: boolean;
+  onToggleWide?: () => void;
+  wideLabel?: string;
+  narrowLabel?: string;
+  filterLabel?: string;
+  emptyLabel?: string;
 }
 
 /** Narrow icon column at the far left; picks what the side panel shows. */
-export function ActivityBar({ items, footer, activeKey, onSelect, label }: ActivityBarProps) {
+export function ActivityBar({ items, footer, activeKey, onSelect, label, wide, onToggleWide, wideLabel = "", narrowLabel = "", filterLabel = "", emptyLabel = "" }: ActivityBarProps) {
+  const [filter, setFilter] = useState("");
+  const toggle =
+    wide !== undefined && onToggleWide ? (
+      <Tooltip content={wide ? narrowLabel : wideLabel} side="right">
+        <button type="button" className="od-activity__item od-activity__toggle" aria-label={wide ? narrowLabel : wideLabel} aria-pressed={wide} onClick={onToggleWide}>
+          <Icon name={wide ? "panel-left-close" : "layout-grid"} size="lg" />
+        </button>
+      </Tooltip>
+    ) : null;
+
+  if (wide) {
+    const words = filter.toLowerCase().split(/\s+/).filter(Boolean);
+    const shown = items.filter((item) => words.every((w) => item.label.toLowerCase().includes(w) || item.key.toLowerCase().includes(w)));
+    return (
+      <nav className="od-activity od-activity--wide" aria-label={label}>
+        {/* Same rows as the side panel next to it: a title row of the tab strip's height, then the search, so the two line up. */}
+        <div className="od-activity__head">
+          <h2 className="od-side__title">{label}</h2>
+          <IconButton icon="panel-left-close" size="sm" label={narrowLabel} tooltipSide="bottom" onClick={onToggleWide} />
+        </div>
+        <div className="od-side__filter">
+          <Input size="sm" icon="search" value={filter} placeholder={filterLabel} aria-label={filterLabel} onChange={(e) => setFilter(e.target.value)} onKeyDown={(e) => e.key === "Escape" && setFilter("")} />
+        </div>
+        <div className="od-activity__grid" role="list">
+          {shown.length === 0 && <span className="od-activity__empty">{emptyLabel}</span>}
+          {shown.map((item) => (
+            <button
+              key={item.key}
+              type="button"
+              role="listitem"
+              className={cx("od-activity__tile", activeKey === item.key && "od-activity__tile--active")}
+              aria-current={activeKey === item.key ? "true" : undefined}
+              title={item.label}
+              onClick={() => onSelect(item.key)}
+            >
+              <span className="od-activity__tile-icon">
+                <Icon name={item.icon} size="lg" />
+                {item.badge !== undefined && item.badge > 0 && <span className="od-activity__badge">{item.badge > 99 ? "99+" : item.badge}</span>}
+              </span>
+              <span className="od-activity__tile-label">{item.label}</span>
+            </button>
+          ))}
+        </div>
+        {footer && footer.length > 0 && (
+          <div className="od-activity__group od-activity__group--row">
+            {footer.map((item) => (
+              <Tooltip key={item.key} content={item.label} shortcut={item.shortcut} side="top">
+                <button type="button" className="od-activity__item" aria-label={item.label} onClick={() => onSelect(item.key)}>
+                  <Icon name={item.icon} size="lg" />
+                </button>
+              </Tooltip>
+            ))}
+          </div>
+        )}
+      </nav>
+    );
+  }
+
   const render = (item: ActivityItem) => (
     <Tooltip key={item.key} content={item.label} shortcut={item.shortcut} side="right">
       <button
@@ -87,7 +156,11 @@ export function ActivityBar({ items, footer, activeKey, onSelect, label }: Activ
   );
   return (
     <nav className="od-activity" aria-label={label}>
-      <div className="od-activity__group">{items.map(render)}</div>
+      <div className="od-activity__group">
+        {toggle}
+        {toggle && <span className="od-activity__divider" aria-hidden />}
+        {items.map(render)}
+      </div>
       {footer && footer.length > 0 && <div className="od-activity__group">{footer.map(render)}</div>}
     </nav>
   );

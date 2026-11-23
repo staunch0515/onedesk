@@ -49,6 +49,8 @@ export interface LayoutState {
   expanded: Record<string, string[]>;
   gridWidths: Record<string, Record<string, number>>;
   lastEnvId: string | null;
+  /** Layout step 2: the activity bar shows all views as a wide grid with a search instead of an icon column. */
+  activityWide: boolean;
 }
 
 /** The "install a plugin" flow: asking for a folder (browser mode), then the confirmation of what was found. */
@@ -124,6 +126,7 @@ export const DEFAULT_LAYOUT: LayoutState = {
   expanded: {},
   gridWidths: {},
   lastEnvId: null,
+  activityWide: false,
 };
 
 export const LIMITS = {

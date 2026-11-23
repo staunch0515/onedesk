@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef } from "react";
 import { ActivityBar, Button, CommandPalette, Dialog, Sized, Splitter, WorkbenchFrame, WorkbenchMain, useTheme, useToast, type CommandGroup } from "../design";
+import { layoutMode } from "./state/layout-mode";
 import { useI18n } from "./i18n";
 import { loadChildren, type LanguageInfo } from "./protocol";
 import { CommandDialogs } from "./parts/command-dialogs";
@@ -40,6 +41,7 @@ export function Workbench({ settings, languages, onSetting: storeSetting }: Work
   const activity = useUi((s) => s.activity);
   const sideOpen = useUi((s) => s.sideOpen);
   const sideWidth = useUi((s) => s.sideWidth);
+  const activityWide = useUi((s) => s.activityWide);
   const tasksOpen = useUi((s) => s.tasksOpen);
   const noticesOpen = useUi((s) => s.noticesOpen);
   const paletteOpen = useUi((s) => s.paletteOpen);
@@ -221,6 +223,13 @@ export function Workbench({ settings, languages, onSetting: storeSetting }: Work
           else if (key === activity && sideOpen) store.set({ sideOpen: false });
           else store.set({ activity: key, sideOpen: true });
         }}
+        // Layout step 2: a button at the top switches between the icon column and a wide grid of all views with a search.
+        wide={layoutMode() === "classic" ? undefined : activityWide}
+        onToggleWide={() => store.set((x) => ({ activityWide: !x.activityWide }))}
+        wideLabel={t("activity.wide")}
+        narrowLabel={t("activity.narrow")}
+        filterLabel={t("activity.filter")}
+        emptyLabel={t("activity.noMatch")}
       />
       {sideOpen && tree && (
         <>

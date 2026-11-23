@@ -985,5 +985,9 @@
   "kernel.audit.resource.aiVisible": "AI への表示を変更",
   "kernel.audit.mcp.call": "AI ツールの呼び出し",
   "kernel.audit.mcp.refused": "AI のリクエストを拒否",
-  "kernel.error.reason.aiRun": "AI クライアントが開始した実行では、この操作は許可されていません。"
+  "kernel.error.reason.aiRun": "AI クライアントが開始した実行では、この操作は許可されていません。",
+  "activity.wide": "すべてのビューをアイコンで表示",
+  "activity.narrow": "アイコン列に戻す",
+  "activity.filter": "ビューを検索",
+  "activity.noMatch": "一致するビューはありません"
 }

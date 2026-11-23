@@ -134,6 +134,115 @@
   text-align: center;
 }
 
+/* Layout step 2: the switch at the top, and the wide panel (all views as large icons, with a search). */
+.od-activity__divider {
+  width: var(--icon-lg);
+  height: var(--border-width);
+  margin: var(--space-1) 0;
+  background: var(--border-default);
+}
+
+.od-activity--wide {
+  justify-content: flex-start;
+  width: var(--activity-wide-width);
+  padding: 0 0 var(--space-1-5);
+}
+
+/* Like the side panel's header (.od-side__header), so the two panels' rows line up. */
+.od-activity__head {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  height: var(--tabstrip-height);
+  padding: 0 var(--space-1-5) 0 var(--space-3);
+}
+
+.od-activity__grid {
+  display: grid;
+  flex: 1;
+  padding: 0 var(--space-2);
+  grid-template-columns: repeat(auto-fill, minmax(var(--activity-tile-width), 1fr));
+  grid-auto-rows: max-content;
+  gap: var(--space-1);
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.od-activity__tile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+  margin: 0;
+  padding: var(--space-2) var(--space-1);
+  border: 0;
+  border-radius: var(--radius-lg);
+  background: transparent;
+  color: var(--fg-default);
+  cursor: default;
+}
+
+.od-activity__tile:hover {
+  background: var(--bg-hover);
+}
+
+.od-activity__tile--active,
+.od-activity__tile--active:hover {
+  background: var(--bg-active);
+}
+
+.od-activity__tile:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring);
+  outline-offset: var(--focus-ring-inset);
+}
+
+.od-activity__tile-icon {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--activity-tile-icon);
+  height: var(--activity-tile-icon);
+  border-radius: var(--radius-lg);
+  background: var(--bg-surface);
+  box-shadow: var(--shadow-xs);
+  color: var(--fg-muted);
+}
+
+.od-activity__tile--active .od-activity__tile-icon {
+  color: var(--accent-text);
+}
+
+.od-activity__tile-label {
+  display: -webkit-box;
+  max-width: 100%;
+  overflow: hidden;
+  font-size: var(--text-xs);
+  line-height: var(--leading-xs);
+  text-align: center;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.od-activity__empty {
+  grid-column: 1 / -1;
+  padding: var(--space-2);
+  color: var(--fg-muted);
+  font-size: var(--text-xs);
+  text-align: center;
+}
+
+.od-activity__group--row {
+  flex-direction: row;
+  justify-content: flex-start;
+  padding: var(--space-1-5) var(--space-2) 0;
+}
+
 /* ------------------------------------------------------------------ side panel */
 .od-side {
   display: flex;

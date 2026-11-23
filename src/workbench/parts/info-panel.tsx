@@ -141,7 +141,7 @@ function AiVisibleSection({ id, visible, group, disabled }: { id: string; visibl
 }
 
 /** Frame-owned info about a resource (§9.3): name, location, description, tags, created / modified. */
-export function InfoPanelPart({ resourceId }: { resourceId: string }) {
+export function InfoPanelPart({ resourceId, side }: { resourceId: string; side?: "left" | "right" }) {
   const { client, store, actions } = useWorkbench();
   const { t, tx, dateTime } = useI18n();
   const { data: res } = useQuery((c) => c.resource.get(resourceId), [resourceId], [`resource:${resourceId}`, "plugins"]);
@@ -238,7 +238,7 @@ export function InfoPanelPart({ resourceId }: { resourceId: string }) {
   );
 
   return (
-    <InfoPanel title={t("info.title")} label={t("info.title")} closeLabel={t("info.hide")} onClose={() => store.set({ infoOpen: false })}>
+    <InfoPanel side={side} title={t("info.title")} label={t("info.title")} closeLabel={t("info.hide")} onClose={() => store.set({ infoOpen: false })}>
       {body}
     </InfoPanel>
   );

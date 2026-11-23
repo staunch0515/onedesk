@@ -139,6 +139,104 @@
   border-left: var(--border-width) solid var(--border-default);
 }
 
+/* Layout step 2: the breadcrumb row (bold current name, badges), then the actions on the left and the aside at the end.
+ * Both rows have the tab strip's size: same height, text, icons and control height. */
+.od-titlebar--crumbs {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0;
+  padding: 0 var(--space-4) var(--space-1);
+}
+
+.od-titlebar__row,
+.od-titlebar__actions-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  height: var(--chrome-row-height);
+}
+
+.od-titlebar__crumbs {
+  flex: 1 1 auto;
+  gap: var(--space-1);
+  height: 100%;
+  overflow: hidden;
+  color: var(--fg-subtle);
+  font-size: var(--chrome-text);
+  line-height: var(--chrome-leading);
+  white-space: nowrap;
+}
+
+.od-titlebar__crumbs .od-icon {
+  width: var(--chrome-icon);
+  height: var(--chrome-icon);
+}
+
+/* The path gives way first, then the current name. */
+.od-titlebar__crumbs .od-crumbs__item {
+  flex: 0 1000 auto;
+  min-width: var(--icon-lg);
+}
+
+.od-titlebar__current {
+  display: inline-flex;
+  flex: 0 1 auto;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: var(--table-col-sm);
+  padding: 0 var(--space-1);
+  color: var(--fg-default);
+}
+
+.od-titlebar--crumbs .od-titlebar__title {
+  min-width: 0;
+  font-size: var(--chrome-text);
+  line-height: var(--chrome-leading);
+  font-weight: var(--weight-semibold);
+  letter-spacing: var(--tracking-normal);
+}
+
+.od-titlebar--crumbs .od-titlebar__meta {
+  flex: 0 100 auto;
+  margin-left: var(--space-1);
+}
+
+.od-titlebar--crumbs .od-titlebar__aside {
+  margin-left: auto;
+  padding-left: 0;
+  border-left: 0;
+}
+
+/* The environment comes first; a hairline sets it apart from the actions. */
+.od-titlebar__lead {
+  display: flex;
+  flex: none;
+  align-items: center;
+  padding-right: var(--space-2);
+  border-right: var(--border-width) solid var(--border-default);
+}
+
+/* Buttons, "More", the environment selector and the info toggle: one control height and the row's text size. */
+.od-titlebar--crumbs .od-button--sm,
+.od-titlebar--crumbs .od-select--sm {
+  height: var(--chrome-control-height);
+  font-size: var(--chrome-text);
+  line-height: var(--chrome-leading);
+}
+
+.od-titlebar--crumbs .od-icon-button--sm {
+  width: var(--chrome-control-height);
+  height: var(--chrome-control-height);
+}
+
+.od-titlebar--crumbs .od-button .od-icon,
+.od-titlebar--crumbs .od-icon-button .od-icon,
+.od-titlebar--crumbs .od-select .od-icon {
+  width: var(--chrome-icon);
+  height: var(--chrome-icon);
+}
+
 .od-titlebar__slot {
   flex: none;
   width: var(--env-select-width);
