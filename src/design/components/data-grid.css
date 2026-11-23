@@ -6,6 +6,7 @@
   height: 100%;
   overflow: auto;
   background: var(--bg-surface);
+  overscroll-behavior: contain;
 }
 
 .od-grid-wrap--auto {

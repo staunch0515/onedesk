@@ -94,6 +94,7 @@
   overflow: auto;
   padding: var(--space-4) var(--space-5);
   color: var(--fg-default);
+  overscroll-behavior: contain;
 }
 
 .od-dialog__header:last-child {

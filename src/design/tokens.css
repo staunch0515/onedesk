@@ -103,8 +103,9 @@
   --icon-stroke-mark: 2.5; /* checkbox tick only: 1.75 is too faint at 14px on a filled box */
 
   /* Layout */
-  --app-min-width: 1280px;
-  --viewport-height: 100vh;
+  /* Same as the window's minWidth (src-tauri/tauri.conf.json): the document never gets wider than the window. */
+  --app-min-width: 1100px;
+  --viewport-height: 100%;
   --sidebar-width: 248px;
   --topbar-height: 48px;
   --page-max-width: 1120px;

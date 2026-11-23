@@ -79,6 +79,7 @@
   min-height: 0;
   overflow: auto;
   padding: var(--space-5);
+  overscroll-behavior: contain;
 }
 
 .od-drawer__footer {

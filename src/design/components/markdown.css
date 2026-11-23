@@ -121,6 +121,7 @@
   background: var(--bg-subtle);
   font-size: var(--text-sm);
   line-height: var(--leading-sm);
+  overscroll-behavior: contain;
 }
 
 .od-markdown pre code {
@@ -142,6 +143,7 @@
 
 .od-markdown__table-wrap {
   overflow-x: auto;
+  overscroll-behavior: contain;
 }
 
 .od-markdown table {

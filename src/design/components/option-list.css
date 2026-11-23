@@ -8,6 +8,7 @@
 .od-option-list--scroll {
   max-height: var(--list-max-height);
   overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .od-option-list__empty {

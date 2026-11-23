@@ -11,6 +11,7 @@
   font-size: var(--text-md);
   outline: none;
   user-select: none;
+  overscroll-behavior: contain;
 }
 
 .od-tree:focus-visible {

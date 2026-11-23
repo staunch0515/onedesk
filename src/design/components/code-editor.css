@@ -64,6 +64,7 @@
   letter-spacing: 0;
   white-space: pre;
   tab-size: var(--code-tab-size);
+  overscroll-behavior: contain;
 }
 
 .od-code__highlight {

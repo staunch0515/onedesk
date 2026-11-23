@@ -294,6 +294,7 @@
 
 .od-pane--scroll {
   overflow: auto;
+  overscroll-behavior: contain;
 }
 
 .od-pane--fixed {
@@ -446,6 +447,7 @@
   flex-direction: column;
   min-height: 0;
   overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .od-task {

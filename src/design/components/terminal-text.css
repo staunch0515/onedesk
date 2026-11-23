@@ -9,6 +9,7 @@
   font-size: var(--text-sm);
   max-height: var(--term-max-height);
   overflow: auto;
+  overscroll-behavior: contain;
 }
 
 .od-terminal__line {

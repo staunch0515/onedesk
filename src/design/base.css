@@ -6,10 +6,19 @@
   box-sizing: border-box;
 }
 
+/*
+ * The document is exactly the window and never scrolls itself (no page jitter): only the inner scroll areas scroll,
+ * and they do not hand their scrolling on to the page. `overscroll-behavior` stops the elastic bounce where WebKit
+ * supports it (Safari 16+); `overflow: hidden` on a fixed-size root is what keeps older WebKit (macOS 11) still.
+ */
 html,
-body {
+body,
+#root {
   margin: 0;
   padding: 0;
+  height: 100%;
+  overflow: hidden;
+  overscroll-behavior: none;
 }
 
 html {
@@ -23,9 +32,18 @@ html {
 }
 
 body {
-  min-width: var(--app-min-width);
-  min-height: var(--viewport-height);
   background: var(--bg-app);
+}
+
+/*
+ * Inner scroll areas keep their scrolling to themselves (a wheel at the end does not move the page or a parent): every
+ * rule in src/design that makes an element scroll also sets `overscroll-behavior: contain`. Not on `*`: on an element
+ * that cannot scroll it stops the wheel from reaching the scrolling parent (Chromium latches to it).
+ */
+
+html,
+body {
+  overscroll-behavior: none;
 }
 
 h1,
