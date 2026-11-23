@@ -2,7 +2,7 @@
 [workspace]
 resolver = "2"
 members = ["crates/protocol", "crates/kernel", "crates/worker", "crates/host", "crates/mcp", "src-tauri"]
-exclude = ["spikes"]
+
 
 [workspace.package]
 version = "1.0.0"

@@ -10,3 +10,4 @@ playwright-report/
 .claude/worktrees/
 target/
 src-tauri/binaries/
+._*
