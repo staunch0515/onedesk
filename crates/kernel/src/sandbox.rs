@@ -598,11 +598,22 @@ impl Drop for Sandbox {
     }
 }
 
-/// A thrown error's text without its stack (`    at name (file:line:col)` lines): what a user
-/// may be shown (D454).
+/// A thrown error's text without its stack: from the first stack line on. A stack line is
+/// indented, starts with `at ` and ends in a location: `file:line:col`, `file:line:col)` or
+/// `native`/`native)` (D454). Message lines that merely start with "at " stay.
 pub fn without_stack(msg: &str) -> String {
-    let kept: Vec<&str> = msg.lines().take_while(|l| !l.trim_start().starts_with("at ") || !l.starts_with(char::is_whitespace)).collect();
-    kept.join("\n").trim_end().to_string()
+    fn is_location(s: &str) -> bool {
+        let s = s.trim_end().trim_end_matches(')');
+        if s.ends_with("native") {
+            return true;
+        }
+        let mut parts = s.rsplitn(3, ':');
+        let (col, line) = (parts.next(), parts.next());
+        let digits = |x: Option<&str>| x.is_some_and(|x| !x.is_empty() && x.bytes().all(|b| b.is_ascii_digit()));
+        digits(col) && digits(line) && parts.next().is_some_and(|f| !f.is_empty())
+    }
+    let is_stack = |l: &str| l.starts_with(char::is_whitespace) && l.trim_start().strip_prefix("at ").is_some_and(is_location);
+    msg.lines().take_while(|l| !is_stack(l)).collect::<Vec<_>>().join("\n").trim_end().to_string()
 }
 
 fn classify(ctl: &Ctl, msg: String) -> SandboxError {
@@ -889,5 +900,18 @@ async fn host_call_inner(
     tokio::select! {
         r = host.call(info, method, args) => r,
         _ = token.cancelled() => Err(refused(token.reason())),
+    }
+}
+
+#[cfg(test)]
+mod stack_tests {
+    use super::without_stack;
+
+    #[test]
+    fn only_real_stack_lines_are_cut() {
+        let m = "Error: could not\n  at home on the server\nat the end\n    at inner (main.js:3:9)\n    at <anonymous> (main.js:549:65)\n    at native";
+        assert_eq!(without_stack(m), "Error: could not\n  at home on the server\nat the end");
+        assert_eq!(without_stack("boom\n    at main.js:1:2"), "boom");
+        assert_eq!(without_stack("plain"), "plain");
     }
 }
