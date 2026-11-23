@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Button, EmptyState, ErrorState, Kbd, LoadingState, Pane } from "../../design";
+import { Button, EmptyState, ErrorState, Kbd, LoadingState, Pane, Text } from "../../design";
 import { useI18n } from "../i18n";
 import { AuditPage } from "../pages/audit-page";
 import { DeletedPage } from "../pages/deleted-page";
@@ -103,7 +103,7 @@ function ResolvedPage({ tab }: { tab: TabState }) {
   }, [d?.usesEnv, tab.id, store]);
 
   if (!d) {
-    return page.error ? <ErrorState title={t("page.loadFailed")} reason={page.error} onRetry={page.reload} retryLabel={t("common.retry")} /> : <LoadingState label={t("common.loading")} />;
+    return page.error ? <ErrorState title={t("page.loadFailed")} reason={page.error} resolution={page.errorDetail ? <Text size="xs" tone="muted" mono>{t("page.errorDetail", { detail: page.errorDetail })}</Text> : undefined} onRetry={page.reload} retryLabel={t("common.retry")} /> : <LoadingState label={t("common.loading")} />;
   }
   switch (d.page) {
     case "env":

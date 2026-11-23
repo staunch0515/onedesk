@@ -11,6 +11,9 @@ fn safe_segment(s: &str) -> bool {
 fn collect(root: &Path, dir: &Path, out: &mut BTreeMap<PathBuf, Vec<u8>>) -> io::Result<()> {
     for entry in std::fs::read_dir(dir)? {
         let entry = entry?;
+        if onedesk_kernel::util::is_junk_name(&entry.file_name()) {
+            continue;
+        }
         let path = entry.path();
         let ty = entry.file_type()?;
         if ty.is_dir() {
@@ -100,6 +103,23 @@ mod tests {
         std::fs::write(dir.join("manifest.json"), format!(r#"{{"id":"{id}","version":"{version}"}}"#)).unwrap();
         std::fs::write(dir.join("main.js"), main).unwrap();
         std::fs::write(dir.join("locales/en-US.json"), "{}").unwrap();
+    }
+
+    #[test]
+    fn junk_files_are_not_copied_and_do_not_make_an_old_copy_stale() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (src, dst) = (tmp.path().join("src"), tmp.path().join("dst"));
+        package(&src, "org.x.alpha", "0.1.0", "a");
+        std::fs::write(src.join("org.x.alpha/._main.js"), [0xffu8, 0xfe]).unwrap();
+        std::fs::write(src.join("org.x.alpha/.DS_Store"), [0u8]).unwrap();
+        std::fs::write(src.join("org.x.alpha/locales/._en-US.json"), [0xffu8]).unwrap();
+        assert_eq!(install_builtin(&src, &dst).unwrap().copied.len(), 1);
+        let d = dst.join("org.x.alpha/0.1.0");
+        assert!(d.join("main.js").is_file());
+        assert!(!d.join("._main.js").exists() && !d.join(".DS_Store").exists() && !d.join("locales/._en-US.json").exists());
+        // An older copy that already has them is current as far as the package goes (nothing is migrated).
+        std::fs::write(d.join("._main.js"), [0xffu8]).unwrap();
+        assert!(install_builtin(&src, &dst).unwrap().copied.is_empty());
     }
 
     #[test]

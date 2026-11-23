@@ -160,6 +160,7 @@
   "page.environment": "本标签页的环境",
   "page.pickEnvironment": "选择环境",
   "page.loadFailed": "页面加载失败",
+  "page.errorDetail": "详情：{detail}",
   "page.missingTitle": "无法打开这一项",
   "page.missingReason": "它已不在这个工作区里。",
   "state.disabled": "插件已停用",

@@ -160,6 +160,7 @@
   "page.environment": "このタブの環境",
   "page.pickEnvironment": "環境を選択",
   "page.loadFailed": "このページを読み込めませんでした",
+  "page.errorDetail": "詳細：{detail}",
   "page.missingTitle": "この項目は開けません",
   "page.missingReason": "このワークスペースにはもう存在しません。",
   "state.disabled": "プラグイン無効",

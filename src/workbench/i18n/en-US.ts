@@ -228,6 +228,7 @@ export const enUS = {
   "page.environment": "Environment of this tab",
   "page.pickEnvironment": "Pick environment",
   "page.loadFailed": "This page could not be loaded",
+  "page.errorDetail": "Details: {detail}",
   "page.missingTitle": "This item cannot be opened",
   "page.missingReason": "It no longer exists in this workspace.",
 

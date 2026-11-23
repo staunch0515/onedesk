@@ -3,7 +3,7 @@ import { useToast } from "../../design";
 import { useI18n } from "../i18n";
 import type { MessageKey } from "../i18n/en-US";
 import { isOpenableUrl } from "../../design";
-import { useClient, type CommandContext, type CommandEffect, type ProtocolClient } from "../protocol";
+import { KernelError, useClient, type CommandContext, type CommandEffect, type ProtocolClient } from "../protocol";
 import { staleFields } from "./merge";
 import { saveTab } from "./save";
 import { useStore, type Store, type TabState, type UiState } from "./store";
@@ -357,6 +357,8 @@ export interface Query<T> {
   data: T | undefined;
   loading: boolean;
   error: string | null;
+  /** One line of the kernel's `detail` for a plugin failure (its message, no stack); null otherwise. */
+  errorDetail: string | null;
   reload: () => void;
 }
 
@@ -364,12 +366,19 @@ export interface Query<T> {
  * Reads through the protocol and re-reads when one of the topics fires (§12 events). The previous
  * data stays on screen while a refresh is in flight, so nothing flickers.
  */
+/** The first line of a plugin failure's `detail` (its message; the kernel already left the stack out), shortened. */
+function pluginDetail(error: unknown): string | null {
+  if (!(error instanceof KernelError) || error.code !== "pluginError") return null;
+  const line = (error.detail ?? "").split("\n")[0]!.trim();
+  return line === "" ? null : line.length > 200 ? `${line.slice(0, 200)}…` : line;
+}
+
 export function useQuery<T>(fn: (client: ProtocolClient) => Promise<T>, deps: DependencyList, topics: string[] = []): Query<T> {
   const client = useClient();
   const i18n = useI18n();
   const i18nRef = useRef(i18n);
   i18nRef.current = i18n;
-  const [state, setState] = useState<{ data: T | undefined; loading: boolean; error: string | null }>({ data: undefined, loading: true, error: null });
+  const [state, setState] = useState<{ data: T | undefined; loading: boolean; error: string | null; errorDetail: string | null }>({ data: undefined, loading: true, error: null, errorDetail: null });
   const [tick, setTick] = useState(0);
   const fnRef = useRef(fn);
   fnRef.current = fn;
@@ -381,10 +390,10 @@ export function useQuery<T>(fn: (client: ProtocolClient) => Promise<T>, deps: De
     const prev = lastDeps.current;
     const fresh = !prev || prev.length !== deps.length || deps.some((d, i) => d !== prev[i]);
     lastDeps.current = deps;
-    setState((s) => ({ data: fresh ? undefined : s.data, loading: true, error: null }));
+    setState((s) => ({ data: fresh ? undefined : s.data, loading: true, error: null, errorDetail: null }));
     fnRef.current(client).then(
-      (data) => !cancelled && setState({ data, loading: false, error: null }),
-      (error: unknown) => !cancelled && setState((s) => ({ data: s.data, loading: false, error: i18nRef.current.error(error) })),
+      (data) => !cancelled && setState({ data, loading: false, error: null, errorDetail: null }),
+      (error: unknown) => !cancelled && setState((s) => ({ data: s.data, loading: false, error: i18nRef.current.error(error), errorDetail: pluginDetail(error) })),
     );
     return () => {
       cancelled = true;

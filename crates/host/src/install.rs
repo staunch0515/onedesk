@@ -77,6 +77,9 @@ pub fn copy_package(src: &Path, dest: &Path) -> io::Result<()> {
     std::fs::create_dir_all(dest)?;
     for entry in std::fs::read_dir(src)? {
         let entry = entry?;
+        if onedesk_kernel::util::is_junk_name(&entry.file_name()) {
+            continue;
+        }
         let from = entry.path();
         let to = dest.join(entry.file_name());
         let meta = std::fs::symlink_metadata(&from)?;
@@ -146,6 +149,25 @@ mod tests {
         let dest = tmp.path().join("out");
         copy_package(&src, &dest).unwrap();
         assert!(dest.join("locales/en-US.json").is_file() && dest.join("main.js").is_file());
+    }
+
+    #[test]
+    fn copy_leaves_appledouble_and_ds_store_behind() {
+        let tmp = tempfile::tempdir().unwrap();
+        let src = tmp.path().join("pkg");
+        package(&src);
+        std::fs::create_dir_all(src.join("locales")).unwrap();
+        std::fs::write(src.join("locales/en-US.json"), "{}").unwrap();
+        std::fs::write(src.join("._main.js"), [0xffu8, 0xfe]).unwrap();
+        std::fs::write(src.join("._manifest.json"), [0xffu8]).unwrap();
+        std::fs::write(src.join("locales/._en-US.json"), [0xffu8]).unwrap();
+        std::fs::write(src.join(".DS_Store"), [0u8]).unwrap();
+        let dest = tmp.path().join("out");
+        copy_package(&src, &dest).unwrap();
+        assert!(dest.join("main.js").is_file() && dest.join("locales/en-US.json").is_file());
+        for junk in ["._main.js", "._manifest.json", "locales/._en-US.json", ".DS_Store"] {
+            assert!(!dest.join(junk).exists(), "{junk}");
+        }
     }
 
     #[test]

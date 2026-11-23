@@ -112,3 +112,23 @@ describe("a refusal by protection names the layer", () => {
     expect(i.error(new KernelError("denied", { reason: "readonly" }))).not.toMatch(/set by/);
   });
 });
+
+describe("a page the plugin could not produce", () => {
+  it("shows the plugin's message as one line of small text, without its stack", async () => {
+    const mock = createMockClient({ fresh: true, quiet: true });
+    const resolve = vi.fn(async () => {
+      throw new KernelError("pluginError", { reason: "threw" }, "plugin error: stream did not contain valid UTF-8\nsecond line");
+    });
+    const client = kernelLikeClient(mock, { page: { ...mock.page, resolve } as never });
+    const ui = (
+      <ThemeProvider theme="light" density="comfortable">
+        <Workbench settings={settings} languages={[]} onSetting={async () => undefined} />
+      </ThemeProvider>
+    );
+    const { store } = renderInShell(client, ui);
+    const tab: TabState = { id: "t9", target: "resource:x", title: "X", icon: "file", pinned: false, envId: null, params: {} };
+    act(() => store.set({ tabs: [tab], activeTabId: "t9" }));
+    expect(await screen.findByText("Details: plugin error: stream did not contain valid UTF-8")).toBeTruthy();
+    expect(screen.queryByText(/second line/)).toBeNull();
+  });
+});
