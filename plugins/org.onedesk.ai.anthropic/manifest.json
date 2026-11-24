@@ -60,7 +60,7 @@
             "type": "secret"
           }
         },
-        "draggable": false,
+        "draggable": true,
         "accepts": []
       }
     ],

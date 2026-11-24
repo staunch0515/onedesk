@@ -247,7 +247,7 @@
           "ext": "",
           "folder": ""
         },
-        "draggable": false,
+        "draggable": true,
         "accepts": [],
         "menu": [
           "copy",
@@ -271,7 +271,7 @@
           "ext": "",
           "folder": ""
         },
-        "draggable": false,
+        "draggable": true,
         "accepts": [
           "disk-folder",
           "disk-file"

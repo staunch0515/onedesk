@@ -190,7 +190,7 @@
 | `newName` | string | 否 | 新建时的默认名（语言键） |
 | `defaults` | object | 否 | 新建资源的初始 `body` |
 | `fields` | object | 否 | body 字段的声明，键是 body 的键，见下表 |
-| `draggable` | bool | 否 | 节点可拖动 |
+| `draggable` | bool | 否 | 节点可拖动。放在资源树（`tree: "resources"`）里的类型必须写 `true`：资源由用户放到想放的分组里（D476，`plugins/_testing/kinds-movable.test.ts` 检查） |
 | `accepts` | string[] | 否 | 可以放进来的子类型：自己的短名、全名或 `*`。未知 `unknownKind` |
 | `menu` | string[] | 否 | 右键菜单命令：自己的命令短名或内核命令。未知 `unknownCommand` |
 | `children` | bool | 否 | 代码在存储的子节点之后再补子节点（`host.kinds.handle(kind, { children })`）。必须有 `tree`，否则 `childrenWithoutTree` |

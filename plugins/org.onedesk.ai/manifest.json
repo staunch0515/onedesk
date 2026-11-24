@@ -48,7 +48,7 @@
           "use6": "true",
           "use7": "true"
         },
-        "draggable": false,
+        "draggable": true,
         "accepts": []
       },
       {
@@ -62,7 +62,7 @@
           "path": "",
           "text": ""
         },
-        "draggable": false,
+        "draggable": true,
         "accepts": []
       }
     ],
