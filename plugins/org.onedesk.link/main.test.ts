@@ -15,12 +15,12 @@ describe("link plugin", () => {
     expect(Object.keys(r.actions)).toEqual(["open"]);
   });
 
-  it("renders a form with url and profile bound to the body", async () => {
+  it("renders a form with the address bound to the body (the browser profile field is gone, user 2026-11-24)", async () => {
     const { pages } = registry(plugin);
     const out = await pages.editor.render(ctxOf({}));
     expect(checkView(out.view)).toEqual([]);
     expect(onlyKeys(out, RENDER_KEYS)).toEqual([]);
-    expect(out.view[0].fields.map((f: any) => [f.name, f.bind])).toEqual([["url", "body.url"], ["profile", "body.profile"]]);
+    expect(out.view[0].fields.map((f: any) => [f.name, f.bind])).toEqual([["url", "body.url"]]);
     expect(out.view).toHaveLength(1); // no placeholders: no strip, no "opens" line
     const ro = await pages.editor.render(ctxOf({}, { run: { id: "x" } }));
     expect(ro.view[0].fields.every((f: any) => f.readOnly)).toBe(true);
@@ -74,9 +74,10 @@ describe("link plugin", () => {
     expect(hostOf("mailto:a@b.com?x=1")).toBe("a@b.com");
   });
 
-  it("the manifest: kind link with url/profile, action open, three locales", () => {
+  it("the manifest: kind link with url only, action open, three locales", () => {
     const m = JSON.parse(readFileSync(new URL("./manifest.json", import.meta.url), "utf8"));
-    expect(m.contributes.kinds[0]).toMatchObject({ id: "link", tree: "resources", fields: { url: { type: "text" }, profile: { type: "text" } } });
+    expect(m.contributes.kinds[0]).toMatchObject({ id: "link", tree: "resources", fields: { url: { type: "text" } } });
+    expect(m.contributes.kinds[0].fields.profile).toBeUndefined();
     expect(m.contributes.actions[0]).toMatchObject({ id: "open", output: "link" });
     expect(Object.keys(m.contributes.locales)).toEqual(["en-US", "zh-CN", "ja-JP"]);
   });

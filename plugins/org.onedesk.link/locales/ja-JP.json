@@ -7,8 +7,6 @@
   "action.save": "保存",
   "field.url": "アドレス",
   "field.url.placeholder": "https://example.com",
-  "field.profile": "ブラウザのプロファイル",
-  "field.profile.hint": "記憶のみで、まだ使われません。",
   "error.noUrl": "先にアドレスを入力してください。",
   "error.badUrl": "開けるのは http、https、mailto のアドレスだけです。",
   "summary.opened": "{host} を開きました",

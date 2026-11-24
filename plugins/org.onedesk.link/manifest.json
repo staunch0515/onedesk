@@ -18,10 +18,9 @@
         "tree": "resources",
         "page": "editor",
         "newName": "kind.link.new",
-        "defaults": { "url": "", "profile": "" },
+        "defaults": { "url": "" },
         "fields": {
-          "url": { "type": "text" },
-          "profile": { "type": "text" }
+          "url": { "type": "text" }
         },
         "draggable": true,
         "accepts": []

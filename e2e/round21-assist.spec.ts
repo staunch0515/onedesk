@@ -99,7 +99,7 @@ test("✨ on a note's content: prepare shows what would be sent, Send asks the f
   await expect.poll(async () => (await call<{ body: { text: string } }>(page, "resource.get", { id })).body.text).toContain("point one");
 });
 
-test("✨ by a labelled field writes that field (the browser profile says assist.off, so it has none); with ai.policy allow there is no preview step", async ({ page }) => {
+test("✨ by a labelled field writes that field; with ai.policy allow there is no preview step", async ({ page }) => {
   ai.set({ kind: "ok", pieces: ["https://example.com/docs"] });
   await openKernel(page, host);
   const env = (await call<{ nodes: { key: string; label: string }[] }>(page, "tree.children", { tree: "env" })).nodes.find((n) => n.label === "Default")!.key;
@@ -107,7 +107,7 @@ test("✨ by a labelled field writes that field (the browser profile says assist
   await create(page, LINK, { name: "Docs" });
   await openKernel(page, host);
   await page.locator("[data-tree-key]", { hasText: "Docs" }).first().dblclick();
-  await expect(page.getByRole("button", { name: "Write with AI" })).toHaveCount(1); // the address, not the profile
+  await expect(page.getByRole("button", { name: "Write with AI" })).toHaveCount(1); // the address (assist.off is covered in src/workbench/parts/assist.test.ts)
   await expect(page.getByRole("button", { name: "Fill with AI" })).toHaveCount(0); // one field: no page-wide button
   await page.getByRole("button", { name: "Write with AI" }).click();
   const dialog = page.getByRole("dialog");
