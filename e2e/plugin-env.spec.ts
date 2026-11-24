@@ -90,12 +90,13 @@ test("a parameter is renamed and retyped in its row; Comes from shows how it is 
   await expect(grid.getByRole("textbox", { name: "New parameter" })).toBeVisible();
   // Comes from: the chain Default › Other with the value at each level.
   await grid.getByRole("button", { name: /^This environment — / }).first().click();
-  const chain = page.getByRole("list", { name: "How price is set, from the top environment down" });
+  const chain = page.getByRole("table", { name: "How price is set, from the top environment down" });
   await expect(chain).toBeVisible();
-  await expect(chain.getByRole("listitem").first()).toContainText("Default");
-  await expect(chain.getByRole("listitem").first()).toContainText("12");
-  await expect(chain.getByRole("listitem").last()).toContainText("Other (this environment)");
-  await expect(chain.getByRole("listitem").last()).toContainText("15");
+  // Only the parent environments, name and value in two columns.
+  await expect(chain.getByRole("row")).toHaveCount(1);
+  await expect(chain.getByRole("rowheader")).toHaveText("Default");
+  await expect(chain.getByRole("cell")).toHaveText("12");
+  await page.waitForTimeout(400); // the popover's fade-in, for the screenshot only
   await page.screenshot({ path: path.join(OUT, "plugin-env-chain.png") });
   await page.keyboard.press("Escape");
   // A parameter never set above (flag) has no chain to show: only price and tenant_id (also set in Default) have one.

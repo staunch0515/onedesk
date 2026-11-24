@@ -212,11 +212,6 @@ export function EnvPage({ tab, descriptor }: { tab: TabState; descriptor: PageDe
             </Text>
           );
         }
-        const inEffect = (
-          <Badge tone="accent" dot>
-            {t("env.layerEffective")}
-          </Badge>
-        );
         const shown = (value: string | undefined) =>
           value === undefined ? (
             <Text size="sm" tone="subtle">
@@ -239,10 +234,8 @@ export function EnvPage({ tab, descriptor }: { tab: TabState; descriptor: PageDe
           >
             <LineageList
               label={t("env.layersTitle", { name: p.name })}
-              items={[
-                ...p.layers.map((l) => ({ key: l.envId, label: l.name, value: shown(l.value), badge: !p.own && l.effective ? inEffect : undefined })),
-                { key: id, label: t("env.layerThis", { name: env.data?.name ?? "" }), value: shown(p.own ? p.value : undefined), badge: p.own ? inEffect : undefined, current: true },
-              ]}
+              numeric={p.type === "number"}
+              items={p.layers.map((l) => ({ key: l.envId, label: l.name, value: shown(l.value) }))}
             />
           </Popover>
         );

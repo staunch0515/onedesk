@@ -1,47 +1,31 @@
 .od-lineage {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  min-width: 0;
-}
-
-.od-lineage--nested {
-  margin-top: var(--space-2);
-  margin-left: var(--space-1-5);
-  padding-left: var(--space-3);
-  border-left: var(--space-px) solid var(--border-default);
-}
-
-.od-lineage__item {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-0-5);
-  min-width: 0;
-}
-
-.od-lineage__head {
-  display: flex;
-  align-items: center;
-  gap: var(--space-1-5);
-  min-width: 0;
-}
-
-.od-lineage__label {
-  min-width: 0;
-  color: var(--fg-muted);
+  width: 100%;
+  border-collapse: collapse;
   font-size: var(--text-sm);
   line-height: var(--leading-sm);
-  overflow-wrap: anywhere;
 }
 
-.od-lineage__item--current > .od-lineage__head .od-lineage__label {
+.od-lineage__row + .od-lineage__row > * {
+  border-top: var(--space-px) solid var(--border-subtle);
+}
+
+.od-lineage__name {
+  padding: var(--space-1-5) var(--space-4) var(--space-1-5) calc(var(--space-4) * var(--od-lineage-depth, 0));
   color: var(--fg-default);
-  font-weight: var(--weight-medium);
+  font-weight: var(--weight-regular);
+  text-align: left;
+  white-space: nowrap;
+  /* as narrow as the names allow; the values take the rest */
+  width: 1%;
 }
 
 .od-lineage__value {
-  min-width: 0;
-  font-size: var(--text-sm);
-  line-height: var(--leading-sm);
+  padding: var(--space-1-5) 0;
+  text-align: left;
   overflow-wrap: anywhere;
+}
+
+.od-lineage__value--numeric {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
 }

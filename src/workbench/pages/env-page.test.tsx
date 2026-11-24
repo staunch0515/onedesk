@@ -103,19 +103,24 @@ describe("environment reference parameters (G3)", () => {
     expect(valueForType({ type: "text", value: "12" }, "number")).toBe("12");
   });
 
-  it("“Comes from” shows how the value is set from the top environment down; never set above, it is only a label (D472)", async () => {
+  it("“Comes from” shows the parent environments and their values in two columns; never set above, it is only a label (D472)", async () => {
     const layers = [
       { envId: "root", name: "Default", value: "12", effective: false },
       { envId: "mid", name: "Production", value: "14", effective: true },
     ];
-    setup([param({ name: "price", type: "text", value: "15", own: true, display: undefined, layers }), param({ name: "solo", type: "text", value: "a", own: true, display: undefined })]);
+    setup([param({ name: "price", type: "number", value: "15", own: true, display: undefined, layers }), param({ name: "solo", type: "text", value: "a", own: true, display: undefined })]);
     const trigger = await screen.findByRole("button", { name: /^This environment — / });
     expect(screen.getAllByRole("button", { name: /^This environment/ })).toHaveLength(1);
     fireEvent.click(trigger);
-    const chain = await screen.findByRole("list", { name: "How price is set, from the top environment down" });
-    const levels = within(chain).getAllByRole("listitem");
-    expect(levels.map((l) => l.firstElementChild!.textContent)).toEqual(["Default", "Production", "Staging (this environment)In effect"]);
-    expect(levels[0]!.textContent).toContain("12");
-    expect(levels[2]!.textContent).toContain("15");
+    const chain = await screen.findByRole("table", { name: "How price is set, from the top environment down" });
+    // Two columns: the parent environments only (not this one), and their values; no "in effect" mark.
+    const rows = within(chain).getAllByRole("row");
+    expect(rows.map((r) => [...r.children].map((c) => c.textContent))).toEqual([
+      ["Default", "12"],
+      ["Production", "14"],
+    ]);
+    expect(within(chain).queryByText(/In effect|this environment/)).toBeNull();
+    // A number is right-aligned.
+    expect(rows[0]!.children[1]!.className).toContain("od-lineage__value--numeric");
   });
 });
