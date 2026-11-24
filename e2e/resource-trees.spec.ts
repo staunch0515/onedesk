@@ -131,3 +131,32 @@ test("a default environment set on the tree, a group or the resource: the neares
   await page.getByRole("tab", { name: /Runbook/ }).first().click();
   await expect(envSelect(page)).toContainText("Default");
 });
+
+test("a group that was open is deleted: the tree still follows every change, with no 'no longer exists' errors (D475)", async ({ page }) => {
+  await openKernel(page, host);
+  const view = (await call<Array<{ id: string; title: string }>>(page, "tree.list")).find((t) => t.title === "Data center")!.id;
+  const a = await call<{ key: string }>(page, "tree.createGroup", { tree: view, name: "Group A" });
+  const b = await call<{ key: string }>(page, "tree.createGroup", { tree: view, name: "Group B" });
+  const inner = await call<{ key: string }>(page, "tree.createGroup", { tree: view, parent: a.key, name: "Inner" });
+  const note = (await call<{ page: { resourceId: string } }>(page, "page.save", { target: `new:${NOTE}`, changes: { name: "Mover", "body.text": "" } })).page.resourceId;
+  await call(page, "tree.move", { tree: view, key: note, target: inner.key, position: "inside" });
+  await views(page).getByRole("button", { name: "Data center", exact: true }).click();
+  const item = (name: string) => page.getByRole("treeitem", { name, exact: true });
+  // Open Group A and Inner, so both levels are loaded.
+  await item("Group A").click();
+  await page.keyboard.press("ArrowRight");
+  await item("Inner").click();
+  await page.keyboard.press("ArrowRight");
+  await expect(item("Mover")).toBeVisible();
+  // The note moves to Group B; then the open Inner group is deleted.
+  await call(page, "tree.move", { tree: view, key: note, target: b.key, position: "inside" });
+  await call(page, "resource.delete", { id: inner.key });
+  await expect(item("Inner")).toHaveCount(0);
+  await item("Group B").click();
+  await page.keyboard.press("ArrowRight");
+  await expect(item("Mover")).toBeVisible();
+  // Later changes still show; nothing failed on the way.
+  await call(page, "tree.rename", { tree: view, key: b.key, name: "Group B2" });
+  await expect(item("Group B2")).toBeVisible();
+  await expect(page.getByText("It no longer exists.")).toHaveCount(0);
+});

@@ -147,10 +147,20 @@ export function TreePanel({ tree }: { tree: TreeInfo }) {
     const refresh = () => {
       const keys = [...nodesRef.current.keys()];
       // Each level is read again as far as it had been read, so the scroll position and what is on screen stay.
-      void Promise.all(keys.map((k) => loadLevel(client, tree.id, k === ROOT ? null : k, locale, nodesRef.current.get(k)?.nodes.length ?? 0).then((level) => [k, level] as const))).then((entries) => {
+      // A level whose node is gone meanwhile (deleted, moved to another tree) cannot be read: it is dropped, and the rest
+      // still refreshes. Only the root failing is an error.
+      const read = (k: string) =>
+        loadLevel(client, tree.id, k === ROOT ? null : k, locale, nodesRef.current.get(k)?.nodes.length ?? 0).then(
+          (level) => [k, level] as const,
+          (error: unknown) => {
+            if (k === ROOT) throw error;
+            return null;
+          },
+        );
+      void Promise.all(keys.map(read)).then((entries) => {
         commit((map) => {
           map.clear();
-          for (const [k, level] of entries) map.set(k, level);
+          for (const entry of entries) if (entry) map.set(entry[0], entry[1]);
         });
       }, actions.fail);
     };
