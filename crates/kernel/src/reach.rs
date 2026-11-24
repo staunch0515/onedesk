@@ -326,7 +326,9 @@ impl Inner {
         client: Option<String>,
     ) -> KResult<Option<TreeMoveResult>> {
         let Some(t) = self.read(|c| store::get(c, target))? else { return Ok(None) };
-        if t.id == row.id || t.tree.as_deref() != Some(tree) {
+        // D478: a resource tree's view (`resources.<id>`, D473) is stored in `resources`.
+        let stored = if self.resource_view(tree).is_some() { TREE_RESOURCES } else { tree };
+        if t.id == row.id || t.tree.as_deref() != Some(stored) {
             return Ok(None);
         }
         let meta = self.row_meta(&t);

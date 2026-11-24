@@ -472,6 +472,25 @@ async fn a_drop_calls_the_plugin_and_moves_nothing() {
     assert_eq!(c.ok("tree.move", mv(&item, &other)).await, json!({}));
 }
 
+/// D478: in a resource tree of the user's own (view `resources.<id>`, D473) a drop goes to the
+/// plugin too, not to an ordinary move that the kind does not accept.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_drop_in_a_user_tree_calls_the_plugin() {
+    let (_env, c) = world(5000).await;
+    c.ok("command.execute", json!({ "id": "tree.new", "context": {} })).await;
+    let trees = c.ok("tree.list", json!(null)).await;
+    let view = trees.as_array().unwrap().iter().map(|t| t["id"].as_str().unwrap().to_string()).find(|id| id.starts_with("resources.")).unwrap();
+    let hub = create(&c, "test.reach:hub", None, json!({ "name": "Hub" })).await;
+    let item = create(&c, "test.alpha:item", None, json!({ "name": "Note", "body.text": "x" })).await;
+    for id in [&hub, &item] {
+        c.ok("command.execute", json!({ "id": "node.moveToTree", "context": { "tree": "resources", "nodeKey": id, "args": { "tree": view } } })).await;
+    }
+    let r = c.ok("tree.move", json!({ "tree": view, "key": item, "target": hub, "position": "inside" })).await;
+    assert_eq!(r["handled"], json!(true), "{r}");
+    assert_eq!(get(&c, &hub).await["body"]["items"], json!([item]));
+    assert_eq!(get(&c, &item).await["tree"], json!(view));
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn not_handled_goes_on_as_an_ordinary_move() {
     let (_env, c) = world(5000).await;
