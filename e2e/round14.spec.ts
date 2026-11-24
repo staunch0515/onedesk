@@ -360,7 +360,7 @@ const PARTS: { name: string; run: (c: Ctx, theme: "light" | "dark") => Promise<v
     run: async ({ page, snap, open }) => {
       await showTree(page, "Settings");
       await open(/^Workspace/);
-      await expect(page.getByRole("button", { name: "Add parameter" })).toBeVisible();
+      await expect(page.getByRole("textbox", { name: "New parameter" })).toBeVisible();
       await snap("workspace-config");
       await showTree(page, "Plugins");
       await open(/^HTTP request/);

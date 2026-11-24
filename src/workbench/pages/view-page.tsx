@@ -7,7 +7,7 @@ import { useRunEndRefresh } from "./run-refresh";
 import { useQuery, useUi, useWorkbench } from "../state/context";
 import { mergeDraft, type MergeState } from "../state/merge";
 import type { TabState } from "../state/store";
-import { AddParamDialog } from "./add-param-dialog";
+import { NewParamRow } from "./new-param-row";
 import { Frame } from "../parts/frame";
 import { DEFAULT_OUTPUT_TAB, isForeignAction, ResultArea, STATUS_TONE } from "../parts/result-area";
 import { TOKENIZERS } from "../parts/sql-tokens";
@@ -169,7 +169,6 @@ export function ViewPage({ tab, descriptor: initial }: { tab: TabState; descript
   const [descriptor, setDescriptor] = useState(initial);
   const [busy, setBusy] = useState<string | null>(null);
   const [ask, setAsk] = useState<ActionDecl | null>(null);
-  const [addingParam, setAddingParam] = useState(false);
   const [assistRequest, setAssistRequest] = useState<AssistRequest | null>(null);
   const assistOn = useAssistAvailable();
   const running = useQuery((c) => (tab.runId ? c.run.get(tab.runId) : Promise.resolve(null)), [tab.runId], tab.runId ? [`run:${tab.runId}`] : []);
@@ -388,7 +387,6 @@ export function ViewPage({ tab, descriptor: initial }: { tab: TabState; descript
     disabled: a.disabled || blockedByProtection(descriptor, a) || (a.role === "save" && !dirty) || (busy !== null && busy !== a.id),
     onSelect: () => void invoke(a),
   }));
-  if (isConfig) items.push({ key: "params.add", label: t("params.add"), icon: "plus", onSelect: () => setAddingParam(true) });
 
   // D462 writing help: every editable text field (✨ by its label) and the whole page ("Fill with AI"); the answer is
   // a proposal, accepted into the draft like typing.
@@ -513,18 +511,15 @@ export function ViewPage({ tab, descriptor: initial }: { tab: TabState; descript
       {descriptor.runId && <RunHeader runId={descriptor.runId} />}
       <Pane grow scroll={!hasFill || descriptor.view.length > 1}>
         {descriptor.view.map((node) => (node.type === "form" ? renderForm(node) : <ViewNodes key={node.id} nodes={[node]} onRowAction={(event, row) => void rowEvent(event, row)} />))}
+        {/* D470: the workspace configuration adds a parameter right here, under its parameters; no dialog. */}
+        {isConfig && (
+          <Pane pad="md">
+            <NewParamRow own={new Set(Object.keys(descriptor.values).map((k) => k.replace(/^params?[.:]/, "")))} onAdd={(name, value, type) => client.params.set(descriptor.resourceId!, name, value, undefined, type).catch((error) => { actions.fail(error); throw error; })} />
+          </Pane>
+        )}
       </Pane>
     </Frame>
       <AssistDialog tab={tab} request={assistRequest} onClose={() => setAssistRequest(null)} onAccept={(values) => Object.entries(values).forEach(([bind, value]) => setBound(bind, value))} />
-      {isConfig && (
-        <AddParamDialog
-          layer="config"
-          own={new Set(Object.keys(descriptor.values).map((k) => k.replace(/^params?[.:]/, "")))}
-          open={addingParam}
-          onOpenChange={setAddingParam}
-          onAdd={(name, value) => client.params.set(descriptor.resourceId!, name, value).catch((error) => { actions.fail(error); throw error; })}
-        />
-      )}
       <Dialog
         open={ask !== null}
         onOpenChange={(open) => !open && setAsk(null)}

@@ -39,39 +39,41 @@ describe("environment reference parameters (G3)", () => {
     await waitFor(() => expect(set).toHaveBeenCalledWith("env1", "datasource", "ds2", "3"));
   });
 
-  it("adds a reference parameter under a name of its own, with the resource picked from a search", async () => {
+  it("adds a reference parameter under a name of its own, with the resource picked from a search (no dialog to start it)", async () => {
     const { set } = setup([]);
-    await screen.findByText("Staging", {}, { timeout: 2000 }).catch(() => null);
-    fireEvent.click(await screen.findByRole("button", { name: /Add parameter/i }));
-    const dialog = await screen.findByRole("dialog");
-    fireEvent.click(within(dialog).getByRole("combobox", { name: "Type" }));
-    fireEvent.click(await screen.findByRole("option", { name: "Resource reference" }));
-    // No name is suggested (the shell knows no plugin's parameter names); Add stays off until one is typed.
-    const name = within(dialog).getByLabelText("Name") as HTMLInputElement;
+    const name = (await screen.findByLabelText("New parameter")) as HTMLInputElement;
     expect(name.value).toBe("");
     fireEvent.change(name, { target: { value: "datasource" } });
-    fireEvent.click(within(dialog).getByRole("button", { name: "Choose…" }));
-    const picker = (await screen.findAllByRole("dialog")).at(-1)!;
+    fireEvent.click(screen.getByRole("button", { name: "Add it as a reference to a resource…" }));
+    const picker = await screen.findByRole("dialog");
     fireEvent.change(within(picker).getByLabelText("Search by name"), { target: { value: "ware" } });
     fireEvent.click(await within(picker).findByText("Warehouse 2"));
-    fireEvent.click(await within(dialog).findByRole("button", { name: "Add" }));
     await waitFor(() => expect(set).toHaveBeenCalledWith("env1", "datasource", "ds2", "3", "ref"));
   });
 
-  it("adds any parameter by name and value (D466), refusing a name with spaces or one already set here", async () => {
-    const { set } = setup([]);
-    fireEvent.click(await screen.findByRole("button", { name: /Add parameter/i }));
-    const dialog = await screen.findByRole("dialog");
-    const add = () => within(dialog).getByRole("button", { name: "Add" }) as HTMLButtonElement;
-    const name = within(dialog).getByLabelText("Name");
+  it("adds any parameter by typing its name and value under the table, Enter adds it (D470); a name with spaces or one already set is refused", async () => {
+    const { set } = setup([param({ name: "region", type: "text", value: "eu", own: true, display: undefined })]);
+    const name = await screen.findByLabelText("New parameter");
+    const value = screen.getByLabelText("Value") as HTMLInputElement;
+    const add = () => screen.getByRole("button", { name: "Add this parameter" }) as HTMLButtonElement;
     expect(add().disabled).toBe(true);
     fireEvent.change(name, { target: { value: "tenant id" } });
-    expect(within(dialog).getByText("A name has no spaces or braces.")).toBeTruthy();
+    expect(screen.getByText("A name has no spaces or braces.")).toBeTruthy();
+    fireEvent.change(name, { target: { value: "region" } });
+    expect(screen.getByText("This environment already sets that parameter.")).toBeTruthy();
     expect(add().disabled).toBe(true);
     fireEvent.change(name, { target: { value: "tenant_id" } });
-    fireEvent.change(within(dialog).getByLabelText("Value"), { target: { value: "1001" } });
-    expect(add().disabled).toBe(false);
-    fireEvent.click(add());
-    await waitFor(() => expect(set).toHaveBeenCalledWith("env1", "tenant_id", "1001", "3", "text"));
+    fireEvent.change(value, { target: { value: "1001" } });
+    fireEvent.keyDown(value, { key: "Enter" });
+    await waitFor(() => expect(set).toHaveBeenCalledWith("env1", "tenant_id", "1001", "3", undefined));
+    // no dialog, no list of the workspace's own parameter names
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(screen.queryByText("network.allow")).toBeNull();
+  });
+
+  it("has no description of its own: the description is in the info panel only (D470)", async () => {
+    setup([]);
+    await screen.findByLabelText("New parameter");
+    expect(screen.queryByRole("textbox", { name: /description/i })).toBeNull();
   });
 });

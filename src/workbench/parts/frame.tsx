@@ -5,7 +5,7 @@ import { isSourceMissing, type NodeState, type PageDescriptor } from "../protoco
 import { useQuery, useUi, useWorkbench } from "../state/context";
 import type { TabState } from "../state/store";
 import { useResize, useWindowAtLeast } from "./hooks";
-import { InfoPanelPart } from "./info-panel";
+import { InfoPanelPart, NewInfoPanelPart } from "./info-panel";
 
 /** From this window width up the info panel sits left of the content (near the tree); below it, on the right (D465). */
 export const INFO_LEFT_MIN_WIDTH = 1600;
@@ -65,7 +65,11 @@ export function Frame({ tab, descriptor, meta, actions, children, panel }: Frame
   }));
 
   const restrictions = descriptor.restrictions ?? [];
-  const showInfo = descriptor.hasInfo && Boolean(descriptor.resourceId);
+  // D466: every resource has its info panel — a saved one, and one not saved yet (`new:<kind>`, its fields go into the draft).
+  const isNew = tab.target.startsWith("new:") && descriptor.found && descriptor.state === "ok";
+  const showInfo = (descriptor.hasInfo && Boolean(descriptor.resourceId)) || isNew;
+  const infoPart = (side?: "left" | "right") =>
+    isNew ? <NewInfoPanelPart tabId={tab.id} descriptor={descriptor} side={side} /> : <InfoPanelPart resourceId={descriptor.resourceId!} side={side} />;
   const envMissing = descriptor.usesEnv && tab.envId !== null && envs.data !== undefined && !envs.data.some((e) => e.id === tab.envId);
 
   const envSelect = descriptor.usesEnv ? (
@@ -154,7 +158,7 @@ export function Frame({ tab, descriptor, meta, actions, children, panel }: Frame
       {showInfo && infoOpen && infoLeft && (
         <>
           <Sized axis="x" size={infoWidth}>
-            <InfoPanelPart resourceId={descriptor.resourceId!} />
+            {infoPart()}
           </Sized>
           <Splitter axis="x" label={t("info.resize")} {...infoResize} />
         </>
@@ -164,7 +168,7 @@ export function Frame({ tab, descriptor, meta, actions, children, panel }: Frame
         <>
           <Splitter axis="x" label={t("info.resize")} {...infoResize} />
           <Sized axis="x" size={infoWidth}>
-            <InfoPanelPart resourceId={descriptor.resourceId!} side="right" />
+            {infoPart("right")}
           </Sized>
         </>
       )}

@@ -1,14 +1,14 @@
 import { useState } from "react";
-import { Badge, BottomPanel, Button, DataGrid, EmptyState, IconButton, Input, LoadingState, Pane, Popover, Section, Switch, Text, Textarea, Tooltip, useToast, type ActionBarItem, type DataGridColumn } from "../../design";
+import { Badge, BottomPanel, Button, DataGrid, EmptyState, IconButton, Input, LoadingState, Pane, Popover, Section, Switch, Text, Tooltip, useToast, type ActionBarItem, type DataGridColumn } from "../../design";
 import { useI18n } from "../i18n";
 import type { EnvParam, HistoryEntry, PageDescriptor } from "../protocol";
 import { useQuery, useUi, useWorkbench } from "../state/context";
 import type { TabState } from "../state/store";
 import { Frame } from "../parts/frame";
-import { AddParamDialog } from "./add-param-dialog";
+import { NewParamRow } from "./new-param-row";
 import { RefPicker } from "./ref-picker";
 
-/** Environment page (I.4): parent chain in the breadcrumb, description, parameters with their source layer, history with restore. */
+/** Environment page (I.4): parent chain in the breadcrumb, parameters with their source layer, history with restore. Name and description are in the info panel only (D470). */
 export function EnvPage({ tab, descriptor }: { tab: TabState; descriptor: PageDescriptor }) {
   const { client, store, actions } = useWorkbench();
   const { t, tx, dateTime } = useI18n();
@@ -21,11 +21,8 @@ export function EnvPage({ tab, descriptor }: { tab: TabState; descriptor: PageDe
   const widths = useUi((s) => s.gridWidths["env-params"]);
   const historyWidths = useUi((s) => s.gridWidths["env-history"]);
   const [filter, setFilter] = useState("");
-  const [adding, setAdding] = useState(false);
   // The reference parameter whose resource is being chosen (G3).
   const [picking, setPicking] = useState<string | null>(null);
-  // The configuration page is this same page for a configuration node: it offers the "config" layer's parameters.
-  const layer = descriptor.breadcrumb[descriptor.breadcrumb.length - 1]?.tree === "config" ? "config" : "env";
 
   const items: ActionBarItem[] = descriptor.actions.map((a) => ({
     key: a.id,
@@ -290,29 +287,12 @@ export function EnvPage({ tab, descriptor }: { tab: TabState; descriptor: PageDe
         <LoadingState label={t("common.loading")} />
       ) : (
         <Pane grow scroll pad="md" gap="md">
-          <Section title={t("env.description")} variant="plain">
-            <Textarea
-              key={env.data.description}
-              rows={2}
-              aria-label={t("env.description")}
-              defaultValue={env.data.description}
-              placeholder={t("env.descriptionPlaceholder")}
-              onBlur={(e) => {
-                if (e.currentTarget.value !== env.data!.description) client.page.save(`resource:${id}`, { description: e.currentTarget.value }).catch(actions.fail);
-              }}
-            />
-          </Section>
           <Section
             variant="plain"
             title={t("env.params")}
             description={t("env.paramsHint", { own, total: env.data.params.length })}
             actions={
-              <Pane direction="row" gap="xs" align="center">
-                <Input size="sm" icon="list-filter" placeholder={t("env.filter")} aria-label={t("env.filter")} value={filter} onChange={(e) => setFilter(e.target.value)} />
-                <Button size="sm" icon="plus" onClick={() => setAdding(true)}>
-                  {t("params.add")}
-                </Button>
-              </Pane>
+              <Input size="sm" icon="list-filter" placeholder={t("env.filter")} aria-label={t("env.filter")} value={filter} onChange={(e) => setFilter(e.target.value)} />
             }
           >
             <DataGrid
@@ -325,12 +305,13 @@ export function EnvPage({ tab, descriptor }: { tab: TabState; descriptor: PageDe
               getRowKey={(p) => p.name}
               widths={widths}
               onWidthsChange={(next) => store.set((s) => ({ gridWidths: { ...s.gridWidths, "env-params": next } }))}
-              empty={<EmptyState layout="inline" message={t("env.noParams")} />}
+              empty={<EmptyState layout="inline" message={needle ? t("env.noParams") : t("env.noParamsYet")} />}
             />
+            {/* D470: a new parameter is typed right here, under the table; no dialog. */}
+            <NewParamRow own={new Set(env.data.params.filter((p) => p.own).map((p) => p.name))} onAdd={(name, value, type) => client.params.set(id, name, value, basis, type).catch((error) => { actions.fail(error); throw error; })} />
           </Section>
         </Pane>
       )}
-      <AddParamDialog layer={layer} own={new Set(env.data?.params.filter((p) => p.own).map((p) => p.name))} open={adding} onOpenChange={setAdding} onAdd={async (name, value, type) => { await client.params.set(id, name, value, basis, type).catch((error) => { actions.fail(error); throw error; }); }} />
       <RefPicker
         open={picking !== null}
         onOpenChange={(open) => !open && setPicking(null)}

@@ -1,8 +1,8 @@
 import { useState } from "react";
 import { Badge, Button, IconButton, InfoField, InfoPanel, Input, LoadingState, Pane, Switch, Text, Textarea, Tooltip, useToast } from "../../design";
-import type { HistoryEntry, RefInfo } from "../protocol";
+import type { HistoryEntry, PageDescriptor, RefInfo } from "../protocol";
 import { useI18n } from "../i18n";
-import { useQuery, useWorkbench } from "../state/context";
+import { useQuery, useUi, useWorkbench } from "../state/context";
 
 const CLIP = 40;
 const clip = (text: string) => (text.length > CLIP ? `${text.slice(0, CLIP)}…` : text);
@@ -240,6 +240,67 @@ export function InfoPanelPart({ resourceId, side }: { resourceId: string; side?:
   return (
     <InfoPanel side={side} title={t("info.title")} label={t("info.title")} closeLabel={t("info.hide")} onClose={() => store.set({ infoOpen: false })}>
       {body}
+    </InfoPanel>
+  );
+}
+
+const splitTags = (text: string): string[] => text.split(/[,，]/).map((x) => x.trim()).filter(Boolean);
+
+/**
+ * The info panel of a resource that is not saved yet (`new:<kind>`, D466: everything is a resource, so its basic
+ * information is there from the start). Name, description and tags go into the tab's draft and are written with the
+ * first save (the kernel takes `name`, `description` and `tags` from the changes when it creates the resource).
+ */
+export function NewInfoPanelPart({ tabId, descriptor, side }: { tabId: string; descriptor: PageDescriptor; side?: "left" | "right" }) {
+  const { store, actions } = useWorkbench();
+  const { t, tx, pageTitle } = useI18n();
+  const draft = useUi((s) => s.drafts[tabId]);
+  const name = typeof draft?.name === "string" ? draft.name : pageTitle(descriptor.title);
+  const description = typeof draft?.description === "string" ? draft.description : "";
+  const tags = Array.isArray(draft?.tags) ? (draft.tags as string[]) : [];
+  const location = descriptor.breadcrumb.slice(0, -1).map((c) => pageTitle(c.label));
+  return (
+    <InfoPanel side={side} title={t("info.title")} label={t("info.title")} closeLabel={t("info.hide")} onClose={() => store.set({ infoOpen: false })}>
+      <Text size="sm" tone="muted">
+        {t("info.unsaved")}
+      </Text>
+      <InfoField label={t("info.name")}>
+        <Input size="sm" aria-label={t("info.name")} value={name} onChange={(e) => actions.setDraft(tabId, "name", e.target.value, undefined)} />
+      </InfoField>
+      <InfoField label={t("info.location")}>
+        <Text size="sm">{[t("info.root"), ...location].join(" / ")}</Text>
+      </InfoField>
+      {descriptor.kindLabel && (
+        <InfoField label={t("info.kind")}>
+          <Badge icon={descriptor.icon}>{tx(descriptor.kindLabel)}</Badge>
+        </InfoField>
+      )}
+      <InfoField label={t("info.description")}>
+        <Textarea rows={3} aria-label={t("info.description")} value={description} placeholder={t("info.descriptionPlaceholder")} onChange={(e) => actions.setDraft(tabId, "description", e.target.value, undefined)} />
+      </InfoField>
+      <InfoField label={t("info.tags")}>
+        <Pane gap="xs">
+          <Input
+            key={tags.join("\n")}
+            size="sm"
+            aria-label={t("info.tags")}
+            defaultValue={tags.join(", ")}
+            placeholder={t("info.tagsPlaceholder")}
+            onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
+            onBlur={(e) => {
+              const next = splitTags(e.currentTarget.value);
+              if (next.join("\n") !== tags.join("\n")) actions.setDraft(tabId, "tags", next, undefined);
+            }}
+          />
+          {tags.length > 0 && (
+            <Pane direction="row" gap="xs" wrap>
+              {tags.map((tag) => (
+                <Badge key={tag}>{tag}</Badge>
+              ))}
+            </Pane>
+          )}
+        </Pane>
+      </InfoField>
     </InfoPanel>
   );
 }

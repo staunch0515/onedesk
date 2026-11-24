@@ -8,7 +8,8 @@ import { ProtocolProvider, type ProtocolClient } from "../protocol";
 import { createMockClient } from "../protocol/mock";
 import { WorkbenchProvider } from "../state/context";
 import { createStore } from "../state/store";
-import { InfoPanelPart } from "./info-panel";
+import type { PageDescriptor } from "../protocol";
+import { InfoPanelPart, NewInfoPanelPart } from "./info-panel";
 
 function setup(history: ProtocolClient["resource"]["history"], restore = vi.fn(async () => undefined)) {
   const mock = createMockClient({ fresh: true, quiet: true });
@@ -92,5 +93,35 @@ describe("info panel references", () => {
     fireEvent.click(await screen.findByText("Other note"));
     expect(store.get().tabs.some((t) => t.target === "resource:s1")).toBe(true);
     void open;
+  });
+});
+
+describe("info panel of a resource not saved yet (D469)", () => {
+  it("name, description and tags go into the tab's draft; location and kind are shown", async () => {
+    const mock = createMockClient({ fresh: true, quiet: true });
+    const store = createStore(null, () => undefined);
+    const descriptor = { target: "new:k", title: "Untitled prompt", icon: "file", kindLabel: "Prompt", found: true, state: "ok", breadcrumb: [{ label: "Team" }, { label: "Untitled prompt" }] } as unknown as PageDescriptor;
+    render(
+      <ProtocolProvider client={mock}>
+        <I18nProvider locale="en-US">
+          <ToastProvider closeLabel="Close" viewportLabel="Notifications" duration={1000}>
+            <WorkbenchProvider store={store}>
+              <NewInfoPanelPart tabId="t1" descriptor={descriptor} />
+            </WorkbenchProvider>
+          </ToastProvider>
+        </I18nProvider>
+      </ProtocolProvider>,
+    );
+    expect(screen.getByText(/Not saved yet/)).toBeTruthy();
+    expect(screen.getByText("Top level / Team")).toBeTruthy();
+    expect(screen.getByText("Prompt")).toBeTruthy();
+    const name = screen.getByLabelText("Name") as HTMLInputElement;
+    expect(name.value).toBe("Untitled prompt");
+    fireEvent.change(name, { target: { value: "Weekly" } });
+    fireEvent.change(screen.getByLabelText("Description"), { target: { value: "Fridays" } });
+    const tags = screen.getByLabelText("Tags");
+    fireEvent.change(tags, { target: { value: "a, b，c" } });
+    fireEvent.blur(tags);
+    await waitFor(() => expect(store.get().drafts.t1).toEqual({ name: "Weekly", description: "Fridays", tags: ["a", "b", "c"] }));
   });
 });

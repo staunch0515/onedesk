@@ -68,16 +68,30 @@ test("the kernel names the provider: the AI plugin implements onedesk.assist/1",
   await call(page, "plugin.setSetting", { plugin: AI, name: "connection", value: conn });
 });
 
-test("✨ on a note's content: prepare shows what would be sent, Send asks the fake, Accept puts the proposal in as an unsaved change", async ({ page }) => {
-  ai.set({ kind: "ok", pieces: ["- point one\n", "- point two"] });
+test("✨ without a description: no instruction is asked for; it says to write the description first (D470)", async ({ page }) => {
   await openKernel(page, host);
-  const id = await create(page, NOTE, { name: "Weekly sync", "body.text": "Met with ann@example.com about the roadmap." });
-  await page.locator("[data-tree-key]", { hasText: "Weekly sync" }).first().dblclick();
+  await create(page, NOTE, { name: "No description", "body.text": "x" });
+  await page.locator("[data-tree-key]", { hasText: "No description" }).first().dblclick();
+  const before = chats().length;
   await page.getByRole("button", { name: "Write with AI" }).first().click();
   const dialog = page.getByRole("dialog");
-  await dialog.getByRole("textbox").fill("Summarize as two bullet points");
+  await expect(dialog).toContainText("Write in the info panel's Description");
+  await expect(dialog.getByRole("textbox")).toHaveCount(0);
+  await dialog.getByRole("button", { name: "Open the info panel" }).click();
+  await expect(dialog).toHaveCount(0);
+  await expect(page.getByRole("complementary", { name: "Info" })).toBeVisible();
+  expect(chats().length).toBe(before);
+});
+
+test("✨ on a note's content: it writes what the description says, no dialog asks; prepare shows what would be sent, Send asks the fake, Accept puts the proposal in as an unsaved change", async ({ page }) => {
+  ai.set({ kind: "ok", pieces: ["- point one\n", "- point two"] });
+  await openKernel(page, host);
+  const id = await create(page, NOTE, { name: "Weekly sync", description: "Summarize as two bullet points", "body.text": "Met with ann@example.com about the roadmap." });
+  await page.locator("[data-tree-key]", { hasText: "Weekly sync" }).first().dblclick();
   const before = chats().length;
-  await dialog.getByRole("button", { name: "Continue" }).click();
+  await page.getByRole("button", { name: "Write with AI" }).first().click();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog).toContainText("From the description: Summarize as two bullet points");
   // preview (the default policy): the request is shown, nothing was sent yet, the email is masked
   const preview = dialog.getByRole("textbox").first();
   await expect(preview).toHaveValue(/Summarize as two bullet points/, { timeout: 20_000 });
@@ -104,15 +118,13 @@ test("✨ by a labelled field writes that field; with ai.policy allow there is n
   await openKernel(page, host);
   const env = (await call<{ nodes: { key: string; label: string }[] }>(page, "tree.children", { tree: "env" })).nodes.find((n) => n.label === "Default")!.key;
   await call(page, "params.set", { node: env, name: "ai.policy", value: "allow" });
-  await create(page, LINK, { name: "Docs" });
+  await create(page, LINK, { name: "Docs", description: "Link to the product documentation" });
   await openKernel(page, host);
   await page.locator("[data-tree-key]", { hasText: "Docs" }).first().dblclick();
   await expect(page.getByRole("button", { name: "Write with AI" })).toHaveCount(1); // the address (assist.off is covered in src/workbench/parts/assist.test.ts)
   await expect(page.getByRole("button", { name: "Fill with AI" })).toHaveCount(0); // one field: no page-wide button
   await page.getByRole("button", { name: "Write with AI" }).click();
   const dialog = page.getByRole("dialog");
-  await dialog.getByRole("textbox").fill("Link to the product documentation");
-  await dialog.getByRole("button", { name: "Continue" }).click();
   await expect(dialog.getByRole("button", { name: "Accept" })).toBeVisible({ timeout: 30_000 });
   await dialog.getByRole("button", { name: "Accept" }).click();
   await expect(page.getByRole("textbox", { name: "Address", exact: true })).toHaveValue("https://example.com/docs");

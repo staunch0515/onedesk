@@ -423,7 +423,7 @@ test("the workspace configuration is never imported", async ({ page }) => {
 
 /* ------------------------------------------------------------------ known parameters */
 
-test("the configuration page offers the known parameters as quick picks; any other name can be typed (D466)", async ({ page }) => {
+test("the configuration page adds a parameter by typing its name and value under the parameters, no dialog (D470)", async ({ page }) => {
   await openKernel(page, host);
   const known = await call<{ name: string; layers: string[] }[]>(page, "params.known");
   expect(known.map((k) => k.name).sort()).toEqual(["mcp.allow_free_query", "mcp.enabled", "mcp.env", "mcp.max_rows", "mcp.rate_per_minute", "network.allow", "process.allow", "protection.no_export", "protection.readonly", "ui.language"]); // round 19 added the five mcp.* policy parameters
@@ -432,17 +432,12 @@ test("the configuration page offers the known parameters as quick picks; any oth
 
   await showTree(page, "Settings");
   await treeItem(page, "Workspace").click();
-  await page.getByRole("button", { name: "Add parameter" }).click();
-  const dialog = page.getByRole("dialog");
-  await expect(dialog.getByRole("button", { name: "protection.readonly" })).toBeVisible();
-  await expect(dialog.getByRole("button", { name: "network.allow" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Add parameter" })).toHaveCount(0);
+  await page.getByRole("textbox", { name: "New parameter" }).fill("protection.no_export");
+  await page.getByRole("textbox", { name: "Value", exact: true }).fill("true");
   await shot(page, "add-param");
-  // A known one: its name and type are filled in (a switch, on).
-  await dialog.getByRole("button", { name: "protection.no_export" }).click();
-  await expect(dialog.getByRole("textbox", { name: "Name" })).toHaveValue("protection.no_export");
-  await expect(dialog.getByRole("switch", { name: "Value" })).toBeChecked();
-  await dialog.getByRole("button", { name: "Add", exact: true }).click();
-  await expect(dialog).toHaveCount(0);
+  await page.getByRole("textbox", { name: "Value", exact: true }).press("Enter");
+  await expect(page.getByRole("dialog")).toHaveCount(0);
   const cfg = await cfgNode(page);
   await expect.poll(async () => JSON.stringify(await call(page, "resource.get", { id: cfg }))).toContain("protection.no_export");
 

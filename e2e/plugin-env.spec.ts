@@ -48,17 +48,17 @@ async function pickEnv(page: Page, name: string) {
   await expect(envSelect(page)).toContainText(name);
 }
 
-test("an environment parameter is added by typing any name and value (D466)", async ({ page }) => {
+test("an environment parameter is added by typing any name and value under the table, no dialog (D466, D470)", async ({ page }) => {
   await openKernel(page, host);
   await showTree(page, "Environments");
   await treeItem(page, "Default").click();
-  await page.getByRole("button", { name: "Add parameter" }).click();
-  const dialog = page.getByRole("dialog");
-  await dialog.getByRole("textbox", { name: "Name" }).fill("tenant_id");
-  await dialog.getByRole("textbox", { name: "Value" }).fill("1001");
+  // Only one description: the info panel's (D470).
+  await expect(page.getByRole("textbox", { name: "Description" })).toHaveCount(1);
+  await page.getByRole("textbox", { name: "New parameter" }).fill("tenant_id");
+  await page.getByRole("textbox", { name: "Value", exact: true }).fill("1001");
   await page.screenshot({ path: path.join(OUT, "plugin-env-add-param.png") });
-  await dialog.getByRole("button", { name: "Add", exact: true }).click();
-  await expect(dialog).toHaveCount(0);
+  await page.getByRole("textbox", { name: "Value", exact: true }).press("Enter");
+  await expect(page.getByRole("dialog")).toHaveCount(0);
   const root = (await children(page, "env")).find((n) => n.label === "Default")!.key;
   type P = { name: string; value: string };
   await expect.poll(async () => (await call<{ params: P[] }>(page, "params.env", { envId: root })).params.find((p) => p.name === "tenant_id")?.value).toBe("1001");
@@ -113,4 +113,28 @@ test("only the welcome page goes without an environment; content pages have one"
   expect((await resolve("new:org.onedesk.link:link")).usesEnv).toBe(true);
   expect((await resolve("new:org.onedesk.prompt:prompt")).usesEnv).toBe(true);
   expect((await resolve("page:org.onedesk.welcome/welcome")).usesEnv).toBe(false);
+});
+
+test("a resource not saved yet has its info panel too: name, description and tags are kept with the first save (D466)", async ({ page }) => {
+  await openKernel(page, host);
+  await page.getByRole("button", { name: "New", exact: true }).first().click();
+  await page.getByRole("menuitem", { name: "Prompt", exact: true }).click();
+  const info = page.getByRole("complementary", { name: "Info" });
+  await expect(info).toBeVisible();
+  await expect(info.getByText("Not saved yet")).toBeVisible();
+  await info.getByRole("textbox", { name: "Name" }).fill("Weekly prompt");
+  await info.getByRole("textbox", { name: "Description" }).fill("Used on Fridays");
+  const tags = info.getByRole("textbox", { name: "Tags" });
+  await tags.fill("report, team");
+  await tags.press("Enter");
+  await page.getByRole("textbox", { name: "Prompt", exact: true }).fill("Write the report for {{team}}");
+  await page.screenshot({ path: path.join(OUT, "plugin-env-new-info.png") });
+  await page.keyboard.press("ControlOrMeta+s");
+  await expect(page.getByRole("heading", { level: 1, name: "Weekly prompt" })).toBeVisible();
+  const node = (await children(page, "resources")).find((n) => n.label === "Weekly prompt")!;
+  const res = await call<{ name: string; description: string; tags: string[] }>(page, "resource.get", { id: node.key });
+  expect(res).toMatchObject({ name: "Weekly prompt", description: "Used on Fridays", tags: ["report", "team"] });
+  // Saved: the usual info panel of the resource.
+  await expect(info.getByText("Not saved yet")).toHaveCount(0);
+  await expect(info.getByRole("textbox", { name: "Description" })).toHaveValue("Used on Fridays");
 });

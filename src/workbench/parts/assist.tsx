@@ -3,13 +3,15 @@ import { Banner, Button, Dialog, FormField, Spinner, Stack, Text, Textarea } fro
 import { useI18n } from "../i18n";
 import type { Run, ViewField, ViewNode } from "../protocol";
 import type { ProtocolClient } from "../protocol/client";
-import { useQuery, useWorkbench } from "../state/context";
+import { useQuery, useUi, useWorkbench } from "../state/context";
 import type { TabState } from "../state/store";
 
 /**
  * Writing help (D462, docs/redesign/ai-assist.md): the shell is the only place that draws it. A plugin only says,
  * per field, `assist: { off | hint | format }`; the kernel runs the provider's `assist` action (`assist.start`) as an
  * ordinary run; what comes back is a proposal the user accepts or not. Nothing is written before Accept.
+ * What to write is the resource's description (its info panel's "Description"; for one not saved yet, the description
+ * typed in its info panel): no dialog asks for an instruction (D470, docs/plugins/spec.md §0.6).
  */
 
 export type AssistMode = "field" | "fill";
@@ -86,20 +88,32 @@ async function runStep(client: ProtocolClient, tab: TabState, request: AssistReq
   return data;
 }
 
-type Stage = { kind: "ask" } | { kind: "working" } | { kind: "preview"; prepared: Prepared } | { kind: "proposal"; values: Record<string, string> };
+type Stage = { kind: "starting" } | { kind: "noDescription" } | { kind: "working" } | { kind: "preview"; prepared: Prepared } | { kind: "proposal"; values: Record<string, string> };
+
+/** The description of the tab's resource, which is what the AI is asked to write: the unsaved one first, then the saved one. */
+function useDescription(tab: TabState): { ready: boolean; text: string } {
+  const resourceId = tab.target.startsWith("resource:") ? tab.target.slice("resource:".length) : null;
+  const saved = useQuery((c) => (resourceId ? c.resource.get(resourceId) : Promise.resolve(null)), [resourceId], resourceId ? [`resource:${resourceId}`] : []);
+  const typed = useUi((s) => s.drafts[tab.id]?.description);
+  if (typeof typed === "string") return { ready: true, text: typed.trim() };
+  if (!resourceId) return { ready: true, text: "" };
+  return { ready: saved.data !== undefined, text: (saved.data?.description ?? "").trim() };
+}
 
 export function AssistDialog({ tab, request, onClose, onAccept }: { tab: TabState; request: AssistRequest | null; onClose: () => void; onAccept: (values: Record<string, string>) => void }) {
-  const { client } = useWorkbench();
+  const { client, store } = useWorkbench();
   const { t } = useI18n();
-  const [instruction, setInstruction] = useState("");
-  const [stage, setStage] = useState<Stage>({ kind: "ask" });
+  const description = useDescription(tab);
+  const instruction = description.text;
+  const [stage, setStage] = useState<Stage>({ kind: "starting" });
   const [error, setError] = useState<string | null>(null);
   const runId = useRef<string | null>(null);
   const live = useRef(true);
+  const started = useRef<AssistRequest | null>(null);
 
   useEffect(() => {
     live.current = true;
-    setStage({ kind: "ask" });
+    setStage({ kind: "starting" });
     setError(null);
     return () => {
       live.current = false;
@@ -108,13 +122,13 @@ export function AssistDialog({ tab, request, onClose, onAccept }: { tab: TabStat
 
   const close = () => {
     if (runId.current) void client.run.cancel(runId.current).catch(() => undefined);
-    setInstruction("");
+    started.current = null;
     onClose();
   };
   const fail = (e: unknown) => {
     if (!live.current) return;
     setError(e instanceof Error ? e.message : String(e));
-    setStage({ kind: "ask" });
+    setStage({ kind: "starting" });
   };
   const track = (id: string | null) => (runId.current = id);
 
@@ -133,6 +147,10 @@ export function AssistDialog({ tab, request, onClose, onAccept }: { tab: TabStat
   };
   const prepare = async () => {
     if (!request) return;
+    if (!instruction) {
+      setStage({ kind: "noDescription" });
+      return;
+    }
     setStage({ kind: "working" });
     setError(null);
     try {
@@ -146,17 +164,43 @@ export function AssistDialog({ tab, request, onClose, onAccept }: { tab: TabStat
     }
   };
 
+  // Clicking "Write with AI" starts at once with the description (once per request, when it has been read).
+  useEffect(() => {
+    if (!request || !description.ready || started.current === request) return;
+    started.current = request;
+    void prepare();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [request, description.ready]);
+
   const labelOf = (name: string) => request?.fields.find((f) => f.name === name)?.label ?? name;
   const title = request?.mode === "fill" ? t("assist.fillTitle") : t("assist.title", { field: request ? labelOf(request.field ?? "") : "" });
 
   const footer = (() => {
     switch (stage.kind) {
-      case "ask":
+      case "starting":
         return (
           <>
             <Button onClick={close}>{t("common.cancel")}</Button>
-            <Button variant="primary" icon="sparkles" onClick={() => void prepare()}>
-              {t("assist.continue")}
+            {error && (
+              <Button variant="primary" icon="sparkles" onClick={() => void prepare()}>
+                {t("assist.again")}
+              </Button>
+            )}
+          </>
+        );
+      case "noDescription":
+        return (
+          <>
+            <Button onClick={close}>{t("common.close")}</Button>
+            <Button
+              variant="primary"
+              icon="panel-left-open"
+              onClick={() => {
+                store.set({ infoOpen: true });
+                close();
+              }}
+            >
+              {t("assist.openInfo")}
             </Button>
           </>
         );
@@ -165,7 +209,7 @@ export function AssistDialog({ tab, request, onClose, onAccept }: { tab: TabStat
       case "preview":
         return (
           <>
-            <Button onClick={() => setStage({ kind: "ask" })}>{t("assist.back")}</Button>
+            <Button onClick={close}>{t("common.cancel")}</Button>
             <Button variant="primary" icon="send" onClick={() => void send()}>
               {t("assist.send")}
             </Button>
@@ -174,13 +218,13 @@ export function AssistDialog({ tab, request, onClose, onAccept }: { tab: TabStat
       case "proposal":
         return (
           <>
-            <Button onClick={() => setStage({ kind: "ask" })}>{t("assist.again")}</Button>
+            <Button onClick={() => void prepare()}>{t("assist.again")}</Button>
             <Button
               variant="primary"
               icon="check"
               onClick={() => {
                 onAccept(stage.values);
-                setInstruction("");
+                started.current = null;
                 onClose();
               }}
             >
@@ -199,12 +243,9 @@ export function AssistDialog({ tab, request, onClose, onAccept }: { tab: TabStat
             {error}
           </Banner>
         )}
-        {stage.kind === "ask" && (
-          <FormField label={t("assist.instruction")}>
-            <Textarea rows={3} value={instruction} placeholder={t("assist.instructionPlaceholder")} onChange={(e) => setInstruction(e.target.value)} autoFocus />
-          </FormField>
-        )}
-        {stage.kind === "working" && (
+        {stage.kind === "noDescription" && <Banner tone="info">{t("assist.noDescription")}</Banner>}
+        {instruction && stage.kind !== "noDescription" && <Text tone="muted">{t("assist.fromDescription", { text: instruction })}</Text>}
+        {(stage.kind === "working" || (stage.kind === "starting" && !error)) && (
           <Stack direction="row" gap="sm" align="center">
             <Spinner size="sm" />
             <Text tone="muted">{t("assist.working")}</Text>
