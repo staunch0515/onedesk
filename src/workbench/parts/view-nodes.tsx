@@ -13,6 +13,19 @@ type Indexed = { cells: OutputCell[]; index: number; key: string };
  * A text node with `format: "markdown"` (D381). `[[name]]` is resolved with the references of the resource the
  * active tab shows (`refs.outgoing`, the stored text); unresolved or deleted ones show as broken and cannot be opened.
  */
+/**
+ * Opens a target from the active page in that page's environment (D466): a composite, a note's [[reference]] or a
+ * table row opened from a tab on "Staging" opens on "Staging" too.
+ */
+export function useOpenHere(): (target: string) => void {
+  const { actions } = useWorkbench();
+  const envId = useUi((s) => {
+    const tab = s.tabs.find((x) => x.id === s.activeTabId);
+    return tab?.usesEnv ? tab.envId : null;
+  });
+  return useCallback((target: string) => actions.open(target, envId ? { envId } : undefined), [actions, envId]);
+}
+
 function MarkdownNode({ source }: { source: string }) {
   const { actions } = useWorkbench();
   const target = useUi((s) => s.tabs.find((x) => x.id === s.activeTabId)?.target ?? "");
@@ -23,6 +36,7 @@ function MarkdownNode({ source }: { source: string }) {
     [refs.data],
   );
   const referenceState = useCallback((name: string): ReferenceState => lookup(name)?.state ?? "missing", [lookup]);
+  const openHere = useOpenHere();
   return (
     <Pane pad="md">
       <MarkdownText
@@ -31,7 +45,7 @@ function MarkdownNode({ source }: { source: string }) {
         onLinkClick={(href) => void actions.openExternal(href)}
         onReferenceClick={(name) => {
           const to = lookup(name)?.target;
-          if (to) actions.open(`resource:${to.id}`);
+          if (to) openHere(`resource:${to.id}`);
         }}
       />
     </Pane>
@@ -40,7 +54,7 @@ function MarkdownNode({ source }: { source: string }) {
 
 /** Draws the read-only view nodes (text, table, link, placeholder). Forms are drawn by the view page. */
 export function ViewNodes({ nodes, onRowAction }: { nodes: ViewNode[]; onRowAction?: (event: string, row: string) => void }) {
-  const { actions } = useWorkbench();
+  const openHere = useOpenHere();
   const { t, tx } = useI18n();
   return (
     <>
@@ -105,14 +119,14 @@ export function ViewNodes({ nodes, onRowAction }: { nodes: ViewNode[]; onRowActi
                 getRowKey={(row) => String(row.index)}
                 nullText=""
                 onRowSelect={targets ? () => undefined : undefined}
-                onRowActivate={targets ? (row) => { const to = targets[row.index]; if (to) actions.open(to); } : undefined}
+                onRowActivate={targets ? (row) => { const to = targets[row.index]; if (to) openHere(to); } : undefined}
               />
             );
           }
           case "link":
             return (
               <Pane key={node.id} pad="sm" align="start">
-                <Button variant="ghost" icon="arrow-up-right" onClick={() => actions.open(node.target)}>
+                <Button variant="ghost" icon="arrow-up-right" onClick={() => openHere(node.target)}>
                   {tx(node.label)}
                 </Button>
               </Pane>

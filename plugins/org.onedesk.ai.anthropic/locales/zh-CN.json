@@ -1,6 +1,6 @@
 {
   "plugin.name": "Anthropic（Claude）",
-  "plugin.description": "AI 功能用的 Anthropic 连接：API 密钥存在钥匙串，可设模型、档位和输出上限。",
+  "plugin.description": "AI 功能用的 Anthropic 连接：API 密钥存在钥匙串，可设模型、档位和输出上限。模型等设置里的 {{名称}} 按环境取值（地址除外）。",
   "kind.connection": "Anthropic 连接",
   "kind.connection.new": "未命名的 Anthropic 连接",
   "action.test": "测试连接",

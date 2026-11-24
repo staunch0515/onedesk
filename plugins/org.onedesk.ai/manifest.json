@@ -127,7 +127,6 @@
       {
         "id": "analysis",
         "recompute": true,
-        "usesEnv": true,
         "actions": [
           {
             "id": "send",

@@ -26,6 +26,13 @@
             ]
           },
           {
+            "id": "fill",
+            "role": "run",
+            "action": "fill",
+            "label": "action.fill",
+            "icon": "braces"
+          },
+          {
             "id": "mkdir",
             "role": "run",
             "action": "mkdir",
@@ -154,7 +161,8 @@
             "label": "tab.result",
             "icon": "file-text"
           }
-        ]
+        ],
+        "usesEnv": false
       },
       {
         "id": "disk-file",
@@ -371,6 +379,14 @@
         "id": "reveal",
         "label": "action.reveal",
         "icon": "folder-search",
+        "output": "text",
+        "saveFirst": false,
+        "confirm": null
+      },
+      {
+        "id": "fill",
+        "label": "action.fill",
+        "icon": "braces",
         "output": "text",
         "saveFirst": false,
         "confirm": null

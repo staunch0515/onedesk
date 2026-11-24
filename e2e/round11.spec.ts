@@ -541,12 +541,20 @@ test("shell: the link's Open output is in the interface language", async ({ page
   }
 });
 
-test("shell: a note's mode selector starts on Edit, not on the placeholder", async ({ page }) => {
+// D467: the note has no mode selector any more (the actions row's "Read / Edit" is the only switch); it still opens
+// in edit mode, and the switch goes to reading and back.
+test("shell: a note opens in edit mode; the actions row's Read / Edit switches it", async ({ page }) => {
   await page.goto("/workbench.html?reset&quiet");
   await create(page, NOTE, { name: "Mode note", "body.text": "x" });
   await openKernel(page, host);
   await openResource(page, "Mode note");
-  await expect(page.getByRole("combobox", { name: "Mode" })).toHaveText(/Edit/, { timeout: 15_000 });
+  const editor = page.getByRole("textbox", { name: "Content", exact: true });
+  await expect(editor).toHaveValue("x", { timeout: 15_000 });
+  await expect(page.getByRole("combobox", { name: "Mode" })).toHaveCount(0);
+  await pageAction(page, "Read / Edit");
+  await expect(editor).toHaveCount(0);
+  await pageAction(page, "Read / Edit");
+  await expect(editor).toHaveValue("x");
 });
 
 test("shell: the kernel's command and audit wording is in the interface language (palette entry, audit operation names)", async ({ page }) => {

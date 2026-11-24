@@ -4,7 +4,7 @@
 // It never talks to a provider directly: the chat goes through the plugin interface `onedesk.ai.chat/1` to the
 // connection resource the user picked (ctx.host.interfaces.call). Sandbox rules: no console, timers or fetch.
 import { assist } from "./assist.js";
-
+import { filled, holeNames, holeStrip } from "./template.js";
 export const PLUGIN = "org.onedesk.ai";
 export const IFACE = "onedesk.ai.chat/1";
 export const KIND_ANALYSIS = "analysis";
@@ -552,7 +552,10 @@ export default {
     host.pages.handle("doc", {
       async render(ctx) {
         const b = (ctx.resource && ctx.resource.body) || {};
-        return { view: [{ type: "text", id: "path", text: String(b.path || ""), tone: "muted" }, { type: "text", id: "text", text: String(b.text || ""), format: "markdown" }], readOnly: true };
+        // A document is a template too (D466): {{name}} shows the tab's environment's value.
+        const text = String(b.text || "");
+        const strip = await holeStrip(ctx, holeNames(text));
+        return { view: [{ type: "text", id: "path", text: String(b.path || ""), tone: "muted" }, ...(strip ? [strip] : []), { type: "text", id: "text", text: await filled(ctx, text), format: "markdown" }], readOnly: true };
       },
     });
 
@@ -564,13 +567,18 @@ export default {
         const info = await connectionLine(ctx, pick("connectionId", ""));
         const docs = docsOf(pick);
         const used = chosenDocs(docs, pick);
-        const full = composeRequest(ctx, pick("request", ""), used);
+        // The request is a template (D466): {{name}} is filled from the tab's environment, and the preview below shows
+        // exactly what will be sent. A request another plugin asked for is sent as it is.
+        const request = pick("request", "");
+        const strip = sqlDraft ? null : await holeStrip(ctx, holeNames(request));
+        const full = composeRequest(ctx, sqlDraft ? request : await filled(ctx, request), used);
         const system = sqlDraft ? pick("system", "") : tr(ctx, "system.analyze");
         const policy = await policyOf(ctx);
         const ro = ctx.run || sqlDraft ? { readOnly: true } : {};
         const lines = [info.text, tr(ctx, "info.tokens", { tokens: estimateTokens(`${system}\n${full}`) }), tr(ctx, `info.policy.${policy}`)];
         view.push({ type: "text", id: "info", text: lines.join("\n"), tone: info.danger || policy === "off" ? "danger" : "muted" });
         view.push({ type: "form", id: "connection", layout: "strip", fields: [{ name: "connectionId", label: ctx.t("field.connection"), kind: "ref", kinds: ["@implements:onedesk.ai.chat/1"], bind: "body.connectionId", hint: tr(ctx, "field.connection.hint"), ...ro }] });
+        if (strip) view.push(strip);
         view.push({ type: "text", id: "system", text: `**${tr(ctx, "field.system")}**\n\n${system}`, format: "markdown" });
         view.push({ type: "form", id: "request", layout: "stack", fields: [{ name: "request", label: ctx.t("field.request"), kind: "longtext", bind: "body.request", fill: true, hint: tr(ctx, "field.request.hint"), ...ro }] });
         if (docs.length > 0) {
@@ -659,7 +667,8 @@ export default {
       const sqlDraft = res.body && res.body.mode === "sql";
       const pickBody = (key, dflt) => (!sqlDraft && typeof i[`body.${key}`] === "string" ? i[`body.${key}`] : res.body && typeof res.body[key] === "string" ? res.body[key] : dflt);
       const docs = sqlDraft ? [] : docsOf(pickBody);
-      const text = composeRequest(ctx, pickBody("request", ""), chosenDocs(docs, pickBody));
+      const request = pickBody("request", "");
+      const text = composeRequest(ctx, sqlDraft ? request : await filled(ctx, request), chosenDocs(docs, pickBody));
       if (!text.trim()) throw new Error(tr(ctx, "error.empty"));
       const system = sqlDraft ? String(res.body.system || "") : tr(ctx, "system.analyze");
       const connection = await pickConnection(ctx, pickBody("connectionId", ""));

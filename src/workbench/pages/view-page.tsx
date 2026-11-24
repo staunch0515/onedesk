@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Banner, Button, CodeEditor, Dialog, DropdownMenu, FieldStrip, FormField, IconButton, Input, Pane, Select, StripField, Switch, Text, Textarea, useToast, type ActionBarItem } from "../../design";
 import { useI18n } from "../i18n";
 import type { ActionDecl, PageDescriptor, RunStatus, ViewField, ViewNode } from "../protocol";
-import { applyPageParams, runParams } from "./run-params";
+import { applyPageParams, runParams, viewParams } from "./run-params";
 import { useRunEndRefresh } from "./run-refresh";
 import { useQuery, useUi, useWorkbench } from "../state/context";
 import { mergeDraft, type MergeState } from "../state/merge";
@@ -236,7 +236,8 @@ export function ViewPage({ tab, descriptor: initial }: { tab: TabState; descript
   const paramFields = descriptor.view.flatMap((n) => (n.type === "form" ? n.fields.filter((f) => f.param) : []));
   const kernelPage = client.demo !== undefined && !client.demo.target(tab.target);
   // Page parameters (D358) go along with every resolve; they live in the tab, so changing one never marks the page unsaved.
-  const pageParams = (entered: Record<string, string>) => runParams(paramFields, entered, kernelPage);
+  // The page's own render and events also get its view state (D467); a run gets only the parameter fields.
+  const pageParams = (entered: Record<string, string>) => ({ ...viewParams(entered), ...runParams(paramFields, entered, kernelPage) });
   const paramsKey = JSON.stringify(pageParams(tab.params));
   useEffect(() => {
     if (!initial.recompute || (Object.keys(draft).length === 0 && paramsKey === "{}")) return;

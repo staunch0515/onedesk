@@ -521,3 +521,26 @@ describe("ai: manifest and text", () => {
     expect(composeRequest(ctxOf(fakeHost()), "A", [{ name: "n", text: "T" }])).toBe("A\n\n## Reference documents\n\n### n\n\nT");
   });
 });
+
+describe("ai: the request and the documents are templates (D466)", () => {
+  it("the page fills {{name}} from the environment in the preview of what will be sent, and lists the placeholders", async () => {
+    const host = fakeHost({}, { env: { region: "eu-west" } });
+    const out = await registry(plugin).pages.analysis.render(analysisCtx(host, draftBody({ request: "Sales in {{region}}" })));
+    expect(checkView(out.view)).toEqual([]);
+    expect(out.view.find((n: any) => n.id === "values").fields.map((f: any) => [f.name, f.envValue])).toEqual([["region", "eu-west"]]);
+    expect(out.view.find((n: any) => n.id === "full").text).toContain("Sales in eu-west");
+  });
+
+  it("send: the filled text is what goes to the connection", async () => {
+    const host = fakeHost({}, { env: { region: "us" } });
+    await A(host, "send", { "body.request": "Sales in {{region}}", "body.use0": "false" }, { resource: { id: "a1", body: draftBody() } });
+    expect(JSON.stringify(host.interfaces.call.mock.calls.at(-1))).toContain("Sales in us");
+  });
+
+  it("a document shows {{name}} with the environment's value", async () => {
+    const host = fakeHost({}, { env: { team: "Data" } });
+    const out = await registry(plugin).pages.doc.render(ctxOf(host, { resource: { id: "d1", body: { path: "/docs/a.md", text: "Owner: {{team}}" } } }));
+    expect(checkView(out.view)).toEqual([]);
+    expect(out.view.at(-1).text).toBe("Owner: Data");
+  });
+});

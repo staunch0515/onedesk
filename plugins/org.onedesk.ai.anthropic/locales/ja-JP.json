@@ -1,6 +1,6 @@
 {
   "plugin.name": "Anthropic（Claude）",
-  "plugin.description": "AI 機能用の Anthropic 接続。API キーはキーチェーンに保存し、モデル・effort・出力上限を設定できます。",
+  "plugin.description": "AI 機能用の Anthropic 接続。API キーはキーチェーンに保存し、モデル・effort・出力上限を設定できます。モデルなどの設定の {{名前}} は環境の値になります（アドレスを除く）。",
   "kind.connection": "Anthropic 接続",
   "kind.connection.new": "名称未設定の Anthropic 接続",
   "action.test": "接続をテスト",

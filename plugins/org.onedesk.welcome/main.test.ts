@@ -33,7 +33,8 @@ describe("welcome plugin", () => {
 
   it("the manifest: a standalone startup page with no kinds", () => {
     const m = JSON.parse(readFileSync(new URL("./manifest.json", import.meta.url), "utf8"));
-    expect(m.contributes.pages).toEqual([{ id: "welcome", startup: true }]);
+    // D466: the only page that does not use an environment (the user agreed: nothing on it depends on one)
+    expect(m.contributes.pages).toEqual([{ id: "welcome", startup: true, usesEnv: false }]);
     expect(m.contributes.kinds).toBeUndefined();
   });
 });

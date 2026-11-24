@@ -82,5 +82,7 @@
   "grant.choose": "请在弹出的对话框里选择文件夹。",
   "error.trashUnavailable": "这个位置不能用废纸篓（在另一个磁盘上）。请改用永久删除。",
   "error.notGranted": "这个文件夹不在授权列表里。",
-  "confirm.delete.named": "永久删除“{name}”？"
+  "confirm.delete.named": "永久删除“{name}”？",
+  "action.fill": "按环境填充",
+  "done.fill": "{count} 个占位符，{filled} 个已按环境填充"
 }

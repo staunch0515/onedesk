@@ -11,7 +11,7 @@
   "requires": { "files": false },
   "contributes": {
     "pages": [
-      { "id": "welcome", "startup": true }
+      { "id": "welcome", "startup": true, "usesEnv": false }
     ],
     "locales": { "en-US": "locales/en-US.json", "zh-CN": "locales/zh-CN.json", "ja-JP": "locales/ja-JP.json" }
   }

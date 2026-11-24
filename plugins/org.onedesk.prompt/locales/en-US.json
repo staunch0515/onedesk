@@ -1,13 +1,13 @@
 {
   "plugin.name": "Prompts",
-  "plugin.description": "Reusable prompt text with {{name}} placeholders you fill in and copy.",
+  "plugin.description": "Reusable prompts. {{name}} in the text takes the value from the tab's environment, or what you type; then copy it.",
   "kind.prompt": "Prompt",
   "kind.prompt.new": "Untitled prompt",
   "action.copy": "Copy",
   "action.preview": "Preview",
   "action.save": "Save",
   "field.text": "Prompt",
-  "field.text.placeholder": "Write the prompt. Use {{name}} for a value you fill in each time.",
+  "field.text.placeholder": "Write the prompt. {{name}} takes the environment's value, or what you type above.",
   "message.copied": "Copied",
   "summary.preview": "{count} placeholder(s), {filled} filled"
 }

@@ -44,10 +44,10 @@ describe("environment reference parameters (G3)", () => {
     await screen.findByText("Staging", {}, { timeout: 2000 }).catch(() => null);
     fireEvent.click(await screen.findByRole("button", { name: /Add parameter/i }));
     const dialog = await screen.findByRole("dialog");
-    fireEvent.click(within(dialog).getByRole("combobox"));
+    fireEvent.click(within(dialog).getByRole("combobox", { name: "Type" }));
     fireEvent.click(await screen.findByRole("option", { name: "Resource reference" }));
     // No name is suggested (the shell knows no plugin's parameter names); Add stays off until one is typed.
-    const name = within(dialog).getByLabelText("Parameter name") as HTMLInputElement;
+    const name = within(dialog).getByLabelText("Name") as HTMLInputElement;
     expect(name.value).toBe("");
     fireEvent.change(name, { target: { value: "datasource" } });
     fireEvent.click(within(dialog).getByRole("button", { name: "Choose…" }));
@@ -56,5 +56,22 @@ describe("environment reference parameters (G3)", () => {
     fireEvent.click(await within(picker).findByText("Warehouse 2"));
     fireEvent.click(await within(dialog).findByRole("button", { name: "Add" }));
     await waitFor(() => expect(set).toHaveBeenCalledWith("env1", "datasource", "ds2", "3", "ref"));
+  });
+
+  it("adds any parameter by name and value (D466), refusing a name with spaces or one already set here", async () => {
+    const { set } = setup([]);
+    fireEvent.click(await screen.findByRole("button", { name: /Add parameter/i }));
+    const dialog = await screen.findByRole("dialog");
+    const add = () => within(dialog).getByRole("button", { name: "Add" }) as HTMLButtonElement;
+    const name = within(dialog).getByLabelText("Name");
+    expect(add().disabled).toBe(true);
+    fireEvent.change(name, { target: { value: "tenant id" } });
+    expect(within(dialog).getByText("A name has no spaces or braces.")).toBeTruthy();
+    expect(add().disabled).toBe(true);
+    fireEvent.change(name, { target: { value: "tenant_id" } });
+    fireEvent.change(within(dialog).getByLabelText("Value"), { target: { value: "1001" } });
+    expect(add().disabled).toBe(false);
+    fireEvent.click(add());
+    await waitFor(() => expect(set).toHaveBeenCalledWith("env1", "tenant_id", "1001", "3", "text"));
   });
 });

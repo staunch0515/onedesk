@@ -1,6 +1,6 @@
 {
   "plugin.name": "Ollama",
-  "plugin.description": "AI 機能用の Ollama 接続。ローカルまたはリモートの Ollama サーバー、モデル、コンテキスト長、保持時間を設定できます。",
+  "plugin.description": "AI 機能用の Ollama 接続。ローカルまたはリモートの Ollama サーバー、モデル、コンテキスト長、保持時間を設定できます。モデルなどの設定の {{名前}} は環境の値になります（アドレスを除く）。",
   "kind.connection": "Ollama 接続",
   "kind.connection.new": "名称未設定の Ollama 接続",
   "action.test": "接続をテスト",

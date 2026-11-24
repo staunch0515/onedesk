@@ -1,11 +1,14 @@
 // Notes plugin: one kind ("note"), one page ("editor"), one command ("duplicate").
 // Runs in the sandbox: no console, timers or fetch; everything goes through ctx.host.
+// A note is a template (D466): `{{name}}` in the text is filled from the tab's environment in the reading view.
+
+import { filled, holeNames, holeStrip } from "./template.js";
 
 const KIND = "org.onedesk.note:note";
 
-// "read" or "edit" (the default), from the page parameter `mode`.
+// "read" or "edit" (the default): view state of the tab (`view.mode`, D467), switched only by the "toggle" action.
 export function modeOf(ctx) {
-  return ctx.params && ctx.params.mode === "read" ? "read" : "edit";
+  return ctx.params && ctx.params["view.mode"] === "read" ? "read" : "edit";
 }
 
 // The note text as the person sees it: the unsaved draft first, then the saved body.
@@ -19,56 +22,38 @@ export default {
   activate(host) {
     host.pages.handle("editor", {
       async render(ctx) {
-        const reading = modeOf(ctx) === "read";
-        // The mode is a page parameter (never part of the draft). It is declared as a `param: true` field so the shell keeps it.
-        const modeForm = {
+        const text = textOf(ctx);
+        const view = [];
+        // The placeholders and the environment's value of each; typing one overrides it on this tab.
+        const strip = await holeStrip(ctx, holeNames(text));
+        if (strip) view.push(strip);
+        if (modeOf(ctx) === "read") {
+          // Reading view: the unsaved draft, filled from the environment, rendered as Markdown.
+          view.push({ type: "text", id: "reading", text: await filled(ctx, text), format: "markdown" });
+          return { view };
+        }
+        view.push({
           type: "form",
-          id: "mode",
-          layout: "strip",
+          id: "content",
+          layout: "stack",
           fields: [
             {
-              name: "mode",
-              label: ctx.t("field.mode"),
-              kind: "enum",
-              param: true,
-              envValue: "edit", // the shown value until a mode has been chosen (the page starts in edit mode)
-              options: [
-                { value: "edit", label: ctx.t("mode.edit") },
-                { value: "read", label: ctx.t("mode.read") },
-              ],
+              name: "text",
+              label: ctx.t("field.text"),
+              kind: "longtext",
+              bind: "body.text",
+              fill: true,
+              placeholder: ctx.t("field.placeholder"),
             },
           ],
-        };
-        if (reading) {
-          // Reading view: the unsaved draft, rendered as Markdown.
-          return { view: [modeForm, { type: "text", id: "reading", text: textOf(ctx), format: "markdown" }] };
-        }
-        return {
-          view: [
-            modeForm,
-            {
-              type: "form",
-              id: "content",
-              layout: "stack",
-              fields: [
-                {
-                  name: "text",
-                  label: ctx.t("field.text"),
-                  kind: "longtext",
-                  bind: "body.text",
-                  fill: true,
-                  placeholder: ctx.t("field.placeholder"),
-                },
-              ],
-            },
-          ],
-        };
+        });
+        return { view };
       },
 
       async onEvent(ctx, event) {
         if (event !== "toggle") throw new Error(`unknown event ${event}`);
         const next = modeOf(ctx) === "read" ? "edit" : "read";
-        return { params: { mode: next }, message: ctx.t(next === "read" ? "message.reading" : "message.editing") };
+        return { params: { "view.mode": next }, message: ctx.t(next === "read" ? "message.reading" : "message.editing") };
       },
     });
 

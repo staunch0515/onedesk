@@ -255,3 +255,16 @@ describe("anthropic: page and manifest", () => {
     expect(m.contributes.kinds[0].defaults).toMatchObject({ baseUrl: "https://api.anthropic.com", model: "claude-haiku-5-5", effort: "medium", maxTokens: "16000" });
   });
 });
+
+describe("connection settings are a template (D466)", () => {
+  it("text settings take {{name}} from the environment; the address and the secret stay as written", async () => {
+    // @ts-ignore plain JS module, no types
+    const { liveBody } = await import("./main.js");
+    const params = { get: async (n: string) => (n === "m" ? { found: true, value: "big-model", sourceName: "Prod" } : n === "h" ? { found: true, value: "evil.example", sourceName: "Prod" } : { found: false }) };
+    const ctx = { host: { params }, params: {}, resource: { id: "c1", body: { baseUrl: "https://{{h}}", model: "{{m}}", secret: { secret: "k" } } } };
+    const b = await liveBody(ctx);
+    expect(b.model).toBe("big-model");
+    expect(b.baseUrl).toBe("https://{{h}}");
+    expect(b.secret).toEqual({ secret: "k" });
+  });
+});

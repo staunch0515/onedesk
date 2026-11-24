@@ -9,8 +9,8 @@ const ctxOf = (host: unknown, extra: Record<string, unknown> = {}) => ({ target:
 describe("prompt plugin: placeholders", () => {
   it("finds {{name}} once each, in order; colons, spaces and long names do not count", () => {
     expect(holeNames("Hi {{who}}, about {{topic}} and {{who}} {{中文名}} {{a-b_c1}}")).toEqual(["who", "topic", "中文名", "a-b_c1"]);
-    expect(holeNames("{{secret:key}} {{ spaced }} {{}} {{" + "x".repeat(41) + "}} {single}")).toEqual([]);
-    expect(holeNames("{{" + "x".repeat(40) + "}}")).toHaveLength(1);
+    expect(holeNames("{{secret:key}} {{ spaced }} {{}} {{" + "x".repeat(65) + "}} {single}")).toEqual([]);
+    expect(holeNames("{{" + "x".repeat(64) + "}}")).toHaveLength(1);
   });
 
   it("fills what is typed and leaves the rest as written", () => {
@@ -70,5 +70,25 @@ describe("prompt plugin: page and actions", () => {
     expect(m.contributes.pages[0].actions.find((a: any) => a.id === "copy").role).toBe("event");
     expect(m.contributes.pages[0].actions.find((a: any) => a.id === "preview")).toMatchObject({ role: "run", action: "preview" });
     expect(m.contributes.kinds[0].fields.text.type).toBe("longtext");
+  });
+});
+
+describe("prompt plugin: values come from the environment (D466)", () => {
+  const envHost = (env: Record<string, string>) => ({
+    ui: { copy: vi.fn(async () => undefined) },
+    params: { get: vi.fn(async (n: string) => (n in env ? { found: true, value: env[n], sourceName: "Staging" } : { found: false })) },
+  });
+
+  it("each {{name}} input shows the environment's value; copy and preview use it unless one is typed", async () => {
+    const { pages, actions } = registry(plugin);
+    const host = envHost({ who: "Team", topic: "release" });
+    const draft = { "body.text": "Hi {{who}} re {{topic}}" };
+    const out = await pages.editor.render(ctxOf(host, { draft }));
+    expect(checkView(out.view)).toEqual([]);
+    expect(out.view[0].fields.map((f: any) => [f.name, f.envValue, f.envSource])).toEqual([["who", "Team", "Staging"], ["topic", "release", "Staging"]]);
+    await pages.editor.onEvent(ctxOf(host, { draft, params: { who: "Ann" } }), "copy");
+    expect(host.ui.copy).toHaveBeenCalledWith("Hi Ann re release");
+    const res = await actions.preview(ctxOf(host, { params: {} }), draft);
+    expect(res.output.text).toBe("Hi Team re release");
   });
 });

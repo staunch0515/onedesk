@@ -1,6 +1,8 @@
 // Files plugin: a provided tree of authorized folders and a text editor page.
 // Runs in the sandbox: no console, timers or fetch; everything goes through ctx.host.
 
+import { fillHoles, holeNames, holeStrip, holeValues } from "./template.js";
+
 const PAGE_SIZE = 200;
 
 const LANGUAGES = {
@@ -452,9 +454,11 @@ export default {
           };
           const language = languageOf(name);
           if (language) field.language = language;
+          // A text file is a template too (D466): its {{name}} placeholders with the environment's values.
+          const strip = await holeStrip(ctx, holeNames(text));
           return {
             ...head,
-            view: [opsForm(ctx), { type: "form", id: "content", layout: "stack", fields: [field] }],
+            view: [opsForm(ctx), ...(strip ? [strip] : []), { type: "form", id: "content", layout: "stack", fields: [field] }],
             values: { content: file.text },
             basis: file.basis,
           };
@@ -549,6 +553,17 @@ export default {
         throw explain(ctx, err, name);
       }
       return done(ctx, "done.mkdir", { path: target });
+    });
+
+    // "Fill from environment": the file's text (unsaved edits included) with its {{name}} placeholders filled from
+    // the tab's environment, shown in the result area; the file itself is not changed.
+    host.actions.handle("fill", async (ctx, input) => {
+      const { path } = await scoped(ctx, targetOf(ctx));
+      const text = input && typeof input.content === "string" ? input.content : (await ctx.host.files.readText(path)).text;
+      const names = holeNames(text);
+      const { values } = await holeValues(ctx, names);
+      const count = names.filter((n) => typeof values[n] === "string" && values[n] !== "").length;
+      return { output: { type: "text", text: fillHoles(text, values) }, summary: { message: tr2(ctx, "done.fill", { count: names.length, filled: count }) } };
     });
 
     host.actions.handle("touch", async (ctx) => {

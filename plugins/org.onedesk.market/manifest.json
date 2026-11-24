@@ -12,6 +12,7 @@
       {
         "id": "browse",
         "recompute": true,
+        "usesEnv": false,
         "actions": [
           { "id": "install", "role": "event", "label": "action.install", "icon": "download", "primary": true },
           { "id": "refresh", "role": "event", "label": "action.refresh", "icon": "refresh-cw" }

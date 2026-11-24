@@ -82,5 +82,7 @@
   "grant.choose": "Pick a folder in the dialog.",
   "error.trashUnavailable": "This place cannot use the Trash (another disk). Delete permanently instead.",
   "error.notGranted": "This folder is not in the authorized list.",
-  "confirm.delete.named": "Delete “{name}” permanently?"
+  "confirm.delete.named": "Delete “{name}” permanently?",
+  "action.fill": "Fill from environment",
+  "done.fill": "{count} placeholders, {filled} filled from the environment"
 }

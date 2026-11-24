@@ -773,3 +773,27 @@ describe("files plugin: delete in the menu", () => {
     expect(d.files.trash).not.toHaveBeenCalled();
   });
 });
+
+describe("files plugin: a text file is a template (D466)", () => {
+  const FILE = `${ROOT}/app.env`;
+  const params = (env: Record<string, string>) => ({ get: vi.fn(async (n: string) => (n in env ? { found: true, value: env[n], sourceName: "Staging" } : { found: false })) });
+
+  it("the page shows the file's placeholders with the environment's values", async () => {
+    const { pages } = registry(plugin);
+    const files = { roots: vi.fn(async () => roots), stat: vi.fn(async () => ({ dir: false })), readText: vi.fn(async () => ({ text: "HOST={{host}}\nKEY={{secret:k}}", basis: "1" })) };
+    const ctx = { ...ctxOf(files, FILE), host: { files, params: params({ host: "staging.example.com" }) } };
+    const out = await pages.text.render(ctx);
+    expect(checkView(out.view)).toEqual([]);
+    const strip = out.view.find((n: any) => n.id === "values");
+    expect(strip.fields.map((f: any) => [f.name, f.envValue])).toEqual([["host", "staging.example.com"]]);
+  });
+
+  it("fill: the text (unsaved edits included) filled from the run's environment; the file is not written", async () => {
+    const { actions } = registry(plugin);
+    const files = { roots: vi.fn(async () => roots), readText: vi.fn(async () => ({ text: "saved {{host}}" })), writeText: vi.fn() };
+    const run = (env: Record<string, string>, input?: Record<string, string>) => actions.fill({ ...ctxOf(files, FILE), host: { files, params: params(env) } }, input);
+    expect((await run({ host: "a" })).output.text).toBe("saved a");
+    expect((await run({ host: "b" }, { content: "draft {{host}} {{port}}" })).output.text).toBe("draft b {{port}}");
+    expect(files.writeText).not.toHaveBeenCalled();
+  });
+});

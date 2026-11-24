@@ -95,7 +95,6 @@
       {
         "id": "editor",
         "recompute": true,
-        "usesEnv": false,
         "actions": [
           {
             "id": "test",

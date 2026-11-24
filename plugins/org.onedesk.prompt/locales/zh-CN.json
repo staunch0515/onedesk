@@ -1,13 +1,13 @@
 {
   "plugin.name": "提示词",
-  "plugin.description": "可复用的提示词，正文里的 {{名字}} 是每次填写的参数，填好后复制。",
+  "plugin.description": "可复用的提示词。正文里的 {{名称}} 按标签页选的环境取值，也可以当场填写；填好后复制。",
   "kind.prompt": "提示词",
   "kind.prompt.new": "未命名提示词",
   "action.copy": "复制",
   "action.preview": "预览",
   "action.save": "保存",
   "field.text": "提示词",
-  "field.text.placeholder": "写下提示词。用 {{名字}} 表示每次要填的值。",
+  "field.text.placeholder": "写下提示词。{{名称}} 从环境取值，也可在上面填写。",
   "message.copied": "已复制",
   "summary.preview": "{count} 个占位符，已填 {filled} 个"
 }

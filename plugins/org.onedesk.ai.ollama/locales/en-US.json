@@ -1,6 +1,6 @@
 {
   "plugin.name": "Ollama",
-  "plugin.description": "An Ollama connection for AI features: a local or remote Ollama server, model, context length and keep-alive time.",
+  "plugin.description": "An Ollama connection for AI features: a local or remote Ollama server, model, context length and keep-alive time. {{name}} in the model and other settings (not the address) takes the environment's value.",
   "kind.connection": "Ollama connection",
   "kind.connection.new": "Untitled Ollama connection",
   "action.test": "Test connection",

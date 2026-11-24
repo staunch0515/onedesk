@@ -1,13 +1,13 @@
 {
   "plugin.name": "プロンプト",
-  "plugin.description": "{{名前}} のプレースホルダーを埋めてコピーできる、再利用可能なプロンプト。",
+  "plugin.description": "再利用できるプロンプト。本文の {{名前}} はタブの環境の値、または入力した値になります。埋めてからコピーします。",
   "kind.prompt": "プロンプト",
   "kind.prompt.new": "無題のプロンプト",
   "action.copy": "コピー",
   "action.preview": "プレビュー",
   "action.save": "保存",
   "field.text": "プロンプト",
-  "field.text.placeholder": "プロンプトを書きます。毎回入力する値は {{名前}} と書きます。",
+  "field.text.placeholder": "プロンプトを書きます。{{名前}} は環境の値、または上で入力した値になります。",
   "message.copied": "コピーしました",
   "summary.preview": "プレースホルダー {count} 個、入力済み {filled} 個"
 }

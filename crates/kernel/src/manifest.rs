@@ -495,6 +495,10 @@ impl KindDecl {
     }
 }
 
+fn yes() -> bool {
+    true
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct PageDecl {
@@ -506,7 +510,9 @@ pub struct PageDecl {
     /// Re-render with the draft ~300 ms after bound content stops changing (§9.3).
     #[serde(default)]
     pub recompute: bool,
-    #[serde(default)]
+    /// D466: every tab can pick an environment, so a page uses it unless its manifest says
+    /// `"usesEnv": false` (an exception the user agreed to, e.g. the welcome page).
+    #[serde(default = "yes")]
     pub uses_env: bool,
     /// Round 11 (D382): a standalone page (no kind or tree uses it) the shell opens when it starts
     /// with no tabs. At most one per plugin.
@@ -2267,6 +2273,16 @@ mod tests {
 
         // Round 13 (D403): `legacyKinds` is no longer a manifest field.
         assert_eq!(reason(with(good(), &["legacyKinds"], json!(["note"]))), "schema");
+    }
+
+    #[test]
+    fn d466_pages_use_an_environment_unless_they_say_not() {
+        let pages = |v: Value| with(good(), &["contributes", "pages"], v);
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = write(tmp.path(), "test.alpha", "0.1.0", &pages(json!([{ "id": "editor" }, { "id": "home", "startup": true, "usesEnv": false }])));
+        let p = load_package(&dir).unwrap();
+        assert!(p.page("editor").unwrap().uses_env, "the default");
+        assert!(!p.page("home").unwrap().uses_env, "an explicit exception");
     }
 
     #[test]

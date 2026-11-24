@@ -1,6 +1,6 @@
 {
   "plugin.name": "リンク",
-  "plugin.description": "ウェブアドレスを保存し、システムのブラウザで開きます。",
+  "plugin.description": "ウェブアドレスを保存し、システムのブラウザで開きます。アドレスの {{名前}} はタブの環境の値になります。",
   "kind.link": "リンク",
   "kind.link.new": "無題のリンク",
   "action.open": "開く",
@@ -12,5 +12,7 @@
   "error.noUrl": "先にアドレスを入力してください。",
   "error.badUrl": "開けるのは http、https、mailto のアドレスだけです。",
   "summary.opened": "{host} を開きました",
-  "output.label": "{host} を開きました"
+  "output.label": "{host} を開きました",
+  "field.resolved": "開くアドレス：{url}",
+  "error.unfilled": "{names} に値がありません。値のある環境を選ぶか、上に入力してください。"
 }

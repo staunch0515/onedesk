@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ViewField } from "../protocol";
-import { applyPageParams, runParams } from "./run-params";
+import { applyPageParams, runParams, viewParams } from "./run-params";
 
 const field = (name: string, envValue?: string): ViewField => ({ name, label: name, kind: "text", param: true, envValue });
 
@@ -24,5 +24,18 @@ describe("applyPageParams", () => {
     expect(applyPageParams([field("pick")], { pick: "/a" }, { pick: 3 as unknown as string })).toBeNull();
     expect(applyPageParams([field("pick")], { pick: "/a" }, { stray: "y" })).toBeNull();
     expect(applyPageParams([field("pick")], {}, undefined)).toBeNull();
+  });
+});
+
+describe("view state (D467)", () => {
+  it("a page event may set view.<x> keys without a field; overly long values and a bare prefix are dropped", () => {
+    expect(applyPageParams([], { a: "1" }, { "view.mode": "read" })).toEqual({ a: "1", "view.mode": "read" });
+    expect(applyPageParams([], {}, { "view.": "x", "view.big": "x".repeat(201) })).toBeNull();
+  });
+
+  it("view state goes back to the page but never to a run", () => {
+    const entered = { "view.mode": "read", city: "Paris" };
+    expect(viewParams(entered)).toEqual({ "view.mode": "read" });
+    expect(runParams([field("city")], entered, true)).toEqual({ city: "Paris" });
   });
 });

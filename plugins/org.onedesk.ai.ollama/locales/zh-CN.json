@@ -1,6 +1,6 @@
 {
   "plugin.name": "Ollama",
-  "plugin.description": "AI 功能用的 Ollama 连接：本机或远程的 Ollama 服务，可设模型、上下文长度和常驻时间。",
+  "plugin.description": "AI 功能用的 Ollama 连接：本机或远程的 Ollama 服务，可设模型、上下文长度和常驻时间。模型等设置里的 {{名称}} 按环境取值（地址除外）。",
   "kind.connection": "Ollama 连接",
   "kind.connection.new": "未命名的 Ollama 连接",
   "action.test": "测试连接",

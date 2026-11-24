@@ -1,5 +1,6 @@
-// Prompt plugin: one kind ("prompt"), one page ("editor") with an input per {{name}} in the text,
-// an event "copy" (fills the text and puts it on the clipboard) and an action "preview".
+// Prompt plugin: one kind ("prompt"), one page ("editor") with an input per {{name}} in the text (showing the
+// environment's value, which a typed value overrides), an event "copy" (fills the text and puts it on the clipboard)
+// and an action "preview".
 // The placeholder syntax is this plugin's own (the core only hands out values by name).
 
 export function tr(ctx, key, vars) {
@@ -9,22 +10,10 @@ export function tr(ctx, key, vars) {
   return text;
 }
 
-// {{name}}: letters, digits, '_', '-' and Chinese characters, 1 to 40 of them. "{{secret:x}}" has a colon, so it is not one.
-const HOLE = /\{\{([A-Za-z0-9_\-一-鿿]{1,40})\}\}/g;
-
-export function holeNames(text) {
-  const out = [];
-  for (const m of String(text || "").matchAll(HOLE)) if (!out.includes(m[1])) out.push(m[1]);
-  return out;
-}
-
-// Typed values go in; a placeholder without a value stays as written.
-export function fillHoles(text, values) {
-  return String(text || "").replace(HOLE, (all, name) => {
-    const v = values && values[name];
-    return typeof v === "string" && v !== "" ? v : all;
-  });
-}
+// {{name}} placeholders (template.js, shared with the other template plugins, D466): a typed value first, else the
+// tab's environment.
+import { fillHoles, holeNames, holeStrip, holeValues } from "./template.js";
+export { fillHoles, holeNames };
 
 function textOf(ctx, input) {
   if (input && typeof input["body.text"] === "string") return input["body.text"];
@@ -41,22 +30,8 @@ export default {
         const text = textOf(ctx);
         const ro = ctx.run ? { readOnly: true } : {};
         const view = [];
-        const names = holeNames(text);
-        if (names.length > 0) {
-          view.push({
-            type: "form",
-            id: "params",
-            layout: "strip",
-            fields: names.map((name) => {
-              const f = { name, label: name, kind: "text", param: true };
-              if (ctx.run) {
-                f.envValue = (ctx.run.params && ctx.run.params[name]) || "";
-                f.readOnly = true;
-              }
-              return f;
-            }),
-          });
-        }
+        const strip = await holeStrip(ctx, holeNames(text), "params");
+        if (strip) view.push(strip);
         view.push({
           type: "form",
           id: "content",
@@ -68,7 +43,9 @@ export default {
 
       async onEvent(ctx, event) {
         if (event !== "copy") throw new Error(`unknown event ${event}`);
-        await ctx.host.ui.copy(fillHoles(textOf(ctx), ctx.params));
+        const text = textOf(ctx);
+        const { values } = await holeValues(ctx, holeNames(text));
+        await ctx.host.ui.copy(fillHoles(text, values));
         return { message: tr(ctx, "message.copied") };
       },
     });
@@ -76,7 +53,7 @@ export default {
     host.actions.handle("preview", async (ctx, input) => {
       const text = textOf(ctx, input);
       const names = holeNames(text);
-      const values = ctx.params || {};
+      const { values } = await holeValues(ctx, names);
       const filled = names.filter((n) => typeof values[n] === "string" && values[n] !== "").length;
       return {
         output: { type: "text", text: fillHoles(text, values) },

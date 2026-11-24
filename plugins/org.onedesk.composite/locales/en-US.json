@@ -1,6 +1,6 @@
 {
   "plugin.name": "Composite",
-  "plugin.description": "A node that gathers references to other items. Drag anything onto it; nothing is moved or copied.",
+  "plugin.description": "A node that gathers references to other items. Drag anything onto it; nothing is moved or copied. What you open from it opens in this tab's environment.",
   "kind.composite": "Composite",
   "kind.composite.new": "Untitled composite",
   "action.save": "Save",

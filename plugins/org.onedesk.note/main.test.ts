@@ -6,42 +6,83 @@ import { RENDER_KEYS, checkView, onlyKeys, registry, t } from "../_testing/view-
 
 const ctxOf = (host: unknown, extra: Record<string, unknown> = {}) => ({ target: "resource:r1", locale: "en-US", host, t, ...extra });
 
+// A host whose environment has the given values (ctx.host.params.get).
+const envHost = (env: Record<string, string>, source = "Staging") => ({
+  params: { get: vi.fn(async (name: string) => (name in env ? { found: true, value: env[name], sourceName: source } : { found: false })) },
+});
+
 describe("note plugin: reading view", () => {
-  it("edit mode is the default: mode strip plus the editor", async () => {
+  it("edit mode is the default: only the editor (no mode control; the actions row has the toggle)", async () => {
     const { pages } = registry(plugin);
-    const out = await pages.editor.render(ctxOf({}));
-    expect(out.view.map((n: any) => n.id)).toEqual(["mode", "content"]);
-    expect(out.view[0].fields[0]).toMatchObject({ name: "mode", param: true, kind: "enum", envValue: "edit" });
+    const out = await pages.editor.render(ctxOf(envHost({})));
+    expect(out.view.map((n: any) => n.id)).toEqual(["content"]);
   });
 
   it("read mode renders the unsaved draft as Markdown, not the saved body", async () => {
     const { pages } = registry(plugin);
-    const out = await pages.editor.render(ctxOf({}, { params: { mode: "read" }, draft: { "body.text": "# draft" }, resource: { id: "r1", body: { text: "saved" } } }));
+    const out = await pages.editor.render(ctxOf(envHost({}), { params: { "view.mode": "read" }, draft: { "body.text": "# draft" }, resource: { id: "r1", body: { text: "saved" } } }));
     expect(checkView(out.view)).toEqual([]);
     expect(out.view.find((n: any) => n.id === "reading")).toEqual({ type: "text", id: "reading", text: "# draft", format: "markdown" });
     expect(out.view.find((n: any) => n.id === "content")).toBeUndefined();
-    const saved = await pages.editor.render(ctxOf({}, { params: { mode: "read" }, resource: { id: "r1", body: { text: "saved" } } }));
-    expect(saved.view[1].text).toBe("saved");
+    const saved = await pages.editor.render(ctxOf(envHost({}), { params: { "view.mode": "read" }, resource: { id: "r1", body: { text: "saved" } } }));
+    expect(saved.view.at(-1).text).toBe("saved");
   });
 
-  it("toggle flips the page parameter mode and keeps the draft untouched", async () => {
+  it("toggle flips the view state view.mode and keeps the draft untouched", async () => {
     const { pages } = registry(plugin);
     const a = await pages.editor.onEvent(ctxOf({}), "toggle");
-    expect(a.params).toEqual({ mode: "read" });
+    expect(a.params).toEqual({ "view.mode": "read" });
     expect(onlyKeys(a, ["changes", "params", "message"])).toEqual([]);
     expect(a.changes).toBeUndefined();
-    const b = await pages.editor.onEvent(ctxOf({}, { params: { mode: "read" } }), "toggle");
-    expect(b.params).toEqual({ mode: "edit" });
+    const b = await pages.editor.onEvent(ctxOf({}, { params: { "view.mode": "read" } }), "toggle");
+    expect(b.params).toEqual({ "view.mode": "edit" });
     await expect(pages.editor.onEvent(ctxOf({}), "nope")).rejects.toThrow();
   });
 
   // Review #10: `recompute: true` stays. The shell re-renders a page only through the recompute effect (view-page.tsx: it
   // re-resolves when the draft or a page parameter changes and the page asked for it); a page event's `params`/`changes`
-  // only update tab state. Without recompute, toggling `mode` would never redraw the reading view.
-  it("the manifest declares the toggle event, recompute (needed to redraw after the mode changes)", () => {
+  // only update tab state. Without recompute, toggling the mode would never redraw the reading view.
+  it("the manifest declares the toggle event, recompute, and uses the environment (D466)", () => {
     const m = JSON.parse(readFileSync(new URL("./manifest.json", import.meta.url), "utf8"));
     expect(m.contributes.pages[0].recompute).toBe(true);
+    expect(m.contributes.pages[0].usesEnv).not.toBe(false);
     expect(m.contributes.pages[0].actions.find((a: any) => a.id === "toggle")).toMatchObject({ role: "event" });
+  });
+});
+
+describe("note plugin: a note is a template (D466)", () => {
+  const text = "Tenant {{tenant_id}} on {{host}}. Key {{secret:api}}. Unknown {{nope}}.";
+
+  it("the reading view fills {{name}} from the chosen environment; another environment gives another text", async () => {
+    const { pages } = registry(plugin);
+    const read = (env: Record<string, string>, source: string) =>
+      pages.editor.render(ctxOf(envHost(env, source), { params: { "view.mode": "read" }, resource: { id: "r1", body: { text } } }));
+    const staging = (await read({ tenant_id: "1001", host: "staging.example.com" }, "Staging")).view.at(-1).text;
+    const prod = (await read({ tenant_id: "9", host: "example.com" }, "Production")).view.at(-1).text;
+    expect(staging).toBe("Tenant 1001 on staging.example.com. Key {{secret:api}}. Unknown {{nope}}.");
+    expect(prod).toBe("Tenant 9 on example.com. Key {{secret:api}}. Unknown {{nope}}.");
+  });
+
+  it("shows a strip with each placeholder and the environment's value; a value typed on the tab wins", async () => {
+    const { pages } = registry(plugin);
+    const host = envHost({ tenant_id: "1001", host: "h" });
+    const out = await pages.editor.render(ctxOf(host, { resource: { id: "r1", body: { text } } }));
+    expect(checkView(out.view)).toEqual([]);
+    const strip = out.view.find((n: any) => n.id === "values");
+    expect(strip.fields.map((f: any) => f.name)).toEqual(["tenant_id", "host", "nope"]);
+    expect(strip.fields[0]).toMatchObject({ param: true, envValue: "1001", envSource: "Staging" });
+    expect(strip.fields[2].envValue).toBeUndefined();
+    // the secret is never asked for
+    expect(host.params.get).not.toHaveBeenCalledWith("secret:api");
+    const typed = await pages.editor.render(ctxOf(host, { params: { "view.mode": "read", tenant_id: "42" }, resource: { id: "r1", body: { text } } }));
+    expect(typed.view.at(-1).text).toContain("Tenant 42 on h.");
+  });
+
+  it("without an environment the placeholders stay as written", async () => {
+    const { pages } = registry(plugin);
+    const host = { params: { get: vi.fn(async () => { throw new Error("noEnv"); }) } };
+    const out = await pages.editor.render(ctxOf(host, { params: { "view.mode": "read" }, resource: { id: "r1", body: { text: "Hi {{who}}" } } }));
+    expect(out.view.at(-1).text).toBe("Hi {{who}}");
   });
 });
 
@@ -55,7 +96,7 @@ describe("note plugin", () => {
 
   it("renders a full-height longtext bound to body.text", async () => {
     const { pages } = registry(plugin);
-    const out = await pages.editor.render(ctxOf({}));
+    const out = await pages.editor.render(ctxOf(envHost({})));
     expect(checkView(out.view)).toEqual([]);
     const field = out.view.find((n: any) => n.id === "content").fields[0];
     expect(field).toMatchObject({ kind: "longtext", bind: "body.text", fill: true });

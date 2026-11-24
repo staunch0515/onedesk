@@ -82,5 +82,7 @@
   "grant.choose": "ダイアログでフォルダーを選んでください。",
   "error.trashUnavailable": "この場所ではゴミ箱を使えません（別のディスク）。完全に削除してください。",
   "error.notGranted": "このフォルダーは許可リストにありません。",
-  "confirm.delete.named": "「{name}」を完全に削除しますか？"
+  "confirm.delete.named": "「{name}」を完全に削除しますか？",
+  "action.fill": "環境の値で埋める",
+  "done.fill": "プレースホルダ {count} 個、うち {filled} 個を環境の値で埋めました"
 }

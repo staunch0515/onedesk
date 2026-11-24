@@ -1,18 +1,15 @@
 {
   "plugin.name": "Notes",
-  "plugin.description": "Plain text notes in the resource tree.",
+  "plugin.description": "Notes in the resource tree. A note is a template: {{name}} is filled from the tab's environment in the reading view.",
   "kind.note": "Note",
   "kind.note.new": "Untitled note",
   "action.save": "Save",
   "command.duplicate": "Duplicate",
   "field.text": "Content",
-  "field.placeholder": "Write the note. Use [[Name]] to link another resource.",
+  "field.placeholder": "Write the note. [[Name]] links another resource; {{name}} takes a value from the environment.",
   "copy.suffix": "copy",
   "error.notFound": "The note no longer exists.",
   "action.toggle": "Read / Edit",
-  "field.mode": "Mode",
-  "mode.edit": "Edit",
-  "mode.read": "Read",
   "message.reading": "Reading view",
   "message.editing": "Editing"
 }

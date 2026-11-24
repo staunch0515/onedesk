@@ -4,6 +4,8 @@
 // Sandbox rules: no console, timers or fetch; the network is ctx.host.network. Only the connection's own host is
 // reachable (the address field grants it).
 
+import { fillHoles, holeNames, holeStrip, holeValues } from "./template.js";
+
 export const VERSION = "2026-10-21";
 export const FALLBACK_BETA = "server-side-fallback-2026-07-01";
 export const DEFAULT_BASE = "https://api.anthropic.com";
@@ -17,6 +19,21 @@ export function tr(ctx, key, vars) {
   let text = typeof label === "string" ? label : label[ctx.locale] || label["en-US"] || key;
   for (const k of Object.keys(vars || {})) text = text.split(`{${k}}`).join(String(vars[k]));
   return text;
+}
+
+// The connection's settings as used now (D466): text settings may hold {{name}}, filled from the environment of the
+// run or tab (a typed tab value first), so one connection uses another model (and so on) per environment.
+// Not the address: it is what grants the network (the kernel reads it as written), so it stays literal. The secret
+// is never a placeholder either: it stays a keychain reference.
+const LITERAL = ["baseUrl", "secret"];
+const templated = (b) => Object.keys(b).filter((k) => !LITERAL.includes(k) && typeof b[k] === "string");
+
+export async function liveBody(ctx) {
+  const b = bodyOf(ctx);
+  const keys = templated(b);
+  const { values } = await holeValues(ctx, holeNames(...keys.map((k) => b[k])));
+  for (const k of keys) b[k] = fillHoles(b[k], values);
+  return b;
 }
 
 export function bodyOf(ctx) {
@@ -198,7 +215,7 @@ function preflight(ctx, body) {
 }
 
 async function runChat(ctx, input) {
-  const body = bodyOf(ctx);
+  const body = await liveBody(ctx);
   const pre = preflight(ctx, body);
   if (pre.error) return failure(ctx, pre.error);
   const { request, fallback } = buildChat(body, input);
@@ -291,7 +308,7 @@ export function modelList(json) {
 }
 
 async function runModels(ctx) {
-  const got = await getJson(ctx, bodyOf(ctx), "/v1/models");
+  const got = await getJson(ctx, await liveBody(ctx), "/v1/models");
   if (got.error) return failure(ctx, got.error);
   return finish(ctx, { models: modelList(got.json) });
 }
@@ -303,7 +320,7 @@ export function errorText(ctx, e) {
 }
 
 async function runTest(ctx) {
-  const got = await getJson(ctx, bodyOf(ctx), "/v1/models");
+  const got = await getJson(ctx, await liveBody(ctx), "/v1/models");
   if (got.error) throw new Error(errorText(ctx, got.error));
   const count = modelList(got.json).length;
   return { output: { type: "text", text: tr(ctx, "test.ok", { count }) }, data: { ok: true, models: count }, summary: { message: tr(ctx, "summary.test", { count }) } };
@@ -320,7 +337,9 @@ export default {
   activate(host) {
     host.pages.handle("editor", {
       async render(ctx) {
-        const b = bodyOf(ctx);
+        const raw = bodyOf(ctx);
+        const b = await liveBody(ctx);
+        const strip = await holeStrip(ctx, holeNames(...templated(raw).map((k) => raw[k])));
         const ro = ctx.run ? { readOnly: true } : {};
         const f = (name, kind, extra) => ({ name, label: ctx.t(`field.${name}`), kind, bind: `body.${name}`, ...ro, ...(extra || {}) });
         const view = [
@@ -338,6 +357,7 @@ export default {
           { type: "form", id: "fallback", layout: "stack", fields: [f("fallback", "boolean", { hint: ctx.t("field.fallback.hint") })] },
           { type: "text", id: "note", ...baseNote(ctx, b) },
         ];
+        if (strip) view.unshift(strip);
         return { view };
       },
     });

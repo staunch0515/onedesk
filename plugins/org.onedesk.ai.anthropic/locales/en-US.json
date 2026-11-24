@@ -1,6 +1,6 @@
 {
   "plugin.name": "Anthropic (Claude)",
-  "plugin.description": "An Anthropic connection for AI features: API key kept in the keychain, model, effort and output limit.",
+  "plugin.description": "An Anthropic connection for AI features: API key kept in the keychain, model, effort and output limit. {{name}} in the model and other settings (not the address) takes the environment's value.",
   "kind.connection": "Anthropic connection",
   "kind.connection.new": "Untitled Anthropic connection",
   "action.test": "Test connection",

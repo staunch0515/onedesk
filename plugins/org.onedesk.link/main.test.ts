@@ -21,6 +21,7 @@ describe("link plugin", () => {
     expect(checkView(out.view)).toEqual([]);
     expect(onlyKeys(out, RENDER_KEYS)).toEqual([]);
     expect(out.view[0].fields.map((f: any) => [f.name, f.bind])).toEqual([["url", "body.url"], ["profile", "body.profile"]]);
+    expect(out.view).toHaveLength(1); // no placeholders: no strip, no "opens" line
     const ro = await pages.editor.render(ctxOf({}, { run: { id: "x" } }));
     expect(ro.view[0].fields.every((f: any) => f.readOnly)).toBe(true);
   });
@@ -78,5 +79,41 @@ describe("link plugin", () => {
     expect(m.contributes.kinds[0]).toMatchObject({ id: "link", tree: "resources", fields: { url: { type: "text" }, profile: { type: "text" } } });
     expect(m.contributes.actions[0]).toMatchObject({ id: "open", output: "link" });
     expect(Object.keys(m.contributes.locales)).toEqual(["en-US", "zh-CN", "ja-JP"]);
+  });
+});
+
+describe("link plugin: a link is a template (D466)", () => {
+  const envHost = (env: Record<string, string>) => ({
+    ui: { openExternal: vi.fn(async () => undefined) },
+    params: { get: vi.fn(async (n: string) => (n in env ? { found: true, value: env[n], sourceName: "Env" } : { found: false })) },
+  });
+  const url = "https://{{host}}/t/{{tenant_id}}";
+
+  it("opens the address filled from the run's environment; another environment opens another address", async () => {
+    const a = envHost({ host: "staging.example.com", tenant_id: "1" });
+    await open(a, { "body.url": url });
+    expect(a.ui.openExternal).toHaveBeenCalledWith("https://staging.example.com/t/1");
+    const b = envHost({ host: "example.com", tenant_id: "9" });
+    await open(b, { "body.url": url });
+    expect(b.ui.openExternal).toHaveBeenCalledWith("https://example.com/t/9");
+  });
+
+  it("a value typed on the tab wins over the environment", async () => {
+    const h = envHost({ host: "example.com", tenant_id: "9" });
+    await open(h, { "body.url": url }, { params: { tenant_id: "42" } });
+    expect(h.ui.openExternal).toHaveBeenCalledWith("https://example.com/t/42");
+  });
+
+  it("refuses to open while a placeholder has no value, and names it", async () => {
+    const h = envHost({ host: "example.com" });
+    await expect(open(h, { "body.url": url })).rejects.toThrow("error.unfilled");
+    expect(h.ui.openExternal).not.toHaveBeenCalled();
+  });
+
+  it("the page shows each placeholder with the environment's value, and the address that would open", async () => {
+    const out = await registry(plugin).pages.editor.render(ctxOf(envHost({ host: "example.com", tenant_id: "9" }), { draft: { "body.url": url } }));
+    expect(checkView(out.view)).toEqual([]);
+    expect(out.view[0].fields.map((f: any) => [f.name, f.envValue])).toEqual([["host", "example.com"], ["tenant_id", "9"]]);
+    expect(out.view.at(-1)).toMatchObject({ type: "text", id: "resolved" });
   });
 });

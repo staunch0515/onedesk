@@ -1,18 +1,15 @@
 {
   "plugin.name": "ノート",
-  "plugin.description": "リソースツリーのプレーンテキストのノート。",
+  "plugin.description": "リソースツリーのノート。ノートはテンプレートです：本文の {{名前}} は閲覧表示でタブの環境の値になります。",
   "kind.note": "ノート",
   "kind.note.new": "無題のノート",
   "action.save": "保存",
   "action.toggle": "閲覧 / 編集",
   "command.duplicate": "複製",
   "field.text": "内容",
-  "field.placeholder": "ノートを書きます。[[名前]] で他のリソースにリンクできます。",
+  "field.placeholder": "ノートを書きます。[[名前]] で他のリソースにリンク、{{名前}} で環境の値を使えます。",
   "copy.suffix": "コピー",
   "error.notFound": "このノートはもう存在しません。",
-  "field.mode": "モード",
-  "mode.edit": "編集",
-  "mode.read": "閲覧",
   "message.reading": "閲覧表示",
   "message.editing": "編集中"
 }
