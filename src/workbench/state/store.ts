@@ -94,6 +94,8 @@ export interface UiState extends LayoutState {
   drafts: Record<string, Record<string, unknown>>;
   /** The page's saved values the tab's draft was started from, by bind path (to tell what changed elsewhere, D374). */
   bases: Record<string, Values>;
+  /** D479: the kind of every bound field each tab's page shows (to never hand a secret to an AI chat). Memory only. */
+  fieldKinds: Record<string, Record<string, string>>;
   /** Unsaved fields whose saved value changed elsewhere, and the ones the user chose to keep (D374). Per tab. */
   merge: Record<string, MergeState>;
   selected: Record<string, string | null>;
@@ -173,6 +175,7 @@ export function createStore(saved: Partial<LayoutState> | null, save: (layout: L
     paletteOpen: false,
     drafts: {},
     bases: {},
+    fieldKinds: {},
     merge: {},
     selected: {},
     renaming: null,

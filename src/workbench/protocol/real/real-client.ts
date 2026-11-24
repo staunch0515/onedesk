@@ -150,7 +150,6 @@ export async function createKernelClient(transport: Transport, locale?: () => st
     },
     assist: {
       provider: () => call<AssistProvider>("assist.provider"),
-      start: (p) => call<string>("assist.start", compact({ locale: locale?.(), target: p.target, tabId: p.tabId, envId: p.envId, input: p.input })),
     },
     run: {
       start: (request) => call<string>("run.start", compact({ locale: locale?.(), action: request.action, resourceId: request.resourceId, target: request.target, tabId: request.tabId, envId: request.envId, input: request.input, params: request.params, resultRun: request.resultRun })),

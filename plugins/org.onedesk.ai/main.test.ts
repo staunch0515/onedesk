@@ -1,8 +1,8 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 // @ts-ignore plain JS module, no types
-import plugin, { audit, buildRequest, checkSql, composeRequest, cleanContext, dropDrafts, estimateTokens, extractSql, isSensitiveColumn, markdownTable, maskText, parseExtra, pickConnection, pickDocs, policyOf, redactTable, searchTerms, syncDocs } from "./main.js";
-import { checkActionResult, checkView, hostError, onlyKeys, registry, RENDER_KEYS } from "../_testing/view-check";
+import plugin, { audit, buildRequest, checkSql, composeRequest, cleanContext, estimateTokens, extractSql, isSensitiveColumn, markdownTable, maskText, parseExtra, pickConnection, pickDocs, policyOf, redactTable, searchTerms, syncDocs } from "./main.js";
+import { checkActionResult, checkView, hostError, registry } from "../_testing/view-check";
 
 const load = (f: string) => JSON.parse(readFileSync(new URL(`./locales/${f}.json`, import.meta.url), "utf8")) as Record<string, string>;
 const EN = load("en-US");
@@ -56,8 +56,8 @@ function fakeHost(over: Host = {}, opts: { env?: Record<string, string>; setting
 }
 const ctxOf = (host: Host, extra: Record<string, unknown> = {}) => ({ target: "core:none", locale: "en-US", host, t, params: {}, progress: vi.fn(), cancelled: () => false, ...extra });
 const A = (host: Host, name: string, input: unknown = {}, extra: Record<string, unknown> = {}) => registry(plugin).actions[name](ctxOf(host, extra), input);
-const draftBody = (over: Record<string, string> = {}) => ({ request: "# Analysis request\n\nbody", docs: JSON.stringify([{ id: "d1", name: "orders.md", text: "Doc text", tokens: 3 }]), runId: "run1", answer: "", model: "", usage: "", connection: "", sent: "", use0: "true", ...over });
-const analysisCtx = (host: Host, body = draftBody(), extra: Record<string, unknown> = {}) => ctxOf(host, { resource: { id: "a1", name: "Analysis", body }, ...extra });
+// A request another plugin asked for (generate's preview): the chat page in "sql" mode.
+const sqlBody = (over: Record<string, string> = {}) => ({ mode: "sql", request: "# Write SQL\n\norders", system: "Only one SELECT", docs: "[]", runId: "", connectionId: "", ...over });
 
 describe("ai: masking (K4)", () => {
   it("masks whole columns by name: a lower-cased substring of the label or the key; Chinese and Japanese words too; the user's own names", () => {
@@ -174,41 +174,28 @@ describe("ai: policy and connection (K10)", () => {
   });
 });
 
-describe("ai: analyze (K1) and the preview page (K3)", () => {
-  it("analyze reads the run's result (only now), builds a masked draft and opens it; nothing is sent", async () => {
+describe("ai: analyze (K1) makes a chat about the result (D479)", () => {
+  it("analyze reads the run's result (only now) and makes a chat with the masked result as material; nothing is sent", async () => {
     const host = fakeHost();
     const res = await A(host, "analyze", { runId: "run1" });
     expect(host.runs.read).toHaveBeenCalledWith("run1");
     expect(host.interfaces.call).not.toHaveBeenCalled();
     expect(checkActionResult(res)).toEqual([]);
     expect(res.output).toEqual({ type: "link", label: "Analysis " + new Date().toISOString().slice(0, 10), target: "resource:a1" });
-    const body = host.resources.create.mock.calls.map((c: any) => c[0]).find((r: any) => r.kind === "analysis").body;
-    expect(body.request).toContain("Masked columns: Email, apiKey");
-    expect(body.request).not.toMatch(/a@b\.com|4111/);
-    expect(body.runId).toBe("run1");
-    expect(body.answer).toBeUndefined();
-    // documents by the producer's name (not another plugin's body) and the result's columns
+    const made = host.resources.create.mock.calls.map((c: any) => c[0]).find((r: any) => r.kind === "analysis");
+    expect(made.description).toContain("Analyze the result below");
+    expect(made.body.runText).toContain("Masked columns: Email, apiKey");
+    expect(made.body.runText).not.toMatch(/a@b\.com|4111/);
+    expect(made.body).toMatchObject({ mode: "", runId: "run1", refs: ["q1"], turns: [], target: "" });
+    // another plugin's resource body is not read
     expect(host.resources.get).not.toHaveBeenCalledWith("q1");
-    expect(host.resources.search.mock.calls[0][0]).toEqual({ ids: ["q1"], limit: 1 });
-    const docSearch = host.resources.search.mock.calls[1][0];
-    expect(docSearch).toMatchObject({ mode: "any", rank: "relevance", kinds: ["org.onedesk.ai:doc"] });
-    expect(docSearch.query.split(" ").slice(0, 2)).toEqual(["Orders", "report"]);
-    expect(JSON.parse(body.docs)[0]).toMatchObject({ id: "d1", name: "orders.md" });
-  });
-  it("the click stores a draft with the run first (a page event may save only where the plugin already has something)", async () => {
-    const host = fakeHost({ runs: { read: vi.fn(async () => ({ output: table, meta: { plugin: "p", kind: "query", resource: "q1", at: 1 } })), saveArtifact: vi.fn(async () => ({ id: "dr1" })) } });
-    await A(host, "analyze", { runId: "run1" });
-    expect(host.runs.saveArtifact).toHaveBeenCalledWith("run1", { name: "Analysis draft", kind: "analysis-draft", data: { analysis: "a1", request: expect.stringContaining("Analysis request") } });
-    // without the host call the draft still opens
-    const plain = fakeHost();
-    await expect(A(plain, "analyze", { runId: "run1" })).resolves.toBeTruthy();
   });
   it("uses the settings for rows, cell length and the user's sensitive columns", async () => {
     const host = fakeHost({}, { settings: { maxRows: "1", maxCell: "5", sensitiveColumns: "note" } });
     await A(host, "analyze", { runId: "run1" });
-    const req = host.resources.create.mock.calls.map((c: any) => c[0]).find((r: any) => r.kind === "analysis").body.request;
-    expect(req).toContain("Only the first 1 of 2 rows");
-    expect(req).toContain("Masked columns: Email, note, apiKey");
+    const text = host.resources.create.mock.calls.map((c: any) => c[0]).find((r: any) => r.kind === "analysis").body.runText;
+    expect(text).toContain("Only the first 1 of 2 rows");
+    expect(text).toContain("Masked columns: Email, note, apiKey");
   });
   it("is refused when the environment says off; without a run there is nothing to analyze", async () => {
     await expect(A(fakeHost({}, { env: { "ai.policy": "off" } }), "analyze", { runId: "r" })).rejects.toThrow("(ai.policy = off), so nothing was read or sent");
@@ -220,56 +207,6 @@ describe("ai: analyze (K1) and the preview page (K3)", () => {
     none.runs.read = vi.fn(async () => { throw hostError("denied", { reason: "notInResultAction" }); });
     await expect(A(none, "analyze", { runId: "r" })).rejects.toMatchObject({ code: "denied" });
   });
-  it("the page shows the connection, model, token estimate, the editable request, document check boxes and the full text", async () => {
-    const host = fakeHost();
-    const { pages } = registry(plugin);
-    const out = await pages.analysis.render(analysisCtx(host));
-    expect(checkView(out.view)).toEqual([]);
-    expect(onlyKeys(out, RENDER_KEYS)).toEqual([]);
-    expect(out.view.map((n: any) => n.id)).toEqual(["info", "connection", "system", "request", "docs", "full"]);
-    expect(out.view[1].fields[0]).toMatchObject({ kind: "ref", kinds: ["@implements:onedesk.ai.chat/1"], bind: "body.connectionId" });
-    expect(out.view[1].fields[0].options).toBeUndefined(); // the host fills the list
-    expect(out.view[2].text).toContain("System prompt");
-    expect(out.view[2].text).toContain("data analyst");
-    expect(out.view[0].text).toContain("Connection: Local AI · Model: llama3");
-    expect(out.view[0].text).toMatch(/About \d+ tokens/);
-    expect(out.view[3].fields[0]).toMatchObject({ kind: "longtext", bind: "body.request" });
-    expect(out.view[4].fields[0]).toMatchObject({ kind: "boolean", bind: "body.use0", label: "orders.md" });
-    expect(out.view[5].text).toContain("### orders.md");
-    expect(host.interfaces.call).not.toHaveBeenCalled();
-  });
-  it("unticking a document and editing the request change the full text and the estimate at once (the draft counts)", async () => {
-    const { pages } = registry(plugin);
-    const host = fakeHost();
-    const on = await pages.analysis.render(analysisCtx(host));
-    const off = await pages.analysis.render(analysisCtx(host, draftBody(), { draft: { "body.use0": "false", "body.request": "short" } }));
-    expect(off.view.find((n: any) => n.id === "full").text).toBe("short");
-    expect(on.view.find((n: any) => n.id === "full").text).toContain("Doc text");
-    const tokens = (o: any) => Number(/About (\d+) tokens/.exec(o.view[0].text)![1]);
-    expect(tokens(off)).toBeLessThan(tokens(on));
-  });
-  it("with policy off or no connection the page says so and nothing is hidden", async () => {
-    const { pages } = registry(plugin);
-    const off = await pages.analysis.render(analysisCtx(fakeHost({}, { env: { "ai.policy": "off" } })));
-    expect(off.view[0]).toMatchObject({ tone: "danger" });
-    expect(off.view[0].text).toContain("turned off");
-    const none = await pages.analysis.render(analysisCtx(fakeHost({}, { env: { "ai.connection": "" } })));
-    expect(none.view[0]).toMatchObject({ tone: "danger" });
-    expect(none.view[0].text).toContain("No AI connection");
-  });
-  it("a run page of an analysis is read only; an answer is shown as Markdown with the model and usage, and the name field only when editable", async () => {
-    const { pages } = registry(plugin);
-    const body = draftBody();
-    const hostA = fakeHost();
-    await hostA.storage.set("last:a1", JSON.stringify({ answer: "**ok**", model: "m", usage: "1 / 2", connection: "Local AI", sent: "S" }));
-    const live = await pages.analysis.render(analysisCtx(hostA, body));
-    expect(live.view.find((n: any) => n.id === "answer")).toMatchObject({ format: "markdown", text: "**ok**" });
-    expect(live.view.find((n: any) => n.id === "keep").fields[0]).toMatchObject({ name: "name", param: true });
-    const ro = await pages.analysis.render(analysisCtx(hostA, body, { run: { id: "x", resourceId: "a1", input: {}, params: {} } }));
-    expect(ro.view.find((n: any) => n.id === "keep")).toBeUndefined();
-    expect(ro.view[3].fields[0].readOnly).toBe(true);
-    expect(checkView(live.view)).toEqual([]);
-  });
   it("the doc page shows the file's text", async () => {
     const out = await registry(plugin).pages.doc.render(ctxOf(fakeHost(), { resource: { id: "d1", body: { path: "/docs/a.md", text: "# A" } } }));
     expect(checkView(out.view)).toEqual([]);
@@ -277,41 +214,7 @@ describe("ai: analyze (K1) and the preview page (K3)", () => {
   });
 });
 
-describe("ai: send (K3, K5, audit)", () => {
-  it("sends the edited request plus the ticked documents through the chat interface to the picked connection; stores the answer; audits without content", async () => {
-    const host = fakeHost();
-    const res = await A(host, "send", { "body.request": "my edit" }, { resource: { id: "a1", body: draftBody() } });
-    expect(host.interfaces.call).toHaveBeenCalledTimes(1);
-    const [iface, action, input, opts] = host.interfaces.call.mock.calls[0];
-    expect([iface, action, opts]).toEqual(["onedesk.ai.chat/1", "chat", { resource: "c1" }]);
-    expect(input.messages).toEqual([{ role: "user", text: expect.stringContaining("my edit") }]);
-    expect(input.messages[0].text).toContain("Doc text");
-    expect(input.system).toContain("data analyst");
-    expect(checkActionResult({ ...res, output: { type: res.output.type, text: res.output.text } })).toEqual([]);
-    expect(res.output).toEqual({ type: "text", text: "It looks fine.", format: "markdown" });
-    // the answer is NOT written into the resource (the index reads bodies): it waits in the plugin's storage
-    expect(host.resources.update).not.toHaveBeenCalled();
-    expect(JSON.parse((await host.storage.get("last:a1"))!)).toMatchObject({ answer: "It looks fine.", model: "claude-haiku-5-5", usage: "100 / 20", connection: "Local AI" });
-    const log = JSON.parse((await host.storage.get("audit"))!);
-    expect(log).toHaveLength(1);
-    expect(log[0]).toMatchObject({ kind: "analyze", connection: "c1", model: "claude-haiku-5-5", usage: { input: 100, output: 20 } });
-    expect(log[0].chars).toBeGreaterThan(0);
-    expect(JSON.stringify(log)).not.toContain("my edit");
-    expect(JSON.stringify(log)).not.toContain("Doc text");
-  });
-  it("an unticked document is not sent", async () => {
-    const host = fakeHost();
-    await A(host, "send", { "body.use0": "false" }, { resource: { id: "a1", body: draftBody() } });
-    expect(host.interfaces.call.mock.calls[0][2].messages[0].text).not.toContain("Doc text");
-  });
-  it("policy off sends nothing; an empty request sends nothing", async () => {
-    const off = fakeHost({}, { env: { "ai.policy": "off" } });
-    await expect(A(off, "send", {}, { resource: { id: "a1", body: draftBody() } })).rejects.toThrow("turned off");
-    const host = fakeHost();
-    await expect(A(host, "send", { "body.request": "  ", "body.use0": "false" }, { resource: { id: "a1", body: draftBody() } })).rejects.toThrow("nothing to send");
-    expect(off.interfaces.call).not.toHaveBeenCalled();
-    expect(host.interfaces.call).not.toHaveBeenCalled();
-  });
+describe("ai: sending a request another plugin asked for (K3, K5, audit)", () => {
   it("provider errors become words for the user; a refusal too; a missing implementation names the connection", async () => {
     const send = (res: any, thrown?: Error) => {
       const host = fakeHost();
@@ -319,7 +222,7 @@ describe("ai: send (K3, K5, audit)", () => {
         if (thrown) throw thrown;
         return res;
       });
-      return A(host, "send", {}, { resource: { id: "a1", body: draftBody() } });
+      return A(host, "send", {}, { resource: { id: "a1", body: sqlBody() } });
     };
     await expect(send({ error: { code: "auth", message: "bad key" } })).rejects.toThrow("refused the key. bad key");
     await expect(send({ error: { code: "rateLimit", retryAfter: 7 } })).rejects.toThrow("in 7 s");
@@ -329,25 +232,13 @@ describe("ai: send (K3, K5, audit)", () => {
     await expect(send(null, hostError("invalid", { reason: "wrongInterface" }))).rejects.toThrow("“Local AI” is not an AI connection");
     await expect(send(null, hostError("denied", { reason: "cancelled" }))).rejects.toMatchObject({ code: "denied" });
   });
-  it("keep (K6): saves the analysis with the run it came from (D442), drops the draft, and only then forgets the stored answer; without the host call it is an error", async () => {
-    const { pages } = registry(plugin);
-    const host = fakeHost({ runs: { saveArtifact: vi.fn(async () => ({ id: "art1" })), listArtifacts: vi.fn(async () => [{ id: "dr1", kind: "analysis-draft" }, { id: "x", kind: "analysis" }]), deleteArtifact: vi.fn(async () => null) } });
-    await host.storage.set("last:a1", JSON.stringify({ answer: "A", model: "m", usage: "1 / 2", connection: "Local AI", sent: "S" }));
-    const res = await pages.analysis.onEvent(analysisCtx(host, draftBody(), { params: { name: "Q3 look" } }), "keep");
-    expect(host.runs.saveArtifact).toHaveBeenCalledWith("run1", { name: "Q3 look", kind: "analysis", data: { system: expect.stringContaining("data analyst"), request: "S", answer: "A", connection: "Local AI", model: "m", usage: "1 / 2" } });
-    expect(host.runs.deleteArtifact).toHaveBeenCalledTimes(1);
-    expect(host.runs.deleteArtifact).toHaveBeenCalledWith("dr1");
-    expect(await host.storage.get("last:a1")).toBeNull();
-    expect(onlyKeys(res, ["changes", "params", "message"])).toEqual([]);
-    expect(res.message).toContain("with the run");
-    const plain = fakeHost();
-    await plain.storage.set("last:a1", JSON.stringify({ answer: "A" }));
-    await expect(pages.analysis.onEvent(analysisCtx(plain, draftBody(), { params: { name: "N" } }), "keep")).rejects.toThrow("cannot attach");
-    expect(await plain.storage.get("last:a1")).not.toBeNull(); // nothing is lost when saving fails
-    expect((await pages.analysis.onEvent(analysisCtx(fakeHost()), "keep")).message).toContain("no answer");
-    expect((await pages.analysis.onEvent(analysisCtx(plain, draftBody({ runId: "" })), "keep")).message).toContain("not known");
-    await expect(pages.analysis.onEvent(analysisCtx(plain), "nope")).rejects.toThrow();
-    await expect(dropDrafts(ctxOf(fakeHost()), "r")).resolves.toBeUndefined();
+  it("policy off sends nothing; an empty stored request sends nothing", async () => {
+    const off = fakeHost({}, { env: { "ai.policy": "off" } });
+    await expect(A(off, "send", {}, { resource: { id: "a1", body: sqlBody() } })).rejects.toThrow("turned off");
+    const host = fakeHost();
+    await expect(A(host, "send", {}, { resource: { id: "a1", body: sqlBody({ request: "  " }) } })).rejects.toThrow("nothing to send");
+    expect(off.interfaces.call).not.toHaveBeenCalled();
+    expect(host.interfaces.call).not.toHaveBeenCalled();
   });
   it("the audit keeps the last 200 only and never fails the answer", async () => {
     const host = fakeHost();
@@ -424,9 +315,11 @@ describe("ai: generate (K7–K9)", () => {
     expect(await gen(host, { fetch: first.draft })).toEqual({ text: "SELECT 1", model: "m", usage: { input: 1, output: 2 }, check: { ok: true } });
     expect(host.resources.remove).toHaveBeenCalledWith(first.draft);
     expect(await gen(host, { fetch: first.draft })).toEqual({ pending: true });
-    // the draft page is read only
+    // the draft page only shows what will be sent: nothing on it can be edited
     const page = await registry(plugin).pages.analysis.render(ctxOf(host, { resource: { id: first.draft, body } }));
-    expect(page.view.find((n: any) => n.id === "request").fields[0].readOnly).toBe(true);
+    expect(checkView(page.view)).toEqual([]);
+    expect(page.view.some((n: any) => n.type === "form" || n.type === "conversation")).toBe(false);
+    expect(page.view.find((n: any) => n.id === "full").text).toBe(body.request);
     expect(page.view.find((n: any) => n.id === "system").text).toContain("single SELECT or WITH");
   });
   it("only names go out: a long instruction is cut and masked, tables and columns must look like names", () => {
@@ -456,7 +349,7 @@ describe("ai: generate (K7–K9)", () => {
     expect((await gen(host)).check).toEqual({ ok: false, reason: "notSelect" });
   });
   it("implements the generate interface without a kind (no anchor resource, D445) and uses the chat interface; reads other resources only through its own permission", () => {
-    expect(manifest.implements).toEqual({ "onedesk.ai.generate/1": { actions: ["generate"] }, "onedesk.assist/1": { actions: ["assist"] } });
+    expect(manifest.implements).toEqual({ "onedesk.ai.generate/1": { actions: ["generate"] }, "onedesk.assist/2": { actions: ["analyze"] } });
     expect(manifest.activation).toBeUndefined();
     expect(manifest.contributes.kinds.map((k: any) => k.id)).toEqual(["analysis", "doc"]);
     expect(manifest.requires).toEqual({ files: true, resources: true });
@@ -469,9 +362,14 @@ describe("ai: generate (K7–K9)", () => {
     expect(st).toMatchObject({ type: "resource", kinds: ["@implements:onedesk.ai.chat/1"], default: "" });
   });
   it("is exported and declared", () => {
-    expect(manifest.exports.actions).toEqual(["analyze", "generate", "assist"]);
-    expect(manifest.contributes.actions.map((a: any) => a.id).sort()).toEqual(["analyze", "assist", "generate", "send", "syncDocs"]);
-    expect(Object.keys(registry(plugin).actions).sort()).toEqual(["analyze", "assist", "generate", "send", "syncDocs"]);
+    expect(manifest.exports.actions).toEqual(["analyze", "generate"]);
+    expect(manifest.contributes.actions.map((a: any) => a.id).sort()).toEqual(["analyze", "clear", "generate", "send", "syncDocs"]);
+    expect(Object.keys(registry(plugin).actions).sort()).toEqual(["analyze", "clear", "generate", "send", "syncDocs"]);
+    // D479: the shell's "AI chat" button is the command openChat; a chat takes drops
+    expect(manifest.contributes.commands.map((c: any) => c.id)).toEqual(["openChat"]);
+    expect(Object.keys(registry(plugin).commands)).toEqual(["openChat"]);
+    expect(Object.keys(registry(plugin).kinds)).toEqual(["analysis"]);
+    expect(manifest.contributes.kinds[0]).toMatchObject({ id: "analysis", drop: true, draggable: true });
   });
 });
 
@@ -507,11 +405,11 @@ describe("ai: manifest and text", () => {
     expect(manifest.requires).toEqual({ files: true, resources: true });
   });
   it("names no provider; the plugin has no CSS or TSX; every key the code and manifest use exists in all languages", () => {
-    const src = readFileSync(new URL("./main.js", import.meta.url), "utf8");
+    const src = ["./main.js", "./chat.js"].map((f) => readFileSync(new URL(f, import.meta.url), "utf8")).join("\n");
     expect(src).not.toMatch(/anthropic|ollama|claude/i);
     const keys = new Set<string>();
     for (const m of src.matchAll(/\b(?:tr\(ctx, |ctx\.t\()[`"]([\w.]+)[`"]/g)) keys.add(m[1]!);
-    for (const m of JSON.stringify(manifest).matchAll(/"((?:plugin|kind|action|tab|setting|doc|analysis)\.[\w.]+)"/g)) keys.add(m[1]!);
+    for (const m of JSON.stringify(manifest).matchAll(/"((?:plugin|kind|action|tab|setting|doc|analysis|command|confirm)\.[\w.]+)"/g)) keys.add(m[1]!);
     for (const k of keys) for (const L of [EN, ZH, JA]) expect(L[k], k).toBeTruthy();
     // dynamic keys
     for (const k of ["info.policy.off", "info.policy.preview", "info.policy.allow", "error.chat.auth", "error.chat.rateLimit", "error.chat.overloaded", "error.chat.timeout", "error.chat.tooLong", "error.chat.refusal", "error.chat.network", "error.chat.other", "error.connectionMissingEnv", "error.connectionMissingDefault"]) expect(EN[k], k).toBeTruthy();
@@ -523,20 +421,6 @@ describe("ai: manifest and text", () => {
 });
 
 describe("ai: the request and the documents are templates (D466)", () => {
-  it("the page fills {{name}} from the environment in the preview of what will be sent, and lists the placeholders", async () => {
-    const host = fakeHost({}, { env: { region: "eu-west" } });
-    const out = await registry(plugin).pages.analysis.render(analysisCtx(host, draftBody({ request: "Sales in {{region}}" })));
-    expect(checkView(out.view)).toEqual([]);
-    expect(out.view.find((n: any) => n.id === "values").fields.map((f: any) => [f.name, f.envValue])).toEqual([["region", "eu-west"]]);
-    expect(out.view.find((n: any) => n.id === "full").text).toContain("Sales in eu-west");
-  });
-
-  it("send: the filled text is what goes to the connection", async () => {
-    const host = fakeHost({}, { env: { region: "us" } });
-    await A(host, "send", { "body.request": "Sales in {{region}}", "body.use0": "false" }, { resource: { id: "a1", body: draftBody() } });
-    expect(JSON.stringify(host.interfaces.call.mock.calls.at(-1))).toContain("Sales in us");
-  });
-
   it("a document shows {{name}} with the environment's value", async () => {
     const host = fakeHost({}, { env: { team: "Data" } });
     const out = await registry(plugin).pages.doc.render(ctxOf(host, { resource: { id: "d1", body: { path: "/docs/a.md", text: "Owner: {{team}}" } } }));

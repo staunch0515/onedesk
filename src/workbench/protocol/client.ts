@@ -1,6 +1,5 @@
 import type {
   AssistProvider,
-  AssistStartParams,
   ProtocolError,
   InstallAnswer,
   InstallPreview,
@@ -240,11 +239,10 @@ export interface ProtocolClient {
   };
 
   /** Round 18 (X5): buttons a plugin adds to a run's result; clicking one is `run.start` with `action` = `ResultAction.action` and `resultRun` = the run. */
-  /** Round 21 (D462): writing help. Absent in the demo; `provider().available` says whether a plugin offers it. */
+  /** Round 21 (D462), D479: writing help. Absent in the demo; `provider().available` says whether a plugin offers it and
+   *  `command` is its "AI chat" command (run with the page as context). */
   assist?: {
     provider(): Promise<AssistProvider>;
-    /** Starts the provider's `assist` action as a run for the page; resolves with the run id. */
-    start(params: Omit<AssistStartParams, "locale">): Promise<string>;
   };
 
   result: {

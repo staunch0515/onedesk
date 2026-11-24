@@ -4,4 +4,8 @@ import type { Label } from "./Label";
 /**
  * Whether writing help is available: an enabled plugin implements `ASSIST_INTERFACE`.
  */
-export type AssistProvider = { available: boolean, plugin?: string, label?: Label, };
+export type AssistProvider = { available: boolean, plugin?: string, label?: Label, 
+/**
+ * D479: the full id of the provider's `openChat` command.
+ */
+command?: string, };

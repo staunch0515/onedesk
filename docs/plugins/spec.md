@@ -27,7 +27,7 @@
 3. **插件天生是模板。** 页面内容可以用占位符（如 `{{名字}}`，语法由插件定义）从当前环境取值（`ctx.host.params.get(name)`，项目规则 5）；换一个环境，同一个资源得到不同的结果。这是 OneDesk 的独特之处，每个插件都要想清楚“选了环境之后，我的内容会怎样变”。内置插件共用一份 `template.js`（每个插件包里各放一份相同的副本，`plugins/_testing/template-copies.test.ts` 检查它们一致）：`{{名字}}` 先取本标签页填的值，再取环境的值；`{{secret:名字}}` 不是占位符，永远不显示；页面上用一条“占位符 + 环境值”的字段条（`holeStrip`）告诉用户每个值从哪个环境来。授予网络的字段（如连接地址）不能用占位符，内核按写下的原文授权。
 4. **环境参数随便加。** 环境里的参数由用户自由添加：任意名字、任意值，不是从少数几个预设参数里挑。插件只按名字取值，不规定环境里必须有哪些参数。
 5. **一个功能只有一个入口。** 操作栏（工具栏）已有的功能，页面内容里不要再放一个同样作用的控件（例如操作栏有“阅读/编辑”切换，页面里就不再放“模式”选择框）。同理，信息面板里已有的名称、说明（描述）、标签，页面内容里不要再放一份。
-6. **AI 生成按资源的说明来写。** “用 AI 写/用 AI 填写”不弹对话框收集指令：资源信息面板里的**说明（描述）**就是给 AI 的要求，点了就按它生成（说明是空的就提示先写说明）。要求变了就改说明。（用户 2026-11-24 重申，“说过多少次了”。）
+6. **AI 生成按资源的说明来写。** 不弹对话框收集指令：资源信息面板里的**说明（描述）**是给 AI 的长期背景；“AI 对话”里什么都不写直接发送，就按说明生成。要求每次不同时，在对话框里直接说（D479）。（用户 2026-11-24 重申，“说过多少次了”；2026-11-25 补充：说明只能用一次不够，要能多次对话。）
 7. **不要乱加东西，不要加用户看不懂的东西。** 只做用户要的；能在原地直接做的事不要再开一个对话框（例如环境参数直接在参数表里加）；系统内部名字（如 `network.allow`）不要摆到普通界面上让用户挑。
 
 各插件按这些要求逐个审查的结论记在 [`docs/handoff/plugin-review.md`](../handoff/plugin-review.md)。
@@ -479,6 +479,14 @@ export default {
 
 `{ type: "link", id, label: Label, target }`，`target` 是 `resource:<id>` 等目标。
 
+### 6.4a `conversation`（D479）
+
+`{ type: "conversation", id, turns, input?, targetTab? }`：一段对话，外壳画成一轮一轮的发言，最下面是输入框。
+- `turns[]`：`{ role: "user" | "assistant", text, caption?, actions? }`。`text` 是 Markdown（用户的话按原样显示）；`caption` 是下面一行灰色小字（模型、token）；`actions` 最多 4 个按钮 `{ id, label, icon? }`，点了发送以 `id` 为名的页面事件，`ctx.row` 是这一轮的序号（和表格的 `rowActions` 一样）。
+- `input`：`{ name, send, placeholder? }`。输入框里的文字是运行参数 `name`（不能以 `view.` 开头），回车运行页面上 `id` 为 `send` 的操作，Shift+回车换行；新的一轮出现时输入框清空。
+- `targetTab`：从这个页面开始的运行带上那个标签页的当前值（`input["target.draft"]`，不含密钥）和信息面板里写的说明（`input["target.description"]`）；标签页没开着时不带。
+- 同一页面上的表格不再撑满页面，按行数显示。
+
 ### 6.5 界面状态
 
 **页面的视图状态（D467）**：不由字段显示、只属于这个标签页的状态（例如笔记的“阅读/编辑”），用名为 `view.<名字>` 的页面参数保存。页面事件可以在返回的 `params` 里设置它（不需要对应的字段），之后 `render` 和 `onEvent` 的 `ctx.params` 里都有它；它**不会**交给运行。值是字符串，最长 1000 个字符。操作栏的切换按钮就用它，页面里不要再放同作用的控件（§0.5）。
@@ -659,23 +667,26 @@ export function tr(ctx, key, vars) {
 
 ---
 
-## 11. AI 辅助（统一模式，D462）
+## 11. AI 辅助（AI 对话，D479）
 
-AI 辅助由**外壳统一提供**（`docs/redesign/ai-assist.md` §9）。插件**不写任何 AI 代码**：
+AI 辅助由**外壳和 AI 工作台统一提供**（`docs/redesign/ai-chat.md`）。插件**不写任何 AI 代码**：
 
-1. 每个可编辑的 `text` / `longtext` / `code` 表单字段（有 `bind`、不是运行参数、不只读）**自动**有 ✨“用 AI 写”；页面操作栏自动有“用 AI 填写”（新建页上就是“用 AI 生成新内容”）。AI 的输出只是提议，用户接受后成为未保存的修改，照常保存。
-2. 插件可以在 `render` 返回的字段上加 `assist`，三个属性都可选：
+1. 每个内容页的操作栏自动有 **“AI 对话”**：打开（第一次时新建，放在这个资源旁边）关于这个页面的对话。说明是长期背景，对话框里每次说的是这次的要求；AI 的回答里有对页面的修改时，“应用到”把它放进页面，成为**未保存的修改**，照常保存或撤销。字段旁不再有 ✨。
+2. AI 能改的是页面上可编辑的 `text` / `longtext` / `code` 字段（有 `bind`、不是运行参数、不只读）。插件可以在 `render` 返回的字段上加 `assist`，三个属性都可选：
    ```js
    { type: "form", id: "main", layout: "stack", fields: [
      { name: "sql", label: ctx.t("field.sql"), kind: "code", language: "sql", bind: "body.sql",
        assist: { hint: ctx.t("assist.sql"), format: "code:sql" } },     // 告诉 AI 这里写什么、什么格式
      { name: "code", label: ctx.t("field.code"), kind: "text", bind: "body.code",
-       assist: { off: true } },                                          // 不适合 AI 写的字段
+       assist: { off: true } },                                          // AI 不能改的字段
    ] }
    ```
-   `hint` 是给 AI 的说明（用 `ctx.t` 取本地化文字）；`format` 是 `text`、`markdown`、`json` 或 `code:<语言>`，省略时按字段类型推断；`off: true` 关闭。
-3. 插件**不得**：直接调用 AI 服务商插件或 `uses: ["onedesk.ai.chat/1"]`；自己画 AI 按钮、预览、发送或模型选择；把数据行塞进字段供 AI 读取。
-4. 旧接口 `onedesk.ai.generate/1`（只支持 `kind: "sql"`）仍可用，供 SQL 插件这类已有实现；**新插件不要再用**，用上面的字段声明。
+   `hint` 是给 AI 的说明（用 `ctx.t` 取本地化文字）；`format` 是 `text`、`markdown`、`json` 或 `code:<语言>`，省略时按字段类型推断；`off: true` 时 AI 看得到这个字段（作为背景），但不能修改它。
+3. 用户在信息面板里允许“AI 可见”的资源，才会作为资料发给 AI；点“AI 对话”本身就是允许这个页面。资料是拖到对话上的任意资源（内容和在当前环境下最近一次运行的结果）。
+4. 插件**不得**：直接调用 AI 服务商插件或 `uses: ["onedesk.ai.chat/1"]`；自己画 AI 按钮、预览、发送或模型选择；把数据行塞进字段供 AI 读取。
+5. 旧接口 `onedesk.ai.generate/1`（只支持 `kind: "sql"`）仍可用，供 SQL 插件这类已有实现；**新插件不要再用**。
+
+**实现 AI 对话的插件**（只有 AI 工作台，规则 10）：实现接口 `onedesk.assist/2`（不带 `kind`），贡献命令 `openChat`（外壳的按钮以页面为上下文运行它：`target`、`tabId`、`args.envId`、`args.name`）。只有它可以：在页面事件结果里返回 `apply: { target, tabId?, label?, values }`（内核只留下目标页面可编辑的文本字段）；调用 `host.pages.fields(target, envId?)`（页面的字段和值，不含密钥；资源须“AI 可见”）和 `host.runs.latest(resourceId, envId?)`（最近一次成功运行的结果）；在 `host.resources.search` 的结果里看到 `aiVisible`。
 
 ## 12. 沙箱限制
 

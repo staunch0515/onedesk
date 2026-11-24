@@ -71,6 +71,8 @@ struct DropAnswer {
 
 /// Most row actions on one table (D393), and the longest `context.row`.
 pub const MAX_ROW_ACTIONS: usize = 4;
+/// D479: turns a conversation view node may show.
+pub const MAX_TURNS: usize = 500;
 pub const MAX_ROW_KEY: usize = 1000;
 
 impl Inner {
@@ -106,6 +108,32 @@ impl Inner {
             e
         };
         for node in view.iter_mut() {
+            // D479: a conversation's buttons are like a table's row actions; its input names a run parameter.
+            if let ViewNode::Conversation { id, turns, input, target_tab } = node {
+                let bad = |what: &str| {
+                    let mut e = err_p(ErrorCode::PluginError, &[("reason", "badOutput"), ("plugin", &plugin.id)]);
+                    e.detail = Some(format!("conversation: {what}"));
+                    e
+                };
+                if turns.len() > MAX_TURNS {
+                    return Err(bad(&format!("{id}: more than {MAX_TURNS} turns")));
+                }
+                for t in turns.iter() {
+                    let a = t.actions.as_deref().unwrap_or_default();
+                    if a.len() > MAX_ROW_ACTIONS || a.iter().any(|x| x.id.is_empty()) {
+                        return Err(bad(&format!("{id}: a turn has more than {MAX_ROW_ACTIONS} buttons or one without id")));
+                    }
+                }
+                if let Some(i) = input {
+                    if i.name.is_empty() || i.name.starts_with("view.") || i.send.is_empty() {
+                        return Err(bad(&format!("{id}: the input needs a parameter name (not view.) and a send action")));
+                    }
+                }
+                if target_tab.as_ref().is_some_and(|t| t.is_empty() || t.chars().count() > 200) {
+                    return Err(bad(&format!("{id}: bad targetTab")));
+                }
+                continue;
+            }
             let ViewNode::Table { id, rows, row_targets, row_actions, row_keys, select_param, .. } = node else { continue };
             if let Some(p) = select_param {
                 if !p.starts_with("view.") || p.len() <= "view.".len() || row_keys.is_none() {

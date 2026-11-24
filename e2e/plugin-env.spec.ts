@@ -185,7 +185,7 @@ test("a resource not saved yet has its info panel too: name, description and tag
   await expect(info.getByRole("textbox", { name: "Description" })).toHaveValue("Used on Fridays");
 });
 
-test("the AI workbench's default connection is picked from a list of the connections, not typed; then Write with AI uses it", async ({ page }) => {
+test("the AI workbench's default connection is picked from a list of the connections, not typed; then the AI chat uses it", async ({ page }) => {
   await openKernel(page, host);
   const conn = (await call<{ page: { resourceId: string } }>(page, "page.save", { target: "new:org.onedesk.ai.ollama:connection", changes: { name: "LocalOllama", "body.baseUrl": "http://127.0.0.1:11434", "body.model": "qwen" } })).page.resourceId;
   await showTree(page, "Plugins");
@@ -197,13 +197,11 @@ test("the AI workbench's default connection is picked from a list of the connect
   type Detail = { settings: { name: string; value: string }[] };
   await expect.poll(async () => (await call<Detail>(page, "plugin.get", { plugin: "org.onedesk.ai" })).settings.find((s) => s.name === "connection")?.value).toBe(conn);
   await page.screenshot({ path: path.join(OUT, "plugin-env-ai-connection.png") });
-  // A note with a description: Write with AI goes to the preview with that connection (nothing is sent before Send).
+  // A note: its AI chat (D479) uses that connection, named on the page.
   await call(page, "page.save", { target: `new:${NOTE}`, changes: { name: "Moon poem", description: "Write a short poem about the moon", "body.text": "" } });
   await showTree(page, "Resources");
   await treeItem(page, "Moon poem").click();
-  await page.getByRole("button", { name: "Write with AI" }).first().click();
-  const dialog = page.getByRole("dialog");
-  await expect(dialog).toContainText("LocalOllama", { timeout: 20_000 });
-  await expect(dialog).not.toContainText("No AI connection");
-  await dialog.getByRole("button", { name: "Cancel" }).click();
+  await page.getByRole("button", { name: "AI chat" }).click();
+  await expect(page.getByText(/Connection: LocalOllama/).first()).toBeVisible({ timeout: 20_000 });
+  await expect(page.getByText("No AI connection")).toHaveCount(0);
 });

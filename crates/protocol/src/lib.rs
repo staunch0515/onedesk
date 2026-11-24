@@ -654,6 +654,51 @@ pub enum ViewNode {
         label: Label,
         target: String,
     },
+    /// D479 (docs/redesign/ai-chat.md): a conversation — turns said by the user or the assistant,
+    /// shown in order, with an input box at the bottom. Each turn's buttons send the page event named
+    /// by their `id`, with the turn's index as `context.row` (like a table's row actions).
+    Conversation {
+        id: String,
+        turns: Vec<ConversationTurn>,
+        input: Option<ConversationInput>,
+        /// The tab whose unsaved values and description go along with every run started on this page
+        /// (as `input["target.draft"]` and `input["target.description"]`); a tab that is not open adds nothing.
+        target_tab: Option<String>,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum TurnRole {
+    User,
+    Assistant,
+}
+
+/// D479: one turn of a conversation. `text` is Markdown; `caption` is a muted line under it (model, tokens).
+#[skip_serializing_none]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[ts(export, optional_fields)]
+pub struct ConversationTurn {
+    pub role: TurnRole,
+    pub text: String,
+    pub caption: Option<String>,
+    /// At most 4 buttons under the turn.
+    pub actions: Option<Vec<TableRowAction>>,
+}
+
+/// D479: the input box of a conversation. What is typed is the page parameter `name` (a run parameter,
+/// like a `param: true` field); Enter (without Shift) runs the page action `send`, and the box is emptied
+/// when a new turn arrives.
+#[skip_serializing_none]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[ts(export, optional_fields)]
+pub struct ConversationInput {
+    pub name: String,
+    pub send: String,
+    pub placeholder: Option<Label>,
 }
 
 /// Round 12 (D393): one button on every row of a table.
@@ -1634,6 +1679,23 @@ pub struct PageEventResult {
     /// Round 8 (D358): new page parameter values (`param: true` fields), applied by the
     /// interface to the page state; not part of the draft, never “unsaved”.
     pub params: Option<BTreeMap<String, String>>,
+    /// D479: put these values into another page as unsaved changes (only the writing-help provider,
+    /// `ASSIST_INTERFACE`). The interface opens `target` (or uses the open tab `tabId`) and sets them in its
+    /// draft; nothing is saved.
+    pub apply: Option<PageApply>,
+}
+
+/// D479: what `PageEventResult.apply` puts into another page. The kernel keeps only the fields that page
+/// shows as editable text (`text`, `longtext`, `code`; not read-only, not `assist.off`, not protected).
+#[skip_serializing_none]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, optional_fields)]
+pub struct PageApply {
+    pub target: String,
+    pub tab_id: Option<String>,
+    pub label: Option<String>,
+    pub values: JsonMap,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -2286,18 +2348,18 @@ pub struct RunRowsResult {
     pub total: u64,
 }
 
-/* ================================================================== round 21 (D462)
-   Writing help ("assist", docs/redesign/ai-assist.md). The kernel knows only the interface name: the
+/* ================================================================== round 21 (D462), D479
+   Writing help ("assist", docs/redesign/ai-chat.md). The kernel knows only the interface name: the
    plugin implementing it decides how help is produced. */
 
-/// The interface an assist provider implements (no connection kind; action `assist`).
-pub const ASSIST_INTERFACE: &str = "onedesk.assist/1";
+/// The interface an assist provider implements (no connection kind). D479: it contributes the command
+/// `openChat`, which the shell's "AI chat" button runs with the page as context (`target`, `tabId`,
+/// `args.envId`); the command opens the conversation about that page.
+pub const ASSIST_INTERFACE: &str = "onedesk.assist/2";
 
 pub mod method21 {
     /// (no params) → `AssistProvider`.
     pub const ASSIST_PROVIDER: &str = "assist.provider";
-    /// `AssistStartParams` → run id (string): the provider's `assist` action runs as a normal run.
-    pub const ASSIST_START: &str = "assist.start";
 }
 
 /// Whether writing help is available: an enabled plugin implements `ASSIST_INTERFACE`.
@@ -2309,21 +2371,8 @@ pub struct AssistProvider {
     pub available: bool,
     pub plugin: Option<String>,
     pub label: Option<Label>,
-}
-
-#[skip_serializing_none]
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export, optional_fields)]
-pub struct AssistStartParams {
-    /// The page the help is for (its environment and protections apply).
-    pub target: String,
-    pub tab_id: String,
-    pub env_id: Option<String>,
-    pub locale: Option<String>,
-    /// What the provider's contract asks for (ai-assist.md §9); handed to the action as its input.
-    #[serde(default)]
-    pub input: JsonMap,
+    /// D479: the full id of the provider's `openChat` command.
+    pub command: Option<String>,
 }
 
 /// Methods of round 7 (D345): install requests made by plugins, answered by the interface.

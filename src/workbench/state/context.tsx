@@ -87,12 +87,14 @@ export function WorkbenchProvider({ store, children }: { store: Store; children:
         const drafts = { ...s.drafts };
         const bases = { ...s.bases };
         const merge = { ...s.merge };
+        const fieldKinds = { ...s.fieldKinds };
         for (const id of tabIds) {
           delete drafts[id];
           delete bases[id];
           delete merge[id];
+          delete fieldKinds[id];
         }
-        return { tabs, activeTabId, drafts, bases, merge, confirmClose: null };
+        return { tabs, activeTabId, drafts, bases, merge, fieldKinds, confirmClose: null };
       });
     };
 

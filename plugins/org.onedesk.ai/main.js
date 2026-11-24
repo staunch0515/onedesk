@@ -1,9 +1,10 @@
-// AI workbench: "Analyze" on a result (K1), a preview page that shows exactly what will be sent and sends only on
-// "Send" (K3), masking before anything leaves (K4), reference documents from an authorized folder (K2), saving
-// an analysis with its run (K6), and an exported `generate` for other plugins (K7–K9, a proposal, never data).
+// AI workbench: AI chats (D479, chat.js) — the one place to talk with AI, opened by the shell's "AI chat" button
+// (interface onedesk.assist/2) or by "Analyze" on a result (K1); masking before anything leaves (K4), reference
+// documents from an authorized folder (K2), and an exported `generate` for other plugins (K7–K9, a proposal,
+// never data; its preview is a chat page in "sql" mode).
 // It never talks to a provider directly: the chat goes through the plugin interface `onedesk.ai.chat/1` to the
 // connection resource the user picked (ctx.host.interfaces.call). Sandbox rules: no console, timers or fetch.
-import { assist } from "./assist.js";
+import { chatEvent, clearChat, dropOnChat, openChat, renderChat, sendChat } from "./chat.js";
 import { filled, holeNames, holeStrip } from "./template.js";
 export const PLUGIN = "org.onedesk.ai";
 export const IFACE = "onedesk.ai.chat/1";
@@ -361,41 +362,6 @@ async function chat(ctx, connection, input) {
 const CHAT_ERRORS = ["auth", "rateLimit", "overloaded", "timeout", "tooLong", "refusal", "network", "other"];
 const usageText = (u) => (u && typeof u === "object" ? `${u.input || 0} / ${u.output || 0}` : "");
 
-/* ---------------------------------------------------------------- K6 saving */
-
-// The analysis belongs to the run it analyzes (D442: deleted with it). No such host call → an error, never a
-// silent copy somewhere else.
-export async function saveArtifact(ctx, runId, artifact) {
-  const runs = ctx.host.runs;
-  if (!runs || typeof runs.saveArtifact !== "function") throw new Error(tr(ctx, "error.noArtifacts"));
-  return runs.saveArtifact(runId, artifact);
-}
-
-// A page event may save only for a run this plugin already has something under, so the click on "Analyze" stores
-// a draft first (what the user is looking at); saving later adds the named analysis and drops the draft.
-const DRAFT_KIND = "analysis-draft";
-export async function dropDrafts(ctx, runId) {
-  const runs = ctx.host.runs;
-  if (!runs || typeof runs.listArtifacts !== "function" || typeof runs.deleteArtifact !== "function") return;
-  try {
-    for (const a of (await runs.listArtifacts(runId)) || []) if (a.kind === DRAFT_KIND) await runs.deleteArtifact(a.id);
-  } catch (e) {
-    /* a draft left behind is harmless */
-  }
-}
-
-// The last answer of an analysis lives in the plugin's own storage until the user saves it: it is not put in the
-// resource body (which the full-text index reads).
-const lastKey = (id) => `last:${id}`;
-async function readLast(ctx, id) {
-  try {
-    const raw = await ctx.host.storage.get(lastKey(id));
-    return raw ? JSON.parse(raw) : null;
-  } catch (e) {
-    return null;
-  }
-}
-
 /* ---------------------------------------------------------------- the analysis page */
 
 const bodyOf = (ctx) => {
@@ -408,20 +374,7 @@ const bodyOf = (ctx) => {
   return pick;
 };
 
-function docsOf(pick) {
-  try {
-    const list = JSON.parse(pick("docs", "[]"));
-    return Array.isArray(list) ? list.slice(0, MAX_DOCS) : [];
-  } catch (e) {
-    return [];
-  }
-}
-
-export function chosenDocs(docs, pick) {
-  return docs.filter((_, i) => pick(`use${i}`, "true") !== "false");
-}
-
-async function connectionLine(ctx, given) {
+export async function connectionLine(ctx, given) {
   try {
     const c = await pickConnection(ctx, given);
     return { text: tr(ctx, "info.connection", { connection: c.name, model: c.model || tr(ctx, "info.modelDefault") }), connection: c };
@@ -547,6 +500,9 @@ async function generate(ctx, input) {
 
 /* ---------------------------------------------------------------- plugin */
 
+// What chat.js uses of this plugin's helpers.
+const deps = { KIND: KIND_ANALYSIS, tr, policyOf, pickConnection, connectionLine, chat, audit, maskText, isSensitiveColumn, redactTable, markdownTable, estimateTokens, MASK, filled, setting, settingNumber, parseExtra, usageText };
+
 export default {
   activate(host) {
     host.pages.handle("doc", {
@@ -562,59 +518,32 @@ export default {
     host.pages.handle("analysis", {
       async render(ctx) {
         const pick = bodyOf(ctx);
-        const sqlDraft = pick("mode", "") === "sql"; // a request made for another plugin: read only, sent as it is
+        if (pick("mode", "") !== "sql") return renderChat(ctx, deps);
+        // A request another plugin asked for (generate's preview): read only, sent as it is.
         const view = [];
         const info = await connectionLine(ctx, pick("connectionId", ""));
-        const docs = docsOf(pick);
-        const used = chosenDocs(docs, pick);
-        // The request is a template (D466): {{name}} is filled from the tab's environment, and the preview below shows
-        // exactly what will be sent. A request another plugin asked for is sent as it is.
         const request = pick("request", "");
-        const strip = sqlDraft ? null : await holeStrip(ctx, holeNames(request));
-        const full = composeRequest(ctx, sqlDraft ? request : await filled(ctx, request), used);
-        const system = sqlDraft ? pick("system", "") : tr(ctx, "system.analyze");
+        const system = pick("system", "");
         const policy = await policyOf(ctx);
-        const ro = ctx.run || sqlDraft ? { readOnly: true } : {};
-        const lines = [info.text, tr(ctx, "info.tokens", { tokens: estimateTokens(`${system}\n${full}`) }), tr(ctx, `info.policy.${policy}`)];
+        const lines = [info.text, tr(ctx, "info.tokens", { tokens: estimateTokens(`${system}\n${request}`) }), tr(ctx, `info.policy.${policy}`)];
         view.push({ type: "text", id: "info", text: lines.join("\n"), tone: info.danger || policy === "off" ? "danger" : "muted" });
-        view.push({ type: "form", id: "connection", layout: "strip", fields: [{ name: "connectionId", label: ctx.t("field.connection"), kind: "ref", kinds: ["@implements:onedesk.ai.chat/1"], bind: "body.connectionId", hint: tr(ctx, "field.connection.hint"), ...ro }] });
-        if (strip) view.push(strip);
         view.push({ type: "text", id: "system", text: `**${tr(ctx, "field.system")}**\n\n${system}`, format: "markdown" });
-        view.push({ type: "form", id: "request", layout: "stack", fields: [{ name: "request", label: ctx.t("field.request"), kind: "longtext", bind: "body.request", fill: true, hint: tr(ctx, "field.request.hint"), ...ro }] });
-        if (docs.length > 0) {
-          view.push({
-            type: "form",
-            id: "docs",
-            layout: "stack",
-            label: ctx.t("field.docs"),
-            fields: docs.map((d, i) => ({ name: `use${i}`, label: String(d.name), kind: "boolean", bind: `body.use${i}`, hint: tr(ctx, "field.doc.hint", { tokens: d.tokens }), ...ro })),
-          });
-        }
-        view.push({ type: "text", id: "full", text: full, format: "markdown" });
-        const last = ctx.resource && !sqlDraft ? await readLast(ctx, ctx.resource.id) : null;
-        if (last && last.answer) {
-          view.push({ type: "text", id: "answerInfo", text: tr(ctx, "info.answer", { model: last.model || "", usage: last.usage || "" }), tone: "muted" });
-          view.push({ type: "text", id: "answer", text: last.answer, format: "markdown" });
-          if (!ctx.run) view.push({ type: "form", id: "keep", layout: "strip", fields: [{ name: "name", label: ctx.t("field.name"), kind: "text", param: true, placeholder: ctx.t("field.name.placeholder") }] });
-        }
+        view.push({ type: "text", id: "full", text: request, format: "markdown" });
         return { view };
       },
-
-      // K6: keep the analysis with the run it came from — only now is the answer stored anywhere but the plugin's
-      // own storage.
-      async onEvent(ctx, event) {
-        if (event !== "keep") throw new Error(`unknown event ${event}`);
-        const b = (ctx.resource && ctx.resource.body) || {};
-        const last = ctx.resource ? await readLast(ctx, ctx.resource.id) : null;
-        if (!last || !last.answer) return { message: tr(ctx, "message.nothingToKeep") };
-        if (!b.runId) return { message: tr(ctx, "message.noRun") };
-        const name = String((ctx.params && ctx.params.name) || "").trim() || tr(ctx, "analysis.defaultName", { date: new Date().toISOString().slice(0, 10) });
-        await saveArtifact(ctx, b.runId, { name, kind: "analysis", data: { system: tr(ctx, "system.analyze"), request: last.sent || b.request || "", answer: last.answer, connection: last.connection || "", model: last.model || "", usage: last.usage || "" } });
-        await dropDrafts(ctx, b.runId);
-        await ctx.host.storage.remove(lastKey(ctx.resource.id));
-        return { message: tr(ctx, "message.kept", { name }) };
+      onEvent(ctx, event) {
+        return chatEvent(ctx, event, deps);
       },
     });
+
+    host.kinds.handle(KIND_ANALYSIS, {
+      drop(ctx, ev) {
+        return dropOnChat(ctx, ev, deps);
+      },
+    });
+
+    // D479: the shell's "AI chat" button (interface onedesk.assist/2).
+    host.commands.handle("openChat", (ctx, context) => openChat(ctx, context, deps));
 
     // K1 (result action): the user clicked "Analyze" on a run's result → a draft to look at, nothing sent.
     host.actions.handle("analyze", async (ctx, input) => {
@@ -626,65 +555,40 @@ export default {
       const maxRows = await settingNumber(ctx, "maxRows", 20);
       const maxCell = await settingNumber(ctx, "maxCell", 200);
       const extra = parseExtra(await setting(ctx, "sensitiveColumns", ""));
-      const request = buildRequest(ctx, read, { maxRows, maxCell, extra });
-      // documents: by the name of what produced the result and the result's column names (no other plugin's
-      // resource body is read)
-      let docs = [];
-      if (read.output.type === "table") {
-        let named = [];
-        const rid = read.meta && read.meta.resource;
-        if (rid) {
-          try {
-            const found = await ctx.host.resources.search({ ids: [rid], limit: 1 });
-            const hit = Array.isArray(found) ? found[0] : found && found.items ? found.items[0] : null;
-            named = hit && hit.name ? String(hit.name).split(/[^\w\u0080-\uffff]+/).filter((w) => w.length >= 3) : [];
-          } catch (e) {
-            named = [];
-          }
-        }
-        const cols = (read.output.columns || []).map((c) => String(c.label || c.key));
-        docs = await pickDocs(ctx, searchTerms(named, cols), await settingNumber(ctx, "docBudget", 3000));
-      }
-      const body = { mode: "", system: "", request, docs: JSON.stringify(docs.slice(0, MAX_DOCS)), runId, connectionId: "" };
-      for (let i = 0; i < MAX_DOCS; i++) body[`use${i}`] = "true";
-      const created = await ctx.host.resources.create({ kind: KIND_ANALYSIS, name: tr(ctx, "analysis.defaultName", { date: new Date().toISOString().slice(0, 10) }), body });
-      // the first thing stored for the run: a page event may save only where this plugin already has something
-      try {
-        await saveArtifact(ctx, runId, { name: tr(ctx, "analysis.draftName"), kind: DRAFT_KIND, data: { analysis: created.id, request } });
-      } catch (e) {
-        /* without run attachments the draft still opens; saving the analysis will say what is missing */
-      }
+      // D479: a chat about this result: the (masked) result goes along as material, the description is the request.
+      const runText = buildRequest(ctx, read, { maxRows, maxCell, extra });
+      const rid = read.meta && typeof read.meta.resource === "string" ? read.meta.resource : "";
+      const created = await ctx.host.resources.create({
+        kind: KIND_ANALYSIS,
+        name: tr(ctx, "analysis.defaultName", { date: new Date().toISOString().slice(0, 10) }),
+        description: tr(ctx, "request.task.default"),
+        body: { mode: "", system: "", request: "", docs: "[]", runId, runText, connectionId: "", target: "", targetTab: "", targetName: "", refs: rid ? [rid] : [], turns: [] },
+      });
       return { output: { type: "link", label: created.name || tr(ctx, "analysis.new"), target: `resource:${created.id}` }, summary: { message: tr(ctx, "summary.draft") } };
     });
 
-    // K3: only now does anything leave. The text is the user's (edited) request plus the documents ticked — or,
-    // for a request another plugin asked for, exactly the text stored with the draft.
+    // K3: only now does anything leave. A chat sends its turn (chat.js); a request another plugin asked for (generate's
+    // preview, "sql" mode) is sent exactly as stored with the draft.
     host.actions.handle("send", async (ctx, input) => {
       await requireAllowed(ctx);
       const res = ctx.resource;
       if (!res) throw new Error(tr(ctx, "error.noRun"));
-      const i = input || {};
-      const sqlDraft = res.body && res.body.mode === "sql";
-      const pickBody = (key, dflt) => (!sqlDraft && typeof i[`body.${key}`] === "string" ? i[`body.${key}`] : res.body && typeof res.body[key] === "string" ? res.body[key] : dflt);
-      const docs = sqlDraft ? [] : docsOf(pickBody);
-      const request = pickBody("request", "");
-      const text = composeRequest(ctx, sqlDraft ? request : await filled(ctx, request), chosenDocs(docs, pickBody));
+      if (!(res.body && res.body.mode === "sql")) return sendChat(ctx, input, deps);
+      const text = String(res.body.request || "");
       if (!text.trim()) throw new Error(tr(ctx, "error.empty"));
-      const system = sqlDraft ? String(res.body.system || "") : tr(ctx, "system.analyze");
-      const connection = await pickConnection(ctx, pickBody("connectionId", ""));
+      const system = String(res.body.system || "");
+      const connection = await pickConnection(ctx, String(res.body.connectionId || ""));
       ctx.progress(undefined, tr(ctx, "step.sending", { connection: connection.name }));
-      const answer = await chat(ctx, connection, sqlDraft ? { system, messages: [{ role: "user", text }], format: "text" } : { system, messages: [{ role: "user", text }] });
-      await audit(ctx, { kind: sqlDraft ? "generate" : "analyze", connection: connection.id, model: answer.model || "", chars: text.length, usage: answer.usage || null });
-      if (sqlDraft) {
-        // the proposal waits in the plugin's storage for the plugin that asked (generate with `fetch`)
-        const p = proposalOf(answer);
-        await ctx.host.storage.set(`proposal:${res.id}`, JSON.stringify(p));
-        return { output: { type: "text", text: p.text, format: "markdown" }, summary: { message: tr(ctx, p.check.ok ? "summary.proposed" : "summary.proposedBad") } };
-      }
-      // not in the resource body: it is kept only when the user saves the analysis
-      await ctx.host.storage.set(lastKey(res.id), JSON.stringify({ answer: answer.text, model: answer.model || "", usage: usageText(answer.usage), connection: connection.name, sent: text }));
-      return { output: { type: "text", text: answer.text, format: "markdown" }, summary: { message: tr(ctx, "summary.answered", { model: answer.model || "", usage: usageText(answer.usage) }) } };
+      const answer = await chat(ctx, connection, { system, messages: [{ role: "user", text }], format: "text" });
+      await audit(ctx, { kind: "generate", connection: connection.id, model: answer.model || "", chars: text.length, usage: answer.usage || null });
+      // the proposal waits in the plugin's storage for the plugin that asked (generate with `fetch`)
+      const p = proposalOf(answer);
+      await ctx.host.storage.set(`proposal:${res.id}`, JSON.stringify(p));
+      return { output: { type: "text", text: p.text, format: "markdown" }, summary: { message: tr(ctx, p.check.ok ? "summary.proposed" : "summary.proposedBad") } };
     });
+
+    // D479: empties the conversation (its description, material and target stay).
+    host.actions.handle("clear", (ctx) => clearChat(ctx, deps));
 
     // K7–K9: exported for other plugins. A proposal made from the words and the names of tables and columns —
     // never from data. `data`: { text, model, usage, check } | { error } | { needsPreview, draft, request, system … }
@@ -694,9 +598,6 @@ export default {
       const text = data.error ? data.error.message : data.needsPreview ? data.request : data.pending ? "" : data.text;
       return { output: { type: "text", text: String(text || ""), format: "markdown" }, data };
     });
-
-    // D462: writing help for every page (the shell's ✨ buttons; interface onedesk.assist/1, see assist.js).
-    host.actions.handle("assist", (ctx, input) => assist(ctx, input, { tr, policyOf, pickConnection, chat, audit, maskText, isSensitiveColumn, estimateTokens, MASK }));
 
     // K2: folder → document resources.
     host.actions.handle("syncDocs", async (ctx) => {

@@ -1,6 +1,6 @@
 {
   "id": "org.onedesk.ai",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "apiVersion": "2",
   "name": "plugin.name",
   "description": "plugin.description",
@@ -19,8 +19,7 @@
   "exports": {
     "actions": [
       "analyze",
-      "generate",
-      "assist"
+      "generate"
     ]
   },
   "contributes": {
@@ -28,7 +27,7 @@
       {
         "id": "analysis",
         "label": "kind.analysis",
-        "icon": "sparkles",
+        "icon": "messages-square",
         "tree": "resources",
         "page": "analysis",
         "newName": "analysis.new",
@@ -38,18 +37,17 @@
           "request": "",
           "docs": "[]",
           "runId": "",
+          "runText": "",
           "connectionId": "",
-          "use0": "true",
-          "use1": "true",
-          "use2": "true",
-          "use3": "true",
-          "use4": "true",
-          "use5": "true",
-          "use6": "true",
-          "use7": "true"
+          "target": "",
+          "targetTab": "",
+          "targetName": "",
+          "refs": [],
+          "turns": []
         },
         "draggable": true,
-        "accepts": []
+        "accepts": [],
+        "drop": true
       },
       {
         "id": "doc",
@@ -87,6 +85,17 @@
         "confirm": null
       },
       {
+        "id": "clear",
+        "label": "action.clear",
+        "icon": "eraser",
+        "kinds": [
+          "analysis"
+        ],
+        "output": "text",
+        "saveFirst": false,
+        "confirm": "confirm.clear"
+      },
+      {
         "id": "generate",
         "label": "action.generate",
         "icon": "wand-sparkles",
@@ -98,14 +107,6 @@
         "id": "syncDocs",
         "label": "action.syncDocs",
         "icon": "refresh-cw",
-        "output": "text",
-        "saveFirst": false,
-        "confirm": null
-      },
-      {
-        "id": "assist",
-        "label": "action.assist",
-        "icon": "sparkles",
         "output": "text",
         "saveFirst": false,
         "confirm": null
@@ -126,7 +127,7 @@
     "pages": [
       {
         "id": "analysis",
-        "recompute": true,
+        "recompute": false,
         "actions": [
           {
             "id": "send",
@@ -151,10 +152,11 @@
             ]
           },
           {
-            "id": "keep",
-            "role": "event",
-            "label": "action.keep",
-            "icon": "bookmark"
+            "id": "clear",
+            "role": "run",
+            "action": "clear",
+            "label": "action.clear",
+            "icon": "eraser"
           }
         ],
         "resultTabs": [
@@ -225,7 +227,14 @@
       "en-US": "locales/en-US.json",
       "zh-CN": "locales/zh-CN.json",
       "ja-JP": "locales/ja-JP.json"
-    }
+    },
+    "commands": [
+      {
+        "id": "openChat",
+        "label": "command.openChat",
+        "icon": "messages-square"
+      }
+    ]
   },
   "implements": {
     "onedesk.ai.generate/1": {
@@ -233,9 +242,9 @@
         "generate"
       ]
     },
-    "onedesk.assist/1": {
+    "onedesk.assist/2": {
       "actions": [
-        "assist"
+        "analyze"
       ]
     }
   }

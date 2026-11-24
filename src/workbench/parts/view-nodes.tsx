@@ -1,5 +1,5 @@
 import { useCallback } from "react";
-import { Button, CodeEditor, DataGrid, EmptyState, IconButton, MarkdownText, Pane, Text, TerminalText, TextBlock, type DataGridColumn, type ReferenceState } from "../../design";
+import { Button, Chat, ChatInput, ChatTurn, CodeEditor, DataGrid, EmptyState, IconButton, MarkdownText, Pane, Text, TerminalText, TextBlock, type DataGridColumn, type ReferenceState } from "../../design";
 import { useI18n } from "../i18n";
 import type { OutputCell, ViewNode } from "../protocol";
 import { useQuery, useUi, useWorkbench } from "../state/context";
@@ -58,6 +58,10 @@ export function ViewNodes({
   onRowAction,
   params,
   onSelectRow,
+  onParam,
+  onSend,
+  busy,
+  compactTables,
 }: {
   nodes: ViewNode[];
   onRowAction?: (event: string, row: string) => void;
@@ -65,8 +69,17 @@ export function ViewNodes({
   params?: Record<string, string>;
   /** Clicking a row of a table with `selectParam` sets that parameter to the row's key. */
   onSelectRow?: (param: string, key: string) => void;
+  /** D479: a conversation's input box sets its page parameter… */
+  onParam?: (name: string, value: string) => void;
+  /** …and Enter runs the page action it names. */
+  onSend?: (action: string) => void;
+  /** A run of this page is going on: the input box waits. */
+  busy?: boolean;
+  /** D479: tables grow with their rows instead of filling the page (beside a conversation, which goes on below). */
+  compactTables?: boolean;
 }) {
   const openHere = useOpenHere();
+  const { actions } = useWorkbench();
   const { t, tx } = useI18n();
   return (
     <>
@@ -132,10 +145,48 @@ export function ViewNodes({
                 rows={node.rows.map((cells, index) => ({ cells: cells as OutputCell[], index, key: node.rowKeys?.[index] ?? String(index) }))}
                 getRowKey={(row) => String(row.index)}
                 nullText=""
+                autoHeight={compactTables}
                 selectedKey={selectedIndex >= 0 ? String(selectedIndex) : null}
                 onRowSelect={selectParam ? (row) => onSelectRow?.(selectParam, row.key) : targets ? () => undefined : undefined}
                 onRowActivate={targets ? (row) => { const to = targets[row.index]; if (to) openHere(to); } : undefined}
               />
+            );
+          }
+          case "conversation": {
+            const input = node.input;
+            return (
+              <Chat key={node.id} label={t("chat.label")} turns={node.turns.length}>
+                {node.turns.map((turn, i) => (
+                  <ChatTurn
+                    key={i}
+                    role={turn.role}
+                    who={turn.role === "user" ? t("chat.me") : t("chat.ai")}
+                    note={turn.caption ?? undefined}
+                    actions={
+                      onRowAction && turn.actions && turn.actions.length > 0
+                        ? turn.actions.map((a) => (
+                            <Button key={a.id} size="sm" icon={a.icon ?? undefined} onClick={() => onRowAction(a.id, String(i))}>
+                              {tx(a.label)}
+                            </Button>
+                          ))
+                        : undefined
+                    }
+                  >
+                    {turn.role === "assistant" ? <MarkdownText source={turn.text} onLinkClick={(href) => void actions.openExternal(href)} /> : <TextBlock>{turn.text}</TextBlock>}
+                  </ChatTurn>
+                ))}
+                {input && onParam && (
+                  <ChatInput
+                    label={t("chat.input")}
+                    value={params?.[input.name] ?? ""}
+                    placeholder={input.placeholder ? tx(input.placeholder) : undefined}
+                    hint={t("chat.inputHint")}
+                    disabled={busy}
+                    onChange={(v) => onParam(input.name, v)}
+                    onSend={() => onSend?.(input.send)}
+                  />
+                )}
+              </Chat>
             );
           }
           case "link":

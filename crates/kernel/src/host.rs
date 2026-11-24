@@ -204,6 +204,8 @@ impl Inner {
             }
             "runs" if matches!(op, "saveArtifact" | "listArtifacts" | "getArtifact" | "deleteArtifact") => self.host_artifacts(plugin, info, op, &args).await,
             "runs" if op == "read" => self.host_runs_read(plugin, info, &args).await,
+            "runs" if op == "latest" => self.host_runs_latest(plugin, info, &args).await,
+            "pages" if op == "fields" => self.host_pages_fields(plugin, info, &args).await,
             "runs" if op == "progress" => {
                 if let Some(run) = &info.run_id {
                     self.run_progress(run, args.get(0).and_then(Value::as_f64), args.get(1).and_then(Value::as_str).map(String::from)).await;
@@ -371,7 +373,26 @@ impl Inner {
                 Ok(Value::Null)
             }
             // Round 12 (D389): basic information of every resource, with `requires.resources`.
-            "search" => self.resources_search(plugin, arg(args, 0), info.ai),
+            "search" => {
+                let mut out = self.resources_search(plugin, arg(args, 0), info.ai)?;
+                // D479: the writing-help provider also learns which results the user let AI see (its
+                // conversation's material must be).
+                if self.assist_plugin().is_some_and(|p| p.id == plugin.id) {
+                    let items = match &mut out {
+                        Value::Array(a) => Some(a),
+                        Value::Object(o) => o.get_mut("items").and_then(Value::as_array_mut),
+                        _ => None,
+                    };
+                    for it in items.into_iter().flatten() {
+                        let id = it.get("id").and_then(Value::as_str).unwrap_or_default().to_string();
+                        let seen = self.read(|c| store::is_ai_visible(c, &id))?;
+                        if let Value::Object(o) = it {
+                            o.insert("aiVisible".into(), json!(seen));
+                        }
+                    }
+                }
+                Ok(out)
+            }
             // D477: the kinds the user can make in a resource tree, with their names and icons.
             "kinds" => self.resources_kinds(plugin),
             "remove" => {

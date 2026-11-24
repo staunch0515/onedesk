@@ -10,7 +10,11 @@ const NODE_KEYS: Record<string, string[]> = {
   text: ["type", "id", "text", "mono", "language", "tone", "format", "lineTones", "appearance"],
   table: ["type", "id", "columns", "rows", "rowTargets", "rowKeys", "rowActions", "selectParam"],
   link: ["type", "id", "label", "target"],
+  // D479
+  conversation: ["type", "id", "turns", "input", "targetTab"],
 };
+const TURN_KEYS = new Set(["role", "text", "caption", "actions"]);
+const INPUT_KEYS = new Set(["name", "send", "placeholder"]);
 
 const isLabel = (l: unknown) =>
   typeof l === "string" || (typeof l === "object" && l !== null && Object.values(l).every((v) => typeof v === "string"));
@@ -37,6 +41,20 @@ export function checkView(view: unknown): string[] {
         }
         if (!KINDS.has(String(f.kind))) errs.push(`bad field kind ${String(f.kind)}`);
         if (typeof f.name !== "string" || !isLabel(f.label)) errs.push("field needs name and label");
+      }
+    }
+    if (n.type === "conversation") {
+      if (!Array.isArray(n.turns)) errs.push("conversation needs turns");
+      for (const turn of (n.turns as Record<string, unknown>[]) ?? []) {
+        for (const k of Object.keys(turn)) if (!TURN_KEYS.has(k)) errs.push(`unknown turn key ${k}`);
+        if (turn.role !== "user" && turn.role !== "assistant") errs.push("bad turn role");
+        if (typeof turn.text !== "string") errs.push("turn needs text");
+        if (turn.actions !== undefined && (!Array.isArray(turn.actions) || turn.actions.length > 4)) errs.push("bad turn actions");
+      }
+      const input = n.input as Record<string, unknown> | undefined;
+      if (input !== undefined) {
+        for (const k of Object.keys(input)) if (!INPUT_KEYS.has(k)) errs.push(`unknown input key ${k}`);
+        if (typeof input.name !== "string" || !input.name || String(input.name).startsWith("view.") || typeof input.send !== "string" || !input.send) errs.push("bad conversation input");
       }
     }
     if (n.type === "text" && typeof n.text !== "string") errs.push("text node needs a string");

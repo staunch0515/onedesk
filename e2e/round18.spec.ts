@@ -128,8 +128,26 @@ const CLICK_ENV = async (page: Page) => nodeId(page, "env", "Default");
 const clickAction = async (page: Page, runId: string, action = `${AI}:analyze`, extra: Record<string, unknown> = {}) => waitRun(page, await startRaw(page, action, `run:${runId}`, { resultRun: runId, ...extra }));
 const resourceOf = (run: RunInfo) => String(run.output?.target ?? "").replace(/^resource:/, "");
 const resultActionsOf = (page: Page, runId: string) => call<{ plugin: string; id: string; action: string; label: string; enabled: boolean; disabledReason?: string }[]>(page, "result.actions", { runId });
-const sendAnalysis = (page: Page, id: string, input: Record<string, unknown> = {}, extra: Record<string, unknown> = {}) => runRes(page, id, `${AI}:send`, { input, ...extra });
-const newAnalysis = (page: Page, request: string, extra: Record<string, unknown> = {}) => create(page, `${AI}:analysis`, { name: "Draft", "body.request": request, ...extra });
+// D479: an analysis is an AI chat. What the user says is the input box (the run parameter `message`); under the default
+// policy (preview) the first Send only shows the full text and the same Send again sends it.
+const said: Record<string, string> = {};
+const PREVIEWED = /Press Send again/;
+const sendOnce = (page: Page, id: string, input: Record<string, unknown> = {}, extra: Record<string, unknown> = {}) => runRes(page, id, `${AI}:send`, { input, params: { message: said[id] ?? "" }, ...extra });
+const sendAnalysis = async (page: Page, id: string, input: Record<string, unknown> = {}, extra: Record<string, unknown> = {}) => {
+  const first = await sendOnce(page, id, input, extra);
+  return PREVIEWED.test(first.summary?.message ?? "") ? sendOnce(page, id, input, extra) : first;
+};
+/** The preview of the next Send (nothing goes out); the Send after it sends. */
+const previewNext = async (page: Page, id: string, extra: Record<string, unknown> = {}) => {
+  const r = await sendOnce(page, id, {}, extra);
+  expect(r.summary?.message ?? "", JSON.stringify(r.error)).toMatch(PREVIEWED);
+  return r;
+};
+const newAnalysis = async (page: Page, request: string, extra: Record<string, unknown> = {}) => {
+  const id = await create(page, `${AI}:analysis`, { name: "Draft", ...extra });
+  said[id] = request;
+  return id;
+};
 const syncDocs = async (page: Page) => waitRun(page, await startRaw(page, `${AI}:syncDocs`, `page:${AI}`));
 const setDefaultConnection = (page: Page, id: string) => call(page, "plugin.setSetting", { plugin: AI, name: "connection", value: id });
 const setEnv = async (page: Page, name: string, value: string) => call(page, "params.set", { node: await CLICK_ENV(page), name, value });
@@ -301,7 +319,7 @@ test("K1/X5: the AI plugin can read only the clicked run: running Analyze withou
   expect(click.status, JSON.stringify(click.error)).toBe("success");
   const made = await getRes(page, resourceOf(click));
   expect(made.body.runId).toBe(second.id);
-  expect(made.body.request).not.toContain("pw-secret");
+  expect(made.body.runText).not.toContain("pw-secret");
   // not a result action: the kernel refuses (analysis `send` is no result action)
   const bad = await startRaw(page, `${AI}:syncDocs`, `run:${second.id}`, { resultRun: second.id }).then(
     () => "started",
@@ -314,7 +332,7 @@ test("K4/K3: masking before anything leaves — sensitive columns, e-mails, long
   await openKernel(page, host);
   const n0 = chats().length;
   const a = await getRes(page, ids.analysis);
-  const req: string = a.body.request;
+  const req: string = a.body.runText;
   expect(req).not.toMatch(/pw-secret-/); // the password column
   expect(req).not.toContain("@example.com"); // the e-mail column
   expect(req).not.toContain("1234567890123456"); // long digit strings
@@ -325,23 +343,25 @@ test("K4/K3: masking before anything leaves — sensitive columns, e-mails, long
   expect(req).toContain("cust20");
   expect(req).not.toContain("z".repeat(250)); // cells cut at 200
   expect(req).toMatch(/20 of 25|first 20/i);
-  // the page: connection and model line, token estimate, the full text
-  const view = JSON.stringify((await call<any>(page, "page.resolve", { target: `resource:${ids.analysis}` })).view);
-  finding("preview shows the connection", () => expect(view).toMatch(/Fake Anthropic/));
-  expect(view).toMatch(/tokens/i);
-  expect(view).toContain("cust20");
+  // the preview (the first Send): connection and model, token estimate, the full text
+  said[ids.analysis] = "What stands out?";
+  const preview = JSON.stringify((await previewNext(page, ids.analysis)).output);
+  finding("preview shows the connection", () => expect(preview).toMatch(/Fake Anthropic/));
+  expect(preview).toMatch(/tokens/i);
+  expect(preview).toContain("cust20");
+  expect(preview).not.toContain("pw-secret-");
   expect(chats().length, "nothing sent by previewing").toBe(n0);
   // the user's own words for what is sensitive: another column name
   await call(page, "plugin.setSetting", { plugin: AI, name: "sensitiveColumns", value: "customer" });
   const again = await clickAction(page, ids.tableRun);
   const second = await getRes(page, resourceOf(again));
-  expect(second.body.request).not.toContain("cust1 ");
-  expect(second.body.request).not.toMatch(/cust\d/);
+  expect(second.body.runText).not.toContain("cust1 ");
+  expect(second.body.runText).not.toMatch(/cust\d/);
   await call(page, "plugin.setSetting", { plugin: AI, name: "sensitiveColumns", value: "" });
   await call(page, "plugin.setSetting", { plugin: AI, name: "maxRows", value: "3" });
   const three = await getRes(page, resourceOf(await clickAction(page, ids.tableRun)));
-  expect(three.body.request).toContain("cust3");
-  expect(three.body.request).not.toContain("cust4");
+  expect(three.body.runText).toContain("cust3");
+  expect(three.body.runText).not.toContain("cust4");
   await call(page, "plugin.setSetting", { plugin: AI, name: "maxRows", value: "20" });
 });
 
@@ -354,33 +374,27 @@ test("K4/#7: sensitive columns are found by part of the name (passwordhash, acce
   );
   expect(run.status, JSON.stringify(run.error)).toBe("success");
   const made = await getRes(page, resourceOf(await clickAction(page, run.id)));
-  const req: string = made.body.request;
+  const req: string = made.body.runText;
   for (const v of ["hash-AAA", "tok-BBB", "mail-CCC", "mima-DDD", "shouji-EEE", "denwa-FFF", "api-GGG"]) expect(req, `${v} must be masked`).not.toContain(v);
   expect(req).toContain("plain-visible");
   // phone-like numbers in an ordinary column are masked as well
   const phone = await runSql(page, `SELECT 'call +86 138 0013 8000 or (415) 555-0132' AS note`, "Phones");
-  const p = (await getRes(page, resourceOf(await clickAction(page, phone.id)))).body.request as string;
+  const p = (await getRes(page, resourceOf(await clickAction(page, phone.id)))).body.runText as string;
   expect(p).not.toMatch(/138 0013 8000|555-0132/);
 });
 
-test("K3: nothing is sent before Send; Send sends exactly the (edited) text; unticked documents stay out; the answer streams into the partial output", async ({ page }) => {
+test("K3: nothing is sent before Send; Send sends what the user said with the masked result; the answer streams into the partial output and is kept as a turn", async ({ page }) => {
   await openKernel(page, host);
-  // documents were picked by the statement's table/column names: a query on orders
   const n0 = chats().length;
   const orders = await runSql(page, "SELECT customer, amount FROM orders", "Orders");
   const draft = resourceOf(await clickAction(page, orders.id));
-  const res = await getRes(page, draft);
-  const docs = JSON.parse(res.body.docs) as { name: string; text: string }[];
-  expect(docs.map((d) => d.name)).toEqual(expect.arrayContaining(["orders.md"]));
-  expect(docs.length).toBeLessThanOrEqual(8);
-  const tokens = docs.reduce((n, d: any) => n + d.tokens, 0);
-  expect(tokens).toBeLessThanOrEqual(3000); // the budget
+  said[draft] = "EDITED REQUEST ABOUT ORDERS";
   const pageView = JSON.stringify((await call<any>(page, "page.resolve", { target: `resource:${draft}` })).view);
-  expect(pageView, "one tick box per document").toContain("orders.md");
-  expect(chats().length).toBe(n0);
-  // send with the first document unticked and an edit
+  expect(pageView, "the page is a conversation").toContain('"type":"conversation"');
+  await previewNext(page, draft);
+  expect(chats().length, "the preview sends nothing").toBe(n0);
   ai.set({ kind: "slow", pieces: ["One", " two", " three", " four"], delayMs: 500 });
-  const runId = await startRaw(page, `${AI}:send`, `resource:${draft}`, { resourceId: draft, input: { "body.request": "EDITED REQUEST ABOUT ORDERS", "body.use0": "false" } });
+  const runId = await startRaw(page, `${AI}:send`, `resource:${draft}`, { resourceId: draft, params: { message: said[draft] } });
   const seen: string[] = [];
   for (let i = 0; i < 60; i++) {
     const r = await call<RunInfo>(page, "run.get", { id: runId });
@@ -395,15 +409,16 @@ test("K3: nothing is sent before Send; Send sends exactly the (edited) text; unt
   expect(seen.at(0)!.length).toBeLessThan("One two three four".length);
   expect(done.output.text).toBe("One two three four");
   expect(chats().length).toBe(n0 + 1);
-  const sent = userText(lastChat());
-  expect(sent).toContain("EDITED REQUEST ABOUT ORDERS");
-  expect(sent).not.toContain(docs[0]!.text.slice(0, 40)); // unticked
+  expect(userText(lastChat())).toBe("EDITED REQUEST ABOUT ORDERS");
+  const system = JSON.stringify(lastChat().body.system);
+  expect(system, "the analysed result goes along as material").toContain("customer");
   expect(lastChat().body.stream).toBe(true);
   expect(lastChat().headers["x-api-key"]).toBe(KEY);
   expect(lastChat().body.model).toBe("claude-haiku-5-5");
   expect(lastChat().body.thinking, "no thinking field").toBeUndefined();
   expect(lastChat().body.temperature, "no sampling parameters").toBeUndefined();
-  expect((await getRes(page, draft)).body.answer, "the answer is not written into the resource body until the user saves it").toBeUndefined();
+  const turns = (await getRes(page, draft)).body.turns;
+  expect(turns.map((t: any) => [t.role, t.text])).toEqual([["user", "EDITED REQUEST ABOUT ORDERS"], ["assistant", "One two three four"]]);
   ids.analysisRun = done.id;
   ids.textRun = done.id;
   ids.analysis = draft;
@@ -473,15 +488,16 @@ test("X16/K5: provider errors are mapped (401, 429+retry-after, 529, too long, r
   const ok = await sendAnalysis(page, d);
   expect(ok.status, "after errors the connection works again").toBe("success");
   for (const r of [r401, r429, r529, tooLong, refused, mid]) expect(JSON.stringify(r)).not.toContain(KEY);
-  // the answer of a failed send is not stored
-  expect((await getRes(page, d)).body.answer, "a failed send stores nothing").toBeUndefined();
+  // a failed send stores no turn: only the one that worked is in the conversation
+  expect((await getRes(page, d)).body.turns.map((t: any) => t.text)).toEqual(["Errors please", "fine"]);
 });
 
 test("X16: cancelling a streaming run ends it at once (the connection is dropped, not drained)", async ({ page }) => {
   await openKernel(page, host);
   const d = await newAnalysis(page, "Slow one");
   ai.set({ kind: "slow", pieces: Array.from({ length: 30 }, (_, i) => `p${i} `), delayMs: 1000 }); // 30 s if nobody cancels
-  const runId = await startRaw(page, `${AI}:send`, `resource:${d}`, { resourceId: d });
+  await previewNext(page, d);
+  const runId = await startRaw(page, `${AI}:send`, `resource:${d}`, { resourceId: d, params: { message: said[d] } });
   for (let i = 0; i < 60; i++) {
     const r = await call<RunInfo>(page, "run.get", { id: runId });
     if (r.partial?.text) break;
@@ -509,7 +525,8 @@ test("X16: Ollama — NDJSON lines are joined, the loading line shows nothing wr
   expect(missing.status).toBe("error");
   expect(missing.error?.message).toMatch(/ollama pull/);
   ai.set({ kind: "drop", pieces: ["part", "ial"] });
-  const dropRun = await startRaw(page, `${AI}:send`, `resource:${d}`, { resourceId: d });
+  await previewNext(page, d);
+  const dropRun = await startRaw(page, `${AI}:send`, `resource:${d}`, { resourceId: d, params: { message: said[d] } });
   let dropped: RunInfo | null = null;
   try {
     dropped = await waitRun(page, dropRun, 150); // 15 s: a dropped connection is seen at once, not after the 60 s timeout
@@ -524,34 +541,24 @@ test("X16: Ollama — NDJSON lines are joined, the loading line shows nothing wr
   if (!dropped) await call(page, "command.execute", { id: "run.cancel", context: { args: { run: dropRun } } });
 });
 
-/* ------------------------------------------------------------------ K6 save an analysis with its run */
+/* ------------------------------------------------------------------ K6 (D479): the conversation is kept in its resource */
 
-test("K6: the analysis is kept with the run it analyses (run_artifacts); the audit holds no content", async ({ page }) => {
+test("K6/D479: the conversation is kept in its own resource; the audit holds no content", async ({ page }) => {
   await openKernel(page, host);
   const source = await runSql(page, "SELECT 'keep-me-1' AS tag, 7 AS n", "To keep");
   const draft = resourceOf(await clickAction(page, source.id));
+  said[draft] = "What is n?";
   ai.set({ kind: "ok", pieces: ["The answer is ", "SEVEN-MARKER"] });
   const sent = await sendAnalysis(page, draft);
   expect(sent.status, JSON.stringify(sent.error)).toBe("success");
   ids.keepRun = source.id;
-  const rows = () => dbq(`SELECT name || '|' || kind || '|' || plugin || '|' || data FROM run_artifacts WHERE run_id = '${source.id}'`).trim();
-  // analyzing already left a draft attachment: that is what lets the page event save the first real one (review #3)
-  expect(rows()).toContain("|org.onedesk.ai|");
-  const kept = await call<{ message?: string }>(page, "page.event", { target: `resource:${draft}`, event: "keep", context: { params: { name: "Seven analysis" } } });
-  expect(JSON.stringify(kept)).toContain("Seven analysis");
-  expect(rows()).toContain("Seven analysis|analysis|org.onedesk.ai|");
-  expect(rows()).toContain("SEVEN-MARKER"); // the answer
-  expect(rows()).toMatch(/connection|model/); // connection, model and usage go with it
-  expect(rows()).not.toContain(KEY);
-  // the user keeps the run and then deletes it: the analysis goes with it
-  await call(page, "run.setKept", { id: source.id, kept: true, name: "Analysed" });
-  await call(page, "command.execute", { id: "run.delete", context: { args: { run: source.id, confirmed: true } } });
-  expect(dbq(`SELECT count(*) FROM runs WHERE id = '${source.id}'`).trim()).toBe("0");
-  expect(rows(), "the analysis is deleted with its run").toBe("");
+  const kept = await getRes(page, draft);
+  expect(kept.body.turns.at(-1)).toMatchObject({ role: "assistant", text: "The answer is SEVEN-MARKER" });
+  expect(JSON.stringify(kept.body)).not.toContain(KEY);
   // audit: what was done, never what was said
   const audit = JSON.stringify(await call(page, "audit.list", {}));
   expect(audit).toContain("runs.read");
-  for (const secret of ["SEVEN-MARKER", "keep-me-1", "Seven analysis", KEY, OLLAMA_AUTH]) expect(audit, `audit must not contain ${secret}`).not.toContain(secret);
+  for (const secret of ["SEVEN-MARKER", "keep-me-1", "What is n?", KEY, OLLAMA_AUTH]) expect(audit, `audit must not contain ${secret}`).not.toContain(secret);
 });
 
 test("D442: an artifact kept in a result-area click lives with its run: listed, one per click, gone when the user deletes the run; the audit has no content", async ({ page }) => {
@@ -723,7 +730,7 @@ test("K5: after everything, the API keys are in no file, no run, no resource, no
 
 /* ------------------------------------------------------------------ the shell (screenshots) */
 
-test("shell: the result area shows an Analyze button on a table; the preview page shows the request, the connection and the token estimate; the answer is readable Markdown", async ({ page }) => {
+test("shell: the result area shows an Analyze button on a table; Analyze makes a chat; the first Send shows the full text with the connection and the token estimate; the answer is readable Markdown", async ({ page }) => {
   await openKernel(page, host);
   mkdirSync(OUT, { recursive: true });
   const nav = page.getByRole("navigation", { name: "Views" }).getByRole("button", { name: "Resources", exact: true });
@@ -739,15 +746,18 @@ test("shell: the result area shows an Analyze button on a table; the preview pag
   await expect.poll(async () => [...(await keys())].filter((k) => !before.has(k)).length, { timeout: 15_000 }).toBe(1);
   const draftKey = [...(await keys())].find((k) => !before.has(k))!;
   await page.waitForTimeout(500);
-  await findingA("clicking Analyze lands on the preview page (a link result opens its target)", async () => {
-    expect(await page.getByText(/tokens will be sent/i).count()).toBeGreaterThan(0);
+  await findingA("clicking Analyze lands on the chat (a link result opens its target)", async () => {
+    expect(await page.getByText(/Connection: Fake Anthropic/).count()).toBeGreaterThan(0);
   });
   // the shell shows a run tab with an empty body today: open the draft from the tree to carry on
   await ui.nodeKey(page, draftKey).dblclick();
-  await expect(page.getByText(/tokens will be sent/i).first()).toBeVisible({ timeout: 15_000 });
-  await expect(page.getByText(/Fake Anthropic/).first()).toBeVisible();
-  await page.screenshot({ path: path.join(OUT, "round18-analysis-preview.png") });
+  await expect(page.getByText(/Connection: Fake Anthropic/).first()).toBeVisible({ timeout: 15_000 });
   const area = page.getByRole("region", { name: "Result area" });
+  // Nothing typed: the description (the default analysis request) is what is asked. The first Send is the preview.
+  await page.getByRole("button", { name: "Send" }).first().click();
+  await expect(area.getByText(/tokens will be sent/i).first()).toBeVisible({ timeout: 15_000 });
+  await expect(area.getByText(/Fake Anthropic/).first()).toBeVisible();
+  await page.screenshot({ path: path.join(OUT, "round18-analysis-preview.png") });
   ai.set({ kind: "slow", pieces: ["## Summary\n\n", "- first point\n", "- **second** point\n", "\nDone."], delayMs: 1500 });
   await page.getByRole("button", { name: "Send" }).first().click();
   await expect(area.locator("li", { hasText: "first point" })).toBeVisible({ timeout: 20_000 }); // Markdown: a real list item, not the raw text

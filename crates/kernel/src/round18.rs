@@ -33,6 +33,9 @@ fn output_type_of(row: &RunRow) -> Option<OutputType> {
 }
 
 /// A run whose result a result-area action may be given: finished well, with an output.
+/// D479: rows of a result `runs.latest` hands over.
+const LATEST_ROWS: usize = 1000;
+
 fn usable_result(row: &RunRow) -> Option<OutputType> {
     (row.status == "success").then(|| output_type_of(row)).flatten()
 }
@@ -130,6 +133,98 @@ impl Inner {
         };
         let _ = self.pipeline.execute(p.actor(), Command::Audit { op: "runs.read".into(), object: id.into(), summary }).await;
         Ok(json!({ "output": output, "meta": meta }))
+    }
+
+    /* ---------------------------------------------------------------- D479 */
+
+    /// D479: what the writing-help provider (only it) may read of a page it helps with: a resource the user
+    /// let AI see, or a new page (`new:<kind>`, nothing saved yet). Returns
+    /// `{ target, name, description, kind, kindLabel, fields: [{ name, label, kind, language, hint, format,
+    /// value, editable }] }` — bound fields that are not parameters and not secrets.
+    pub(crate) async fn host_pages_fields(&self, p: &'static Plugin, info: &CallInfo, args: &Value) -> KResult<Value> {
+        self.assist_reader(p)?;
+        let target = args.get(0).and_then(Value::as_str).ok_or_else(|| invalid_params("target must be a string"))?.to_string();
+        let env_id = match args.get(1) {
+            Some(Value::String(e)) => Some(e.clone()),
+            _ => info.env_id.clone(),
+        };
+        let (name, description) = match crate::pages::parse_target(&target) {
+            crate::pages::Target::Resource(id) => {
+                let row = self.live_row(&id)?;
+                self.ai_readable(&id)?;
+                (row.name, row.description)
+            }
+            crate::pages::Target::New { .. } => (String::new(), String::new()),
+            _ => return Err(invalid("badTarget")),
+        };
+        let shown = self.resolve(&target, onedesk_protocol::PageContext { env_id: env_id.clone(), ..Default::default() }, None).await?;
+        let editable = self.editable_fields(&target, env_id, None).await?;
+        let secret = |f: &onedesk_protocol::ViewField| f.kind == onedesk_protocol::FieldKind::Secret;
+        let fields: Vec<Value> = shown
+            .view
+            .iter()
+            .filter_map(|n| match n {
+                onedesk_protocol::ViewNode::Form { fields, .. } => Some(fields),
+                _ => None,
+            })
+            .flatten()
+            .filter(|f| f.bind.is_some() && f.param != Some(true) && !secret(f))
+            .map(|f| {
+                let bind = f.bind.clone().unwrap_or_default();
+                json!({
+                    "name": bind,
+                    "label": f.label,
+                    "kind": f.kind,
+                    "language": f.language,
+                    "hint": f.assist.as_ref().and_then(|a| a.hint.clone()).or_else(|| f.hint.clone()),
+                    "format": f.assist.as_ref().and_then(|a| a.format.clone()),
+                    "value": shown.values.get(&bind).cloned().unwrap_or(Value::Null),
+                    "editable": editable.iter().any(|e| e.bind.as_deref() == Some(bind.as_str())),
+                })
+            })
+            .collect();
+        Ok(json!({ "target": target, "name": name, "description": description, "kindLabel": shown.kind_label, "title": shown.title, "fields": fields }))
+    }
+
+    /// D479: the result of the last successful run of a resource the user let AI see — in `envId` when
+    /// given (`null`: any environment). `{ runId, output, meta }` like `runs.read`, or `null`.
+    pub(crate) async fn host_runs_latest(&self, p: &'static Plugin, info: &CallInfo, args: &Value) -> KResult<Value> {
+        self.assist_reader(p)?;
+        let id = args.get(0).and_then(Value::as_str).ok_or_else(|| invalid_params("resourceId must be a string"))?.to_string();
+        let env = match args.get(1) {
+            Some(Value::String(e)) => Some(e.clone()),
+            Some(Value::Null) => None,
+            _ => info.env_id.clone(),
+        };
+        self.live_row(&id)?;
+        self.ai_readable(&id)?;
+        let rows = self.read(|c| store::runs_where(c, "resource_id = ?1 AND status = 'success' AND output IS NOT NULL", &id, 50))?;
+        let Some(row) = rows.into_iter().find(|r| usable_result(r).is_some() && (env.is_none() || r.env_id == env)) else { return Ok(Value::Null) };
+        let mut output = row.output.clone().unwrap_or(Value::Null);
+        if let Some(r) = output.get_mut("rows").and_then(Value::as_array_mut) {
+            r.truncate(LATEST_ROWS);
+        }
+        let meta = json!({ "plugin": row.plugin, "at": row.ended_at, "env": row.env_name, "action": row.action });
+        let _ = self.pipeline.execute(p.actor(), Command::Audit { op: "runs.latest".into(), object: row.id.clone(), summary: json!({}) }).await;
+        Ok(json!({ "runId": row.id, "output": output, "meta": meta }))
+    }
+
+    fn assist_reader(&self, p: &'static Plugin) -> KResult<()> {
+        if !p.manifest.requires.resources {
+            return Err(denied("notRequested"));
+        }
+        if self.assist_plugin().map(|x| x.id.as_str()) != Some(p.id.as_str()) {
+            return Err(denied("notAssistProvider"));
+        }
+        Ok(())
+    }
+
+    fn ai_readable(&self, id: &str) -> KResult<()> {
+        if self.read(|c| store::is_ai_visible(c, id))? {
+            Ok(())
+        } else {
+            Err(denied("notAiVisible"))
+        }
     }
 
     /* ---------------------------------------------------------------- D442 */

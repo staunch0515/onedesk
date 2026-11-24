@@ -21,8 +21,11 @@ pub const METHODS: &[&str] = &[
     M::RUN_START, M::RUN_GET, M::RUN_CANCEL, M::RUN_LIST_FOR, M::RUN_TASKS, M::RUN_CLEAR_FINISHED, M::RUN_SET_KEPT,
     M::RUN_RENDER, M::PAGE_EVENT, M::PLUGIN_GET, M::PLUGIN_SET_ENABLED, M::PLUGIN_SET_SETTING, M::PLUGIN_RELOAD,
     M::COMMAND_PALETTE, onedesk_protocol::method15::RUN_ROWS, onedesk_protocol::method18::RESULT_ACTIONS,
-    onedesk_protocol::method21::ASSIST_PROVIDER, onedesk_protocol::method21::ASSIST_START,
+    onedesk_protocol::method21::ASSIST_PROVIDER,
 ];
+
+/// D479: the command of the writing-help provider that opens the conversation about a page.
+pub const ASSIST_COMMAND: &str = "openChat";
 
 /// D377: rows of a table output handed to the interface (more → `truncated`, with `total`).
 pub const MAX_ROWS: usize = 10_000;
@@ -237,10 +240,6 @@ impl Inner {
             onedesk_protocol::method15::RUN_ROWS => parse::<RunRowsParams>(params).and_then(|p| self.run_rows(p)).and_then(to_value),
             M::RUN_GET => parse::<RunIdParams>(params).and_then(|p| self.run_get(&p.id, true)).and_then(to_value),
             onedesk_protocol::method21::ASSIST_PROVIDER => to_value(self.assist_provider()),
-            onedesk_protocol::method21::ASSIST_START => match parse::<onedesk_protocol::AssistStartParams>(params) {
-                Ok(p) => self.assist_start(p, client).await.and_then(to_value),
-                Err(e) => Err(e),
-            },
             M::RUN_CANCEL => match parse::<RunIdParams>(params) {
                 Ok(p) => self.run_cancel(&p.id).await.map(|_| Value::Null),
                 Err(e) => Err(e),
@@ -340,39 +339,23 @@ impl Inner {
         Some((plugin, plugin.action(&short)?))
     }
 
-    /// D462: the plugin offering writing help: enabled, implements `ASSIST_INTERFACE` without a
-    /// connection kind, with an action `assist` (the first by id when several do).
-    fn assist_plugin(&self) -> Option<&'static Plugin> {
+    /// D462/D479: the plugin offering writing help: enabled, implements `ASSIST_INTERFACE` without a
+    /// connection kind, with the command `openChat` (the first by id when several do).
+    pub(crate) fn assist_plugin(&self) -> Option<&'static Plugin> {
         let iface = onedesk_protocol::ASSIST_INTERFACE;
-        self.implementers(iface).into_iter().find(|p| {
-            let i = &p.manifest.implements[iface];
-            i.kind.is_none() && i.actions.iter().any(|a| a == "assist") && p.action("assist").is_some()
-        })
+        self.implementers(iface).into_iter().find(|p| p.manifest.implements[iface].kind.is_none() && p.command(ASSIST_COMMAND).is_some())
     }
 
     pub fn assist_provider(&self) -> onedesk_protocol::AssistProvider {
         match self.assist_plugin() {
-            Some(p) => onedesk_protocol::AssistProvider { available: true, plugin: Some(p.id.clone()), label: Some(p.label(&p.manifest.name)) },
-            None => onedesk_protocol::AssistProvider { available: false, plugin: None, label: None },
+            Some(p) => onedesk_protocol::AssistProvider {
+                available: true,
+                plugin: Some(p.id.clone()),
+                label: Some(p.label(&p.manifest.name)),
+                command: Some(p.full(ASSIST_COMMAND)),
+            },
+            None => onedesk_protocol::AssistProvider { available: false, plugin: None, label: None, command: None },
         }
-    }
-
-    /// D462 `assist.start`: the provider's `assist` action as an ordinary run for the page (`target`),
-    /// with the page's environment — so read-only, protections, cancel, history and audit are a run's.
-    pub async fn assist_start(&self, p: onedesk_protocol::AssistStartParams, client: Option<String>) -> KResult<String> {
-        let plugin = self.assist_plugin().ok_or_else(|| invalid("noProvider"))?;
-        let run = RunStartParams {
-            action: plugin.full("assist"),
-            resource_id: None,
-            target: p.target,
-            tab_id: p.tab_id,
-            env_id: p.env_id,
-            input: p.input,
-            params: Default::default(),
-            locale: p.locale,
-            result_run: None,
-        };
-        self.run_start(run, client).await
     }
 
     pub async fn run_start(&self, p: RunStartParams, client: Option<String>) -> KResult<String> {
@@ -1003,6 +986,8 @@ impl Inner {
             message: Option<Label>,
             #[serde(default)]
             params: Option<serde_json::Map<String, Value>>,
+            #[serde(default)]
+            apply: Option<onedesk_protocol::PageApply>,
         }
         let cx = p.context.unwrap_or_default();
         if json_size(&cx.draft) + json_size(&cx.params) > MAX_INPUT_BYTES {
@@ -1050,7 +1035,54 @@ impl Inner {
             }
             other => other,
         };
-        Ok(PageEventResult { changes, message: e.message, params })
+        // D479: only the writing-help provider may put values into another page, and only into the fields
+        // that page shows as editable text.
+        let apply = match e.apply {
+            None => None,
+            Some(a) => {
+                if self.assist_plugin().map(|x| x.id.as_str()) != Some(plugin.id.as_str()) {
+                    return Err(err_p_detail(ErrorCode::PluginError, "badOutput", "apply: only the writing-help provider may apply".into()));
+                }
+                if !crate::pages::is_target(&a.target)
+                    || a.tab_id.as_ref().is_some_and(|t| t.chars().count() > 200)
+                    || a.label.as_ref().is_some_and(|t| t.chars().count() > 200)
+                {
+                    return Err(err_p_detail(ErrorCode::PluginError, "badOutput", "apply: bad target".into()));
+                }
+                let editable = self.editable_fields(&a.target, cx.env_id.clone(), cx.locale.clone()).await?;
+                let values: JsonMap = a.values.into_iter().filter(|(k, v)| v.is_string() && editable.iter().any(|f| f.bind.as_deref() == Some(k.as_str()))).collect();
+                (!values.is_empty()).then_some(onedesk_protocol::PageApply { values, ..a })
+            }
+        };
+        Ok(PageEventResult { changes, message: e.message, params, apply })
+    }
+
+    /// D479: the fields of a page the writing help may fill: bound, not a parameter, editable text
+    /// (`text`, `longtext`, `code`), not read-only, not `assist.off`, not protected (D311). A read-only
+    /// page has none.
+    pub(crate) async fn editable_fields(&self, target: &str, env_id: Option<String>, locale: Option<String>) -> KResult<Vec<onedesk_protocol::ViewField>> {
+        use onedesk_protocol::FieldKind;
+        let shown = self.resolve(target, PageContext { env_id, locale, ..Default::default() }, None).await?;
+        if shown.read_only {
+            return Ok(vec![]);
+        }
+        let protected = self.page_protected(target);
+        Ok(shown
+            .view
+            .into_iter()
+            .filter_map(|n| match n {
+                onedesk_protocol::ViewNode::Form { fields, .. } => Some(fields),
+                _ => None,
+            })
+            .flatten()
+            .filter(|f| {
+                f.bind.as_ref().is_some_and(|b| !protected.contains(b))
+                    && f.param != Some(true)
+                    && matches!(f.kind, FieldKind::Text | FieldKind::Longtext | FieldKind::Code)
+                    && f.read_only != Some(true)
+                    && !f.assist.as_ref().is_some_and(|a| a.off == Some(true))
+            })
+            .collect())
     }
 
     /// `body.<key>` paths of the target's kind that only a user may change (D311).

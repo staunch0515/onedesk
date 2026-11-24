@@ -15,6 +15,7 @@ import type {
   Run as KernelRun,
   RunOutput as KernelRunOutput,
   Label,
+  PageApply,
   PageContext as KernelPageContext,
   PageDescriptor as KernelPageDescriptor,
   Resource as KernelResource,
@@ -107,8 +108,9 @@ export type {
   LanguageInfo,
   I18nShellResult as ShellTexts,
   AssistProvider,
-  AssistStartParams,
   FieldAssist,
+  PageApply,
+  ConversationTurn,
 } from "./generated";
 
 /**
@@ -169,6 +171,8 @@ export interface PageEventResult {
   /** Round 8 (D358): new page parameter values (merged over the tab's; "" clears). Never marks the page unsaved. */
   params?: Record<string, string>;
   message?: Label;
+  /** D479: values the writing-help provider puts into another page as unsaved changes. */
+  apply?: PageApply;
 }
 
 /* ------------------------------------------------------------------ params & environments (§6) */

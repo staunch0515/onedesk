@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Banner, Button, CodeEditor, Dialog, DropdownMenu, FieldStrip, FormField, IconButton, Input, MultiSelect, Pane, Select, StripField, Switch, Text, Textarea, useToast, type ActionBarItem } from "../../design";
 import { useI18n } from "../i18n";
-import type { ActionDecl, PageDescriptor, RunStatus, ViewField, ViewNode } from "../protocol";
+import type { ActionDecl, PageApply, PageDescriptor, RunStatus, ViewField, ViewNode } from "../protocol";
 import { applyPageParams, runParams, viewParams } from "./run-params";
 import { useRunEndRefresh } from "./run-refresh";
 import { useQuery, useUi, useWorkbench } from "../state/context";
@@ -14,9 +14,11 @@ import { TOKENIZERS } from "../parts/sql-tokens";
 import { ViewNodes } from "../parts/view-nodes";
 import { Badge, FactRow } from "../../design";
 import { RunKeepBar } from "../parts/run-keep-bar";
-import { AssistDialog, assistable, assistableFields, useAssistAvailable, type AssistRequest } from "../parts/assist";
+import { clashes, conversationOf, targetInput, useAssistProvider } from "../parts/ai-chat";
 
 const EMPTY: Record<string, unknown> = {};
+/** D479: how many turns each tab's conversation showed last, to empty its box when a new one comes in. */
+const SEEN_TURNS = new Map<string, number>();
 
 interface FieldProps {
   field: ViewField;
@@ -185,8 +187,9 @@ export function ViewPage({ tab, descriptor: initial }: { tab: TabState; descript
   const [descriptor, setDescriptor] = useState(initial);
   const [busy, setBusy] = useState<string | null>(null);
   const [ask, setAsk] = useState<ActionDecl | null>(null);
-  const [assistRequest, setAssistRequest] = useState<AssistRequest | null>(null);
-  const assistOn = useAssistAvailable();
+  // D479: an answer's changes for a page that has unsaved changes of its own wait for the user's word.
+  const [applyAsk, setApplyAsk] = useState<{ tabId: string; values: Record<string, unknown>; label: string } | null>(null);
+  const provider = useAssistProvider();
   const running = useQuery((c) => (tab.runId ? c.run.get(tab.runId) : Promise.resolve(null)), [tab.runId], tab.runId ? [`run:${tab.runId}`] : []);
   const isRunning = running.data?.status === "running";
   // The plugin that owns this resource's type: its own actions are named in full too, and are not "foreign" (D351).
@@ -248,7 +251,10 @@ export function ViewPage({ tab, descriptor: initial }: { tab: TabState; descript
 
   // "Recompute after the content changed" (§9.3): ask the plugin again 300 ms after typing stops.
   const draftKey = JSON.stringify(draft);
-  const paramFields = descriptor.view.flatMap((n) => (n.type === "form" ? n.fields.filter((f) => f.param) : []));
+  const conversation = conversationOf(descriptor.view);
+  // D479: what is typed in a conversation's input box is a run parameter like a `param: true` field.
+  const chatField: ViewField[] = conversation?.input ? [{ name: conversation.input.name, label: conversation.input.name, kind: "longtext", param: true }] : [];
+  const paramFields = [...descriptor.view.flatMap((n) => (n.type === "form" ? n.fields.filter((f) => f.param) : [])), ...chatField];
   const kernelPage = client.demo !== undefined && !client.demo.target(tab.target);
   // Page parameters (D358) go along with every resolve; they live in the tab, so changing one never marks the page unsaved.
   // The page's own render and events also get its view state (D467); a run gets only the parameter fields.
@@ -339,7 +345,7 @@ export function ViewPage({ tab, descriptor: initial }: { tab: TabState; descript
           target: fresh.target,
           tabId: tab.id,
           envId: fresh.envId,
-          input: context.draft,
+          input: { ...context.draft, ...(conversation?.targetTab ? targetInput(store.get(), conversation.targetTab) : {}) },
           params,
         });
         const own = isForeignAction(action.action ?? action.id, ownerPlugin) ? undefined : now.descriptor.resultTabs.find((x) => x.type === "output")?.id;
@@ -351,6 +357,7 @@ export function ViewPage({ tab, descriptor: initial }: { tab: TabState; descript
         const merged = applyPageParams(now.descriptor.view.flatMap((n) => (n.type === "form" ? n.fields.filter((f) => f.param) : [])), store.get().tabs.find((x) => x.id === tab.id)?.params ?? now.tab.params, result.params);
         if (merged) actions.updateTab(tab.id, { params: merged });
         if (result.message) toast({ tone: "neutral", title: tx(result.message) });
+        if (result.apply) startApply(result.apply);
       } else if (action.role === "command") {
         await actions.command(action.id, { target: tab.target, tabId: tab.id });
       }
@@ -368,9 +375,31 @@ export function ViewPage({ tab, descriptor: initial }: { tab: TabState; descript
       const result = await client.page.event(tab.target, event, context);
       for (const [bind, value] of Object.entries(result.changes ?? {})) actions.setDraft(tab.id, bind, value, now.descriptor.values[bind]);
       if (result.message) toast({ tone: "neutral", title: tx(result.message) });
+      if (result.apply) startApply(result.apply);
     } catch (error) {
       actions.fail(error);
     }
+  };
+  /** D479: put an answer's changes into the page they are for, as unsaved changes; that page's own typing is asked about first. */
+  const putInto = (tabId: string, values: Record<string, unknown>, label: string) => {
+    const s = store.get();
+    for (const [bind, value] of Object.entries(values)) actions.setDraft(tabId, bind, value, s.bases[tabId]?.[bind]);
+    const to = s.tabs.find((x) => x.id === tabId);
+    if (to) actions.open(to.target);
+    toast({ tone: "success", title: t("apply.done", { name: label }) });
+  };
+  const startApply = (apply: PageApply) => {
+    let s = store.get();
+    let tabId = apply.tabId && s.tabs.some((x) => x.id === apply.tabId) ? apply.tabId : s.tabs.find((x) => x.target === apply.target)?.id;
+    if (!tabId) {
+      actions.open(apply.target, tab.envId ? { envId: tab.envId } : undefined);
+      s = store.get();
+      tabId = s.tabs.find((x) => x.target === apply.target)?.id;
+    }
+    if (!tabId) return;
+    const label = apply.label ?? "";
+    if (clashes(s.drafts[tabId], apply.values).length > 0) setApplyAsk({ tabId, values: apply.values, label });
+    else putInto(tabId, apply.values, label);
   };
   const invokeRef = useRef(invoke);
   invokeRef.current = invoke;
@@ -389,6 +418,29 @@ export function ViewPage({ tab, descriptor: initial }: { tab: TabState; descript
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
+  /** D479: Enter in a conversation's box runs the page action it names. */
+  const sendFrom = (actionId: string) => {
+    const a = latest.current.descriptor.actions.find((x) => x.id === actionId);
+    if (a && !a.disabled && !blockedByProtection(latest.current.descriptor, a)) void invokeRef.current(a);
+  };
+  // D479: when a new turn comes in, the box it was typed in is emptied.
+  const turnCount = conversation?.turns.length ?? -1;
+  const inputName = conversation?.input?.name;
+  useEffect(() => {
+    // Kept per tab outside the page: the page is drawn anew when its run ends.
+    const before = SEEN_TURNS.get(tab.id) ?? -1;
+    SEEN_TURNS.set(tab.id, turnCount);
+    if (!inputName || before < 0 || turnCount <= before) return;
+    const fresh = store.get().tabs.find((x) => x.id === tab.id);
+    if (fresh?.params[inputName]) actions.updateTab(tab.id, { params: { ...fresh.params, [inputName]: "" } });
+  }, [turnCount, inputName, tab.id, actions, store]);
+  // D479: the kinds of the fields this page shows, so a chat about it never takes a secret along.
+  const kindsKey = JSON.stringify([...fieldKinds]);
+  useEffect(() => {
+    store.set((s) => ({ fieldKinds: { ...s.fieldKinds, [tab.id]: Object.fromEntries(fieldKinds) } }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [kindsKey, tab.id, store]);
+
   const dirty = Object.keys(draft).length > 0;
   // A workspace configuration page is a list of parameters: it can add the ones the kernel knows (round 5).
   const isConfig = descriptor.breadcrumb[descriptor.breadcrumb.length - 1]?.tree === "config" && Boolean(descriptor.resourceId) && descriptor.autosave;
@@ -404,30 +456,34 @@ export function ViewPage({ tab, descriptor: initial }: { tab: TabState; descript
     onSelect: () => void invoke(a),
   }));
 
-  // D462 writing help: every editable text field (✨ by its label) and the whole page ("Fill with AI"); the answer is
-  // a proposal, accepted into the draft like typing.
-  const canAssist = assistOn && kernelPage;
-  const helpable = canAssist ? assistableFields(descriptor.view, readOnly) : [];
-  const assistField = (f: ViewField) => ({
-    name: f.bind ?? f.name,
-    label: tx(f.label),
-    kind: f.kind,
-    language: f.language,
-    hint: f.assist?.hint ? tx(f.assist.hint) : f.hint ? tx(f.hint) : undefined,
-    format: f.assist?.format,
-    value: fieldValue(f),
-  });
-  const assistPage = { title: descriptor.title, kind: descriptor.kindLabel ? tx(descriptor.kindLabel) : "" };
-  const askField = (f: ViewField) => setAssistRequest({ mode: "field", field: f.bind ?? f.name, fields: helpable.map(assistField), page: assistPage });
-  // Several fields: one button fills them all. One field that fills the page (an editor without a label row): the
-  // button is its ✨. One labelled field: its own ✨ is enough.
-  if (helpable.length > 1) {
-    items.push({ key: "assist", label: t("assist.action"), icon: "sparkles", onSelect: () => setAssistRequest({ mode: "fill", fields: helpable.map(assistField), page: assistPage }) });
-  } else if (helpable.length === 1 && helpable[0]!.fill) {
-    items.push({ key: "assist", label: t("assist.field"), icon: "sparkles", onSelect: () => askField(helpable[0]!) });
+  // D479: the one AI entry point — the conversation about this page (made the first time). The page is let AI see first:
+  // asking for a chat about it is the user's word for that.
+  const chatCommand = provider?.command;
+  if (chatCommand && kernelPage && !conversation && (tab.target.startsWith("resource:") || tab.target.startsWith("new:"))) {
+    items.push({
+      key: "assist",
+      label: t("assist.chat"),
+      icon: "messages-square",
+      onSelect: () =>
+        void (async () => {
+          try {
+            const id = descriptor.resourceId;
+            if (id) {
+              const r = await client.resource.get(id);
+              if (r && !r.aiVisible) {
+                await client.resource.setAiVisible(id, true);
+                toast({ tone: "neutral", title: t("assist.allowed", { name: r.name }) });
+              }
+            }
+            // A page not saved yet is named by what is typed in its info panel.
+            const typedName = store.get().drafts[tab.id]?.name;
+            await actions.command(chatCommand, { target: tab.target, tabId: tab.id, args: { envId: tab.envId ?? "", name: typeof typedName === "string" ? typedName : "" } });
+          } catch (error) {
+            actions.fail(error);
+          }
+        })(),
+    });
   }
-  const assistButton = (f: ViewField) =>
-    canAssist && assistable(f, readOnly) ? <IconButton icon="sparkles" size="sm" label={t("assist.field")} onClick={() => askField(f)} /> : undefined;
 
   const hasFill = descriptor.view.some((n) => (n.type === "form" && n.fields.some((f) => f.fill)) || (n.type === "text" && n.mono) || n.type === "table");
   const renderForm = (node: Extract<ViewNode, { type: "form" }>) => {
@@ -478,7 +534,7 @@ export function ViewPage({ tab, descriptor: initial }: { tab: TabState; descript
         {rest.length > 0 && (
           <Pane grow={!fill && !stacked} scroll={!stacked} pad="lg" gap="md" width="form">
             {rest.map((f) => (
-              <FormField key={f.name} label={tx(f.label)} required={f.required} requiredMark="*" description={f.hint ? tx(f.hint) : undefined} labelAside={assistButton(f)}>
+              <FormField key={f.name} label={tx(f.label)} required={f.required} requiredMark="*" description={f.hint ? tx(f.hint) : undefined}>
                 <FieldControl field={f} size="md" readOnly={readOnly} value={fieldValue(f)} secret={secretOf(f)} onChange={(v) => setBound(f.bind ?? f.name, v)} />
               </FormField>
             ))}
@@ -526,7 +582,7 @@ export function ViewPage({ tab, descriptor: initial }: { tab: TabState; descript
       {conflictBar}
       {descriptor.runId && <RunHeader runId={descriptor.runId} />}
       <Pane grow scroll={!hasFill || descriptor.view.length > 1}>
-        {descriptor.view.map((node) => (node.type === "form" ? renderForm(node) : <ViewNodes key={node.id} nodes={[node]} onRowAction={(event, row) => void rowEvent(event, row)} params={tab.params} onSelectRow={setParam} />))}
+        {descriptor.view.map((node) => (node.type === "form" ? renderForm(node) : <ViewNodes key={node.id} nodes={[node]} onRowAction={(event, row) => void rowEvent(event, row)} params={tab.params} onSelectRow={setParam} onParam={setParam} onSend={sendFrom} busy={isRunning} compactTables={Boolean(conversation)} />))}
         {/* D470: the workspace configuration adds a parameter right here, under its parameters; no dialog. */}
         {isConfig && (
           <Pane pad="md">
@@ -535,7 +591,28 @@ export function ViewPage({ tab, descriptor: initial }: { tab: TabState; descript
         )}
       </Pane>
     </Frame>
-      <AssistDialog tab={tab} request={assistRequest} onClose={() => setAssistRequest(null)} onAccept={(values) => Object.entries(values).forEach(([bind, value]) => setBound(bind, value))} />
+      <Dialog
+        open={applyAsk !== null}
+        onOpenChange={(open) => !open && setApplyAsk(null)}
+        size="sm"
+        title={t("apply.replaceTitle")}
+        description={applyAsk ? t("apply.replaceBody", { name: applyAsk.label }) : undefined}
+        footer={
+          <>
+            <Button onClick={() => setApplyAsk(null)}>{t("common.cancel")}</Button>
+            <Button
+              variant="primary"
+              onClick={() => {
+                const pending = applyAsk;
+                setApplyAsk(null);
+                if (pending) putInto(pending.tabId, pending.values, pending.label);
+              }}
+            >
+              {t("apply.replace")}
+            </Button>
+          </>
+        }
+      />
       <Dialog
         open={ask !== null}
         onOpenChange={(open) => !open && setAsk(null)}

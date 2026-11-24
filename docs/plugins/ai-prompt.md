@@ -51,7 +51,7 @@ AI 辅助：           默认所有文本字段都有（外壳提供）；列出
 4. 不写 CSS、TSX/JSX、HTML；JS 里不出现 style、className、innerHTML、颜色、像素、时长。视图只用 form、text、table、link 四种节点，字段只用 spec.md §6 列出的。
 5. 每段给人看的文字来自 locales/*.json；en-US 与 zh-CN（内置插件再加 ja-JP）键完全相同、{占位} 相同。需要纯文字的地方用 spec.md §8 的 tr(ctx, key, vars)。
 6. 权限只申请用到的。密钥用 type "secret" 字段 + {{secret:名字}} 占位符，绝不出现明文，不申请 secrets.plaintext。网络主机全部声明。外部程序参数用数组，不拼 shell。
-7. 不写任何 AI 代码：不调 AI 服务商插件，不 uses "onedesk.ai.chat/1"，不画 AI 界面。AI 辅助由外壳统一提供，插件只在字段上写 assist: { hint, format, off }（spec.md §11）。
+7. 不写任何 AI 代码：不调 AI 服务商插件，不 uses "onedesk.ai.chat/1"，不画 AI 界面。AI 辅助由外壳和 AI 工作台统一提供（“AI 对话”按钮），插件只在字段上写 assist: { hint, format, off }（spec.md §11）。
 8. 抛给用户的错误：`throw new Error(tr(ctx, "error.xxx"))`，不带 code，不含密钥。宿主错误要让用户看到自己的说明时，捕获后改写。
 9. 页面必须处理空状态、错误状态、前置条件未满足的状态（用 text 节点说明，tone muted/danger）；运行结果页（ctx.run 存在）表单只读。
 10. 测试只用假宿主（vi.fn），不连任何真实服务，不碰真实数据目录和钥匙串。
