@@ -183,6 +183,7 @@ export function EnvPage({ tab, descriptor }: { tab: TabState; descriptor: PageDe
             key={`${p.name}:${p.value}:${p.own}`}
             size="sm"
             mono
+            numeric={p.type === "number"}
             aria-label={p.name}
             defaultValue={p.value}
             placeholder={t("env.notSet")}
@@ -424,6 +425,7 @@ export function EnvPage({ tab, descriptor }: { tab: TabState; descriptor: PageDe
                   ) : (
                     <Input
                       mono
+                      numeric={newType === "number"}
                       size="sm"
                       aria-label={t("params.newValue")}
                       placeholder={t("params.newValuePlaceholder")}

@@ -92,6 +92,12 @@ describe("environment reference parameters (G3)", () => {
     await waitFor(() => expect(rename).toHaveBeenCalledWith("env1", "region", "area", "3"));
   });
 
+  it("a number is right-aligned in its box, text is not (D472)", async () => {
+    setup([param({ name: "price", type: "number", value: "18", own: true, display: undefined }), param({ name: "region", type: "text", value: "eu", own: true, display: undefined })]);
+    expect((await screen.findByRole("textbox", { name: "price" })).className).toContain("od-input__control--numeric");
+    expect(screen.getByRole("textbox", { name: "region" }).className).not.toContain("od-input__control--numeric");
+  });
+
   it("a parameter set here gets another type from its row; the value follows the type (D472)", async () => {
     const { set } = setup([param({ name: "debug", type: "text", value: "true", own: true, display: undefined })]);
     fireEvent.click(await screen.findByRole("combobox", { name: "Type of debug" }));

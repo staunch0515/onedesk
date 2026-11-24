@@ -12,11 +12,13 @@ export interface InputProps extends Omit<InputHTMLAttributes<HTMLInputElement>, 
   trailing?: ReactNode;
   /** Use the monospace font (URLs, code, headers). */
   mono?: boolean;
+  /** A number: the text is right-aligned with digits of equal width (D472). */
+  numeric?: boolean;
   invalid?: boolean;
   ref?: Ref<HTMLInputElement>;
 }
 
-export function Input({ size = "md", icon, trailing, mono, invalid, className, disabled, readOnly, ref, ...rest }: InputProps) {
+export function Input({ size = "md", icon, trailing, mono, numeric, invalid, className, disabled, readOnly, ref, ...rest }: InputProps) {
   const field = useFieldControl({
     id: rest.id,
     "aria-describedby": rest["aria-describedby"],
@@ -44,7 +46,7 @@ export function Input({ size = "md", icon, trailing, mono, invalid, className, d
         required={field.required}
         disabled={disabled}
         readOnly={readOnly}
-        className={cx("od-input__control", mono && "od-mono")}
+        className={cx("od-input__control", mono && "od-mono", numeric && "od-input__control--numeric")}
       />
       {trailing && <span className="od-input__trailing">{trailing}</span>}
     </span>
