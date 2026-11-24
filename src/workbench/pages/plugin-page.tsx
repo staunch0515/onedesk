@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Badge, Banner, Button, Checkbox, DataGrid, Dialog, FormField, Input, KeyValueList, LoadingState, Pane, Section, Select, Switch, Text, TextLink, useToast, type ActionBarItem, type DataGridColumn } from "../../design";
+import { Badge, Banner, Button, Checkbox, DataGrid, Dialog, FormField, IconButton, Input, KeyValueList, LoadingState, Pane, Section, Select, Switch, Text, TextLink, useToast, type ActionBarItem, type DataGridColumn } from "../../design";
 import { useI18n } from "../i18n";
 import type { Label, NamedRef, PageDescriptor, PluginDependency, PluginPermission, PluginVersion } from "../protocol";
 import { useQuery, useWorkbench } from "../state/context";
@@ -329,6 +329,21 @@ export function PluginPage({ tab, descriptor }: { tab: TabState; descriptor: Pag
                   <FormField key={s.name} label={tx(s.label)} description={s.hint ? tx(s.hint) : undefined}>
                     {s.kind === "enum" ? (
                       <Select value={s.value} options={(s.options ?? []).map((o) => ({ value: o.value, label: tx(o.label) }))} onValueChange={(v) => client.plugin.setSetting(id, s.name, v).catch(actions.fail)} />
+                    ) : s.kind === "ref" ? (
+                      // A `resource` setting holds a resource id (the kernel refuses a typed name): pick one of the
+                      // resources it may name, or clear it.
+                      <Pane direction="row" gap="xs" align="center">
+                        <Pane grow>
+                          <Select
+                            aria-label={tx(s.label)}
+                            value={s.value || undefined}
+                            placeholder={(s.options ?? []).length > 0 ? t("plugin.settingPick") : t("plugin.settingNoneToPick")}
+                            options={(s.options ?? []).map((o) => ({ value: o.value, label: tx(o.label) }))}
+                            onValueChange={(v) => client.plugin.setSetting(id, s.name, v).catch(actions.fail)}
+                          />
+                        </Pane>
+                        {s.value && <IconButton icon="x" size="sm" label={t("plugin.settingClear")} onClick={() => client.plugin.setSetting(id, s.name, "").catch(actions.fail)} />}
+                      </Pane>
                     ) : (
                       <Input
                         key={s.value}
