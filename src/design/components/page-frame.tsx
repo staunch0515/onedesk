@@ -10,9 +10,7 @@ import "./page-frame.css";
 /* ------------------------------------------------------------------ page frame */
 
 export interface PageFrameProps {
-  /** Breadcrumb row. */
-  breadcrumb?: ReactNode;
-  /** Title bar (PageTitleBar). */
+  /** Title bar (PageTitleBar): the breadcrumb row and the actions row. */
   header: ReactNode;
   /** Message strip under the header (conflict, read-only, missing plugin). */
   notice?: ReactNode;
@@ -22,11 +20,10 @@ export interface PageFrameProps {
   panel?: ReactNode;
 }
 
-/** The fixed frame every tab page shares (§9): breadcrumb, title + actions, content (+ info), result area. */
-export function PageFrame({ breadcrumb, header, notice, children, panel }: PageFrameProps) {
+/** The fixed frame every tab page shares (§9, D465): breadcrumb + actions, content (+ info), result area. */
+export function PageFrame({ header, notice, children, panel }: PageFrameProps) {
   return (
     <div className="od-pf">
-      {breadcrumb}
       {header}
       {notice && <div className="od-pf__notice">{notice}</div>}
       <div className="od-pf__content">{children}</div>
@@ -42,110 +39,63 @@ export interface BreadcrumbItem {
   onClick?: () => void;
 }
 
-export interface BreadcrumbProps {
-  items: BreadcrumbItem[];
-  label: string;
-}
-
-/** Path of the page's object in its tree; the last item is the object itself. */
-export function Breadcrumb({ items, label }: BreadcrumbProps) {
-  return (
-    <nav className="od-crumbs" aria-label={label}>
-      {items.map((item, i) => {
-        const last = i === items.length - 1;
-        const content = (
-          <>
-            {item.icon && <Icon name={item.icon} size="sm" />}
-            <span className="od-crumbs__label">{item.label}</span>
-          </>
-        );
-        return (
-          <Fragment key={item.key}>
-            {i > 0 && <Icon name="chevron-right" size="xs" className="od-crumbs__sep" />}
-            {item.onClick ? (
-              <button type="button" className={cx("od-crumbs__item", "od-crumbs__item--link", last && "od-crumbs__item--current")} onClick={item.onClick}>
-                {content}
-              </button>
-            ) : (
-              <span className={cx("od-crumbs__item", last && "od-crumbs__item--current")} aria-current={last ? "page" : undefined}>
-                {content}
-              </span>
-            )}
-          </Fragment>
-        );
-      })}
-    </nav>
-  );
-}
-
 export interface PageTitleBarProps {
   icon: string;
   title: ReactNode;
-  /**
-   * The path to the object (without the object itself). Given (layout step 2): no title row — the breadcrumb row ends
-   * with the object's name in bold as the page heading, then the badges; the next row has `lead` (the environment)
-   * first, then the actions, and the aside (info toggle) at its right end.
-   */
+  /** The path to the page's object in its tree, without the object itself. */
   crumbs?: BreadcrumbItem[];
-  crumbsLabel?: string;
-  /** Badges after the title. */
+  /** Accessible name of the breadcrumb row. */
+  crumbsLabel: string;
+  /** Badges right after the title (kind, state, unsaved). */
   meta?: ReactNode;
-  /** Action bar. */
-  actions?: ReactNode;
-  /** Right end: environment selector, info toggle. */
-  aside?: ReactNode;
-  /** With `crumbs`: first in the actions row, before the actions (the environment selector). */
+  /** First in the actions row, set apart by a hairline (the environment selector). */
   lead?: ReactNode;
+  /** Action bar, after `lead`, on the left. */
+  actions?: ReactNode;
+  /** Right end of the actions row (the info toggle). */
+  aside?: ReactNode;
 }
 
-export function PageTitleBar({ icon, title, crumbs, crumbsLabel, meta, actions, aside, lead }: PageTitleBarProps) {
-  if (crumbs) {
-    return (
-      <header className="od-titlebar od-titlebar--crumbs">
-        <div className="od-titlebar__row">
-          <nav className="od-titlebar__heading od-titlebar__crumbs" aria-label={crumbsLabel}>
-            {crumbs.map((item) => (
-              <Fragment key={item.key}>
-                {item.onClick ? (
-                  <button type="button" className="od-crumbs__item od-crumbs__item--link" onClick={item.onClick}>
-                    {item.icon && <Icon name={item.icon} size="sm" />}
-                    <span className="od-crumbs__label">{item.label}</span>
-                  </button>
-                ) : (
-                  <span className="od-crumbs__item">
-                    {item.icon && <Icon name={item.icon} size="sm" />}
-                    <span className="od-crumbs__label">{item.label}</span>
-                  </span>
-                )}
-                <Icon name="chevron-right" size="xs" className="od-crumbs__sep" />
-              </Fragment>
-            ))}
-            <span className="od-titlebar__current" aria-current="page">
-              <Icon name={icon} size="sm" className="od-titlebar__icon" />
-              <h1 className="od-titlebar__title">{title}</h1>
-            </span>
-            {meta && <div className="od-titlebar__meta">{meta}</div>}
-          </nav>
-        </div>
-        {(lead || actions || aside) && (
-          <div className="od-titlebar__actions-row">
-            {lead && <div className="od-titlebar__lead">{lead}</div>}
-            {actions && <div className="od-titlebar__actions">{actions}</div>}
-            {aside && <div className="od-titlebar__aside">{aside}</div>}
-          </div>
-        )}
-      </header>
-    );
-  }
+/**
+ * The top of a page (D465). Row one: the path, then the object's name in bold (the page's `h1`) and its badges. Row two
+ * (only when it has something): `lead`, then the actions on the left, `aside` at the right end. Both rows have the tab
+ * strip's size (`--chrome-*`).
+ */
+export function PageTitleBar({ icon, title, crumbs = [], crumbsLabel, meta, lead, actions, aside }: PageTitleBarProps) {
   return (
     <header className="od-titlebar">
-      <div className="od-titlebar__heading">
-        <Icon name={icon} size="md" className="od-titlebar__icon" />
-        <h1 className="od-titlebar__title">{title}</h1>
-        {meta && <div className="od-titlebar__meta">{meta}</div>}
+      <div className="od-titlebar__row">
+        <nav className="od-titlebar__crumbs" aria-label={crumbsLabel}>
+          {crumbs.map((item) => (
+            <Fragment key={item.key}>
+              {item.onClick ? (
+                <button type="button" className="od-crumbs__item od-crumbs__item--link" onClick={item.onClick}>
+                  {item.icon && <Icon name={item.icon} size="sm" />}
+                  <span className="od-crumbs__label">{item.label}</span>
+                </button>
+              ) : (
+                <span className="od-crumbs__item">
+                  {item.icon && <Icon name={item.icon} size="sm" />}
+                  <span className="od-crumbs__label">{item.label}</span>
+                </span>
+              )}
+              <Icon name="chevron-right" size="xs" className="od-crumbs__sep" />
+            </Fragment>
+          ))}
+          <span className="od-titlebar__current" aria-current="page">
+            <Icon name={icon} size="sm" className="od-titlebar__icon" />
+            <h1 className="od-titlebar__title">{title}</h1>
+          </span>
+          {meta && <div className="od-titlebar__meta">{meta}</div>}
+        </nav>
       </div>
-      {actions && <div className="od-titlebar__actions">{actions}</div>}
-      {aside && <div className="od-titlebar__aside">{aside}</div>}
+      {(lead || actions || aside) && (
+        <div className="od-titlebar__actions-row">
+          {lead && <div className="od-titlebar__lead">{lead}</div>}
+          {actions && <div className="od-titlebar__actions">{actions}</div>}
+          {aside && <div className="od-titlebar__aside">{aside}</div>}
+        </div>
+      )}
     </header>
   );
 }
@@ -226,7 +176,7 @@ export interface InfoPanelProps {
   closeLabel?: string;
   children: ReactNode;
   label?: string;
-  /** Which side of the content it is on (the close icon points that way). Default left. */
+  /** Which side of the content it is on (the close icon points that way; D465). Default left. */
   side?: "left" | "right";
 }
 

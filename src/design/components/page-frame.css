@@ -20,20 +20,44 @@
   min-height: 0;
 }
 
-/* ------------------------------------------------------------------ breadcrumb */
-.od-crumbs {
+/* ------------------------------------------------------------------ title bar (D465)
+ * Two rows with the tab strip's size (--chrome-*): the breadcrumb ending in the page's name in bold and its badges;
+ * then the environment, the actions on the left and the info toggle at the right end. */
+.od-titlebar {
   display: flex;
   flex: none;
+  flex-direction: column;
+  min-width: 0;
+  padding: 0 var(--space-4) var(--space-1);
+  border-bottom: var(--border-width) solid var(--border-default);
+}
+
+.od-titlebar__row,
+.od-titlebar__actions-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  height: var(--chrome-row-height);
+}
+
+.od-titlebar__crumbs {
+  display: flex;
+  flex: 1 1 auto;
   align-items: center;
   gap: var(--space-1);
-  height: var(--breadcrumb-height);
   min-width: 0;
-  padding: 0 var(--space-4);
+  height: 100%;
   overflow: hidden;
   color: var(--fg-subtle);
-  font-size: var(--text-xs);
-  line-height: var(--leading-xs);
+  font-size: var(--chrome-text);
+  line-height: var(--chrome-leading);
   white-space: nowrap;
+}
+
+.od-titlebar__crumbs .od-icon {
+  width: var(--chrome-icon);
+  height: var(--chrome-icon);
 }
 
 .od-crumbs__sep {
@@ -41,11 +65,13 @@
   color: var(--fg-disabled);
 }
 
+/* The path gives way first, then the current name. */
 .od-crumbs__item {
   display: inline-flex;
+  flex: 0 1000 auto;
   align-items: center;
   gap: var(--space-1);
-  min-width: 0;
+  min-width: var(--icon-lg);
   margin: 0;
   padding: var(--space-0-5) var(--space-1);
   border: 0;
@@ -76,28 +102,14 @@
   outline-offset: var(--focus-ring-inset);
 }
 
-.od-crumbs__item--current {
-  color: var(--fg-muted);
-}
-
-/* ------------------------------------------------------------------ title bar */
-.od-titlebar {
-  display: flex;
-  flex: none;
+.od-titlebar__current {
+  display: inline-flex;
+  flex: 0 1 auto;
   align-items: center;
-  gap: var(--space-3);
-  min-width: 0;
-  padding: 0 var(--space-4) var(--space-2);
-  border-bottom: var(--border-width) solid var(--border-default);
-}
-
-.od-titlebar__heading {
-  display: flex;
-  flex: 1;
-  align-items: center;
-  gap: var(--space-2);
-  min-width: 0;
-  height: var(--control-height-md);
+  gap: var(--space-1);
+  min-width: var(--table-col-sm);
+  padding: 0 var(--space-1);
+  color: var(--fg-default);
 }
 
 .od-titlebar__icon {
@@ -107,12 +119,12 @@
 
 .od-titlebar__title {
   flex: 0 1 auto;
-  min-width: var(--table-col-sm);
+  min-width: 0;
   overflow: hidden;
-  font-size: var(--text-lg);
-  line-height: var(--leading-lg);
+  font-size: var(--chrome-text);
+  line-height: var(--chrome-leading);
   font-weight: var(--weight-semibold);
-  letter-spacing: var(--tracking-tight);
+  letter-spacing: var(--tracking-normal);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -123,6 +135,7 @@
   align-items: center;
   gap: var(--space-1-5);
   min-width: 0;
+  margin-left: var(--space-1);
   overflow: hidden;
 }
 
@@ -135,77 +148,7 @@
 }
 
 .od-titlebar__aside {
-  padding-left: var(--space-3);
-  border-left: var(--border-width) solid var(--border-default);
-}
-
-/* Layout step 2: the breadcrumb row (bold current name, badges), then the actions on the left and the aside at the end.
- * Both rows have the tab strip's size: same height, text, icons and control height. */
-.od-titlebar--crumbs {
-  flex-direction: column;
-  align-items: stretch;
-  gap: 0;
-  padding: 0 var(--space-4) var(--space-1);
-}
-
-.od-titlebar__row,
-.od-titlebar__actions-row {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  min-width: 0;
-  height: var(--chrome-row-height);
-}
-
-.od-titlebar__crumbs {
-  flex: 1 1 auto;
-  gap: var(--space-1);
-  height: 100%;
-  overflow: hidden;
-  color: var(--fg-subtle);
-  font-size: var(--chrome-text);
-  line-height: var(--chrome-leading);
-  white-space: nowrap;
-}
-
-.od-titlebar__crumbs .od-icon {
-  width: var(--chrome-icon);
-  height: var(--chrome-icon);
-}
-
-/* The path gives way first, then the current name. */
-.od-titlebar__crumbs .od-crumbs__item {
-  flex: 0 1000 auto;
-  min-width: var(--icon-lg);
-}
-
-.od-titlebar__current {
-  display: inline-flex;
-  flex: 0 1 auto;
-  align-items: center;
-  gap: var(--space-1);
-  min-width: var(--table-col-sm);
-  padding: 0 var(--space-1);
-  color: var(--fg-default);
-}
-
-.od-titlebar--crumbs .od-titlebar__title {
-  min-width: 0;
-  font-size: var(--chrome-text);
-  line-height: var(--chrome-leading);
-  font-weight: var(--weight-semibold);
-  letter-spacing: var(--tracking-normal);
-}
-
-.od-titlebar--crumbs .od-titlebar__meta {
-  flex: 0 100 auto;
-  margin-left: var(--space-1);
-}
-
-.od-titlebar--crumbs .od-titlebar__aside {
   margin-left: auto;
-  padding-left: 0;
-  border-left: 0;
 }
 
 /* The environment comes first; a hairline sets it apart from the actions. */
@@ -218,21 +161,21 @@
 }
 
 /* Buttons, "More", the environment selector and the info toggle: one control height and the row's text size. */
-.od-titlebar--crumbs .od-button--sm,
-.od-titlebar--crumbs .od-select--sm {
+.od-titlebar .od-button--sm,
+.od-titlebar .od-select--sm {
   height: var(--chrome-control-height);
   font-size: var(--chrome-text);
   line-height: var(--chrome-leading);
 }
 
-.od-titlebar--crumbs .od-icon-button--sm {
+.od-titlebar .od-icon-button--sm {
   width: var(--chrome-control-height);
   height: var(--chrome-control-height);
 }
 
-.od-titlebar--crumbs .od-button .od-icon,
-.od-titlebar--crumbs .od-icon-button .od-icon,
-.od-titlebar--crumbs .od-select .od-icon {
+.od-titlebar .od-button .od-icon,
+.od-titlebar .od-icon-button .od-icon,
+.od-titlebar .od-select .od-icon {
   width: var(--chrome-icon);
   height: var(--chrome-icon);
 }

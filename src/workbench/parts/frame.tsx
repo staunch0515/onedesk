@@ -1,12 +1,14 @@
 import type { ReactNode } from "react";
-import { ActionBar, Badge, Banner, Breadcrumb, IconButton, PageFrame, PageTitleBar, Pane, Select, Sized, Splitter, TitleBarSlot, type ActionBarItem, type Tone } from "../../design";
+import { ActionBar, Badge, Banner, IconButton, PageFrame, PageTitleBar, Pane, Select, Sized, Splitter, TitleBarSlot, type ActionBarItem, type Tone } from "../../design";
 import { useI18n } from "../i18n";
 import { isSourceMissing, type NodeState, type PageDescriptor } from "../protocol";
 import { useQuery, useUi, useWorkbench } from "../state/context";
 import type { TabState } from "../state/store";
 import { useResize, useWindowAtLeast } from "./hooks";
-import { INFO_LEFT_MIN_WIDTH, layoutMode } from "../state/layout-mode";
 import { InfoPanelPart } from "./info-panel";
+
+/** From this window width up the info panel sits left of the content (near the tree); below it, on the right (D465). */
+export const INFO_LEFT_MIN_WIDTH = 1600;
 
 const STATE_TONE: Record<NodeState, Tone> = { ok: "neutral", disabled: "neutral", "missing-plugin": "warning", broken: "danger", conflict: "warning", "load-failed": "danger" };
 
@@ -22,7 +24,7 @@ export interface FrameProps {
   panel?: ReactNode;
 }
 
-/** The frame shared by every page: breadcrumb, title, actions, environment, info panel, result area (§9). */
+/** The frame shared by every page (§9, D465): breadcrumb ending in the bold title, environment + actions, info panel, result area. */
 export function Frame({ tab, descriptor, meta, actions, children, panel }: FrameProps) {
   const { client, store, actions: wb } = useWorkbench();
   const { t, tx, pageTitle } = useI18n();
@@ -32,9 +34,8 @@ export function Frame({ tab, descriptor, meta, actions, children, panel }: Frame
   const panelHeight = useUi((s) => s.panelHeight);
   const dirty = useUi((s) => Object.keys(s.drafts[tab.id] ?? {}).length > 0);
   const envs = useQuery((c) => (descriptor.usesEnv ? c.params.envOptions() : Promise.resolve([])), [descriptor.usesEnv], ["env", "tree:environments"]);
-  const classic = layoutMode() === "classic";
-  // New layout: on a wide window the info panel sits left of the content (near the tree), otherwise on the right.
-  const infoLeft = useWindowAtLeast(INFO_LEFT_MIN_WIDTH) || classic;
+  // On a wide window the info panel sits left of the content (near the tree), otherwise on the right; it changes sides live.
+  const infoLeft = useWindowAtLeast(INFO_LEFT_MIN_WIDTH);
   const infoResize = useResize("infoWidth", infoLeft ? 1 : -1);
   const panelResize = useResize("panelHeight", -1);
   const stateName: Record<NodeState, string> = {
@@ -86,13 +87,12 @@ export function Frame({ tab, descriptor, meta, actions, children, panel }: Frame
 
   return (
     <PageFrame
-      // New layout: no breadcrumb row; the breadcrumb is the start of the title row, with the page's name in bold.
-      breadcrumb={classic ? <Breadcrumb label={t("page.breadcrumb")} items={crumbs} /> : undefined}
       header={
         <PageTitleBar
           icon={descriptor.icon}
           title={pageTitle(descriptor.title)}
-          crumbs={classic ? undefined : crumbs.slice(0, -1)}
+          // The last crumb is the page's object itself: the title bar shows it as the bold heading.
+          crumbs={crumbs.slice(0, -1)}
           crumbsLabel={t("page.breadcrumb")}
           meta={
             <>
@@ -108,16 +108,9 @@ export function Frame({ tab, descriptor, meta, actions, children, panel }: Frame
             </>
           }
           actions={actions && actions.length > 0 ? <ActionBar items={actions} moreLabel={t("page.more")} label={t("page.actions")} /> : undefined}
-          // New layout: the environment comes first in the actions row (the most important choice); classic: in the aside.
-          lead={classic ? undefined : envSelect}
-          aside={
-            (classic && envSelect) || infoToggle ? (
-              <>
-                {classic && envSelect}
-                {infoToggle}
-              </>
-            ) : undefined
-          }
+          // The environment comes first in the actions row (the most important choice); the info toggle at its right end.
+          lead={envSelect ?? undefined}
+          aside={infoToggle ?? undefined}
         />
       }
       notice={

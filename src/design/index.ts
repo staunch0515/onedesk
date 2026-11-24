@@ -77,7 +77,6 @@ export {
 } from "./components/workbench";
 export {
   PageFrame,
-  Breadcrumb,
   PageTitleBar,
   TitleBarSlot,
   ActionBar,
@@ -88,7 +87,6 @@ export {
   StripField,
   FactRow,
   type PageFrameProps,
-  type BreadcrumbProps,
   type BreadcrumbItem,
   type PageTitleBarProps,
   type ActionBarProps,

@@ -49,7 +49,7 @@ export interface LayoutState {
   expanded: Record<string, string[]>;
   gridWidths: Record<string, Record<string, number>>;
   lastEnvId: string | null;
-  /** Layout step 2: the activity bar shows all views as a wide grid with a search instead of an icon column. */
+  /** The activity bar shows all views as a wide grid with a search instead of an icon column (D465). */
   activityWide: boolean;
 }
 

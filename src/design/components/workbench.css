@@ -134,7 +134,7 @@
   text-align: center;
 }
 
-/* Layout step 2: the switch at the top, and the wide panel (all views as large icons, with a search). */
+/* D465: the switch at the top, and the wide panel (all views as large icons, with a search). */
 .od-activity__divider {
   width: var(--icon-lg);
   height: var(--border-width);

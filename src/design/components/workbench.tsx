@@ -69,7 +69,7 @@ export interface ActivityBarProps {
   onSelect: (key: string) => void;
   label: string;
   /**
-   * Layout step 2. Defined: a button at the top switches between the icon column (false) and a wide panel that shows
+   * D465. Defined: a button at the top switches between the icon column (false) and a wide panel that shows
    * every view as a large icon with its name, with a search on top (true). Undefined: no switch.
    */
   wide?: boolean;
