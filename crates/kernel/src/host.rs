@@ -102,7 +102,7 @@ const ROUND17_FILES: &[&str] =
 /// transfers and artifacts are refused.
 fn ai_allows(method: &str, args: &Value) -> bool {
     match method {
-        "resources.get" | "resources.list" | "resources.search" => true,
+        "resources.get" | "resources.list" | "resources.search" | "resources.kinds" => true,
         "files.roots" | "files.list" | "files.stat" | "files.readText" | "files.find" => true,
         "settings.get" | "runs.partial" | "runs.progress" => true,
         "network.output" | "network.stop" => true,
@@ -372,6 +372,8 @@ impl Inner {
             }
             // Round 12 (D389): basic information of every resource, with `requires.resources`.
             "search" => self.resources_search(plugin, arg(args, 0), info.ai),
+            // D477: the kinds the user can make in a resource tree, with their names and icons.
+            "kinds" => self.resources_kinds(plugin),
             "remove" => {
                 let id = arg_str(args, 0, "id")?;
                 self.own_row(plugin, &id)?.ok_or_else(|| not_found("resource"))?;

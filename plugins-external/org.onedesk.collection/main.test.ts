@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 // @ts-ignore plain JS module, no types
-import plugin, { BATCH, csv, queryOf } from "./main.js";
+import plugin, { BATCH, csv, kindOptions, queryOf } from "./main.js";
 import { RENDER_KEYS, TREE_NODE_KEYS, checkView, onlyKeys, registry } from "../../plugins/_testing/view-check";
 
 const load = (f: string) => JSON.parse(readFileSync(new URL(`./locales/${f}.json`, import.meta.url), "utf8")) as Record<string, string>;
@@ -12,7 +12,11 @@ const t = (key: string) => ({ "en-US": EN[key], "zh-CN": ZH[key], "ja-JP": JA[ke
 
 const info = (id: string) => ({ id, name: `Name ${id}`, kind: "org.onedesk.note:note", icon: "file-text", tree: "resources", tags: [], deleted: false });
 type Host = Record<string, any>;
-const hostOf = (search: (q: any) => unknown): Host => ({ resources: { search: vi.fn(async (q: any) => search(q)) } });
+const KINDS = [
+  { kind: "org.onedesk.sql:query", label: { "en-US": "SQL query", "zh-CN": "SQL 查询" }, icon: "database" },
+  { kind: "org.onedesk.note:note", label: { "en-US": "Note", "zh-CN": "笔记" }, icon: "file-text" },
+];
+const hostOf = (search: (q: any) => unknown): Host => ({ resources: { search: vi.fn(async (q: any) => search(q)), kinds: vi.fn(async () => KINDS) } });
 const body = (b: Record<string, string>) => ({ id: "col1", body: b });
 const ctxOf = (host: Host, b: Record<string, string>, extra: Record<string, unknown> = {}) => ({ locale: "en-US", host, t, resource: body(b), ...extra });
 
@@ -67,6 +71,22 @@ describe("collection: children", () => {
   });
 });
 
+describe("collection: kind choices (D477)", () => {
+  it("are named in the viewer's language; a chosen kind no longer offered stays so it can be unticked", async () => {
+    const host = hostOf(() => ({ items: [], total: 0 }));
+    expect(await kindOptions(ctxOf(host, {}, { locale: "zh-CN" }), ["org.onedesk.sql:query", "gone:kind"])).toEqual([
+      { value: "org.onedesk.note:note", label: "笔记" },
+      { value: "org.onedesk.sql:query", label: "SQL 查询" },
+      { value: "gone:kind", label: "gone:kind" },
+    ]);
+  });
+  it("the field shows what was chosen; the search uses it", async () => {
+    const host = hostOf(() => ({ items: [], total: 0 }));
+    await registry(plugin).pages.editor.render(ctxOf(host, { kinds: "org.onedesk.sql:query,org.onedesk.note:note" }));
+    expect(host.resources.search.mock.calls[0][0].kinds).toEqual(["org.onedesk.sql:query", "org.onedesk.note:note"]);
+  });
+});
+
 describe("collection: page", () => {
   const { pages } = registry(plugin);
   it("without conditions: the three bound fields and a hint, no search", async () => {
@@ -74,7 +94,9 @@ describe("collection: page", () => {
     const out = await pages.editor.render(ctxOf(host, {}));
     expect(checkView(out.view)).toEqual([]);
     expect(onlyKeys(out, RENDER_KEYS)).toEqual([]);
-    expect(out.view[0].fields.map((f: any) => [f.name, f.bind, f.kind])).toEqual([["kinds", "body.kinds", "text"], ["tags", "body.tags", "text"], ["text", "body.text", "text"]]);
+    expect(out.view[0].fields.map((f: any) => [f.name, f.bind, f.kind])).toEqual([["kinds", "body.kinds", "multi"], ["tags", "body.tags", "text"], ["text", "body.text", "text"]]);
+    // D477: the kinds are ticked from the kinds of the resource trees, by name, sorted.
+    expect(out.view[0].fields[0].options).toEqual([{ value: "org.onedesk.note:note", label: "Note" }, { value: "org.onedesk.sql:query", label: "SQL query" }]);
     expect(out.view[1]).toEqual({ type: "text", id: "hint", text: "Fill in at least one condition.", tone: "muted" });
     expect(host.resources.search).not.toHaveBeenCalled();
   });

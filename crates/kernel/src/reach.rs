@@ -195,6 +195,25 @@ impl Inner {
         }
     }
 
+    /// D477: `host.resources.kinds()` — every kind of an enabled plugin that lives in the resource
+    /// trees (what "New" offers there, and kinds made only by code), as `{ kind, label, icon }`
+    /// with the full kind name; for conditions like a collection's. Needs `requires.resources`.
+    pub(crate) fn resources_kinds(&self, plugin: &Plugin) -> KResult<Value> {
+        if !plugin.manifest.requires.resources {
+            return Err(denied("notRequested"));
+        }
+        let mut out = Vec::new();
+        for p in self.registry.plugins().iter().filter(|p| self.plugin_enabled(&p.id)) {
+            for k in &p.manifest.contributes.kinds {
+                if k.tree.as_deref().map(|t| p.tree_ref(t)).as_deref() != Some(store::TREE_RESOURCES) || !self.kind_unmet(p, k).is_empty() {
+                    continue;
+                }
+                out.push(json!({ "kind": p.full(&k.id), "label": p.label(&k.label), "icon": k.icon }));
+            }
+        }
+        Ok(Value::Array(out))
+    }
+
     pub(crate) fn search_basic(&self, o: &SearchOpts) -> KResult<ResourceSearchResult> {
         Ok(self.search_core(o, false)?.0)
     }

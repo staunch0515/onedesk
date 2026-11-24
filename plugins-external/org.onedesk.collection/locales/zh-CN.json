@@ -5,7 +5,7 @@
   "kind.collection.new": "未命名集合",
   "action.save": "保存",
   "field.kinds": "类型",
-  "field.kinds.placeholder": "类型全名，用逗号分隔（可空）",
+  "field.kinds.placeholder": "任意类型（可多选）",
   "field.tags": "标签",
   "field.tags.placeholder": "用逗号分隔，需同时含有（可空）",
   "field.text": "文字",

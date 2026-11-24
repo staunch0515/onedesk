@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Banner, Button, CodeEditor, Dialog, DropdownMenu, FieldStrip, FormField, IconButton, Input, Pane, Select, StripField, Switch, Text, Textarea, useToast, type ActionBarItem } from "../../design";
+import { Banner, Button, CodeEditor, Dialog, DropdownMenu, FieldStrip, FormField, IconButton, Input, MultiSelect, Pane, Select, StripField, Switch, Text, Textarea, useToast, type ActionBarItem } from "../../design";
 import { useI18n } from "../i18n";
 import type { ActionDecl, PageDescriptor, RunStatus, ViewField, ViewNode } from "../protocol";
 import { applyPageParams, runParams, viewParams } from "./run-params";
@@ -79,6 +79,22 @@ export function FieldControl({ field, value, onChange, size, readOnly, id, secre
           options={(field.options ?? []).map((o) => ({ value: o.value, label: tx(o.label) }))}
         />
       );
+    case "multi": {
+      // D477: the value is the chosen option values joined with "," (in the order of the options).
+      const chosen = (value || field.envValue || "").split(",").map((v) => v.trim()).filter(Boolean);
+      return (
+        <MultiSelect
+          id={id}
+          size={size}
+          aria-label={label}
+          disabled={locked}
+          value={chosen}
+          placeholder={placeholder ?? t("field.choose")}
+          onValueChange={(vs) => onChange(vs.join(","))}
+          options={(field.options ?? []).map((o) => ({ value: o.value, label: tx(o.label) }))}
+        />
+      );
+    }
     case "longtext":
       return <Textarea id={id} aria-label={label} rows={4} value={value} readOnly={locked} maxLength={field.maxLength} placeholder={placeholder} onChange={(e) => onChange(e.target.value)} />;
     case "code":

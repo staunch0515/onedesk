@@ -486,6 +486,9 @@ pub enum FieldKind {
     /// Round 15 (D414): a reference to a resource; the value is its id. Choices are `options`; for
     /// a field with `kinds` and no `options` the kernel lists the resources of those kinds.
     Ref,
+    /// D477: several of `options` at once; the value is their `value`s joined with `,` in the
+    /// order of `options` (so option values never contain a comma). Empty = none chosen.
+    Multi,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]

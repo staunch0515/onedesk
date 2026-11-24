@@ -4,7 +4,7 @@ import type { ViewNode } from "../../src/workbench/protocol/generated";
 const FIELD_KEYS = new Set(["name", "label", "kind", "bind", "param", "options", "presets", "fill", "language", "hint", "placeholder", "envValue", "envSource", "readOnly", "required", "maxLength", "kinds", "assist"]);
 // D462: `assist` holds only these (FieldAssist in crates/protocol).
 const ASSIST_KEYS = new Set(["off", "hint", "format"]);
-const KINDS = new Set(["text", "longtext", "code", "number", "boolean", "date", "datetime", "enum", "secret", "time", "ref"]);
+const KINDS = new Set(["text", "longtext", "code", "number", "boolean", "date", "datetime", "enum", "secret", "time", "ref", "multi"]);
 const NODE_KEYS: Record<string, string[]> = {
   form: ["type", "id", "layout", "label", "fields"],
   text: ["type", "id", "text", "mono", "language", "tone", "format", "lineTones", "appearance"],

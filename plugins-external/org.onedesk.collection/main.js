@@ -40,6 +40,19 @@ export function labelText(label, locale, fallback) {
   return fallback;
 }
 
+// The choices of the "kinds" field: every kind of the resource trees (`host.resources.kinds()`, D477) by its name in
+// the viewer's language, sorted by name; a kind already chosen that is not among them (its plugin is off) stays, as
+// its full name, so it can be unticked.
+export async function kindOptions(ctx, chosen) {
+  const list = await ctx.host.resources.kinds();
+  const options = (list || [])
+    .filter((k) => k && typeof k.kind === "string" && !k.kind.includes(","))
+    .map((k) => ({ value: k.kind, label: labelText(k.label, ctx.locale, k.kind) }))
+    .sort((a, b) => a.label.localeCompare(b.label, ctx.locale));
+  for (const c of chosen || []) if (!options.some((o) => o.value === c)) options.push({ value: c, label: c });
+  return options;
+}
+
 const bodyOf = (ctx) => (ctx.resource && ctx.resource.body) || {};
 
 function pick(ctx, name) {
@@ -68,7 +81,9 @@ export default {
       async render(ctx) {
         const ro = ctx.run ? { readOnly: true } : {};
         const field = (name) => ({ name, label: ctx.t(`field.${name}`), kind: "text", bind: `body.${name}`, placeholder: ctx.t(`field.${name}.placeholder`), ...ro });
-        const view = [{ type: "form", id: "conditions", layout: "stack", fields: [field("kinds"), field("tags"), field("text")] }];
+        // D477: the kinds are ticked in a list of every kind of the resource trees, not typed.
+        const kinds = { ...field("kinds"), kind: "multi", options: await kindOptions(ctx, csv(pick(ctx, "kinds"))) };
+        const view = [{ type: "form", id: "conditions", layout: "stack", fields: [kinds, field("tags"), field("text")] }];
         const q = queryOf({ kinds: pick(ctx, "kinds"), tags: pick(ctx, "tags"), text: pick(ctx, "text") }, 0);
         if (!q) {
           view.push({ type: "text", id: "hint", text: tr(ctx, "page.needCondition"), tone: "muted" });

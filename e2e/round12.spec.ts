@@ -370,6 +370,18 @@ test("collection: the page shows the conditions, the total and a results table",
   expect(await page.locator("body").innerText()).not.toContain("[object Object]");
   await expect(page.getByRole("row").filter({ hasText: "Alpha view" })).toContainText("Note");
   await shot(page, "collection-page");
+  // D477: the kinds are ticked from a list of the kinds by name, not typed; only notes now.
+  const kinds = page.getByRole("button", { name: "Types", exact: true });
+  await expect(kinds).toContainText("Any type");
+  await kinds.click();
+  await expect(page.getByRole("menuitemcheckbox", { name: "Link" })).toBeVisible();
+  await page.getByRole("menuitemcheckbox", { name: "Note" }).click();
+  await page.keyboard.press("Escape");
+  await expect(kinds).toContainText("Note");
+  await expect(page.getByText("1 result(s)")).toBeVisible();
+  await shot(page, "collection-kinds");
+  await page.keyboard.press("ControlOrMeta+s");
+  await expect.poll(async () => (await call<{ body: { kinds?: string } }>(page, "resource.get", { id: (await call<{ nodes: { key: string; label: string }[] }>(page, "tree.children", { tree: "resources" })).nodes.find((n) => n.label === "Fruit view")!.key })).body.kinds).toBe(NOTE);
 });
 
 /* ------------------------------------------------------------------ permission: requires.resources / resources.search */

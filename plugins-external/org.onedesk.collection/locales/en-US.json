@@ -5,7 +5,7 @@
   "kind.collection.new": "Untitled collection",
   "action.save": "Save",
   "field.kinds": "Types",
-  "field.kinds.placeholder": "Full type names, comma separated (optional)",
+  "field.kinds.placeholder": "Any type (choose several)",
   "field.tags": "Tags",
   "field.tags.placeholder": "Comma separated; an item must have all of them (optional)",
   "field.text": "Text",

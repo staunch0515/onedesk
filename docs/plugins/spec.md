@@ -442,10 +442,10 @@ export default {
 |---|---|
 | `name`（必填） | 字段名 |
 | `label`（必填） | `Label`（直接给 `ctx.t("…")`） |
-| `kind`（必填） | `text`、`longtext`、`code`、`number`、`boolean`、`date`、`datetime`、`enum`、`secret`、`time`（`HH:MM[:SS]`，UTC）、`ref`（值是资源 id） |
+| `kind`（必填） | `text`、`longtext`、`code`、`number`、`boolean`、`date`、`datetime`、`enum`、`secret`、`time`（`HH:MM[:SS]`，UTC）、`ref`（值是资源 id）、`multi`（从 `options` 里选多个，值是选中项的 `value` 按 `options` 的顺序用 `,` 连起来，所以 `value` 里不能有逗号；D477） |
 | `bind` | 编辑的页面值：资源页是 `name`、`description`、`tags`、`body.<键>`；其他页面是 `values` 里的名字。外壳负责未保存标记、⌘S、关闭前询问 |
 | `param` | `true`：运行参数，只在标签页状态里，不保存 |
-| `options` | `[{ value, label }]`（`enum`、`ref`） |
+| `options` | `[{ value, label }]`（`enum`、`ref`、`multi`） |
 | `presets` | 日期/时间字段的快捷值 `[{ value, label }]` |
 | `fill` | `code`/`longtext` 占满剩余高度 |
 | `language` | `code` 字段的着色语言 |
@@ -523,6 +523,7 @@ export default {
 | `move(id, { parent? } \| { before })` | → `null` | |
 | `remove(id)` | → `null` | 进回收站 |
 | `search(opts)` | → 结果 | 需 `requires.resources`；`{ query, kinds?, limit? }` 按相关度返回 `[{ id, kind, name, snippet, score }]`；或基本搜索 `{ text, kinds, tags, … }` |
+| `kinds()` | → `[{ kind, label, icon }]` | 需 `requires.resources`；资源树里能有的所有类型（已启用的插件，`kind` 是全名，`label` 是 Label），供“按类型”的条件让用户勾选，不要让用户手写类型全名（D477） |
 
 插件拿到的资源还带 `externalKey` 和 `missing`。
 

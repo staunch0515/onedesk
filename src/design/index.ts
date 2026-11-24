@@ -18,6 +18,7 @@ export { FormField, useFieldControl, type FormFieldProps } from "./components/fo
 export { Input, type InputProps } from "./components/input";
 export { Textarea, type TextareaProps } from "./components/textarea";
 export { Select, type SelectProps, type SelectOption, type SelectGroup } from "./components/select";
+export { MultiSelect, type MultiSelectProps } from "./components/multi-select";
 export { Switch, type SwitchProps } from "./components/switch";
 export { Checkbox, type CheckboxProps } from "./components/checkbox";
 export { Table, type TableProps, type TableColumn, type TableColumnWidth } from "./components/table";

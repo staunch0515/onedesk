@@ -265,6 +265,24 @@ async fn search_without_the_permission_is_refused() {
     assert!(denied.as_array().unwrap().iter().any(|a| a["operation"] == "resources.search"), "{denied}");
 }
 
+/// D477: `resources.kinds()` lists the kinds of the resource trees (full names, labels, icons),
+/// not those of other trees or without a tree; it needs `requires.resources`.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_kinds_of_the_resource_trees_are_listed() {
+    let (_env, c) = world(5000).await;
+    let r = c.probe("test.reach", "resources.kinds", json!([])).await;
+    let kinds: Vec<&str> = r["ok"].as_array().unwrap().iter().map(|k| k["kind"].as_str().unwrap()).collect();
+    for k in ["test.reach:hub", "test.reach:card", "test.reach:sheet"] {
+        assert!(kinds.contains(&k), "{k}: {r}");
+    }
+    assert!(!kinds.contains(&"test.reach:pin") && !kinds.contains(&"test.reach:loose"), "{r}");
+    let card = r["ok"].as_array().unwrap().iter().find(|k| k["kind"] == "test.reach:card").unwrap();
+    assert_eq!(card["icon"], "box");
+    assert!(!card["label"].is_null());
+    let blind = c.probe("test.blind", "resources.kinds", json!([])).await;
+    assert_eq!((blind["error"].as_str(), blind["params"]["reason"].as_str()), (Some("denied"), Some("notRequested")), "{blind}");
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn search_conditions_alone_and_together() {
     let (_env, c) = world(5000).await;

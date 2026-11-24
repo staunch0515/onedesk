@@ -5,7 +5,7 @@
   "kind.collection.new": "無題のコレクション",
   "action.save": "保存",
   "field.kinds": "種類",
-  "field.kinds.placeholder": "種類の完全名をカンマ区切りで（省略可）",
+  "field.kinds.placeholder": "すべての種類（複数選択可）",
   "field.tags": "タグ",
   "field.tags.placeholder": "カンマ区切り。すべてを含む項目のみ（省略可）",
   "field.text": "テキスト",
