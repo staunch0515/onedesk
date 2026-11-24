@@ -157,7 +157,9 @@ export function TreePanel({ tree }: { tree: TreeInfo }) {
     // Shown again after another view: events were missed meanwhile, so read the cached levels again.
     if (nodesRef.current.size > 0) refresh();
     // The kernel announces run changes on `runs` (it has no `tree:runs`): keeping, renaming or deleting a result moves nodes between the two groups.
-    const offs = [client.events.subscribe(`tree:${tree.id}`, refresh), client.events.subscribe("connection", refresh), ...(tree.id === RUNS_TREE ? [client.events.subscribe("runs", refresh)] : [])];
+    // D473: every resource tree's view lives in the kernel's `resources` tree.
+    const topic = tree.id.startsWith("resources.") ? "tree:resources" : `tree:${tree.id}`;
+    const offs = [client.events.subscribe(topic, refresh), client.events.subscribe("connection", refresh), ...(tree.id === RUNS_TREE ? [client.events.subscribe("runs", refresh)] : [])];
     return () => offs.forEach((off) => off());
     // `locale` is a dependency on purpose: after a language switch the loaded levels are read again in the new language.
   }, [client, tree.id, commit, actions, locale]);
@@ -344,8 +346,10 @@ export function TreePanel({ tree }: { tree: TreeInfo }) {
   // buttons out of the narrow panel: past a few, the rest go into one "New" menu.
   const TOOLBAR_INLINE_MAX = 4;
   const crowded = tree.toolbar.length > TOOLBAR_INLINE_MAX;
-  const inline = crowded ? tree.toolbar.filter((c) => c.id === "node.newGroup") : tree.toolbar;
-  const overflow = crowded ? tree.toolbar.filter((c) => c.id !== "node.newGroup") : [];
+  // A resource tree's "information" button (D473) stays in the row too.
+  const keep = (id: string) => id === "node.newGroup" || id === "tree.info";
+  const inline = crowded ? tree.toolbar.filter((c) => keep(c.id)) : tree.toolbar;
+  const overflow = crowded ? tree.toolbar.filter((c) => !keep(c.id)) : [];
 
   return (
     <SidePanel

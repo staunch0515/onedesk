@@ -28,6 +28,7 @@ pub const MIGRATIONS: &[(&str, &str)] = &[
     ("0012_resources_parent", include_str!("../migrations/0012_resources_parent.sql")),
     ("0013_run_artifacts", include_str!("../migrations/0013_run_artifacts.sql")),
     ("0014_ai_visible_default_off", include_str!("../migrations/0014_ai_visible_default_off.sql")),
+    ("0015_default_env", include_str!("../migrations/0015_default_env.sql")),
 ];
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

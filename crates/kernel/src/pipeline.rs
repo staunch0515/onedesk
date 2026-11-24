@@ -45,6 +45,8 @@ pub struct Changes {
     pub name: Option<String>,
     pub description: Option<String>,
     pub tags: Option<Vec<String>>,
+    /// D473: `defaultEnv`; `Some("")` clears it (the place above decides again).
+    pub default_env: Option<String>,
     pub body: JsonMap,
     /// `params.<name>` of parameter nodes (D275).
     pub params: std::collections::BTreeMap<String, ParamChange>,
@@ -76,6 +78,13 @@ impl Changes {
                 "tags" => {
                     c.tags = Some(serde_json::from_value(v.clone()).map_err(|_| invalid_params("tags must be strings"))?)
                 }
+                "defaultEnv" => {
+                    c.default_env = Some(match v {
+                        Value::Null => String::new(),
+                        Value::String(s) => s.clone(),
+                        _ => return Err(invalid_params("defaultEnv must be an environment id")),
+                    })
+                }
                 p => match (p.strip_prefix("body."), p.strip_prefix("params.")) {
                     (Some(k), _) if !k.is_empty() => {
                         c.body.insert(k.to_string(), v.clone());
@@ -104,6 +113,7 @@ impl Changes {
         self.name.is_none()
             && self.description.is_none()
             && self.tags.is_none()
+            && self.default_env.is_none()
             && self.body.is_empty()
             && self.params.is_empty()
     }
@@ -127,6 +137,13 @@ impl Changes {
             if *t != row.tags {
                 row.tags = t.clone();
                 changed.push("tags".into());
+            }
+        }
+        if let Some(e) = &self.default_env {
+            let e = (!e.is_empty()).then(|| e.clone());
+            if e != row.default_env {
+                row.default_env = e;
+                changed.push("defaultEnv".into());
             }
         }
         for (k, v) in &self.body {
@@ -155,6 +172,9 @@ impl Changes {
         }
         if self.tags.is_some() {
             f.push("tags".into());
+        }
+        if self.default_env.is_some() {
+            f.push("defaultEnv".into());
         }
         f.extend(self.body.keys().map(|k| format!("body.{k}")));
         f.extend(self.params.keys().map(|k| format!("params.{k}")));
@@ -818,6 +838,10 @@ impl Tx<'_> {
 
     /// Checks that `parent` (live, same tree) accepts `kind`.
     pub(crate) fn check_parent(&self, kind: &str, tree: Option<&str>, parent: Option<&str>) -> KResult<()> {
+        // D473: a resource tree is always at the top.
+        if kind == store::KIND_TREE && parent.is_some() {
+            return Err(invalid("treeAtTop"));
+        }
         let Some(pid) = parent else { return Ok(()) };
         let p = store::get(self.tx, pid).map_err(db_err)?.ok_or_else(|| invalid("parentNotFound"))?;
         if p.tree.as_deref() != tree || tree.is_none() {
@@ -834,7 +858,7 @@ impl Tx<'_> {
     pub(crate) fn next_pos(&self, tree: Option<&str>, parent: Option<&str>) -> KResult<i64> {
         self.tx
             .query_row(
-                "SELECT COALESCE(MAX(pos) + 1, 0) FROM resources WHERE tree IS ?1 AND parent_id IS ?2 AND deleted_at IS NULL",
+                "SELECT COALESCE(MAX(pos) + 1, 0) FROM resources WHERE tree IS ?1 AND parent_id IS ?2 AND deleted_at IS NULL AND kind <> 'core:tree'",
                 params![tree, parent],
                 |r| r.get(0),
             )
@@ -843,7 +867,7 @@ impl Tx<'_> {
 
     pub(crate) fn insert(&self, r: &Row) -> KResult<()> {
         self.tx.prepare_cached(&format!(
-                    "INSERT INTO resources ({}) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19)",
+                    "INSERT INTO resources ({}) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20)",
                     store::COLUMNS
                 )).map_err(db_err)?.execute(params![
                     r.id,
@@ -864,7 +888,8 @@ impl Tx<'_> {
                     r.created_by,
                     r.updated_at,
                     r.updated_by,
-                    r.deleted_at
+                    r.deleted_at,
+                    r.default_env
                 ],
             )
             .map_err(db_err)?;
@@ -895,7 +920,7 @@ impl Tx<'_> {
 
     pub(crate) fn save(&self, r: &Row) -> KResult<()> {
         self.tx.prepare_cached("UPDATE resources SET parent_id=?2, pos=?3, name=?4, description=?5, tags=?6, body=?7, rev=?8,
-                 updated_at=?9, updated_by=?10, deleted_at=?11, plugin_version=?12 WHERE id=?1").map_err(db_err)?.execute(params![
+                 updated_at=?9, updated_by=?10, deleted_at=?11, plugin_version=?12, default_env=?13 WHERE id=?1").map_err(db_err)?.execute(params![
                     r.id,
                     r.parent_id,
                     r.pos,
@@ -907,7 +932,8 @@ impl Tx<'_> {
                     r.updated_at,
                     r.updated_by,
                     r.deleted_at,
-                    r.plugin_version
+                    r.plugin_version,
+                    r.default_env
                 ],
             )
             .map_err(db_err)?;
@@ -964,16 +990,25 @@ impl Tx<'_> {
         self.guard_protected(&n.kind, None, &n.body)?;
         let rule_tree = self.rule(&n.kind)?.tree.clone();
         let tree = if n.kind == KIND_GROUP { n.tree.clone().or(rule_tree) } else { rule_tree };
-        if n.name.trim().is_empty() {
+        // D473: the default resource tree starts without a name: the shell shows its own word for it.
+        if n.name.trim().is_empty() && !(n.kind == store::KIND_TREE && n.body.get("default") == Some(&json!(true))) {
             return Err(invalid("emptyName"));
         }
         self.check_parent(&n.kind, tree.as_deref(), n.parent.as_deref())?;
         let actor = self.actor.as_text();
+        // D473: trees are numbered among themselves, the other rows without them.
+        let pos = if n.kind == store::KIND_TREE {
+            self.tx
+                .query_row("SELECT COALESCE(MAX(pos) + 1, 0) FROM resources WHERE kind = ?1 AND deleted_at IS NULL", [store::KIND_TREE], |r| r.get(0))
+                .map_err(db_err)?
+        } else {
+            self.next_pos(tree.as_deref(), n.parent.as_deref())?
+        };
         let row = Row {
             id: new_id(),
             kind: n.kind,
             plugin_version: n.plugin_version,
-            pos: self.next_pos(tree.as_deref(), n.parent.as_deref())?,
+            pos,
             tree,
             parent_id: n.parent,
             name: n.name,
@@ -989,6 +1024,7 @@ impl Tx<'_> {
             updated_at: self.at,
             updated_by: actor,
             deleted_at: None,
+            default_env: None,
         };
         self.insert(&row)?;
         self.refs_after(&row, None)?;
@@ -1109,6 +1145,12 @@ impl Tx<'_> {
         if changes.name.as_deref().is_some_and(|n| n.trim().is_empty()) {
             return Err(invalid("emptyName"));
         }
+        // D473: a default environment is an environment that exists.
+        if let Some(e) = changes.default_env.as_deref().filter(|e| !e.is_empty()) {
+            if store::get(self.tx, e).map_err(db_err)?.is_none_or(|r| r.kind != KIND_ENV) {
+                return Err(invalid("notEnv"));
+            }
+        }
         if let Some(b) = basis {
             if b < row.rev {
                 // D374: refuse only when one of *these* fields changed after `basis` (§4 并发规则, §9.3).
@@ -1172,6 +1214,9 @@ impl Tx<'_> {
         }
         if old.tags != row.tags {
             out.insert("tags".to_string());
+        }
+        if old.default_env != row.default_env {
+            out.insert("defaultEnv".to_string());
         }
         for k in old.body.keys().chain(row.body.keys()) {
             if old.body.get(k) != row.body.get(k) {
@@ -1635,6 +1680,22 @@ impl Tx<'_> {
                 rows.extend(out.rows);
             }
         }
+        // D473: the default resource tree (the top level of `resources`) has a node of its own.
+        if !store::resource_trees(self.tx).map_err(db_err)?.iter().any(store::is_default_tree) {
+            let mut body = JsonMap::new();
+            body.insert("default".into(), json!(true));
+            let out = self.create(NewResource {
+                kind: store::KIND_TREE.into(),
+                tree: None,
+                parent: None,
+                name: String::new(),
+                description: String::new(),
+                tags: vec![],
+                body,
+                plugin_version: None,
+            })?;
+            rows.extend(out.rows);
+        }
         let built: bool = self
             .tx
             .query_row("SELECT EXISTS(SELECT 1 FROM meta WHERE key = 'search_built')", [], |r| r.get(0))
@@ -1940,6 +2001,10 @@ impl Tx<'_> {
     fn delete(&mut self, id: &str) -> KResult<Outcome> {
         let root = self.live(id)?;
         self.permit(&root.kind)?;
+        // D473: the default resource tree holds the top level; it stays.
+        if store::is_default_tree(&root) {
+            return Err(invalid("defaultTree"));
+        }
         let mut batch = vec![root];
         batch.extend(store::descendants(self.tx, id).map_err(db_err)?);
         // All or nothing: one refused row refuses the batch.
@@ -1991,6 +2056,7 @@ pub const GRANTS_KEY: &str = "files.folders";
 pub fn core_rules() -> HashMap<String, KindRule> {
     let mut m = HashMap::new();
     m.insert(KIND_GROUP.to_string(), KindRule { tree: Some(store::TREE_RESOURCES.into()), accepts: vec!["*".into()], protected: vec![], ..Default::default() });
+    m.insert(store::KIND_TREE.to_string(), KindRule { tree: Some(store::TREE_RESOURCES.into()), accepts: vec!["*".into()], protected: vec![], ..Default::default() });
     m.insert(KIND_PLUGIN_STATE.to_string(), KindRule { tree: Some(TREE_PLUGIN_STATE.into()), accepts: vec![], protected: vec![], ..Default::default() });
     // D274: environments only under environments, configuration only under configuration.
     m.insert(KIND_ENV.to_string(), KindRule { tree: Some(store::TREE_ENV.into()), accepts: vec![KIND_ENV.into()], protected: vec![], ..Default::default() });

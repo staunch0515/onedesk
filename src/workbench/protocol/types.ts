@@ -36,6 +36,7 @@ export type {
   EnvLayer,
   EnvOption,
   EnvParam,
+  InheritedEnv,
   EnvView,
   HistoryEntry,
   InheritedValue,

@@ -7,6 +7,11 @@ use serde_json::Value;
 
 /// Kernel's own kinds and trees (mechanisms, not features).
 pub const KIND_GROUP: &str = "core:group";
+/// D473: a resource tree of the user's own ("XX project"): a top-level node of the `resources` tree
+/// whose contents are its children. The first one (body `default: true`) holds the top level itself.
+pub const KIND_TREE: &str = "core:tree";
+/// The view ids of the other resource trees: `resources.<id of the core:tree row>`.
+pub const RESOURCE_VIEW_PREFIX: &str = "resources.";
 pub const KIND_PLUGIN_STATE: &str = "core:plugin-state";
 pub const TREE_RESOURCES: &str = "resources";
 pub const TREE_PLUGIN_STATE: &str = "core:plugin-state";
@@ -66,10 +71,13 @@ pub struct Row {
     pub updated_at: i64,
     pub updated_by: String,
     pub deleted_at: Option<i64>,
+    /// D473: the environment pages of this node (and below it) open in; `None` = the place above.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_env: Option<String>,
 }
 
 pub const COLUMNS: &str = "id, kind, plugin_version, tree, parent_id, pos, name, description, tags, body, origin, \
-     origin_ref, state, rev, created_at, created_by, updated_at, updated_by, deleted_at";
+     origin_ref, state, rev, created_at, created_by, updated_at, updated_by, deleted_at, default_env";
 
 fn parse_json<T: for<'de> Deserialize<'de> + Default>(s: String) -> T {
     serde_json::from_str(&s).unwrap_or_default()
@@ -96,7 +104,55 @@ pub fn from_row(r: &SqlRow<'_>) -> rusqlite::Result<Row> {
         updated_at: r.get(16)?,
         updated_by: r.get(17)?,
         deleted_at: r.get(18)?,
+        default_env: r.get(19)?,
     })
+}
+
+/// D473: the live resource trees in order; the default one first.
+pub fn resource_trees(conn: &Connection) -> rusqlite::Result<Vec<Row>> {
+    let mut st = conn.prepare_cached(&format!(
+        "SELECT {COLUMNS} FROM resources WHERE kind = ?1 AND tree = ?2 AND parent_id IS NULL AND deleted_at IS NULL ORDER BY pos, id"
+    ))?;
+    let mut rows: Vec<Row> = st.query_map(params![KIND_TREE, TREE_RESOURCES], from_row)?.collect::<rusqlite::Result<_>>()?;
+    rows.sort_by_key(|r| !is_default_tree(r));
+    Ok(rows)
+}
+
+/// D473: the name pages show for a row: the unnamed default tree is `core:resources` (the shell's word).
+pub fn shown_name(r: &Row) -> String {
+    if r.name.trim().is_empty() && is_default_tree(r) {
+        "core:resources".into()
+    } else {
+        r.name.clone()
+    }
+}
+
+pub fn is_default_tree(r: &Row) -> bool {
+    r.kind == KIND_TREE && r.body.get("default").and_then(Value::as_bool) == Some(true)
+}
+
+/// D473: the tree a row of the `resources` tree belongs to: its top ancestor when that is a tree,
+/// else (the top level) the default tree.
+pub fn tree_of(conn: &Connection, row: &Row) -> rusqlite::Result<Option<Row>> {
+    if row.tree.as_deref() != Some(TREE_RESOURCES) {
+        return Ok(None);
+    }
+    if row.kind == KIND_TREE {
+        return Ok(Some(row.clone()));
+    }
+    if let Some(top) = ancestors(conn, row)?.into_iter().next().filter(|a| a.kind == KIND_TREE) {
+        return Ok(Some(top));
+    }
+    Ok(resource_trees(conn)?.into_iter().find(is_default_tree))
+}
+
+/// The view id of a tree row: `resources` for the default one, `resources.<id>` for the others.
+pub fn view_of(tree: &Row) -> String {
+    if is_default_tree(tree) {
+        TREE_RESOURCES.to_string()
+    } else {
+        format!("{RESOURCE_VIEW_PREFIX}{}", tree.id)
+    }
 }
 
 /// Including deleted rows.
@@ -118,7 +174,7 @@ pub fn children(
 ) -> rusqlite::Result<Vec<Row>> {
     let mut st = conn.prepare_cached(&format!(
         "SELECT {COLUMNS} FROM resources WHERE tree = ?1 AND parent_id IS ?2 AND deleted_at IS NULL \
-         ORDER BY pos, id LIMIT ?3 OFFSET ?4"
+         AND kind <> 'core:tree' ORDER BY pos, id LIMIT ?3 OFFSET ?4"
     ))?;
     let rows = st.query_map(params![tree, parent, limit, offset], from_row)?;
     rows.collect()

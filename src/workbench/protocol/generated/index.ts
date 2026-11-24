@@ -38,6 +38,7 @@ export type * from "./ImportParams";
 export type * from "./ImportPreview";
 export type * from "./ImportResult";
 export type * from "./ImportSkip";
+export type * from "./InheritedEnv";
 export type * from "./InheritedValue";
 export type * from "./InstallAnswerOutcome";
 export type * from "./InstallAnswerParams";

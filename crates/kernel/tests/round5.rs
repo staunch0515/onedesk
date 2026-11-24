@@ -301,7 +301,8 @@ async fn migration_0008_rebuilds_references_of_existing_resources() {
     {
         let conn = Connection::open(ws.join("workspace.db")).unwrap();
         conn.execute_batch("DROP TABLE refs; DROP INDEX resources_name; DELETE FROM meta WHERE key = 'refs_built'; UPDATE meta SET value = '7' WHERE key = 'schema_version';
-                            ALTER TABLE audit_counts DROP COLUMN last_summary; ALTER TABLE audit_counts DROP COLUMN failures;").unwrap();
+                            ALTER TABLE audit_counts DROP COLUMN last_summary; ALTER TABLE audit_counts DROP COLUMN failures;
+                            ALTER TABLE resources DROP COLUMN default_env;").unwrap();
     }
     tokio::time::sleep(Duration::from_millis(50)).await;
     let k = onedesk_kernel::Kernel::open(&ws, &plugins, config_for(&plugins)).unwrap();

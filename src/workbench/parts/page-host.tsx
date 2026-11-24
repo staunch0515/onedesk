@@ -101,6 +101,17 @@ function ResolvedPage({ tab }: { tab: TabState }) {
   useEffect(() => {
     if (d?.usesEnv) store.set({ envTabId: tab.id });
   }, [d?.usesEnv, tab.id, store]);
+  // D473: a tab whose environment nobody chose opens in the page's default one (the resource's, its group's, its tree's).
+  // It does not become the "last" environment: that stays the one last picked by hand.
+  useEffect(() => {
+    const env = d?.defaultEnv;
+    if (!env) return;
+    store.set((s) => {
+      const cur = s.tabs.find((x) => x.id === tab.id);
+      if (!cur || !cur.envAuto || cur.envId === env) return {};
+      return { tabs: s.tabs.map((x) => (x.id === tab.id ? { ...x, envId: env } : x)) };
+    });
+  }, [d?.defaultEnv, tab.id, store]);
 
   if (!d) {
     return page.error ? <ErrorState title={t("page.loadFailed")} reason={page.error} resolution={page.errorDetail ? <Text size="xs" tone="muted" mono>{t("page.errorDetail", { detail: page.errorDetail })}</Text> : undefined} onRetry={page.reload} retryLabel={t("common.retry")} /> : <LoadingState label={t("common.loading")} />;

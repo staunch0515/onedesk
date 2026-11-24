@@ -157,6 +157,7 @@ fn blank(target: &str) -> PageDescriptor {
         found: true,
         state: NodeState::Ok,
         state_reason: None,
+        default_env: None,
         breadcrumb: vec![],
         page: PageKind::View,
         view: vec![],
@@ -333,14 +334,20 @@ impl Inner {
     fn crumbs(&self, r: &Row) -> KResult<Vec<Crumb>> {
         let mut chain = self.read(|c| store::ancestors(c, r))?;
         chain.push(r.clone());
+        // D473: in a resource tree, every crumb reveals in that tree's view; the tree's own crumb (and
+        // a group's) opens its page, since it is not a node of the view.
+        let view = self.view_of_row(r);
         Ok(chain
             .into_iter()
-            .map(|a| Crumb {
-                icon: Some(self.row_meta(&a).icon),
-                tree: a.tree.clone(),
-                target: (a.kind != KIND_GROUP).then(|| format!("resource:{}", a.id)),
-                key: Some(a.id),
-                label: a.name,
+            .map(|a| {
+                let tree_node = a.kind == store::KIND_TREE;
+                Crumb {
+                    icon: Some(self.row_meta(&a).icon),
+                    tree: if a.tree.as_deref() == Some(store::TREE_RESOURCES) { view.clone() } else { a.tree.clone() },
+                    target: Some(format!("resource:{}", a.id)),
+                    key: (!tree_node).then(|| a.id.clone()),
+                    label: store::shown_name(&a),
+                }
             })
             .collect())
     }
@@ -410,7 +417,7 @@ impl Inner {
     ) -> KResult<PageDescriptor> {
         let meta = self.row_meta(r);
         let mut d = PageDescriptor {
-            title: r.name.clone(),
+            title: store::shown_name(r),
             icon: meta.icon.clone(),
             kind_label: Some(meta.label.clone()),
             // Round 16: a resource whose source is gone still opens, marked.
@@ -420,9 +427,10 @@ impl Inner {
             resource_id: Some(r.id.clone()),
             has_info: true,
             basis: Some(r.rev.to_string()),
+            default_env: self.env_along(r, true)?.map(|(env, _)| env.id),
             ..blank(target)
         };
-        if r.kind == KIND_GROUP {
+        if r.kind == KIND_GROUP || r.kind == store::KIND_TREE {
             return Ok(d);
         }
         if r.kind == store::KIND_ENV {
@@ -571,6 +579,7 @@ impl Inner {
             updated_at: 0,
             updated_by: String::new(),
             deleted_at: None,
+            default_env: None,
         });
         for (k, v) in &values {
             if let Some(b) = k.strip_prefix("body.") {
@@ -652,6 +661,7 @@ impl Inner {
             updated_at: 0,
             updated_by: String::new(),
             deleted_at: None,
+            default_env: None,
         };
         let mut breadcrumb = match &parent {
             Some(p) => match self.read(|c| store::get(c, p))? {
@@ -679,6 +689,7 @@ impl Inner {
             has_info: true,
             values,
             view: out.view,
+            default_env: self.env_along(&draft_row, false)?.map(|(env, _)| env.id),
             ..blank(target)
         };
         // K-R1: an unsaved page can run, so it has the same frame (result tabs…) as a saved one.
@@ -852,6 +863,11 @@ impl Inner {
                     )
                     .await?;
                 let id = out.id.ok_or_else(|| internal("no id"))?;
+                // D473: a default environment chosen before the first save.
+                if let Some(env) = changes.default_env.clone().filter(|e| !e.is_empty()) {
+                    let set = Changes { default_env: Some(env), ..Default::default() };
+                    self.execute(Actor::User, Command::Update { id: id.clone(), changes: set, basis: None, overwrite: vec![] }).await?;
+                }
                 if !secrets.is_empty() {
                     let mut raw = secrets;
                     let pending = self.take_secret_fields(&id, &secret_fields, &mut raw, None)?;

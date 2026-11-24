@@ -17,6 +17,11 @@ export interface TabState {
   pinned: boolean;
   /** Tab context (§9.2): the environment used for parameters and policy. */
   envId: string | null;
+  /**
+   * D473: the environment was not chosen for this tab (by hand, or by the page it was opened from): the page's own default
+   * (`PageDescriptor.defaultEnv`: the resource's, its group's, its tree's) replaces it once known.
+   */
+  envAuto?: boolean;
   /** Page state: run parameters typed by the user, by name. */
   params: Record<string, string>;
   /** Selected result sub-tab. */

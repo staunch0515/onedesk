@@ -440,6 +440,23 @@ pub struct Resource {
     pub updated_by: String,
     /// Round 19 (D448): whether an AI client may see this resource. Always sent; absent = false.
     pub ai_visible: Option<bool>,
+    /// D473: the environment its pages open in, set on this resource itself; absent = the place above decides.
+    pub default_env: Option<String>,
+    /// D473: what the place above gives when this resource sets none (its group, then its tree, …).
+    pub inherited_env: Option<InheritedEnv>,
+}
+
+/// D473: a default environment and where it is set.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct InheritedEnv {
+    pub env_id: String,
+    pub env_name: String,
+    /// The group or tree that sets it; its name ("" for the unnamed default tree).
+    pub from_id: String,
+    pub from_name: String,
+    pub from_kind: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -751,6 +768,9 @@ pub struct PageDescriptor {
     pub resource_id: Option<String>,
     pub run_id: Option<String>,
     pub uses_env: bool,
+    /// D473: the environment this page opens in by default: the resource's own, else its group's,
+    /// its tree's (absent: the shell's last one). A tab chosen by hand or opened from another page keeps its own.
+    pub default_env: Option<String>,
     /// Whether the frame shows the information panel (resource pages).
     pub has_info: bool,
     pub read_only: bool,

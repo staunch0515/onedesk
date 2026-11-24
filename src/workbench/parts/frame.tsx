@@ -80,7 +80,7 @@ export function Frame({ tab, descriptor, meta, actions, children, panel }: Frame
         placeholder={t("page.pickEnvironment")}
         invalid={envMissing || !tab.envId}
         value={envMissing ? undefined : (tab.envId ?? undefined)}
-        onValueChange={(envId) => wb.updateTab(tab.id, { envId })}
+        onValueChange={(envId) => wb.updateTab(tab.id, { envId, envAuto: false })}
         options={(envs.data ?? []).map((e) => ({ value: e.id, label: `${" ".repeat(e.depth)}${e.name}`, icon: "layers" }))}
       />
     </TitleBarSlot>

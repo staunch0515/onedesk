@@ -1,6 +1,6 @@
 import { useState } from "react";
-import { Badge, Button, IconButton, InfoField, InfoPanel, Input, LoadingState, Pane, Switch, Text, Textarea, Tooltip, useToast } from "../../design";
-import type { HistoryEntry, PageDescriptor, RefInfo } from "../protocol";
+import { Badge, Button, IconButton, InfoField, InfoPanel, Input, LoadingState, Pane, Popover, Select, Switch, Text, Textarea, Tooltip, useToast } from "../../design";
+import type { HistoryEntry, InheritedEnv, PageDescriptor, RefInfo } from "../protocol";
 import { useI18n } from "../i18n";
 import { useQuery, useUi, useWorkbench } from "../state/context";
 
@@ -140,6 +140,66 @@ function AiVisibleSection({ id, visible, group, disabled }: { id: string; visibl
   );
 }
 
+/** D473: a resource of a resource tree (any of them, its groups and the trees themselves). */
+export const inResourceTree = (tree: string) => tree === "resources" || tree.startsWith("resources.");
+
+/** The `Select` value standing for "as the place above says" (a Select item cannot have an empty value). */
+const FOLLOW = "__follow";
+
+/**
+ * D473: the environment pages of this resource (and of everything below a group or tree) open in. Empty = as the place
+ * above says (its group, its tree); the field says which one that is and where it is set.
+ */
+function DefaultEnvField({ value, inherited, inheritedName, disabled, onChange }: { value: string | null | undefined; inherited?: InheritedEnv; inheritedName?: string; disabled?: boolean; onChange: (env: string) => void }) {
+  const { t, tx, pageTitle } = useI18n();
+  const envs = useQuery((c) => c.params.envOptions(), [], ["env", "tree:environments"]);
+  const follow = inherited
+    ? t("info.envFollow", { env: inherited.envName, from: inherited.fromName ? inherited.fromName : tx("resources") })
+    : inheritedName
+      ? t("info.envFollowOnly", { env: inheritedName })
+      : t("info.envFollowNone");
+  const options = [{ value: FOLLOW, label: follow }, ...(envs.data ?? []).map((e) => ({ value: e.id, label: `${"  ".repeat(e.depth)}${pageTitle(e.name)}` }))];
+  return (
+    <InfoField label={t("info.defaultEnv")}>
+      <Select size="sm" aria-label={t("info.defaultEnv")} options={options} value={value || FOLLOW} disabled={disabled} onValueChange={(v) => onChange(v === FOLLOW ? "" : v)} />
+    </InfoField>
+  );
+}
+
+/** D473: icons a resource tree can be given (lucide names). */
+const TREE_ICONS = ["library", "folder-kanban", "briefcase", "building-2", "factory", "store", "database", "server", "cloud", "hard-drive", "network", "boxes", "package", "layers", "layout-dashboard", "globe", "rocket", "flask-conical", "wrench", "shield", "users", "graduation-cap", "heart-pulse", "landmark"];
+
+function TreeIconField({ icon, disabled, onPick }: { icon: string; disabled?: boolean; onPick: (icon: string) => void }) {
+  const { t } = useI18n();
+  const [open, setOpen] = useState(false);
+  return (
+    <InfoField label={t("info.icon")}>
+      <Popover
+        open={open}
+        onOpenChange={setOpen}
+        title={t("info.iconPick")}
+        trigger={<IconButton icon={icon} variant="secondary" label={t("info.iconPick")} disabled={disabled} />}
+      >
+        <Pane direction="row" gap="xs" wrap>
+          {TREE_ICONS.map((name) => (
+            <IconButton
+              key={name}
+              icon={name}
+              label={name}
+              variant={name === icon ? "secondary" : "ghost"}
+              aria-pressed={name === icon}
+              onClick={() => {
+                setOpen(false);
+                if (name !== icon) onPick(name);
+              }}
+            />
+          ))}
+        </Pane>
+      </Popover>
+    </InfoField>
+  );
+}
+
 /** Frame-owned info about a resource (§9.3): name, location, description, tags, created / modified. */
 export function InfoPanelPart({ resourceId, side }: { resourceId: string; side?: "left" | "right" }) {
   const { client, store, actions } = useWorkbench();
@@ -157,6 +217,8 @@ export function InfoPanelPart({ resourceId, side }: { resourceId: string; side?:
           size="sm"
           aria-label={t("info.name")}
           defaultValue={res.name}
+          // The default resource tree starts without a name: the shell's word for it (D473).
+          placeholder={res.kind === "core:tree" ? tx("resources") : undefined}
           readOnly={res.readOnly}
           onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
           onBlur={(e) => {
@@ -168,7 +230,8 @@ export function InfoPanelPart({ resourceId, side }: { resourceId: string; side?:
       <InfoField label={t("info.location")}>
         <Pane direction="row" align="center" gap="xs">
           <Pane grow>
-            <Text size="sm">{[t("info.root"), ...res.location].join(" / ")}</Text>
+            {/* In a resource tree the place starts with the tree; the unnamed default one is the shell's word (D473). */}
+            <Text size="sm">{(inResourceTree(res.tree) && res.location.length > 0 ? res.location.map((n) => n || tx("resources")) : [t("info.root"), ...res.location]).join(" / ")}</Text>
           </Pane>
           <IconButton icon="locate" size="sm" label={t("info.reveal")} onClick={() => void actions.reveal(res.tree, res.id)} />
         </Pane>
@@ -217,7 +280,9 @@ export function InfoPanelPart({ resourceId, side }: { resourceId: string; side?:
           )}
         </Pane>
       </InfoField>
-      {res.kind !== "core:env" && res.kind !== "core:config" && <AiVisibleSection id={resourceId} visible={Boolean(res.aiVisible)} group={res.kind === "core:group"} disabled={res.readOnly || res.deleted} />}
+      {res.kind === "core:tree" && <TreeIconField icon={res.icon} disabled={res.readOnly} onPick={(icon) => void update({ "body.icon": icon })} />}
+      {inResourceTree(res.tree) && <DefaultEnvField value={res.defaultEnv} inherited={res.inheritedEnv} disabled={res.readOnly || res.deleted} onChange={(env) => void update({ defaultEnv: env })} />}
+      {res.kind !== "core:env" && res.kind !== "core:config" && <AiVisibleSection id={resourceId} visible={Boolean(res.aiVisible)} group={res.kind === "core:group" || res.kind === "core:tree"} disabled={res.readOnly || res.deleted} />}
       {res.origin !== "original" && (
         <InfoField label={t("info.origin")}>
           <Text size="sm">{res.origin === "subscribed" ? t("info.subscribedFrom", { source: res.originRef ?? "" }) : t("info.copied")}</Text>
@@ -258,6 +323,8 @@ export function NewInfoPanelPart({ tabId, descriptor, side }: { tabId: string; d
   const name = typeof draft?.name === "string" ? draft.name : pageTitle(descriptor.title);
   const description = typeof draft?.description === "string" ? draft.description : "";
   const tags = Array.isArray(draft?.tags) ? (draft.tags as string[]) : [];
+  const defaultEnv = typeof draft?.defaultEnv === "string" ? draft.defaultEnv : "";
+  const envs = useQuery((c) => c.params.envOptions(), [], ["env", "tree:environments"]);
   const location = descriptor.breadcrumb.slice(0, -1).map((c) => pageTitle(c.label));
   return (
     <InfoPanel side={side} title={t("info.title")} label={t("info.title")} closeLabel={t("info.hide")} onClose={() => store.set({ infoOpen: false })}>
@@ -301,6 +368,12 @@ export function NewInfoPanelPart({ tabId, descriptor, side }: { tabId: string; d
           )}
         </Pane>
       </InfoField>
+      {/* D473: chosen now, kept with the first save; empty = as its group or tree says. */}
+      <DefaultEnvField
+        value={defaultEnv}
+        inheritedName={descriptor.defaultEnv ? envs.data?.find((e) => e.id === descriptor.defaultEnv)?.name : undefined}
+        onChange={(env) => actions.setDraft(tabId, "defaultEnv", env === "" ? undefined : env, undefined)}
+      />
     </InfoPanel>
   );
 }

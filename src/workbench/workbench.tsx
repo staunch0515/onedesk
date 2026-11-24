@@ -34,7 +34,8 @@ export function Workbench({ settings, languages, onSetting: storeSetting }: Work
   const { t, tx, locale } = useI18n();
   const { toast } = useToast();
   const { resolvedTheme } = useTheme();
-  const trees = useQuery((c) => c.tree.list(), []);
+  // D473: the resource trees are the user's: the list follows their changes.
+  const trees = useQuery((c) => c.tree.list(), [], ["tree:resources", "plugins"]);
   const palette = useQuery((c) => c.command.palette(), []);
   const newItems = useQuery((c) => c.command.newItems(), []);
   const activity = useUi((s) => s.activity);
@@ -216,9 +217,20 @@ export function Workbench({ settings, languages, onSetting: storeSetting }: Work
         label={t("activity.label")}
         activeKey={sideOpen ? (tree?.id ?? null) : null}
         items={(trees.data ?? []).map((x, i) => ({ key: x.id, icon: x.icon, label: tx(x.title), shortcut: i < 9 ? ["⌘", String(i + 1)] : undefined, badge: x.id === "runs" ? runningCount : undefined }))}
-        footer={[{ key: "__settings", icon: "settings", label: t("topbar.settings"), shortcut: ["⌘", ","] }]}
+        footer={[
+          // D473: a resource tree of the user's own ("XX project"); it opens its page to be named.
+          { key: "__newTree", icon: "plus", label: tx("tree.new") },
+          { key: "__settings", icon: "settings", label: t("topbar.settings"), shortcut: ["⌘", ","] },
+        ]}
         onSelect={(key) => {
-          if (key === "__settings") void openSettings();
+          if (key === "__newTree") {
+            // The new tree's page opens; its view is shown beside it.
+            void actions.command("tree.new", {}).then(() => {
+              const s = store.get();
+              const target = s.tabs.find((x) => x.id === s.activeTabId)?.target ?? "";
+              if (target.startsWith("resource:")) store.set({ activity: `resources.${target.slice("resource:".length)}`, sideOpen: true });
+            });
+          } else if (key === "__settings") void openSettings();
           else if (key === activity && sideOpen) store.set({ sideOpen: false });
           else store.set({ activity: key, sideOpen: true });
         }}

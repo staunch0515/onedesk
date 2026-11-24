@@ -17,6 +17,11 @@ export type PageDescriptor = { target: string, title: string, icon: string, kind
  */
 actions: Array<ActionDecl>, resultTabs: Array<ResultTabDecl>, resourceId?: string, runId?: string, usesEnv: boolean, 
 /**
+ * D473: the environment this page opens in by default: the resource's own, else its group's,
+ * its tree's (absent: the shell's last one). A tab chosen by hand or opened from another page keeps its own.
+ */
+defaultEnv?: string, 
+/**
  * Whether the frame shows the information panel (resource pages).
  */
 hasInfo: boolean, readOnly: boolean, 

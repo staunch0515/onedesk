@@ -614,3 +614,120 @@ async fn an_own_parameter_is_renamed_with_its_value_and_type() {
     let e = c.call("params.rename", json!({ "node": child, "name": "price", "newName": "p2" })).await.unwrap_err();
     assert_eq!(reason(e), Some("notFound".to_string()));
 }
+
+/* ------------------------------------------------------------ D473: resource trees, default environments */
+
+async fn item_in(c: &Client, parent: &str, name: &str) -> String {
+    let target = format!("new:test.alpha:item?parent={parent}");
+    let r = c.ok("page.save", json!({ "target": target, "changes": { "name": name, "body.text": "" } })).await;
+    r["page"]["resourceId"].as_str().unwrap().to_string()
+}
+
+fn labels(page: &Value) -> Vec<String> {
+    page["nodes"].as_array().unwrap().iter().map(|n| n["label"].as_str().unwrap().to_string()).collect()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_user_tree_is_a_view_of_its_own_with_its_contents() {
+    let (_env, c) = setup().await;
+    // Installed: one tree, the default, unnamed (the shell's word "resources").
+    let views = |l: &Value| l.as_array().unwrap().iter().filter(|t| t["id"].as_str().unwrap().starts_with("resources")).map(|t| (t["id"].as_str().unwrap().to_string(), t["title"].as_str().unwrap().to_string())).collect::<Vec<_>>();
+    assert_eq!(views(&c.ok("tree.list", Value::Null).await), vec![("resources".to_string(), "resources".to_string())]);
+    let top = item(&c, "Top note", "").await;
+    // A new tree: its node opens (its page holds its information), named by its user afterwards.
+    let eff = c.ok("command.execute", json!({ "id": "tree.new", "context": { "args": { "name": "Data center" } } })).await;
+    let tree = eff[0]["target"].as_str().unwrap().strip_prefix("resource:").unwrap().to_string();
+    let view = format!("resources.{tree}");
+    assert_eq!(views(&c.ok("tree.list", Value::Null).await), vec![("resources".to_string(), "resources".to_string()), (view.clone(), "Data center".to_string())]);
+    let page = c.ok("page.resolve", json!({ "target": format!("resource:{tree}"), "context": {} })).await;
+    assert_eq!(page["hasInfo"], true);
+    // Its contents: a group and an item inside it, created from its view.
+    let g = c.ok("tree.createGroup", json!({ "tree": view, "name": "Scripts" })).await["key"].as_str().unwrap().to_string();
+    let inner = item_in(&c, &g, "Inner").await;
+    let direct = item_in(&c, &tree, "Direct").await;
+    assert_eq!(labels(&c.ok("tree.children", json!({ "tree": view })).await), vec!["Scripts", "Direct"]);
+    assert_eq!(labels(&c.ok("tree.children", json!({ "tree": "resources" })).await), vec!["Top note"]);
+    let nodes = c.ok("tree.children", json!({ "tree": view })).await;
+    assert_eq!(nodes["nodes"][0]["tree"], view.as_str());
+    assert_eq!(nodes["nodes"][0]["parentKey"], Value::Null);
+    // The path in its view leaves the tree's own node out; the breadcrumb reveals in its view.
+    let path: Vec<String> = serde_json::from_value(c.ok("tree.path", json!({ "tree": view, "key": inner })).await).unwrap();
+    assert_eq!(path, vec![g.clone(), inner.clone()]);
+    let crumbs = c.ok("page.resolve", json!({ "target": format!("resource:{inner}"), "context": {} })).await["breadcrumb"].clone();
+    assert_eq!(crumbs[0]["label"], "Data center");
+    assert_eq!(crumbs[0]["key"], Value::Null);
+    assert_eq!(crumbs[1]["tree"], view.as_str());
+    // Moving to another tree: the choice of trees first, then the move.
+    let ask = c.ok("command.execute", json!({ "id": "node.moveToTree", "context": { "tree": "resources", "nodeKey": top } })).await;
+    assert_eq!(ask[0]["type"], "confirm");
+    assert_eq!(ask[0]["choices"][0]["id"], view.as_str());
+    c.ok("command.execute", json!({ "id": "node.moveToTree", "context": { "tree": "resources", "nodeKey": top, "args": { "tree": view, "confirmed": true } } })).await;
+    assert_eq!(labels(&c.ok("tree.children", json!({ "tree": view })).await), vec!["Scripts", "Direct", "Top note"]);
+    assert!(labels(&c.ok("tree.children", json!({ "tree": "resources" })).await).is_empty());
+    // Dropped at the top of a view: into that tree.
+    c.ok("tree.move", json!({ "tree": "resources", "key": direct, "position": "inside" })).await;
+    assert_eq!(labels(&c.ok("tree.children", json!({ "tree": "resources" })).await), vec!["Direct"]);
+    // A tree stays at the top; the default one stays.
+    let e = c.call("tree.move", json!({ "tree": view, "key": tree, "target": g, "position": "inside" })).await.unwrap_err();
+    assert_eq!(e.code, ErrorCode::Invalid);
+    let default_tree = c.ok("command.execute", json!({ "id": "tree.info", "context": { "tree": "resources" } })).await[0]["target"].as_str().unwrap().strip_prefix("resource:").unwrap().to_string();
+    let e = c.call("command.execute", json!({ "id": "node.delete", "context": { "nodeKey": default_tree } })).await.unwrap_err();
+    assert_eq!(e.params.get("reason").map(String::as_str), Some("defaultTree"));
+    // Deleting a tree takes its contents to the deleted items.
+    c.ok("command.execute", json!({ "id": "node.delete", "context": { "nodeKey": tree } })).await;
+    assert_eq!(views(&c.ok("tree.list", Value::Null).await).len(), 1);
+    assert_eq!(c.ok("resource.get", json!({ "id": inner })).await, Value::Null);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_default_environment_is_the_nearest_one_set_along_the_place() {
+    let (_env, c) = setup().await;
+    let def = root(&c, "env").await;
+    let prod = new_env(&c, Some(&def), "Production").await;
+    let test = new_env(&c, Some(&def), "Test").await;
+    let eff = c.ok("command.execute", json!({ "id": "tree.new", "context": { "args": { "name": "Project" } } })).await;
+    let tree = eff[0]["target"].as_str().unwrap().strip_prefix("resource:").unwrap().to_string();
+    let view = format!("resources.{tree}");
+    let g = c.ok("tree.createGroup", json!({ "tree": view, "name": "Tests" })).await["key"].as_str().unwrap().to_string();
+    let inner = item_in(&c, &g, "Inner").await;
+    let direct = item_in(&c, &tree, "Direct").await;
+    let top = item(&c, "Top", "").await;
+    let default_env = |id: String| {
+        let c = &c;
+        async move { c.ok("page.resolve", json!({ "target": format!("resource:{id}"), "context": {} })).await["defaultEnv"].clone() }
+    };
+    let save = |id: String, env: &str| {
+        let c = &c;
+        let env = env.to_string();
+        async move { c.ok("page.save", json!({ "target": format!("resource:{id}"), "changes": { "defaultEnv": env } })).await }
+    };
+    // Nothing set: no default (the shell keeps its last one).
+    assert_eq!(default_env(inner.clone()).await, Value::Null);
+    // The tree sets Production: everything in it, not the other trees.
+    save(tree.clone(), &prod).await;
+    assert_eq!(default_env(inner.clone()).await, prod.as_str());
+    assert_eq!(default_env(direct.clone()).await, prod.as_str());
+    assert_eq!(default_env(top.clone()).await, Value::Null);
+    // The group sets Test: nearer wins; the info panel says where the inherited one comes from.
+    save(g.clone(), &test).await;
+    assert_eq!(default_env(inner.clone()).await, test.as_str());
+    let r = c.ok("resource.get", json!({ "id": inner })).await;
+    assert_eq!(r["defaultEnv"], Value::Null);
+    assert_eq!((r["inheritedEnv"]["envName"].as_str(), r["inheritedEnv"]["fromName"].as_str()), (Some("Test"), Some("Tests")));
+    // The resource itself sets Production: its own.
+    save(inner.clone(), &prod).await;
+    assert_eq!(default_env(inner.clone()).await, prod.as_str());
+    // Cleared: the place above again.
+    save(inner.clone(), "").await;
+    assert_eq!(default_env(inner.clone()).await, test.as_str());
+    // The default tree's setting is for the top level.
+    let default_tree = c.ok("command.execute", json!({ "id": "tree.info", "context": { "tree": "resources" } })).await[0]["target"].as_str().unwrap().strip_prefix("resource:").unwrap().to_string();
+    save(default_tree, &test).await;
+    assert_eq!(default_env(top.clone()).await, test.as_str());
+    // A new resource in the group: its page opens in the group's environment.
+    let new = c.ok("page.resolve", json!({ "target": format!("new:test.alpha:item?parent={g}"), "context": {} })).await;
+    assert_eq!(new["defaultEnv"], test.as_str());
+    // Not an environment: refused.
+    let e = c.call("page.save", json!({ "target": format!("resource:{inner}"), "changes": { "defaultEnv": g } })).await.unwrap_err();
+    assert_eq!(e.params.get("reason").map(String::as_str), Some("notEnv"));
+}

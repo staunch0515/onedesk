@@ -17,6 +17,12 @@ export const KERNEL_LABELS: Table = {
   "plugin.grantFolder": "kernel.label.plugin.grantFolder",
   "resources": "kernel.label.resources",
   "core:group": "kernel.label.core:group",
+  "core:tree": "kernel.label.core:tree",
+  "core:resources": "kernel.label.resources",
+  "tree.info": "kernel.label.tree.info",
+  "tree.new": "kernel.label.tree.new",
+  "node.moveToTree": "kernel.label.node.moveToTree",
+  "node.moveToTree.pick": "kernel.label.node.moveToTree.pick",
   "core:env": "kernel.label.core:env",
   "core:config": "kernel.label.core:config",
   "core:audit": "kernel.label.core:audit",
@@ -137,6 +143,9 @@ export const KERNEL_ERRORS: Table = {
   "reason.targetNotFound": "kernel.error.reason.targetNotFound",
   "reason.noGroups": "kernel.error.reason.noGroups",
   "reason.notParamNode": "kernel.error.reason.notParamNode",
+  "reason.treeAtTop": "kernel.error.reason.treeAtTop",
+  "reason.defaultTree": "kernel.error.reason.defaultTree",
+  "reason.notEnv": "kernel.error.reason.notEnv",
   "reason.badParamName": "kernel.error.reason.badParamName",
   "reason.paramExists": "kernel.error.reason.paramExists",
   "reason.reservedField": "kernel.error.reason.reservedField",
@@ -411,6 +420,7 @@ export const RUN_ERRORS_NAMED: Table = {
 /** Title and confirm-button words for the kernel's `confirm` effects, by message key. */
 export const KERNEL_CONFIRMS: Record<string, { title: MessageKey; ok: MessageKey }> = {
   "deleted.purge.confirm": { title: "kernel.confirm.deleted.purge.confirm.title", ok: "kernel.confirm.deleted.purge.confirm.ok" },
+  "node.moveToTree.pick": { title: "kernel.confirm.node.moveToTree.pick.title", ok: "kernel.confirm.node.moveToTree.pick.ok" },
   "run.delete.confirm": { title: "kernel.confirm.run.delete.confirm.title", ok: "kernel.confirm.run.delete.confirm.ok" },
 };
 

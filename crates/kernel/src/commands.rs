@@ -22,6 +22,8 @@ fn bad_effects(detail: String) -> onedesk_protocol::ProtocolError {
 
 pub const DEFAULT_ENV_NAME: &str = "New environment";
 pub const DEFAULT_CONFIG_NAME: &str = "New configuration";
+/// D473: the name of a new resource tree until its user names it.
+pub const DEFAULT_TREE_NAME: &str = "New tree";
 
 /// The resource a node command is about: `nodeKey`, or a `resource:` target.
 fn node_resource(c: &CommandContext) -> KResult<String> {
@@ -43,10 +45,8 @@ impl Inner {
                 let target = match (&c.target, &c.tree, &c.node_key) {
                     (Some(t), _, _) => t.clone(),
                     (None, Some(tree), Some(key)) if self.stored_tree(tree).is_ok() => {
+                        // D473: a group opens too: its page holds its information (default environment).
                         let r = self.row_in_tree(tree, key)?;
-                        if r.kind == KIND_GROUP {
-                            return Ok(vec![]);
-                        }
                         format!("resource:{}", r.id)
                     }
                     (None, Some(tree), Some(key)) => node_target(tree, key),
@@ -76,7 +76,7 @@ impl Inner {
             "node.delete" => {
                 let key = c.node_key.clone().ok_or_else(|| invalid_params("nodeKey"))?;
                 let row = self.live_row(&key)?;
-                if self.hidden_tree(&row) || c.tree.as_deref().is_some_and(|t| row.tree.as_deref() != Some(t)) {
+                if self.hidden_tree(&row) || c.tree.as_deref().is_some_and(|t| self.row_in_tree(t, &row.id).is_err()) {
                     return Err(not_found("node"));
                 }
                 let out = self.execute(Actor::User, Command::Delete { id: row.id }).await?;
@@ -125,6 +125,83 @@ impl Inner {
                 let tree = tree.to_string();
                 Ok(vec![CommandEffect::Reveal { tree: tree.clone(), key: id.clone() }, CommandEffect::Rename { tree, key: id }])
             }
+            // D473: resource trees of the user's own.
+            "tree.new" => {
+                let trees = self.read(store::resource_trees)?;
+                let mut name = arg("name").filter(|n| !n.trim().is_empty()).unwrap_or_else(|| DEFAULT_TREE_NAME.to_string());
+                let base = name.clone();
+                let mut i = 2;
+                while trees.iter().any(|t| t.name == name) {
+                    name = format!("{base} {i}");
+                    i += 1;
+                }
+                let out = self
+                    .execute(
+                        Actor::User,
+                        Command::Create(crate::pipeline::NewResource {
+                            kind: store::KIND_TREE.into(),
+                            tree: None,
+                            parent: None,
+                            name,
+                            description: String::new(),
+                            tags: vec![],
+                            body: JsonMap::new(),
+                            plugin_version: None,
+                        }),
+                    )
+                    .await?;
+                let id = out.id.ok_or_else(|| internal("no id"))?;
+                Ok(vec![CommandEffect::Open { target: format!("resource:{id}"), params: None, env_id: None }])
+            }
+            "tree.info" => {
+                let view = c.tree.clone().ok_or_else(|| invalid_params("tree"))?;
+                let root = match self.resource_view(&view).ok_or_else(|| not_found("tree"))? {
+                    Some(id) => id,
+                    None => self
+                        .read(store::resource_trees)?
+                        .into_iter()
+                        .find(store::is_default_tree)
+                        .map(|t| t.id)
+                        .ok_or_else(|| not_found("tree"))?,
+                };
+                Ok(vec![CommandEffect::Open { target: format!("resource:{root}"), params: None, env_id: None }])
+            }
+            "node.moveToTree" => {
+                let id = node_resource(&c)?;
+                let row = self.live_row(&id)?;
+                if row.tree.as_deref() != Some(store::TREE_RESOURCES) || row.kind == store::KIND_TREE {
+                    return Err(not_found("node"));
+                }
+                let here = self.view_of_row(&row);
+                let trees = self.read(store::resource_trees)?;
+                if let Some(view) = arg("tree") {
+                    let root = self.resource_view(&view).ok_or_else(|| not_found("tree"))?;
+                    self.execute(Actor::User, Command::Move { id: row.id.clone(), dest: crate::pipeline::MoveDest::Inside(root) }).await?;
+                    return Ok(vec![CommandEffect::Reveal { tree: view, key: row.id }]);
+                }
+                let choices: Vec<ConfirmChoice> = trees
+                    .iter()
+                    .map(|t| (store::view_of(t), t))
+                    .filter(|(v, _)| Some(v) != here.as_ref())
+                    .take(MAX_CONFIRM_CHOICES)
+                    .map(|(v, t)| ConfirmChoice {
+                        id: v,
+                        label: Some(Label::Text(if t.name.trim().is_empty() { store::TREE_RESOURCES.into() } else { t.name.clone() })),
+                        danger: None,
+                    })
+                    .collect();
+                if choices.is_empty() {
+                    return Ok(vec![]);
+                }
+                Ok(vec![CommandEffect::Confirm {
+                    message: Label::Text("node.moveToTree.pick".into()),
+                    command: "node.moveToTree".into(),
+                    danger: None,
+                    choices: Some(choices),
+                    choice_arg: Some("tree".into()),
+                    irreversible: None,
+                }])
+            }
             "node.favorite" | "node.unfavorite" => {
                 let id = node_resource(&c)?;
                 self.set_favorite(&id, p.id == "node.favorite").await?;
@@ -169,10 +246,12 @@ impl Inner {
                 }
                 // D356: not while a tree or page the kind borrows is not exported.
                 self.kind_usable(kind)?;
+                // D473: inside the chosen group, else at the top of the tree in view.
                 let parent = match &c.node_key {
                     Some(k) => self.read(|conn| store::get(conn, k))?.filter(|r| r.kind == KIND_GROUP).map(|r| r.id),
                     None => None,
-                };
+                }
+                .or_else(|| c.tree.as_deref().and_then(|t| self.resource_view(t)).flatten());
                 let target = match parent {
                     Some(p) => format!("new:{kind}?parent={}", url_encode(&p)),
                     None => format!("new:{kind}"),

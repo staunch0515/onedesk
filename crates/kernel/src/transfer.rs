@@ -324,6 +324,7 @@ impl Tx<'_> {
                 updated_at: self.at,
                 updated_by: actor.clone(),
                 deleted_at: None,
+                default_env: None,
             };
             self.insert(&row)?;
             if let Some(k) = &it.external_key {
@@ -576,8 +577,12 @@ impl Inner {
                     "SELECT {}, external_key FROM resources WHERE deleted_at IS NULL AND (tree IS NULL OR tree <> ?1) ORDER BY tree, parent_id, pos, id",
                     store::COLUMNS
                 ))?;
-                let rows: Vec<(Row, Option<String>)> =
-                    st.query_map([TREE_PLUGIN_STATE], |r| Ok((store::from_row(r)?, r.get(19)?)))?.collect::<Result<_, _>>()?;
+                // D473: the default resource tree's own node stays with its workspace (its contents
+                // are the top level); the other trees go with their contents.
+                let rows: Vec<(Row, Option<String>)> = st
+                    .query_map([TREE_PLUGIN_STATE], |r| Ok((store::from_row(r)?, r.get(20)?)))?
+                    .filter(|x| x.as_ref().map_or(true, |(r, _)| !store::is_default_tree(r)))
+                    .collect::<Result<_, _>>()?;
                 drop(st);
                 let mut refs = HashMap::new();
                 for (r, _) in &rows {
@@ -734,6 +739,7 @@ impl Inner {
                 (!kernel_only && self.stored_tree(&t).is_ok()).then_some(t)
             }
             KIND_ENV => Some(store::TREE_ENV.into()),
+            store::KIND_TREE => Some(TREE_RESOURCES.into()),
             k => self.rules.read().unwrap().get(k).and_then(|x| x.tree.clone()),
         }
     }
@@ -749,7 +755,7 @@ impl Inner {
         if serde_json::to_vec(&r.body).map(|b| b.len()).unwrap_or(usize::MAX) > crate::runs::MAX_INPUT_BYTES {
             return Ok(Decision::Skip("invalid"));
         }
-        if r.kind == KIND_GROUP || r.kind == KIND_ENV {
+        if r.kind == KIND_GROUP || r.kind == KIND_ENV || r.kind == store::KIND_TREE {
             if r.name.trim().is_empty() || self.import_tree(r).is_none() {
                 return Ok(Decision::Skip("invalid"));
             }
@@ -958,6 +964,7 @@ impl Inner {
                     updated_at: r.updated_at,
                     updated_by: r.updated_by.clone(),
                     deleted_at: None,
+                    default_env: None,
                 });
             }
         }
@@ -996,6 +1003,8 @@ impl Inner {
             }
             let parent = match r.parent.as_deref().and_then(|p| idx.get(p)) {
                 Some(&j) if map.contains_key(&resources[j].id) => ParentChoice::Id(map[&resources[j].id].clone()),
+                // D473: an imported tree is a tree of its own, at the top.
+                _ if r.kind == store::KIND_TREE => ParentChoice::Top,
                 _ if tree.as_deref() == Some(TREE_RESOURCES) => ParentChoice::Group,
                 _ => ParentChoice::Top,
             };

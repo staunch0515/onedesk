@@ -23,6 +23,17 @@ use crate::workspace::Workspace;
 pub const BATCH: u32 = 200;
 pub const DEFAULT_CLIENT: &str = "default";
 pub const DEFAULT_GROUP_NAME: &str = "New group";
+/// D473: the icon of a resource tree that has not been given one.
+pub const TREE_ICON: &str = "library";
+
+/// D473: the icon a user chose for a resource tree (`body.icon`, a lucide name).
+pub fn tree_icon(r: &Row) -> Option<String> {
+    r.body
+        .get("icon")
+        .and_then(Value::as_str)
+        .filter(|i| !i.is_empty() && i.len() <= 64 && i.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-'))
+        .map(String::from)
+}
 pub use crate::pipeline::GRANTS_KEY;
 
 #[derive(Debug, Clone)]
@@ -210,7 +221,7 @@ pub(crate) fn kernel_cmd(id: &str, icon: &str) -> MenuCommand {
 
 /// Per-request memo for `node_memo`: (kind, bound version) → meta, supplies children, dependents' actions.
 #[derive(Default)]
-pub(crate) struct NodeMemo(HashMap<(String, Option<String>), KindShared>);
+pub(crate) struct NodeMemo(HashMap<(String, Option<String>), KindShared>, Option<bool>);
 
 /// What every node of one kind shares: its meta, whether it supplies children, dependents' actions.
 type KindShared = (KindMeta, bool, Vec<ActionDecl>);
@@ -681,7 +692,14 @@ impl Inner {
 
     /// For a stored resource: its kind as the version it is bound to declares it.
     pub fn row_meta(&self, r: &Row) -> KindMeta {
-        self.kind_meta_v(&r.kind, r.plugin_version.as_deref())
+        let mut meta = self.kind_meta_v(&r.kind, r.plugin_version.as_deref());
+        // D473: a resource tree shows the icon its user chose.
+        if r.kind == store::KIND_TREE {
+            if let Some(icon) = tree_icon(r) {
+                meta.icon = icon;
+            }
+        }
+        meta
     }
 
     pub fn kind_meta_v(&self, kind: &str, version: Option<&str>) -> KindMeta {
@@ -699,10 +717,10 @@ impl Inner {
                 plugin: None,
             };
         }
-        if kind == KIND_GROUP {
+        if kind == KIND_GROUP || kind == store::KIND_TREE {
             return KindMeta {
-                label: Label::Text(KIND_GROUP.into()),
-                icon: "folder".into(),
+                label: Label::Text(kind.into()),
+                icon: if kind == KIND_GROUP { "folder" } else { TREE_ICON }.into(),
                 page: None,
                 draggable: true,
                 accepts: vec!["*".into()],
@@ -806,10 +824,33 @@ impl Inner {
 
     pub fn row_in_tree(&self, tree: &str, key: &str) -> KResult<Row> {
         let r = self.live_row(key)?;
-        if r.tree.as_deref() != Some(tree) {
+        let stored = if self.resource_view(tree).is_some() { TREE_RESOURCES } else { tree };
+        if r.tree.as_deref() != Some(stored) {
             return Err(not_found("node"));
         }
         Ok(r)
+    }
+
+    /// D473: a view of one resource tree. `None`: `tree` is not one; `Some(None)`: the default tree
+    /// (the top level of `resources`); `Some(Some(id))`: the tree whose node is `id`.
+    pub fn resource_view(&self, tree: &str) -> Option<Option<String>> {
+        if tree == TREE_RESOURCES {
+            return Some(None);
+        }
+        let id = tree.strip_prefix(store::RESOURCE_VIEW_PREFIX)?;
+        let row = self.read(|c| store::get(c, id)).ok().flatten()?;
+        (row.kind == store::KIND_TREE && row.parent_id.is_none() && !store::is_default_tree(&row)).then_some(Some(row.id))
+    }
+
+    /// D473: the view a row of `resources` is shown in (its tree's), else its own tree.
+    pub fn view_of_row(&self, r: &Row) -> Option<String> {
+        if r.tree.as_deref() != Some(TREE_RESOURCES) {
+            return r.tree.clone();
+        }
+        match self.read(|c| store::tree_of(c, r)).ok().flatten() {
+            Some(t) => Some(store::view_of(&t)),
+            None => r.tree.clone(),
+        }
     }
 
     pub fn resource(&self, r: &Row) -> KResult<Resource> {
@@ -817,13 +858,20 @@ impl Inner {
         let r = &self.display_row(r)?;
         let meta = self.row_meta(r);
         let (state, state_reason) = store::shown_state(r, meta.state, &meta.reason);
-        let location = self.read(|c| store::ancestors(c, r))?.into_iter().map(|a| a.name).collect();
+        let mut location: Vec<String> = self.read(|c| store::ancestors(c, r))?.into_iter().map(|a| a.name).collect();
+        // D473: in a resource tree the place starts with the tree (the default one's name may be "",
+        // the shell's word for it); `tree` is the view it is shown in.
+        if r.tree.as_deref() == Some(TREE_RESOURCES) && r.kind != store::KIND_TREE {
+            if let Some(t) = self.read(|c| store::tree_of(c, r))?.filter(store::is_default_tree) {
+                location.insert(0, t.name);
+            }
+        }
         Ok(Resource {
             id: r.id.clone(),
             kind: r.kind.clone(),
             kind_label: meta.label,
             icon: meta.icon,
-            tree: r.tree.clone().unwrap_or_default(),
+            tree: self.view_of_row(r).unwrap_or_default(),
             parent_id: r.parent_id.clone(),
             name: r.name.clone(),
             description: r.description.clone(),
@@ -844,6 +892,42 @@ impl Inner {
             updated_at: r.updated_at,
             updated_by: r.updated_by.clone(),
             ai_visible: Some(self.read(|c| store::is_ai_visible(c, &r.id))?),
+            default_env: r.default_env.clone(),
+            inherited_env: self.env_along(r, false)?.map(|(env, from)| InheritedEnv {
+                env_id: env.id,
+                env_name: env.name,
+                from_id: from.id,
+                from_name: from.name,
+                from_kind: from.kind,
+            }),
+        })
+    }
+
+    /// D473: the default environment along `r`'s place, nearest first: `r` itself (when `include_self`),
+    /// its groups upwards, its tree (a row at the top level of `resources`: the default tree). Returns the
+    /// environment and the row that sets it; an environment that no longer exists does not count.
+    pub fn env_along(&self, r: &Row, include_self: bool) -> KResult<Option<(Row, Row)>> {
+        if r.tree.as_deref() != Some(TREE_RESOURCES) {
+            return Ok(None);
+        }
+        self.read(|c| {
+            let mut chain: Vec<Row> = Vec::new();
+            if include_self {
+                chain.push(r.clone());
+            }
+            let ancestors = store::ancestors(c, r)?;
+            let in_tree = ancestors.first().is_some_and(|a| a.kind == store::KIND_TREE) || r.kind == store::KIND_TREE;
+            chain.extend(ancestors.into_iter().rev());
+            if !in_tree {
+                chain.extend(store::resource_trees(c)?.into_iter().filter(store::is_default_tree));
+            }
+            for row in chain {
+                let Some(id) = row.default_env.as_deref() else { continue };
+                if let Some(env) = store::get(c, id)?.filter(|e| e.kind == store::KIND_ENV) {
+                    return Ok(Some((env, row)));
+                }
+            }
+            Ok(None)
         })
     }
 
@@ -851,7 +935,7 @@ impl Inner {
 
     /// A stored tree id the protocol may touch: `resources` or a plugin's stored tree.
     pub fn stored_tree(&self, tree: &str) -> KResult<()> {
-        if tree == TREE_RESOURCES || tree == store::TREE_ENV || tree == store::TREE_CONFIG {
+        if tree == store::TREE_ENV || tree == store::TREE_CONFIG || self.resource_view(tree).is_some() {
             return Ok(());
         }
         match self.registry.tree(tree) {
@@ -910,15 +994,26 @@ impl Inner {
             list_tree(store::TREE_PLUGINS, "puzzle", vec![]),
             list_tree(store::TREE_RUNS, "history", vec![]),
         ];
-        let mut out = vec![TreeInfo {
-            id: TREE_RESOURCES.into(),
-            title: Label::Text(TREE_RESOURCES.into()),
-            icon: "library".into(),
-            source: TreeSource::Stored,
-            groups: true,
-            toolbar: new_menu(TREE_RESOURCES),
-            menu: new_menu(TREE_RESOURCES),
-        }];
+        // D473: one view per resource tree, the default one first; its title is the tree's name (an
+        // unnamed default tree keeps the shell's word for "resources").
+        let trees = self.read(store::resource_trees).unwrap_or_default();
+        let mut out: Vec<TreeInfo> = trees
+            .iter()
+            .map(|t| {
+                let id = store::view_of(t);
+                let mut toolbar = new_menu(&id);
+                toolbar.push(kernel_cmd("tree.info", "info"));
+                TreeInfo {
+                    title: Label::Text(if t.name.trim().is_empty() { TREE_RESOURCES.into() } else { t.name.clone() }),
+                    icon: tree_icon(t).unwrap_or_else(|| TREE_ICON.into()),
+                    source: TreeSource::Stored,
+                    groups: true,
+                    menu: new_menu(&id),
+                    toolbar,
+                    id,
+                }
+            })
+            .collect();
         for p in &self.registry.plugins() {
             let enabled = self.plugin_enabled(&p.id);
             for t in &p.manifest.contributes.trees {
@@ -968,7 +1063,8 @@ impl Inner {
         let group = r.kind == KIND_GROUP;
         let has_children = supplies || self.read(|c| store::has_children(c, &r.id))?;
         let mut menu = Vec::new();
-        if meta.page.is_some() || crate::params::is_param_kind(&r.kind) {
+        // D473: a group opens too (its page holds its information).
+        if meta.page.is_some() || crate::params::is_param_kind(&r.kind) || group {
             menu.push(kernel_cmd("node.open", "external-link"));
         }
         if r.kind == store::KIND_ENV {
@@ -980,6 +1076,18 @@ impl Inner {
         menu.push(kernel_cmd("node.rename", "pencil"));
         if group {
             menu.push(kernel_cmd("node.newGroup", "folder-plus"));
+        }
+        // D473: to another resource tree, when there is one.
+        let several = match memo.1 {
+            Some(v) => v,
+            None => {
+                let v = r.tree.as_deref() == Some(TREE_RESOURCES) && self.read(store::resource_trees)?.len() > 1;
+                memo.1 = Some(v);
+                v
+            }
+        };
+        if r.tree.as_deref() == Some(TREE_RESOURCES) && several {
+            menu.push(kernel_cmd("node.moveToTree", "folder-input"));
         }
         if self.read(|c| store::is_favorite(c, &r.id))? {
             menu.push(kernel_cmd("node.unfavorite", "star-off"));
@@ -1066,10 +1174,26 @@ impl Inner {
                     None => {}
                 }
             }
-            let rows = self.read(|c| store::children(c, &p.tree, p.parent.as_deref(), offset, BATCH + 1))?;
+            // D473: a resource tree's view lists the tree's node's children (the default one: the top
+            // level, without the trees' own nodes); its nodes carry the view's id.
+            let view = self.resource_view(&p.tree);
+            let (stored, parent) = match &view {
+                Some(root) => (TREE_RESOURCES.to_string(), p.parent.clone().or(root.clone())),
+                None => (p.tree.clone(), p.parent.clone()),
+            };
+            // (`store::children` never lists the trees' own nodes.)
+            let rows = self.read(|c| store::children(c, &stored, parent.as_deref(), offset, BATCH + 1))?;
             let more = rows.len() > BATCH as usize;
             let mut memo = NodeMemo::default();
-            let nodes = rows.iter().take(BATCH as usize).map(|r| self.node_memo(r, &mut memo)).collect::<KResult<Vec<_>>>()?;
+            let mut nodes = rows.iter().take(BATCH as usize).map(|r| self.node_memo(r, &mut memo)).collect::<KResult<Vec<_>>>()?;
+            if let Some(root) = &view {
+                for n in &mut nodes {
+                    n.tree = p.tree.clone();
+                    if n.parent_key.is_some() && n.parent_key == *root {
+                        n.parent_key = None;
+                    }
+                }
+            }
             return Ok(TreePage { next: more.then_some(offset + BATCH), nodes });
         }
         let (plugin, decl) = self.registry.tree(&p.tree).ok_or_else(|| not_found("tree"))?;
@@ -1177,7 +1301,8 @@ impl Inner {
                 ids.push(p.key);
                 return Ok(ids);
             }
-            let mut ids: Vec<String> = self.read(|c| store::ancestors(c, &r))?.into_iter().map(|a| a.id).collect();
+            // D473: a resource tree's own node is not part of the path in its view.
+            let mut ids: Vec<String> = self.read(|c| store::ancestors(c, &r))?.into_iter().filter(|a| a.kind != store::KIND_TREE).map(|a| a.id).collect();
             ids.push(r.id);
             return Ok(ids);
         }
@@ -1196,8 +1321,10 @@ impl Inner {
                 return Ok(done);
             }
         }
+        // D473: "inside the view" of a resource tree is inside its node (the default one: the top level).
+        let root = self.resource_view(&p.tree).flatten();
         let dest = match (p.position, p.target) {
-            (DropPosition::Inside, t) => MoveDest::Inside(t),
+            (DropPosition::Inside, t) => MoveDest::Inside(t.or(root)),
             (DropPosition::Before, Some(t)) => MoveDest::Before(t),
             (DropPosition::After, Some(t)) => MoveDest::After(t),
             (_, None) => return Err(invalid_params("before/after need a target")),
@@ -1255,6 +1382,11 @@ impl Inner {
     /// Creates a `core:group`; an empty name gets a default that does not clash with its siblings.
     pub async fn create_group(&self, tree: &str, parent: Option<String>, name: &str) -> KResult<String> {
         self.stored_tree(tree)?;
+        // D473: in a resource tree's view, the top is the tree's node.
+        let (tree, parent) = match self.resource_view(tree) {
+            Some(root) => (TREE_RESOURCES, parent.or(root)),
+            None => (tree, parent),
+        };
         if tree == store::TREE_ENV || tree == store::TREE_CONFIG {
             return Err(invalid("noGroups"));
         }
@@ -1291,6 +1423,8 @@ impl Inner {
 
     /// The "new" items: `node.newGroup` and every manifest's `menus.new` (optionally for one tree).
     pub fn new_items(&self, tree: Option<&str>) -> Vec<NewItem> {
+        // D473: every resource tree offers what the `resources` tree does.
+        let tree = tree.map(|t| if self.resource_view(t).is_some() { TREE_RESOURCES } else { t });
         let mut out = vec![NewItem {
             id: "node.newGroup".into(),
             label: Label::Text("node.newGroup".into()),
