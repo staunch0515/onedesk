@@ -81,7 +81,7 @@ export function Frame({ tab, descriptor, meta, actions, children, panel }: Frame
         invalid={envMissing || !tab.envId}
         value={envMissing ? undefined : (tab.envId ?? undefined)}
         onValueChange={(envId) => wb.updateTab(tab.id, { envId, envAuto: false })}
-        options={(envs.data ?? []).map((e) => ({ value: e.id, label: `${" ".repeat(e.depth)}${e.name}`, icon: "layers" }))}
+        options={(envs.data ?? []).map((e) => ({ value: e.id, label: e.name, depth: e.depth, icon: "layers" }))}
       />
     </TitleBarSlot>
   ) : null;

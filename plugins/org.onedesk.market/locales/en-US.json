@@ -5,8 +5,6 @@
   "node.market": "Local packages",
   "action.install": "Install",
   "action.refresh": "Rescan",
-  "field.pick": "Package to install",
-  "field.pick.placeholder": "Choose a package",
   "empty.title": "No folder authorized yet.",
   "empty.hint": "Use “Add folder” in the toolbar to authorize a folder that contains plugin packages.",
   "none.found": "No plugin packages found in the authorized folders.",
@@ -28,11 +26,12 @@
   "message.failedNoReason": "Installation failed.",
   "message.expired": "The request timed out.",
   "message.pending": "Another install request is still waiting for an answer.",
-  "message.nothing": "Choose a package first.",
+  "message.nothing": "Choose a package in the list first.",
   "message.refreshed": "Rescanned.",
   "truncated": "Scan stopped: too many folders to look through (limit {max}).",
   "message.cooldown": "The last request was not completed. Try again in {seconds} s.",
   "reason.incomplete": "The manifest is missing required fields.",
   "reason.mismatch": "The manifest does not match its folder (id or version differs).",
-  "file.description": "Package file {file}: the name, description and permissions are shown before installing."
+  "file.description": "Package file {file}: the name, description and permissions are shown before installing.",
+  "message.notInstallable": "{name}: {status}. Nothing to install."
 }

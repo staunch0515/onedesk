@@ -41,4 +41,10 @@ rowActions?: Array<TableRowAction>,
 /**
  * Round 12 (D393): one key per row (as long as `rows`), handed back as `context.row`.
  */
-rowKeys?: Array<string>, } | { "type": "link", id: string, label: Label, target: string, };
+rowKeys?: Array<string>, 
+/**
+ * D474: a view-state page parameter (`view.<x>`, D467) that clicking a row sets to that
+ * row's key (needs `rowKeys`); the row whose key it holds is shown selected. The page's
+ * render and events get it in `ctx.params` like any view state.
+ */
+selectParam?: string, } | { "type": "link", id: string, label: Label, target: string, };

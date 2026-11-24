@@ -139,3 +139,15 @@ describe("table rows without rowKeys, or without a target (D393)", () => {
     expect(screen.getByLabelText("A1")).toBeTruthy();
   });
 });
+
+describe("a table whose rows are picked (D474)", () => {
+  it("clicking a row sets its selectParam to the row key; the row the parameter names is shown selected", () => {
+    const onSelectRow = vi.fn();
+    const node: ViewNode = { type: "table", id: "t", columns: [{ key: "n", label: "N" }], rows: [["A"], ["B"]], rowKeys: ["/p/a", "/p/b"], selectParam: "view.pick" };
+    renderInShell(kernelLikeClient(createMockClient({ fresh: true, quiet: true }), {}), <ViewNodes nodes={[node]} params={{ "view.pick": "/p/b" }} onSelectRow={onSelectRow} />);
+    expect(screen.getByText("B").closest("tr")).toHaveClass("od-grid__row--selected");
+    expect(screen.getByText("A").closest("tr")).not.toHaveClass("od-grid__row--selected");
+    fireEvent.click(screen.getByText("A"));
+    expect(onSelectRow).toHaveBeenCalledWith("view.pick", "/p/a");
+  });
+});

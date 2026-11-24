@@ -510,7 +510,7 @@ export function ViewPage({ tab, descriptor: initial }: { tab: TabState; descript
       {conflictBar}
       {descriptor.runId && <RunHeader runId={descriptor.runId} />}
       <Pane grow scroll={!hasFill || descriptor.view.length > 1}>
-        {descriptor.view.map((node) => (node.type === "form" ? renderForm(node) : <ViewNodes key={node.id} nodes={[node]} onRowAction={(event, row) => void rowEvent(event, row)} />))}
+        {descriptor.view.map((node) => (node.type === "form" ? renderForm(node) : <ViewNodes key={node.id} nodes={[node]} onRowAction={(event, row) => void rowEvent(event, row)} params={tab.params} onSelectRow={setParam} />))}
         {/* D470: the workspace configuration adds a parameter right here, under its parameters; no dialog. */}
         {isConfig && (
           <Pane pad="md">

@@ -5,8 +5,6 @@
   "node.market": "本地插件包",
   "action.install": "安装",
   "action.refresh": "重新扫描",
-  "field.pick": "要安装的包",
-  "field.pick.placeholder": "选择一个包",
   "empty.title": "还没有授权文件夹。",
   "empty.hint": "用工具栏里的“添加文件夹”授权一个放着插件包的文件夹。",
   "none.found": "授权的文件夹里没有找到插件包。",
@@ -28,11 +26,12 @@
   "message.failedNoReason": "安装失败。",
   "message.expired": "请求超时了。",
   "message.pending": "还有一个安装请求在等待答复。",
-  "message.nothing": "请先选一个包。",
+  "message.nothing": "请先在列表里选一个包。",
   "message.refreshed": "已重新扫描。",
   "truncated": "扫描已截断：要查看的文件夹太多（上限 {max}）。",
   "message.cooldown": "上一次请求没有完成，请 {seconds} 秒后再试。",
   "reason.incomplete": "清单缺少必需字段。",
   "reason.mismatch": "清单与所在文件夹不符（id 或版本不同）。",
-  "file.description": "插件包文件 {file}：安装前会显示名称、说明和权限。"
+  "file.description": "插件包文件 {file}：安装前会显示名称、说明和权限。",
+  "message.notInstallable": "{name}：{status}，不用安装。"
 }

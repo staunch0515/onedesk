@@ -43,7 +43,7 @@ export interface DataGridProps<Row> {
   /** dense: result grids. regular: lists with controls inside the cells. */
   size?: "dense" | "regular";
   selectedKey?: string | null;
-  /** Click selects; double-click or Enter activates (ui-spec §7a). `activateOnClick` makes a single click activate. */
+  /** Click or Space selects; double-click or Enter activates (Enter selects when nothing activates; ui-spec §7a). `activateOnClick` makes a single click activate. */
   onRowSelect?: (row: Row) => void;
   onRowActivate?: (row: Row) => void;
   activateOnClick?: boolean;
@@ -284,7 +284,8 @@ export function DataGrid<Row>({
                   interactive
                     ? (e) => {
                         if (e.target !== e.currentTarget) return;
-                        if (e.key === "Enter") onRowActivate?.(row);
+                        if (e.key === "Enter") (onRowActivate ?? onRowSelect)?.(row);
+                        else if (e.key === " " && onRowSelect) onRowSelect(row);
                         else if (e.key === "ArrowDown" && i + 1 < sorted.length) focusRow(i + 1);
                         else if (e.key === "ArrowUp" && i > 0) focusRow(i - 1);
                         else return;

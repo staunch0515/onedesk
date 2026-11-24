@@ -158,7 +158,7 @@ function DefaultEnvField({ value, inherited, inheritedName, disabled, onChange }
     : inheritedName
       ? t("info.envFollowOnly", { env: inheritedName })
       : t("info.envFollowNone");
-  const options = [{ value: FOLLOW, label: follow }, ...(envs.data ?? []).map((e) => ({ value: e.id, label: `${"  ".repeat(e.depth)}${pageTitle(e.name)}` }))];
+  const options = [{ value: FOLLOW, label: follow }, ...(envs.data ?? []).map((e) => ({ value: e.id, label: pageTitle(e.name), depth: e.depth }))];
   return (
     <InfoField label={t("info.defaultEnv")}>
       <Select size="sm" aria-label={t("info.defaultEnv")} options={options} value={value || FOLLOW} disabled={disabled} onValueChange={(v) => onChange(v === FOLLOW ? "" : v)} />

@@ -38,6 +38,9 @@ function sheet(host) {
       if (b.mode === "shortKeys") table.rowKeys = [];
       if (b.mode === "manyActions") table.rowActions = [1, 2, 3, 4, 5].map((i) => ({ id: "a" + i, label: "a" }));
       if (b.mode === "unknownField") table.rowColor = "red";
+      if (b.mode === "select") table.selectParam = "view.pick";
+      if (b.mode === "selectNotView") table.selectParam = "pick";
+      if (b.mode === "selectNoKeys") { table.selectParam = "view.pick"; delete table.rowKeys; }
       return { view: [table] };
     },
     onEvent(ctx, event) {
@@ -552,7 +555,7 @@ async fn table_rows_carry_actions_keys_and_checked_targets() {
 async fn bad_tables_are_plugin_errors() {
     let (_env, c) = world(5000).await;
     let t = json!(["plugin:test.reach", "plugin:test.reach"]);
-    for mode in ["shortTargets", "shortKeys", "manyActions", "unknownField"] {
+    for mode in ["shortTargets", "shortKeys", "manyActions", "unknownField", "selectNotView", "selectNoKeys"] {
         let s = create(&c, "test.reach:sheet", None, json!({ "body.targets": t })).await;
         c.probe("test.reach", "resources.update", json!([s, { "body.mode": mode }])).await;
         let e = c.call("page.resolve", json!({ "target": format!("resource:{s}"), "context": {} })).await.unwrap_err();
@@ -561,6 +564,10 @@ async fn bad_tables_are_plugin_errors() {
     // Exactly 4 row actions are fine.
     let s = create(&c, "test.reach:sheet", None, json!({ "body.targets": t })).await;
     c.ok("page.resolve", json!({ "target": format!("resource:{s}"), "context": {} })).await;
+    // D474: rows picked into a view-state parameter, with keys.
+    c.probe("test.reach", "resources.update", json!([s, { "body.mode": "select" }])).await;
+    let d = c.ok("page.resolve", json!({ "target": format!("resource:{s}"), "context": {} })).await;
+    assert_eq!(d["view"][0]["selectParam"], json!("view.pick"));
 }
 
 #[tokio::test(flavor = "multi_thread")]

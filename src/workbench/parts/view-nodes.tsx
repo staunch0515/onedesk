@@ -53,7 +53,19 @@ function MarkdownNode({ source }: { source: string }) {
 }
 
 /** Draws the read-only view nodes (text, table, link, placeholder). Forms are drawn by the view page. */
-export function ViewNodes({ nodes, onRowAction }: { nodes: ViewNode[]; onRowAction?: (event: string, row: string) => void }) {
+export function ViewNodes({
+  nodes,
+  onRowAction,
+  params,
+  onSelectRow,
+}: {
+  nodes: ViewNode[];
+  onRowAction?: (event: string, row: string) => void;
+  /** The tab's page parameters: a table's `selectParam` (D474) holds the key of its selected row. */
+  params?: Record<string, string>;
+  /** Clicking a row of a table with `selectParam` sets that parameter to the row's key. */
+  onSelectRow?: (param: string, key: string) => void;
+}) {
   const openHere = useOpenHere();
   const { t, tx } = useI18n();
   return (
@@ -110,6 +122,8 @@ export function ViewNodes({ nodes, onRowAction }: { nodes: ViewNode[]; onRowActi
               });
             }
             const targets = node.rowTargets;
+            const selectParam = onSelectRow && node.selectParam && node.rowKeys ? node.selectParam : undefined;
+            const selectedIndex = selectParam ? (node.rowKeys ?? []).indexOf(params?.[selectParam] ?? "") : -1;
             return (
               <DataGrid
                 key={node.id}
@@ -118,7 +132,8 @@ export function ViewNodes({ nodes, onRowAction }: { nodes: ViewNode[]; onRowActi
                 rows={node.rows.map((cells, index) => ({ cells: cells as OutputCell[], index, key: node.rowKeys?.[index] ?? String(index) }))}
                 getRowKey={(row) => String(row.index)}
                 nullText=""
-                onRowSelect={targets ? () => undefined : undefined}
+                selectedKey={selectedIndex >= 0 ? String(selectedIndex) : null}
+                onRowSelect={selectParam ? (row) => onSelectRow?.(selectParam, row.key) : targets ? () => undefined : undefined}
                 onRowActivate={targets ? (row) => { const to = targets[row.index]; if (to) openHere(to); } : undefined}
               />
             );

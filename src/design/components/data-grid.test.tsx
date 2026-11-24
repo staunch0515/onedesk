@@ -82,4 +82,14 @@ describe("DataGrid last row (D472)", () => {
     expect(empty.queryByText("Nothing")).toBeNull();
     expect(empty.getByText("add")).toBeTruthy();
   });
+
+  it("selects a row with Space, or Enter when nothing activates (D474)", () => {
+    const onRowSelect = vi.fn();
+    const { container } = render(<DataGrid label="s" columns={columns} rows={[[1, "a"], [2, "b"]] as Row[]} getRowKey={(_r, i) => String(i)} selectedKey="1" onRowSelect={onRowSelect} />);
+    const rows = container.querySelectorAll("tbody tr[data-index]");
+    expect(rows[1]).toHaveClass("od-grid__row--selected");
+    fireEvent.keyDown(rows[0]!, { key: " " });
+    fireEvent.keyDown(rows[1]!, { key: "Enter" });
+    expect(onRowSelect.mock.calls.map((c) => c[0])).toEqual([[1, "a"], [2, "b"]]);
+  });
 });

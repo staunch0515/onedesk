@@ -85,6 +85,14 @@ describe("Select aria-label", () => {
     render(<Select aria-label="类型" options={[{ value: "a", label: "A" }]} value="a" />);
     expect(screen.getByRole("combobox", { name: "类型" })).toBeInTheDocument();
   });
+  it("indents options by their depth in a tree; the chosen value is not indented", () => {
+    const options = [{ value: "a", label: "Default" }, { value: "b", label: "iMac", depth: 1 }, { value: "c", label: "202611", depth: 2 }];
+    render(<Select aria-label="env" options={options} value="c" />);
+    expect(screen.getByRole("combobox", { name: "env" })).toHaveTextContent(/^202611$/);
+    fireEvent.keyDown(screen.getByRole("combobox", { name: "env" }), { key: "Enter" });
+    const depth = (name: string) => screen.getByRole("option", { name }).style.getPropertyValue("--od-select-depth");
+    expect([depth("Default"), depth("iMac"), depth("202611")]).toEqual(["", "1", "2"]);
+  });
 });
 
 describe("Sidebar header", () => {

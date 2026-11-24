@@ -106,7 +106,12 @@ impl Inner {
             e
         };
         for node in view.iter_mut() {
-            let ViewNode::Table { id, rows, row_targets, row_actions, row_keys, .. } = node else { continue };
+            let ViewNode::Table { id, rows, row_targets, row_actions, row_keys, select_param, .. } = node else { continue };
+            if let Some(p) = select_param {
+                if !p.starts_with("view.") || p.len() <= "view.".len() || row_keys.is_none() {
+                    return Err(bad(&format!("{id}: selectParam must be a view.<name> parameter, with rowKeys")));
+                }
+            }
             if row_targets.as_ref().is_some_and(|t| t.len() != rows.len()) {
                 return Err(bad(&format!("{id}: rowTargets and rows differ in length")));
             }

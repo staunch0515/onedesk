@@ -80,8 +80,9 @@ test("the market lists a package file from an authorized folder and installs it 
   const row = page.getByRole("row", { name: new RegExp(HELLO) });
   await expect(row).toContainText("Not installed");
   await expect(row).toContainText(`${HELLO}-0.1.0.odplugin`);
-  await page.getByRole("combobox", { name: "Package to install" }).click();
-  await page.getByRole("option", { name: new RegExp(HELLO) }).click();
+  // the package is picked by clicking its row in the list (D474)
+  await row.click();
+  await expect(row).toHaveClass(/od-grid__row--selected/);
   await page.getByRole("button", { name: "Install", exact: true }).click();
   const dialog = page.getByRole("dialog");
   await expect(dialog).toContainText("Plugin market");

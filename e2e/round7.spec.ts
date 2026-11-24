@@ -86,7 +86,7 @@ async function untilRequest(page: Page): Promise<InstallRequest> {
 }
 /** Starts the market's install event; resolves when the request has been answered. */
 const marketInstall = (page: Page, folder: string) =>
-  call<{ message?: unknown; changes?: Record<string, unknown> }>(page, "page.event", { target: MARKET_TARGET, event: "install", context: { params: { pick: folder }, locale: "en-US" } });
+  call<{ message?: unknown; changes?: Record<string, unknown> }>(page, "page.event", { target: MARKET_TARGET, event: "install", context: { params: { "view.pick": folder }, locale: "en-US" } });
 
 const setEnabled = (page: Page, plugin: string, enabled: boolean) => call(page, "plugin.setEnabled", { plugin, enabled });
 type Node = { key: string; label: string };
@@ -146,7 +146,7 @@ test("a folder outside what the market can read is refused (outsideGrant) and no
   await bare(page);
   const outside = path.join(base, "elsewhere");
   mkdirSync(outside, { recursive: true });
-  const err = await refused(page, "page.event", { target: MARKET_TARGET, event: "install", context: { params: { pick: outside } } });
+  const err = await refused(page, "page.event", { target: MARKET_TARGET, event: "install", context: { params: { "view.pick": outside } } });
   expect(err).toMatchObject({ code: "denied" });
   expect(JSON.stringify(err)).toContain("outsideGrant");
   expect(await requests(page)).toEqual([]);
@@ -155,8 +155,7 @@ test("a folder outside what the market can read is refused (outsideGrant) and no
 /* ------------------------------------------------------------------ install through the dialog */
 
 async function pickAndInstall(page: Page, label: RegExp) {
-  await page.getByRole("combobox", { name: "Package to install" }).click();
-  await page.getByRole("option", { name: label }).click();
+  await page.getByRole("row", { name: label }).first().click();
   await page.getByRole("button", { name: "Install", exact: true }).click();
 }
 
@@ -177,6 +176,8 @@ test("install from the market: confirming installs it, the list says Installed, 
 
 test("a second request while one waits is turned away (pendingRequest); answering ends the first", async ({ page }) => {
   await bare(page);
+  // hello was installed above: the market answers an installed package itself (D474), so take it out first
+  await call(page, "app.removePlugin", { plugin: HELLO, version: "0.1.0" });
   const first = marketInstall(page, HELLO_DIR);
   const req = await untilRequest(page);
   expect(req).toMatchObject({ plugin: MARKET_ID });
@@ -195,9 +196,8 @@ test("a second request while one waits is turned away (pendingRequest); answerin
 
 test("install from the market: the framework's dialog names the market; cancel installs nothing and ends the request", async ({ page }) => {
   test.setTimeout(120_000);
-  // hello was installed above and the market was told off a moment ago: remove it, and wait the cooldown out
+  // hello was removed above and the market was told off a moment ago: wait the cooldown out
   await bare(page);
-  await call(page, "app.removePlugin", { plugin: HELLO, version: "0.1.0" });
   expect(await installed(page, HELLO)).toBe(false);
   await page.waitForTimeout(31_000);
   await openMarketPage(page);

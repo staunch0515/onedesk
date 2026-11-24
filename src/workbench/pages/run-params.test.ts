@@ -30,7 +30,7 @@ describe("applyPageParams", () => {
 describe("view state (D467)", () => {
   it("a page event may set view.<x> keys without a field; overly long values and a bare prefix are dropped", () => {
     expect(applyPageParams([], { a: "1" }, { "view.mode": "read" })).toEqual({ a: "1", "view.mode": "read" });
-    expect(applyPageParams([], {}, { "view.": "x", "view.big": "x".repeat(201) })).toBeNull();
+    expect(applyPageParams([], {}, { "view.": "x", "view.big": "x".repeat(1001) })).toBeNull();
   });
 
   it("view state goes back to the page but never to a run", () => {

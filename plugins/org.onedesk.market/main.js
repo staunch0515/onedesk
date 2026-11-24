@@ -9,6 +9,8 @@ export const MAX_PROBES = 400;
 export const MAX_NAME = 80;
 export const MAX_DESCRIPTION = 300;
 const PAGE_SIZE = 200;
+// The page parameter holding the folder of the row picked in the table (view state, D467/D474).
+export const PICK = "view.pick";
 const MAX_LIST_PAGES = 20;
 
 /* ---------------------------------------------------------------- helpers */
@@ -318,16 +320,12 @@ export default {
               { key: "status", label: tr(ctx, "col.status") },
             ],
             rows: state.rows.map((r) => [r.name, r.version, r.description, r.status]),
+            // A row is picked by clicking it (D474); "Install" installs the picked one.
+            rowKeys: state.rows.map((r) => r.folder),
+            selectParam: PICK,
           });
         }
         if (state.truncated || state.capped) view.push({ type: "text", id: "capped", text: tr(ctx, state.truncated ? "truncated" : "capped", { max: state.truncated ? MAX_PROBES : MAX_PACKAGES }), tone: "muted" });
-        const options = state.rows.filter((r) => r.installable).map((r) => ({ value: r.folder, label: `${r.name} ${r.version}` }));
-        view.push({
-          type: "form",
-          id: "pick",
-          layout: "strip",
-          fields: [{ name: "pick", label: ctx.t("field.pick"), kind: "enum", param: true, options, placeholder: ctx.t("field.pick.placeholder") }],
-        });
         return { ...head, view };
       },
 
@@ -337,9 +335,12 @@ export default {
           return { message: tr(ctx, "message.refreshed") };
         }
         if (event !== "install") throw new Error(`unknown event ${event}`);
-        // The pick is a page parameter (never part of the draft): it comes in `ctx.params`.
-        const folder = ctx.params && typeof ctx.params.pick === "string" ? ctx.params.pick : "";
+        // The pick is the row selected in the table: view state of the page (never part of the draft), in `ctx.params`.
+        const folder = ctx.params && typeof ctx.params[PICK] === "string" ? ctx.params[PICK] : "";
         if (!folder) return { message: tr(ctx, "message.nothing") };
+        // A row that needs no installing is answered here; anything else goes to the framework, which checks the folder itself.
+        const row = (await load(ctx)).rows.find((r) => r.folder === folder);
+        if (row && !row.installable) return { message: tr(ctx, "message.notInstallable", { name: row.name, status: row.status }) };
         let res;
         try {
           res = await ctx.host.plugins.requestInstall({ folder });
@@ -353,7 +354,7 @@ export default {
         }
         switch (res.outcome) {
           case "installed":
-            return { params: { pick: "" }, message: tr(ctx, "message.installed", { name: res.id || "", version: res.version || "" }) };
+            return { params: { [PICK]: "" }, message: tr(ctx, "message.installed", { name: res.id || "", version: res.version || "" }) };
           case "declined":
             return { message: tr(ctx, "message.declined") };
           case "expired":

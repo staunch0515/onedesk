@@ -120,8 +120,11 @@ test("a default environment set on the tree, a group or the resource: the neares
   await page.keyboard.press("ControlOrMeta+w");
   await page.getByRole("treeitem", { name: "Runbook", exact: true }).click();
   await expect(envSelect(page)).toContainText("Testing");
-  // Picked by hand on the tab: kept.
+  // Picked by hand on the tab: kept. The choices show the environment tree: children indented under Default (D474).
   await envSelect(page).click();
+  const indent = async (name: RegExp) => page.getByRole("option", { name }).evaluate((el) => parseFloat(getComputedStyle(el).paddingLeft));
+  expect(await indent(/^\s*Testing$/)).toBeGreaterThan(await indent(/^\s*Default$/));
+  await page.screenshot({ path: path.join(OUT, "resource-trees-env-select.png") });
   await page.getByRole("option", { name: /^\s*Default$/ }).click();
   await expect(envSelect(page)).toContainText("Default");
   await page.getByRole("tab", { name: /Data center/ }).first().click();

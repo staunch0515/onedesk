@@ -1,5 +1,5 @@
 import * as SelectPrimitive from "@radix-ui/react-select";
-import type { Ref } from "react";
+import type { CSSProperties, Ref } from "react";
 import { cx } from "./cx";
 import { useFieldControl } from "./form-field";
 import { Icon } from "./icon";
@@ -11,6 +11,8 @@ export interface SelectOption {
   label: string;
   icon?: string;
   disabled?: boolean;
+  /** Nesting level in a tree of options (0 = top); indents the item in the list, not the chosen value. */
+  depth?: number;
 }
 
 export interface SelectGroup {
@@ -42,7 +44,12 @@ function isGroup(o: SelectOption | SelectGroup): o is SelectGroup {
 
 function Item({ option }: { option: SelectOption }) {
   return (
-    <SelectPrimitive.Item className="od-select__item" value={option.value} disabled={option.disabled}>
+    <SelectPrimitive.Item
+      className="od-select__item"
+      value={option.value}
+      disabled={option.disabled}
+      style={option.depth ? ({ "--od-select-depth": option.depth } as CSSProperties) : undefined} // od-allow-inline-style: nesting level of this option
+    >
       {option.icon && <Icon name={option.icon} size="md" className="od-select__item-icon" />}
       <SelectPrimitive.ItemText>{option.label}</SelectPrimitive.ItemText>
       <SelectPrimitive.ItemIndicator className="od-select__check">

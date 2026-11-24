@@ -369,7 +369,7 @@ test("refused: network.allow names the layer that refuses, and the shell text sh
 
 /* ------------------------------------------------------------------ market */
 
-test("market: packages that cannot be installed are listed as unavailable and are not in the dropdown", async ({ page }) => {
+test("market: packages that cannot be installed are listed as unavailable and Install refuses them", async ({ page }) => {
   await bare(page);
   const market = path.join(base, "market");
   cpSync(path.join(MARKET, "com.example.hello"), path.join(market, "com.example.hello"), { recursive: true });
@@ -388,14 +388,18 @@ test("market: packages that cannot be installed are listed as unavailable and ar
   const status = (name: string) => rows.find((r) => r[0]!.includes(name))?.[3];
   expect(status("Hello")).toBe("Not installed");
   for (const n of ["wrong-id", "wrong-version", "no-main"]) expect(status(n), n).toBe("Unavailable");
-  const options = resolved.view.flatMap((n) => n.fields ?? []).find((f) => f.name === "pick")!.options!;
-  expect(options.map((o) => o.value)).toEqual([path.join(market, "com.example.hello/0.1.0")]);
+  // every row is picked by its folder (D474); Install refuses the unavailable ones (below)
+  const table = resolved.view.find((n) => n.type === "table") as unknown as { rowKeys: string[]; selectParam: string };
+  expect(table.selectParam).toBe("view.pick");
+  expect(table.rowKeys).toContain(path.join(market, "com.example.hello/0.1.0"));
   await openKernel(page, host);
   await showTree(page, "Plugin market");
   await page.locator("[data-tree-key]", { hasText: "Local packages" }).first().dblclick();
   await expect(page.getByRole("row", { name: /wrong-id/ })).toContainText("Unavailable");
-  await page.getByRole("combobox", { name: "Package to install" }).click();
-  await expect(page.getByRole("option")).toHaveCount(1);
-  await expect(page.getByRole("option", { name: /Hello/ })).toBeVisible();
+  // an unavailable package can be picked, but Install says there is nothing to install
+  await page.getByRole("row", { name: /wrong-id/ }).click();
+  await page.getByRole("button", { name: "Install", exact: true }).click();
+  await expect(page.getByText(/Nothing to install/).first()).toBeVisible();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
   await shot(page, "market-unavailable");
 });

@@ -22,7 +22,8 @@ export function runParams(fields: ViewField[], entered: Record<string, string>, 
  * events, never to a run.
  */
 export const VIEW_PREFIX = "view.";
-const MAX_VIEW_VALUE = 200;
+// As long as a table row key may be: a picked row is view state too (D474).
+const MAX_VIEW_VALUE = 1000;
 const isView = (name: string, value: unknown): value is string => name.startsWith(VIEW_PREFIX) && name.length > VIEW_PREFIX.length && typeof value === "string" && value.length <= MAX_VIEW_VALUE;
 
 /** The view-state parameters (`view.<x>`) of a tab. */

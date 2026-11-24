@@ -641,6 +641,10 @@ pub enum ViewNode {
         row_actions: Option<Vec<TableRowAction>>,
         /// Round 12 (D393): one key per row (as long as `rows`), handed back as `context.row`.
         row_keys: Option<Vec<String>>,
+        /// D474: a view-state page parameter (`view.<x>`, D467) that clicking a row sets to that
+        /// row's key (needs `rowKeys`); the row whose key it holds is shown selected. The page's
+        /// render and events get it in `ctx.params` like any view state.
+        select_param: Option<String>,
     },
     Link {
         id: String,

@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 // @ts-ignore plain JS module, no types
-import plugin, { MAX_DESCRIPTION, MAX_NAME, MAX_PACKAGES, MAX_PROBES, PACKAGE_FILE, clean, compareVersions, statusOf } from "./main.js";
+import plugin, { MAX_DESCRIPTION, MAX_NAME, MAX_PACKAGES, MAX_PROBES, PACKAGE_FILE, PICK, clean, compareVersions, statusOf } from "./main.js";
 import { RENDER_KEYS, TREE_NODE_KEYS, TREE_PAGE_KEYS, checkView, hostError, onlyKeys, registry } from "../_testing/view-check";
 
 const ROOT = "/Users/me/market";
@@ -50,7 +50,10 @@ const ctxOf = (host: any, extra: Record<string, unknown> = {}) => {
   host.storage ??= fakeStorage();
   return { target: "node:org.onedesk.market:market/local", node: { tree: "org.onedesk.market:market", key: "local" }, locale: "en-US", host, t: tt, ...extra };
 };
-const rowsOf = (out: any) => out.view.find((n: any) => n.type === "table").rows as string[][];
+const tableOf = (out: any) => out.view.find((n: any) => n.type === "table");
+const rowsOf = (out: any) => tableOf(out).rows as string[][];
+// Each row's key is its folder; clicking a row picks it (D474).
+const keysOf = (out: any) => tableOf(out).rowKeys as string[];
 
 describe("market: manifest", () => {
   it("declares files and plugin-install, one provided tree and the page it opens", () => {
@@ -162,9 +165,10 @@ describe("market: scanning", () => {
     expect(rows.find((r) => r[0] === "bad-json")).toEqual(["bad-json", "", "The manifest is not valid JSON.", "Unavailable"]);
     expect(rows.find((r) => r[0] === "no-id")?.[2]).toBe("The manifest has no id or version.");
     expect(rows.find((r) => r[0] === "locked")?.[2]).toBe("The manifest cannot be read.");
-    // unavailable packages cannot be picked
-    const pick = out.view.find((n: any) => n.id === "pick").fields[0];
-    expect(pick.options.map((o: any) => o.value)).toEqual([`${ROOT}/good`]);
+    // every row is picked by its folder
+    expect(tableOf(out).selectParam).toBe(PICK);
+    expect(keysOf(out)).toHaveLength(rows.length);
+    expect(keysOf(out)[rows.findIndex((r) => r[0] === "Good")]).toBe(`${ROOT}/good`);
   });
 
   it("marks packages with missing required fields or an id/version that differs from their folder as unavailable", async () => {
@@ -181,8 +185,7 @@ describe("market: scanning", () => {
     expect(rows.find((r) => r[0] === "com.example.a/1.0.0")).toEqual(["com.example.a/1.0.0", "", "The manifest does not match its folder (id or version differs).", "Unavailable"]);
     expect(rows.find((r) => r[0] === "com.example.b/1.0.0")?.[3]).toBe("Unavailable");
     expect(rows.find((r) => r[0] === "com.example.c/1.0.0")).toEqual(["com.example.c/1.0.0", "", "The manifest is missing required fields.", "Unavailable"]);
-    const pick = out.view.find((n: any) => n.id === "pick").fields[0];
-    expect(pick.options.map((o: any) => o.value)).toEqual([`${ROOT}/com.example.ok/1.0.0`]);
+    expect(keysOf(out)[rows.findIndex((r) => r[0] === "Ok")]).toBe(`${ROOT}/com.example.ok/1.0.0`);
   });
 
   it("ignores hidden and plain-file entries and folders without any manifest", async () => {
@@ -196,7 +199,7 @@ describe("market: scanning", () => {
     const { pages } = registry(plugin);
     const out = await pages.browse.render(ctxOf({ files: fakeFiles({}), plugins: { list: async () => [] } }));
     expect(checkView(out.view)).toEqual([]);
-    expect(out.view.map((n: any) => n.id)).toEqual(["none", "pick"]);
+    expect(out.view.map((n: any) => n.id)).toEqual(["none"]);
   });
 
   it("stops at 200 packages and says so", async () => {
@@ -271,8 +274,7 @@ describe("market: status", () => {
     const plugins = { list: async () => [{ id: "com.example.same", name: "Same", versions: ["1.0.0"], active: "1.0.0" }, { id: "com.example.upd", name: "Upd", versions: ["1.0.0"], active: "1.0.0" }] };
     const out = await pages.browse.render(ctxOf({ files, plugins }));
     expect(rowsOf(out).map((r) => [r[0], r[3]])).toEqual([["New", "Not installed"], ["Same", "Installed 1.0.0"], ["Upd", "Update available (installed 1.0.0)"]]);
-    const options = out.view.find((n: any) => n.id === "pick").fields[0].options;
-    expect(options.map((o: any) => o.value)).toEqual([`${ROOT}/new`, `${ROOT}/upd`]);
+    expect(keysOf(out)).toEqual([`${ROOT}/new`, `${ROOT}/same`, `${ROOT}/upd`]);
   });
   it("Chinese status text", async () => {
     const { pages } = registry(plugin);
@@ -281,14 +283,14 @@ describe("market: status", () => {
     const out = await pages.browse.render(ctxOf({ files, plugins }, { locale: "zh-CN" }));
     expect(rowsOf(out)[0]![3]).toBe("已安装 1.0.0");
   });
-  it("the package drop-down is a page parameter: no bind, never part of the draft, no returned values", async () => {
+  it("the package is picked in the table: view state of the page (no form, no bind, no returned values)", async () => {
     const { pages } = registry(plugin);
     const files = fakeFiles(pkgFiles(`${ROOT}/new`, "com.example.new", "1.0.0", "New", "d"));
     const host = { files, plugins: { list: async () => [] } };
-    const out = await pages.browse.render(ctxOf(host, { params: { pick: `${ROOT}/new` } }));
-    const field = out.view.find((n: any) => n.id === "pick").fields[0];
-    expect(field).toMatchObject({ name: "pick", kind: "enum", param: true });
-    expect(field.bind).toBeUndefined();
+    const out = await pages.browse.render(ctxOf(host, { params: { [PICK]: `${ROOT}/new` } }));
+    expect(PICK.startsWith("view.")).toBe(true);
+    expect(tableOf(out)).toMatchObject({ selectParam: PICK, rowKeys: [`${ROOT}/new`] });
+    expect(out.view.some((n: any) => n.type === "form")).toBe(false);
     expect(out.values).toBeUndefined();
     expect(checkView(out.view)).toEqual([]);
   });
@@ -322,16 +324,15 @@ describe("market: package files (D461)", () => {
       ["New", "1.0.0", "Not installed"],
     ]);
     expect(rows[1]![2]).toContain("com.example.zip-1.2.0.odplugin");
-    const options = out.view.find((n: any) => n.id === "pick").fields[0].options;
-    expect(options.map((o: any) => o.value)).toEqual([`${ROOT}/com.example.zip-1.2.0.odplugin`, `${ROOT}/new`]);
+    expect(keysOf(out)).toEqual([`${ROOT}/com.example.same-1.0.0.odplugin`, `${ROOT}/com.example.zip-1.2.0.odplugin`, `${ROOT}/new`]);
   });
 
   it("installing a package file asks the framework with the file's path", async () => {
     const { pages } = registry(plugin);
     const requestInstall = vi.fn(async () => ({ outcome: "installed", id: "com.example.zip", version: "1.2.0" }));
-    const host = { plugins: { requestInstall, list: async () => [] }, files: fakeFiles({}) };
     const file = `${ROOT}/com.example.zip-1.2.0.odplugin`;
-    const out = await pages.browse.onEvent(ctxOf(host, { params: { pick: file }, draft: {} }), "install");
+    const host = { plugins: { requestInstall, list: async () => [] }, files: fakeFiles({ [file]: "PK" }) };
+    const out = await pages.browse.onEvent(ctxOf(host, { params: { [PICK]: file }, draft: {} }), "install");
     expect(requestInstall).toHaveBeenCalledWith({ folder: file });
     expect(out.message).toBe("Installed com.example.zip 1.2.0.");
   });
@@ -345,15 +346,17 @@ describe("market: install", () => {
       if (answer instanceof Error) throw answer;
       return answer;
     });
-    return { pages, requestInstall, host: { plugins: { requestInstall, list: async () => [] }, files: fakeFiles({}) } };
+    const files = fakeFiles({ ...pkgFiles(FOLDER, "com.example.hello", "0.1.0", "Hello", "d"), ...pkgFiles(`${ROOT}/same`, "com.example.same", "1.0.0", "Same", "d") });
+    const list = async () => [{ id: "com.example.same", name: "Same", versions: ["1.0.0"], active: "1.0.0" }];
+    return { pages, requestInstall, host: { plugins: { requestInstall, list }, files } };
   };
-  const run = (s: ReturnType<typeof setup>, params: unknown = { pick: FOLDER }) => s.pages.browse.onEvent(ctxOf(s.host, { params, draft: {} }), "install");
+  const run = (s: ReturnType<typeof setup>, params: unknown = { [PICK]: FOLDER }) => s.pages.browse.onEvent(ctxOf(s.host, { params, draft: {} }), "install");
 
   it("asks the framework with the package folder and reports an installed result", async () => {
     const s = setup({ outcome: "installed", id: "com.example.hello", version: "0.1.0" });
     const out = await run(s);
     expect(s.requestInstall).toHaveBeenCalledWith({ folder: FOLDER });
-    expect(out).toEqual({ params: { pick: "" }, message: "Installed com.example.hello 0.1.0." });
+    expect(out).toEqual({ params: { [PICK]: "" }, message: "Installed com.example.hello 0.1.0." });
   });
   it("declined: nothing changes", async () => {
     const out = await run(setup({ outcome: "declined" }));
@@ -375,20 +378,26 @@ describe("market: install", () => {
     const out = await run(setup(hostError("conflict", { reason: "cooldown", seconds: "17" })));
     expect(out.message).toBe("The last request was not completed. Try again in 17 s.");
   });
-  it("a pick in the draft (the old way) is ignored: only ctx.params counts", async () => {
+  it("a pick in the draft or under the old name is ignored: only ctx.params[view.pick] counts", async () => {
     const s = setup({ outcome: "installed" });
-    expect((await s.pages.browse.onEvent(ctxOf(s.host, { draft: { pick: FOLDER } }), "install")).message).toBe("Choose a package first.");
+    expect((await s.pages.browse.onEvent(ctxOf(s.host, { draft: { [PICK]: FOLDER } }), "install")).message).toBe("Choose a package in the list first.");
+    expect((await run(s, { pick: FOLDER })).message).toBe("Choose a package in the list first.");
+    expect(s.requestInstall).not.toHaveBeenCalled();
+  });
+  it("a picked row that is installed already installs nothing", async () => {
+    const s = setup({ outcome: "installed" });
+    expect((await run(s, { [PICK]: `${ROOT}/same` })).message).toBe("Same: Installed 1.0.0. Nothing to install.");
     expect(s.requestInstall).not.toHaveBeenCalled();
   });
   it("does nothing without a selection", async () => {
     const s = setup({ outcome: "installed" });
-    expect((await run(s, {})).message).toBe("Choose a package first.");
-    expect((await s.pages.browse.onEvent(ctxOf(s.host), "install")).message).toBe("Choose a package first.");
+    expect((await run(s, {})).message).toBe("Choose a package in the list first.");
+    expect((await s.pages.browse.onEvent(ctxOf(s.host), "install")).message).toBe("Choose a package in the list first.");
     expect(s.requestInstall).not.toHaveBeenCalled();
   });
   it("messages are in the viewer's language", async () => {
     const s = setup({ outcome: "declined" });
-    expect((await s.pages.browse.onEvent(ctxOf(s.host, { params: { pick: FOLDER }, locale: "zh-CN" }), "install")).message).toBe("已取消安装。");
+    expect((await s.pages.browse.onEvent(ctxOf(s.host, { params: { [PICK]: FOLDER }, locale: "zh-CN" }), "install")).message).toBe("已取消安装。");
   });
   it("refresh answers with a message; unknown events are rejected", async () => {
     const s = setup({});
@@ -436,7 +445,7 @@ describe("market: limits, cache and untrusted text", () => {
     const listed = files.list.mock.calls.length;
     expect(listed).toBeGreaterThan(0);
     await pages.browse.render(ctxOf(host));
-    await pages.browse.render(ctxOf(host, { params: { pick: "" } }));
+    await pages.browse.render(ctxOf(host, { params: { [PICK]: "" } }));
     expect(files.list.mock.calls.length).toBe(listed);
     // a new package shows up only after a rescan
     Object.assign((files as any), {});
@@ -496,8 +505,6 @@ describe("market: limits, cache and untrusted text", () => {
     expect(JSON.stringify(rows)).not.toMatch(/\[object Object\]|\\u202e|\\u0007/);
     const c = rows.find((r) => r[3] === "Unavailable")!;
     expect(c[0]).toBe("ctxt");
-    const options = out.view.find((n: any) => n.id === "pick").fields[0].options;
-    expect(options.every((o: any) => o.label.length <= MAX_NAME + 20)).toBe(true);
   });
 
   it("text from the package's language file is cleaned and cut too", async () => {

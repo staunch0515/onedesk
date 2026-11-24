@@ -344,7 +344,7 @@ const PARTS: { name: string; run: (c: Ctx, theme: "light" | "dark") => Promise<v
     run: async ({ page, snap, open }) => {
       await showTree(page, "Plugin market");
       await page.locator("[data-tree-key]", { hasText: "Local packages" }).first().dblclick();
-      await expect(page.getByRole("combobox", { name: "Package to install" })).toBeVisible({ timeout: 20_000 });
+      await expect(page.getByRole("button", { name: "Install", exact: true })).toBeVisible({ timeout: 20_000 });
       await snap("market");
       await showTree(page, "Files");
       await expect(page.getByRole("navigation", { name: "Views" }).getByRole("button", { name: "Files", exact: true })).toHaveAttribute("aria-pressed", "true");

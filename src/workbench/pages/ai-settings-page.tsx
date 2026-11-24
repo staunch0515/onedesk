@@ -85,7 +85,7 @@ export function AiSettingsPage({ tab }: { tab: TabState }) {
               aria-label={t("ai.env")}
               value={raw.data["mcp.env"] || NONE}
               onValueChange={(v) => set("mcp.env", v === NONE ? "" : v)}
-              options={[{ value: NONE, label: t("ai.envNone") }, ...(envs.data ?? []).map((e) => ({ value: e.id, label: `${"  ".repeat(e.depth)}${e.name}` }))]}
+              options={[{ value: NONE, label: t("ai.envNone") }, ...(envs.data ?? []).map((e) => ({ value: e.id, label: e.name, depth: e.depth }))]}
             />
           </FormField>
           <Text size="sm" tone="muted">{t("ai.toolCount", { count: status.data.tools })}</Text>

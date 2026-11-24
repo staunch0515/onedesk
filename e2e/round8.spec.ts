@@ -406,9 +406,8 @@ test("market: choosing a package shows no “Unsaved”, installing clears the c
   await openKernel(page, host);
   await showTree(page, "Plugin market");
   await page.locator("[data-tree-key]", { hasText: "Local packages" }).first().dblclick();
-  await page.getByRole("combobox", { name: "Package to install" }).click();
-  await page.getByRole("option", { name: /Hello/ }).click();
-  await expect(page.getByRole("combobox", { name: "Package to install" })).toContainText("Hello");
+  await page.getByRole("row", { name: /Hello/ }).click();
+  await expect(page.getByRole("row", { name: /Hello/ })).toHaveClass(/od-grid__row--selected/);
   await expect(page.getByText("Unsaved", { exact: true })).toHaveCount(0);
   await shot(page, "market-picked");
   await page.getByRole("button", { name: "Install", exact: true }).click();
@@ -417,9 +416,9 @@ test("market: choosing a package shows no “Unsaved”, installing clears the c
   await dialog.getByRole("button", { name: "Install", exact: true }).click();
   await expect(dialog).toHaveCount(0);
   await expect(page.getByRole("row", { name: /Hello/ })).toContainText("Installed 0.1.0");
-  await expect(page.getByRole("combobox", { name: "Package to install" })).not.toContainText("Hello");
+  await expect(page.getByRole("row", { name: /Hello/ })).not.toHaveClass(/od-grid__row--selected/);
   await expect(page.getByText("Unsaved", { exact: true })).toHaveCount(0);
   // the event itself gets the parameter in the page context (protocol level)
-  const e = await refused(page, "page.event", { target: MARKET_TARGET, event: "install", context: { params: { pick: path.join(base, "elsewhere") }, locale: "en-US" } });
+  const e = await refused(page, "page.event", { target: MARKET_TARGET, event: "install", context: { params: { "view.pick": path.join(base, "elsewhere") }, locale: "en-US" } });
   expect(e.code).toBe("denied");
 });

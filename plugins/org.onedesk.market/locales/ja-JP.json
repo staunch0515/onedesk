@@ -5,8 +5,6 @@
   "node.market": "ローカルパッケージ",
   "action.install": "インストール",
   "action.refresh": "再スキャン",
-  "field.pick": "インストールするパッケージ",
-  "field.pick.placeholder": "パッケージを選択",
   "empty.title": "まだフォルダーが許可されていません。",
   "empty.hint": "ツールバーの「フォルダーを追加」で、プラグインパッケージを含むフォルダーを許可してください。",
   "none.found": "許可したフォルダーにプラグインパッケージが見つかりません。",
@@ -28,11 +26,12 @@
   "message.failedNoReason": "インストールに失敗しました。",
   "message.expired": "リクエストがタイムアウトしました。",
   "message.pending": "別のインストール要求がまだ応答待ちです。",
-  "message.nothing": "先にパッケージを選んでください。",
+  "message.nothing": "先に一覧からパッケージを選んでください。",
   "message.refreshed": "再スキャンしました。",
   "truncated": "スキャンを中止しました：調べるフォルダーが多すぎます（上限 {max}）。",
   "message.cooldown": "前のリクエストが完了していません。{seconds} 秒後にもう一度お試しください。",
   "reason.incomplete": "マニフェストに必須項目がありません。",
   "reason.mismatch": "マニフェストがフォルダーと一致しません（id または version が異なります）。",
-  "file.description": "パッケージファイル {file}：インストール前に名前・説明・権限が表示されます。"
+  "file.description": "パッケージファイル {file}：インストール前に名前・説明・権限が表示されます。",
+  "message.notInstallable": "{name}：{status}。インストールするものはありません。"
 }
