@@ -113,6 +113,10 @@ impl Inner {
                 }
                 Err(e) => Err(e),
             },
+            M::PARAMS_RENAME => match parse::<ParamRenameParams>(params) {
+                Ok(p) => self.param_rename(p).await.map(|_| Value::Null),
+                Err(e) => Err(e),
+            },
             M::RESOURCE_HISTORY => parse::<ResourceIdParams>(params).and_then(|p| self.history(&p.id)).and_then(to_value),
             M::RESOURCE_RESTORE => match parse::<ResourceRestoreParams>(params) {
                 Ok(p) => self.restore_entry(&p.id, &p.entry_id).await.map(|_| Value::Null),
@@ -154,6 +158,32 @@ impl Inner {
         changes.params.insert(name.to_string(), ch);
         // #3: with a basis, the same parameter changed after it is a conflict.
         self.execute(Actor::User, Command::Params { id: row.id, changes, basis, op: op.into() }).await?;
+        Ok(())
+    }
+
+    /// D472: the own parameter `name` becomes `new_name` with its value and type, as one change (one revision).
+    /// Refused: no such own parameter, an empty name or one with spaces or braces, a name the node already sets.
+    pub async fn param_rename(&self, p: ParamRenameParams) -> KResult<()> {
+        let row = self.param_node(&p.node)?;
+        let new_name = p.new_name.trim().to_string();
+        if new_name == p.name {
+            return Ok(());
+        }
+        if new_name.is_empty() {
+            return Err(invalid("emptyName"));
+        }
+        if new_name.chars().any(|c| c.is_whitespace() || c == '{' || c == '}') {
+            return Err(invalid("badParamName"));
+        }
+        let own = P::params_of(&row);
+        let Some(old) = own.get(&p.name) else { return Err(invalid("notFound")) };
+        if own.contains_key(&new_name) {
+            return Err(invalid("paramExists"));
+        }
+        let mut changes = Changes::default();
+        changes.params.insert(p.name.clone(), ParamChange::Unset);
+        changes.params.insert(new_name, ParamChange::Set { value: old.value.clone(), ty: Some(old.ty) });
+        self.execute(Actor::User, Command::Params { id: row.id, changes, basis: p.basis, op: M::PARAMS_RENAME.into() }).await?;
         Ok(())
     }
 

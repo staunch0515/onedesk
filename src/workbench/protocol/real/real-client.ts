@@ -98,6 +98,7 @@ export async function createKernelClient(transport: Transport, locale?: () => st
       set: async (node, name, value, basis, type) => void (await call("params.set", compact({ node, name, value, basis: rev(basis), type }))),
       unset: async (node, name, basis) => void (await call("params.unset", compact({ node, name, basis: rev(basis) }))),
       acknowledge: async (node, name, basis) => void (await call("params.acknowledge", compact({ node, name, basis: rev(basis) }))),
+      rename: async (node, name, newName, basis) => void (await call("params.rename", compact({ node, name, newName, basis: rev(basis) }))),
       known: () => call<KnownParam[]>("params.known"),
     },
     app: {

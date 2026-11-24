@@ -586,3 +586,31 @@ async fn purge_leaves_no_trace_in_the_database_or_wal_files() {
         assert!(!found, "{marker} still in {f} ({} bytes)", bytes.len());
     }
 }
+
+/// D472: an own parameter is renamed with its value and type in one change; the parent's value of the old name shows again.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_own_parameter_is_renamed_with_its_value_and_type() {
+    let (_env, c) = setup().await;
+    let def = root(&c, "env").await;
+    let child = new_env(&c, Some(&def), "Child").await;
+    set(&c, &def, "price", "12").await;
+    c.ok("params.set", json!({ "node": child, "name": "price", "value": "15", "type": "number" })).await;
+    c.ok("params.rename", json!({ "node": child, "name": "price", "newName": "cost" })).await;
+    let view = c.ok("params.env", json!({ "envId": child })).await;
+    assert_eq!(param(&view, "cost")["value"], "15");
+    assert_eq!(param(&view, "cost")["type"], "number");
+    assert_eq!(param(&view, "cost")["own"], true);
+    // The old name is the parent's again.
+    assert_eq!(param(&view, "price")["value"], "12");
+    assert_eq!(param(&view, "price")["own"], false);
+    // Refused: a name the node already sets, a bad name, a parameter it does not set.
+    set(&c, &child, "other", "x").await;
+    let reason = |e: onedesk_protocol::ProtocolError| e.params.get("reason").cloned();
+    let e = c.call("params.rename", json!({ "node": child, "name": "cost", "newName": "other" })).await.unwrap_err();
+    assert_eq!(e.code, ErrorCode::Invalid);
+    assert_eq!(reason(e), Some("paramExists".to_string()));
+    let e = c.call("params.rename", json!({ "node": child, "name": "cost", "newName": "a b" })).await.unwrap_err();
+    assert_eq!(reason(e), Some("badParamName".to_string()));
+    let e = c.call("params.rename", json!({ "node": child, "name": "price", "newName": "p2" })).await.unwrap_err();
+    assert_eq!(reason(e), Some("notFound".to_string()));
+}

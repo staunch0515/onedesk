@@ -174,6 +174,8 @@ export interface ProtocolClient {
     unset(envId: string, name: string, basis?: string): Promise<void>;
     /** Accept the parent's new value as the basis of this override (clears "changed upstream"). */
     acknowledge(envId: string, name: string, basis?: string): Promise<void>;
+    /** D472: this environment's own parameter gets another name; value and type stay. */
+    rename(envId: string, name: string, newName: string, basis?: string): Promise<void>;
     /** Parameters the kernel itself interprets: the pages offer these by name (§6.3). */
     known(): Promise<KnownParam[]>;
   };

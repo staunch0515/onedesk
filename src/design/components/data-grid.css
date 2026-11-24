@@ -175,6 +175,11 @@
   background: var(--bg-selected);
 }
 
+/* The row that adds a row (D472): no hover, it is a place to type. */
+.od-grid__row--last:hover .od-grid__td {
+  background: transparent;
+}
+
 .od-grid__row--muted .od-grid__td {
   color: var(--fg-inactive);
 }

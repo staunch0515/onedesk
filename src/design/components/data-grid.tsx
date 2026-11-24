@@ -57,6 +57,11 @@ export interface DataGridProps<Row> {
   autoHeight?: boolean;
   /** Called when the visible rows come near the end of `rows`: the owner appends the next page (a result read piece by piece). */
   onNeedMore?: () => void;
+  /**
+   * One more row after all the others, never sorted or windowed: a cell per column key (e.g. the inputs that add a
+   * row, D472). With it the `empty` message is not shown: this row is what an empty grid offers.
+   */
+  lastRow?: Partial<Record<string, ReactNode>>;
   className?: string;
 }
 
@@ -114,6 +119,7 @@ export function DataGrid<Row>({
   framed,
   autoHeight,
   onNeedMore,
+  lastRow,
   className,
 }: DataGridProps<Row>) {
   const [sort, setSort] = useState<DataGridSort>(defaultSort);
@@ -310,9 +316,20 @@ export function DataGrid<Row>({
             );
           })}
           {windowed && win.after > 0 && <GridGap height={win.after} columns={columns.length + (rowNumbers ? 2 : 1)} />}
+          {lastRow && (
+            <tr className="od-grid__row od-grid__row--last">
+              {rowNumbers && <td className="od-grid__td od-grid__td--num" />}
+              {columns.map((c) => (
+                <td key={c.key} className="od-grid__td">
+                  {lastRow[c.key]}
+                </td>
+              ))}
+              <td className="od-grid__td od-grid__td--fill" aria-hidden="true" />
+            </tr>
+          )}
         </tbody>
       </table>
-      {rows.length === 0 && empty && <div className="od-grid__empty">{empty}</div>}
+      {rows.length === 0 && empty && !lastRow && <div className="od-grid__empty">{empty}</div>}
     </div>
   );
 }

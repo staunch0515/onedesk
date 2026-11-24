@@ -1874,7 +1874,7 @@ export function createMockClient(options: MockOptions = {}): ProtocolClient {
         await wait(4);
         return resolveIn(db, envId, name);
       },
-      async set(envId, name, value, _basis, _type) {
+      async set(envId, name, value, _basis, type) {
         await wait(20);
         const env = db.rows[envId];
         if (!env) throw new Error("Environment not found");
@@ -1882,6 +1882,7 @@ export function createMockClient(options: MockOptions = {}): ProtocolClient {
         const parent = env.parentId ? resolveIn(db, env.parentId, name) : undefined;
         applyPatch(env, { [`param:${name}`]: value });
         const now = paramsOf(env)[name];
+        if (now && type) now.type = type;
         if (now && !had && parent?.found) now.based_on = parent.value;
         persist();
         emit("env");
@@ -1900,6 +1901,18 @@ export function createMockClient(options: MockOptions = {}): ProtocolClient {
           { name: "protection.readonly", type: "boolean", merge: "deny", layers: ["config", "env"] },
           { name: "protection.no_export", type: "boolean", merge: "deny", layers: ["config", "env"] },
         ];
+      },
+      async rename(envId, name, newName) {
+        await wait(20);
+        const env = db.rows[envId];
+        const own = env && paramsOf(env)[name];
+        if (!env || !own || name === newName) return;
+        const { type, value } = own;
+        applyPatch(env, { [`param:${name}`]: undefined, [`param:${newName}`]: value });
+        const now = paramsOf(env)[newName];
+        if (now) now.type = type;
+        persist();
+        emit("env", `resource:${env.id}`);
       },
       async acknowledge(envId, name) {
         await wait(20);

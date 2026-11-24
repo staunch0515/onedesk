@@ -68,3 +68,18 @@ describe("DataGrid reading more rows on demand", () => {
     expect(near).toHaveBeenCalled();
   });
 });
+
+describe("DataGrid last row (D472)", () => {
+  it("draws the last row after the sorted rows, one cell per column, and no empty message", () => {
+    const { container } = render(
+      <DataGrid label="r" columns={columns} rows={rows(3)} autoHeight getRowKey={(_r, i) => String(i)} defaultSort={{ key: "n", direction: "desc" }} lastRow={{ s: <input aria-label="new" /> }} />,
+    );
+    const trs = container.querySelectorAll("tbody tr");
+    expect(trs.length).toBe(4);
+    expect(trs[3]!.querySelector("input[aria-label=new]")).not.toBeNull();
+    expect(trs[0]!.textContent).toContain("v2");
+    const empty = render(<DataGrid label="e" columns={columns} rows={[]} getRowKey={(_r, i) => String(i)} empty="Nothing" lastRow={{ s: "add" }} />);
+    expect(empty.queryByText("Nothing")).toBeNull();
+    expect(empty.getByText("add")).toBeTruthy();
+  });
+});

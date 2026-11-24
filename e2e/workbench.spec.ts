@@ -281,18 +281,18 @@ test.describe("behaviour", () => {
   test("environment: override, reset to inherited, restore from history", async ({ page }) => {
     await tab(page, "正式 Production").click();
     const params = page.getByRole("table", { name: "Parameters" });
-    const tenant = params.getByRole("textbox", { name: "tenant_id" });
+    const tenant = params.getByRole("textbox", { name: "tenant_id", exact: true });
     await expect(tenant).toHaveValue("1001");
     await tenant.fill("2002");
     await tenant.press("Enter");
-    const row = params.locator("tbody tr", { has: page.getByRole("textbox", { name: "tenant_id" }) });
+    const row = params.locator("tbody tr", { has: page.getByRole("textbox", { name: "tenant_id", exact: true }) });
     await expect(row).toContainText("This environment");
     const history = page.getByRole("table", { name: "History" });
     await expect(history.locator("tbody tr").first()).toContainText("tenant_id");
     await row.getByRole("button", { name: /Use the inherited value/ }).click();
     await expect(row).toContainText("Inherited from 默认 Default");
     await history.locator("tbody tr").first().getByRole("button", { name: "Restore" }).click();
-    await expect(params.getByRole("textbox", { name: "tenant_id" })).toHaveValue("2002");
+    await expect(params.getByRole("textbox", { name: "tenant_id", exact: true })).toHaveValue("2002");
   });
 
   test("plugin: disabling greys its resources; search, ⌘K, command palette, audit page", async ({ page }) => {

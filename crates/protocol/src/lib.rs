@@ -999,6 +999,8 @@ pub mod method2 {
     pub const PARAMS_SET: &str = "params.set";
     pub const PARAMS_UNSET: &str = "params.unset";
     pub const PARAMS_ACKNOWLEDGE: &str = "params.acknowledge";
+    /// D472: an environment's own parameter gets another name; value and type stay.
+    pub const PARAMS_RENAME: &str = "params.rename";
     pub const RESOURCE_HISTORY: &str = "resource.history";
     pub const RESOURCE_RESTORE: &str = "resource.restore";
     pub const RESOURCE_LIST_DELETED: &str = "resource.listDeleted";
@@ -1173,6 +1175,19 @@ pub struct ParamSetParams {
 pub struct ParamNameParams {
     pub node: String,
     pub name: String,
+    /// See `ParamSetParams.basis`.
+    pub basis: Option<i64>,
+}
+
+/// `params.rename` (D472): the node's own parameter `name` becomes `newName`, in one change.
+#[skip_serializing_none]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, optional_fields)]
+pub struct ParamRenameParams {
+    pub node: String,
+    pub name: String,
+    pub new_name: String,
     /// See `ParamSetParams.basis`.
     pub basis: Option<i64>,
 }

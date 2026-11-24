@@ -1,0 +1,47 @@
+.od-lineage {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+}
+
+.od-lineage--nested {
+  margin-top: var(--space-2);
+  margin-left: var(--space-1-5);
+  padding-left: var(--space-3);
+  border-left: var(--space-px) solid var(--border-default);
+}
+
+.od-lineage__item {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-0-5);
+  min-width: 0;
+}
+
+.od-lineage__head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1-5);
+  min-width: 0;
+}
+
+.od-lineage__label {
+  min-width: 0;
+  color: var(--fg-muted);
+  font-size: var(--text-sm);
+  line-height: var(--leading-sm);
+  overflow-wrap: anywhere;
+}
+
+.od-lineage__item--current > .od-lineage__head .od-lineage__label {
+  color: var(--fg-default);
+  font-weight: var(--weight-medium);
+}
+
+.od-lineage__value {
+  min-width: 0;
+  font-size: var(--text-sm);
+  line-height: var(--leading-sm);
+  overflow-wrap: anywhere;
+}

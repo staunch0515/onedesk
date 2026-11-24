@@ -1,14 +1,29 @@
 import { useState } from "react";
-import { Badge, BottomPanel, Button, DataGrid, EmptyState, IconButton, Input, LoadingState, Pane, Popover, Section, Switch, Text, Tooltip, useToast, type ActionBarItem, type DataGridColumn } from "../../design";
+import { Badge, BottomPanel, Button, DataGrid, EmptyState, IconButton, Input, LineageList, LoadingState, Pane, Popover, Section, Select, Switch, Text, Tooltip, useToast, type ActionBarItem, type DataGridColumn } from "../../design";
 import { useI18n } from "../i18n";
-import type { EnvParam, HistoryEntry, PageDescriptor } from "../protocol";
+import type { EnvParam, HistoryEntry, PageDescriptor, ParamType } from "../protocol";
 import { useQuery, useUi, useWorkbench } from "../state/context";
 import type { TabState } from "../state/store";
 import { Frame } from "../parts/frame";
-import { NewParamRow } from "./new-param-row";
+import { validParamName } from "./new-param-row";
 import { RefPicker } from "./ref-picker";
 
-/** Environment page (I.4): parent chain in the breadcrumb, parameters with their source layer, history with restore. Name and description are in the info panel only (D470). */
+/** The types a parameter can be given here; a secret is made on the secrets page and keeps its type. */
+const TYPES: ParamType[] = ["text", "number", "boolean", "list", "ref"];
+
+/** The value kept when a parameter changes type (D472): a switch is on or off, a reference is chosen again. */
+export function valueForType(p: Pick<EnvParam, "type" | "value" | "display">, type: ParamType): string {
+  if (type === "boolean") return p.value === "true" ? "true" : "false";
+  if (type === "ref") return "";
+  if (p.type === "ref") return p.display ?? "";
+  return p.value;
+}
+
+/**
+ * Environment page (I.4): parent chain in the breadcrumb, parameters with their source layer, history with restore.
+ * Name and description are in the info panel only (D470). D472: a parameter set here can be renamed and given another
+ * type in its row; a new one is typed in the table's last row; "Comes from" opens how the value is set along the parents.
+ */
 export function EnvPage({ tab, descriptor }: { tab: TabState; descriptor: PageDescriptor }) {
   const { client, store, actions } = useWorkbench();
   const { t, tx, dateTime } = useI18n();
@@ -21,8 +36,12 @@ export function EnvPage({ tab, descriptor }: { tab: TabState; descriptor: PageDe
   const widths = useUi((s) => s.gridWidths["env-params"]);
   const historyWidths = useUi((s) => s.gridWidths["env-history"]);
   const [filter, setFilter] = useState("");
-  // The reference parameter whose resource is being chosen (G3).
-  const [picking, setPicking] = useState<string | null>(null);
+  // The reference parameter whose resource is being chosen (G3); `isNew`: the one being added in the last row.
+  const [picking, setPicking] = useState<{ name: string; isNew: boolean } | null>(null);
+  // The last row: a new parameter (D472).
+  const [newName, setNewName] = useState("");
+  const [newType, setNewType] = useState<ParamType>("text");
+  const [newValue, setNewValue] = useState("");
 
   const items: ActionBarItem[] = descriptor.actions.map((a) => ({
     key: a.id,
@@ -42,7 +61,49 @@ export function EnvPage({ tab, descriptor }: { tab: TabState; descriptor: PageDe
       actions.fail(error);
       env.reload();
     });
-  const set = (name: string, value: string) => guard(client.params.set(id, name, value, basis));
+  const set = (name: string, value: string, type?: ParamType) => guard(client.params.set(id, name, value, basis, type));
+  const ownNames = new Set((env.data?.params ?? []).filter((p) => p.own).map((p) => p.name));
+  const typeOptions = TYPES.map((v) => ({ value: v, label: typeLabel(v) }));
+  function typeLabel(type: ParamType): string {
+    const labels: Record<ParamType, string> = {
+      text: t("env.ptypeText"),
+      number: t("env.ptypeNumber"),
+      boolean: t("env.ptypeBoolean"),
+      list: t("env.ptypeList"),
+      ref: t("env.ptypeRef"),
+      secret: t("env.ptypeSecret"),
+    };
+    return labels[type];
+  }
+  const nameProblem = (name: string, was?: string) =>
+    name === "" || name === was ? undefined : !validParamName(name) ? t("params.addBadName") : ownNames.has(name) ? t("params.addExists") : undefined;
+  const rename = (p: EnvParam, input: HTMLInputElement) => {
+    const next = input.value.trim();
+    const problem = nameProblem(next, p.name);
+    if (next === "" || next === p.name || problem) {
+      if (problem) toast({ tone: "danger", title: problem });
+      input.value = p.name;
+      return;
+    }
+    void guard(client.params.rename(id, p.name, next, basis));
+  };
+  const newTrimmed = newName.trim();
+  const newProblem = nameProblem(newTrimmed);
+  const newReady = newTrimmed !== "" && !newProblem;
+  const addNew = (value: string) => {
+    if (!newReady) return;
+    void client.params.set(id, newTrimmed, value, basis, newType).then(
+      () => {
+        setNewName("");
+        setNewValue("");
+        setNewType("text");
+      },
+      (error) => {
+        actions.fail(error);
+        env.reload();
+      },
+    );
+  };
 
   const columns: Array<DataGridColumn<EnvParam>> = [
     {
@@ -52,40 +113,28 @@ export function EnvPage({ tab, descriptor }: { tab: TabState; descriptor: PageDe
       value: (p) => p.name,
       render: (p) => (
         <Pane direction="row" align="center" gap="xs">
-          <Text mono size="sm" truncate>
-            {p.name}
-          </Text>
-          {!p.own && p.layers && (
-            <Popover
-              size="md"
-              title={t("env.layersTitle", { name: p.name })}
-              trigger={<IconButton icon="list-tree" size="sm" label={t("env.layersShow")} />}
-            >
-              <Pane gap="sm">
-                {p.layers.map((l, i) => (
-                  <Pane key={l.envId} gap="xs">
-                    <Pane direction="row" align="center" gap="xs">
-                      <Text size="xs" tone="muted">
-                        {String(i + 1)}
-                      </Text>
-                      <Text size="sm" weight="medium" truncate>
-                        {l.name}
-                      </Text>
-                      {l.effective && <Badge tone="accent">{t("env.layerEffective")}</Badge>}
-                    </Pane>
-                    {l.value === null ? (
-                      <Text size="sm" tone="subtle">
-                        {t("env.layerNotSet")}
-                      </Text>
-                    ) : (
-                      <Text mono size="sm">
-                        {l.value}
-                      </Text>
-                    )}
-                  </Pane>
-                ))}
-              </Pane>
-            </Popover>
+          {p.own ? (
+            <Pane grow>
+              <Input
+                key={`name:${p.name}`}
+                size="sm"
+                mono
+                aria-label={t("env.nameOf", { name: p.name })}
+                defaultValue={p.name}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") e.currentTarget.blur();
+                  else if (e.key === "Escape") {
+                    e.currentTarget.value = p.name;
+                    e.currentTarget.blur();
+                  }
+                }}
+                onBlur={(e) => rename(p, e.currentTarget)}
+              />
+            </Pane>
+          ) : (
+            <Text mono size="sm" truncate>
+              {p.name}
+            </Text>
           )}
           {p.declaredBy.length > 0 && (
             <Tooltip content={t("env.declaredBy", { names: p.declaredBy.slice(0, 6).join(", ") + (p.declaredBy.length > 6 ? " …" : "") })}>
@@ -97,7 +146,20 @@ export function EnvPage({ tab, descriptor }: { tab: TabState; descriptor: PageDe
         </Pane>
       ),
     },
-    { key: "type", header: t("env.type"), width: 64, muted: true, value: (p) => p.type },
+    {
+      key: "type",
+      header: t("env.type"),
+      width: 120,
+      value: (p) => typeLabel(p.type),
+      render: (p) =>
+        p.own && p.type !== "secret" ? (
+          <Select size="sm" aria-label={t("env.typeOf", { name: p.name })} options={typeOptions} value={p.type} onValueChange={(v) => void set(p.name, valueForType(p, v as ParamType), v as ParamType)} />
+        ) : (
+          <Text size="sm" tone="muted">
+            {typeLabel(p.type)}
+          </Text>
+        ),
+    },
     {
       key: "value",
       header: t("env.value"),
@@ -113,7 +175,7 @@ export function EnvPage({ tab, descriptor }: { tab: TabState; descriptor: PageDe
             <Pane grow>
               <Input size="sm" icon="link" aria-label={p.name} value={p.display ?? p.value} readOnly />
             </Pane>
-            <IconButton icon="replace" size="sm" label={p.value ? t("env.refChange") : t("env.refChoose")} onClick={() => setPicking(p.name)} />
+            <IconButton icon="replace" size="sm" label={p.value ? t("env.refChange") : t("env.refChoose")} onClick={() => setPicking({ name: p.name, isNew: false })} />
             {p.value !== "" && <IconButton icon="arrow-up-right" size="sm" label={t("env.openRef")} onClick={() => actions.open(`resource:${p.value}`)} />}
           </Pane>
         ) : (
@@ -136,18 +198,55 @@ export function EnvPage({ tab, descriptor }: { tab: TabState; descriptor: PageDe
       header: t("env.source"),
       width: 220,
       value: (p) => (p.own ? "" : p.sourceName || "~"),
-      render: (p) =>
-        p.own ? (
-          <Badge tone="accent" icon="layers">
-            {t("env.sourceOwn")}
+      render: (p) => {
+        const label = p.own ? t("env.sourceOwn") : p.sourceName ? t("env.sourceInherited", { name: p.sourceName }) : t("env.sourceNone");
+        // Never set in a parent environment: nothing to show but where it is.
+        if (!p.layers) {
+          return p.own ? (
+            <Badge tone="accent" icon="layers">
+              {label}
+            </Badge>
+          ) : (
+            <Text size="sm" tone="subtle">
+              {label}
+            </Text>
+          );
+        }
+        const inEffect = (
+          <Badge tone="accent" dot>
+            {t("env.layerEffective")}
           </Badge>
-        ) : p.sourceName ? (
-          <Badge icon="corner-left-up">{t("env.sourceInherited", { name: p.sourceName })}</Badge>
-        ) : (
-          <Text size="sm" tone="subtle">
-            {t("env.sourceNone")}
-          </Text>
-        ),
+        );
+        const shown = (value: string | undefined) =>
+          value === undefined ? (
+            <Text size="sm" tone="subtle">
+              {t("env.layerNotSet")}
+            </Text>
+          ) : (
+            <Text mono size="sm">
+              {value}
+            </Text>
+          );
+        return (
+          <Popover
+            size="md"
+            title={t("env.layersTitle", { name: p.name })}
+            trigger={
+              <Button size="sm" variant="ghost" icon={p.own ? "layers" : "corner-left-up"} trailingIcon="chevron-down" aria-label={`${label} — ${t("env.layersShow")}`}>
+                {label}
+              </Button>
+            }
+          >
+            <LineageList
+              label={t("env.layersTitle", { name: p.name })}
+              items={[
+                ...p.layers.map((l) => ({ key: l.envId, label: l.name, value: shown(l.value), badge: !p.own && l.effective ? inEffect : undefined })),
+                { key: id, label: t("env.layerThis", { name: env.data?.name ?? "" }), value: shown(p.own ? p.value : undefined), badge: p.own ? inEffect : undefined, current: true },
+              ]}
+            />
+          </Popover>
+        );
+      },
     },
     {
       key: "status",
@@ -305,10 +404,49 @@ export function EnvPage({ tab, descriptor }: { tab: TabState; descriptor: PageDe
               getRowKey={(p) => p.name}
               widths={widths}
               onWidthsChange={(next) => store.set((s) => ({ gridWidths: { ...s.gridWidths, "env-params": next } }))}
-              empty={<EmptyState layout="inline" message={needle ? t("env.noParams") : t("env.noParamsYet")} />}
+              lastRow={{
+                // D470/D472: a new parameter is typed in the table's last row; no dialog.
+                name: (
+                  <Input mono size="sm" aria-label={t("params.newName")} placeholder={t("params.newNamePlaceholder")} invalid={Boolean(newProblem)} value={newName} onChange={(e) => setNewName(e.target.value)} />
+                ),
+                type: (
+                  <Select
+                    size="sm"
+                    aria-label={t("env.newType")}
+                    options={typeOptions}
+                    value={newType}
+                    onValueChange={(v) => {
+                      setNewType(v as ParamType);
+                      setNewValue(v === "boolean" ? "false" : "");
+                    }}
+                  />
+                ),
+                value:
+                  newType === "boolean" ? (
+                    <Switch aria-label={t("params.newValue")} checked={newValue === "true"} onCheckedChange={(on) => setNewValue(on ? "true" : "false")} />
+                  ) : newType === "ref" ? (
+                    <Button size="sm" variant="secondary" icon="link" disabled={!newReady} onClick={() => setPicking({ name: newTrimmed, isNew: true })}>
+                      {t("env.refChoose")}
+                    </Button>
+                  ) : (
+                    <Input
+                      mono
+                      size="sm"
+                      aria-label={t("params.newValue")}
+                      placeholder={t("params.newValuePlaceholder")}
+                      value={newValue}
+                      onChange={(e) => setNewValue(e.target.value)}
+                      onKeyDown={(e) => e.key === "Enter" && addNew(newValue)}
+                    />
+                  ),
+                status: newProblem ? (
+                  <Text size="xs" tone="danger" truncate>
+                    {newProblem}
+                  </Text>
+                ) : undefined,
+                actions: newType === "ref" ? undefined : <IconButton icon="plus" size="sm" variant="secondary" label={t("params.addHere")} disabled={!newReady} onClick={() => addNew(newValue)} />,
+              }}
             />
-            {/* D470: a new parameter is typed right here, under the table; no dialog. */}
-            <NewParamRow own={new Set(env.data.params.filter((p) => p.own).map((p) => p.name))} onAdd={(name, value, type) => client.params.set(id, name, value, basis, type).catch((error) => { actions.fail(error); throw error; })} />
           </Section>
         </Pane>
       )}
@@ -316,9 +454,11 @@ export function EnvPage({ tab, descriptor }: { tab: TabState; descriptor: PageDe
         open={picking !== null}
         onOpenChange={(open) => !open && setPicking(null)}
         onPick={(resource) => {
-          const name = picking;
+          const target = picking;
           setPicking(null);
-          if (name) void set(name, resource);
+          if (!target) return;
+          if (target.isNew) addNew(resource);
+          else void set(target.name, resource);
         }}
       />
     </Frame>

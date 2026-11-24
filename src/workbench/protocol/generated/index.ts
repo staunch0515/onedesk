@@ -68,6 +68,7 @@ export type * from "./PageSaveParams";
 export type * from "./PageSaveResult";
 export type * from "./PaletteCommand";
 export type * from "./ParamNameParams";
+export type * from "./ParamRenameParams";
 export type * from "./ParamSetParams";
 export type * from "./ParamType";
 export type * from "./ParamsResolveParams";

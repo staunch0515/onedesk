@@ -1,6 +1,7 @@
 /**
  * The plugin requirements of D466 against the REAL kernel and the real built-in plugins (devhost on a temp dir):
- *  - environment parameters are added freely: any name, any value, typed in the "Add parameter" dialog;
+ *  - environment parameters are added freely: any name, any value, typed in the table's last row (D470, D472);
+ *  - a parameter set here is renamed and given another type in its row; "Comes from" shows the chain of parents (D472);
  *  - every tab picks an environment (the kernel's default; the welcome page is the exception);
  *  - a note is a template: {{name}} is filled from the tab's environment, another environment gives another text;
  *  - one function, one control: the note's reading/editing switch is only in the actions row.
@@ -69,6 +70,50 @@ test("an environment parameter is added by typing any name and value under the t
   await expect(treeItem(page, "Other")).toBeVisible();
   const other = (await children(page, "env", root)).find((n) => n.label === "Other")!.key;
   await call(page, "params.set", { node: other, name: "tenant_id", value: "2002" });
+});
+
+test("a parameter is renamed and retyped in its row; Comes from shows how it is set from the top environment down (D472)", async ({ page }) => {
+  await openKernel(page, host);
+  const root = (await children(page, "env")).find((n) => n.label === "Default")!.key;
+  const other = (await children(page, "env", root)).find((n) => n.label === "Other")!.key;
+  await call(page, "params.set", { node: root, name: "price", value: "12" });
+  await call(page, "params.set", { node: other, name: "price", value: "15" });
+  await call(page, "params.set", { node: other, name: "flag", value: "true" });
+  await showTree(page, "Environments");
+  if (!(await treeItem(page, "Other").isVisible())) {
+    await treeItem(page, "Default").click();
+    await treeItem(page, "Default").press("ArrowRight");
+  }
+  await treeItem(page, "Other").click();
+  // The new row is the table's last row.
+  const grid = page.getByRole("table", { name: "Parameters" });
+  await expect(grid.getByRole("textbox", { name: "New parameter" })).toBeVisible();
+  // Comes from: the chain Default › Other with the value at each level.
+  await grid.getByRole("button", { name: /^This environment — / }).first().click();
+  const chain = page.getByRole("list", { name: "How price is set, from the top environment down" });
+  await expect(chain).toBeVisible();
+  await expect(chain.getByRole("listitem").first()).toContainText("Default");
+  await expect(chain.getByRole("listitem").first()).toContainText("12");
+  await expect(chain.getByRole("listitem").last()).toContainText("Other (this environment)");
+  await expect(chain.getByRole("listitem").last()).toContainText("15");
+  await page.screenshot({ path: path.join(OUT, "plugin-env-chain.png") });
+  await page.keyboard.press("Escape");
+  // A parameter never set above (flag) has no chain to show: only price and tenant_id (also set in Default) have one.
+  await expect(grid.getByRole("button", { name: /^This environment/ })).toHaveCount(2);
+  // Type: text to yes/no; the value becomes a switch.
+  await grid.getByRole("combobox", { name: "Type of flag" }).click();
+  await page.getByRole("option", { name: "Yes / no" }).click();
+  await expect(grid.getByRole("switch", { name: "flag" })).toBeChecked();
+  // Rename: value and type stay.
+  const name = grid.getByRole("textbox", { name: "Name of flag" });
+  await name.fill("enabled");
+  await name.press("Enter");
+  await expect(grid.getByRole("switch", { name: "enabled" })).toBeChecked();
+  type P = { name: string; type: string; value: string; own: boolean };
+  const params = (await call<{ params: P[] }>(page, "params.env", { envId: other })).params;
+  expect(params.find((p) => p.name === "enabled")).toMatchObject({ type: "boolean", value: "true", own: true });
+  expect(params.find((p) => p.name === "flag")).toBeUndefined();
+  await page.screenshot({ path: path.join(OUT, "plugin-env-renamed.png") });
 });
 
 test("a note picks an environment and is a template; its reading/editing switch is only in the actions row (D466)", async ({ page }) => {
