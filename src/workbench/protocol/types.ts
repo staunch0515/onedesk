@@ -110,6 +110,8 @@ export type {
   AssistProvider,
   EmbedResult,
   RefSuggestion,
+  BlobInfo,
+  ImageWidth,
   FieldAssist,
   PageApply,
   ConversationTurn,

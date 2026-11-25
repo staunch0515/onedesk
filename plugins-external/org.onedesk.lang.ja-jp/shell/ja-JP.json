@@ -1021,5 +1021,17 @@
   "refs.staleHint": "書かれたパスはもう合いません（上位の名前が変わったか移動しました）。参照は {place} のものを指したままです。",
   "refs.rewrite": "一意な書き方にする",
   "refs.rewritten": "「{text}」と書き直しました。",
-  "refs.topLevel": "最上位"
+  "refs.topLevel": "最上位",
+  "image.alt": "画像",
+  "image.open": "大きく表示",
+  "image.failed": "この画像は表示できません。",
+  "image.drop": "画像をここにドロップ、貼り付け、またはファイルを選択（PNG・JPEG・GIF・WebP、最大 20 MB）。",
+  "image.choose": "画像を選択…",
+  "image.replace": "置き換え…",
+  "image.remove": "削除",
+  "image.tooLarge": "画像が 20 MB を超えています。",
+  "image.pasted": "画像",
+  "kernel.error.invalid.notAnImage": "OneDesk が受け付ける画像（PNG・JPEG・GIF・WebP）ではありません。",
+  "kernel.error.invalid.unknownBlob": "その画像はこのワークスペースにありません。",
+  "kernel.error.invalid.tooManyBlobs": "1 つのリソースに入れられる画像は 200 枚までです。"
 }

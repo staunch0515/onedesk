@@ -196,6 +196,8 @@ pub(crate) struct Inner {
     pub(crate) warned: Mutex<std::collections::HashSet<String>>,
     /// Round 19: rate-limit memory of the AI clients.
     pub(crate) mcp: crate::mcp::McpState,
+    /// D484 §16: blobs each client has put and may read before any resource uses them.
+    pub(crate) blob_pending: Mutex<HashMap<String, std::collections::HashSet<String>>>,
 }
 
 pub(crate) fn parse<T: DeserializeOwned>(v: Value) -> KResult<T> {
@@ -285,6 +287,7 @@ impl Kernel {
             languages_seen: Mutex::new(None),
             warned: Mutex::new(Default::default()),
             mcp: Default::default(),
+            blob_pending: Default::default(),
         });
         // Round 13 (D400): a new workspace copies the settings it was created with, once.
         let init = inner.read(|c| Ok(crate::workspace_settings::take_init_settings(&inner.ws.dir, c))).ok().flatten();
@@ -662,6 +665,9 @@ impl Inner {
                 }
                 if crate::install::METHODS.contains(&m) {
                     return self.handle7(m, params).await;
+                }
+                if crate::blobs::METHODS.contains(&m) {
+                    return self.handle_blobs(client, m, params).await;
                 }
                 if crate::transfer::METHODS.contains(&m) {
                     return self.handle5(m, params).await.unwrap_or_else(|| Err(err_p(ErrorCode::UnknownMethod, &[("method", m)])));

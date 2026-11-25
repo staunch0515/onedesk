@@ -1,0 +1,9 @@
+{
+  "plugin.name": "画像",
+  "plugin.description": "ワークスペースに保存する画像：ドロップ・貼り付け・選択。![[名前]] でどこにでも埋め込めます。",
+  "kind.image": "画像",
+  "kind.image.new": "無題の画像",
+  "field.image": "画像",
+  "action.save": "保存",
+  "embed.empty": "まだ画像がありません。"
+}

@@ -110,6 +110,16 @@ impl Inner {
             e
         };
         for node in view.iter_mut() {
+            // D484 §16: an image is a stored blob.
+            if let ViewNode::Image { id, blob, .. } = node {
+                let known = crate::blobs::is_blob(blob) && self.read(|c| crate::blobs::exists(c, blob))?;
+                if !known {
+                    let mut e = err_p(ErrorCode::PluginError, &[("reason", "badOutput"), ("plugin", &plugin.id)]);
+                    e.detail = Some(format!("image {id}: not a stored file"));
+                    return Err(e);
+                }
+                continue;
+            }
             // D479: a conversation's buttons are like a table's row actions; its input names a run parameter.
             if let ViewNode::Conversation { id, turns, input, target_tab } = node {
                 let bad = |what: &str| {

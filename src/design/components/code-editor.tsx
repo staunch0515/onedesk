@@ -1,4 +1,4 @@
-import { useMemo, useRef, type KeyboardEvent, type ReactNode, type Ref, type UIEvent } from "react";
+import { useMemo, useRef, type KeyboardEvent, type ReactNode, type Ref, type UIEvent, type ClipboardEvent, type DragEvent } from "react";
 import { cx } from "./cx";
 import "./code-editor.css";
 
@@ -18,6 +18,9 @@ export interface CodeEditorProps {
   label: string;
   placeholder?: string;
   onKeyDown?: (e: KeyboardEvent<HTMLTextAreaElement>) => void;
+  /** D484 §16: pasting or dropping (e.g. images) into the text. */
+  onPaste?: (e: ClipboardEvent<HTMLTextAreaElement>) => void;
+  onDrop?: (e: DragEvent<HTMLTextAreaElement>) => void;
   /** fill: takes all remaining height of a flex column parent (I.7). auto: grows with the content. */
   height?: "fill" | "auto";
   /** Draw a border (when it is not edge-to-edge). */
@@ -32,7 +35,7 @@ const INDENT = "  ";
  * Plain code editor: a textarea over a highlighted copy of the same text, with line numbers.
  * Typing stays entirely in the browser; nothing is computed per keystroke except the token colours.
  */
-export function CodeEditor({ value, onChange, tokenize, readOnly, label, placeholder, onKeyDown, height = "fill", framed, ref, className }: CodeEditorProps) {
+export function CodeEditor({ value, onChange, tokenize, readOnly, label, placeholder, onKeyDown, onPaste, onDrop, height = "fill", framed, ref, className }: CodeEditorProps) {
   const highlightRef = useRef<HTMLPreElement>(null);
   const gutterRef = useRef<HTMLDivElement>(null);
 
@@ -99,6 +102,8 @@ export function CodeEditor({ value, onChange, tokenize, readOnly, label, placeho
           wrap="off"
           rows={height === "auto" ? Math.max(3, lineCount) : undefined}
           onChange={(e) => onChange?.(e.target.value)}
+          onPaste={onPaste}
+          onDrop={onDrop}
           onScroll={onScroll}
           onKeyDown={handleKeyDown}
         />

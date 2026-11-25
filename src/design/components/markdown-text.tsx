@@ -1,4 +1,5 @@
-import { Fragment, useMemo, type MouseEvent, type ReactNode } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from "react";
+import { ImageView } from "./image-view";
 import { Marked, Renderer } from "marked";
 import { cx } from "./cx";
 import { isOpenableUrl, normalizeLinkHref } from "./open-url";
@@ -21,6 +22,13 @@ export interface MarkdownTextProps {
    * Without it, and for `![[…]]` inside a sentence, the mark is shown as a reference.
    */
   renderEmbed?: (text: string) => ReactNode;
+  /**
+   * D484 §16: reads a stored image (`![…](blob:<hash>)`) and gives an address the page may load, or null. Without it
+   * (or for any other address) only the alternative text is shown.
+   */
+  blobUrl?: (blob: string) => Promise<string | null>;
+  /** Words for an image: the button that shows it large, and the one that closes it. */
+  imageLabels?: { open: string; close: string };
   className?: string;
 }
 
@@ -74,8 +82,12 @@ function createRenderer(): Marked {
         const target = normalizeLinkHref(href);
         return isOpenableUrl(target) ? `<a href="${escapeHtml(target)}" data-od-link rel="noopener noreferrer">${text}</a>` : text;
       },
-      // Images are not loaded: only the alternative text is shown.
-      image: ({ text }) => `<span class="od-markdown__image-alt">${escapeHtml(text)}</span>`,
+      // Images are not loaded: only the alternative text is shown. D484 §16: a stored image (`blob:<hash>`) gets a place
+      // that the component fills once it has read the file.
+      image: ({ href, text }) =>
+        /^blob:[0-9a-f]{64}$/.test(href)
+          ? `<span class="od-markdown__blob" data-od-blob="${href.slice(5)}" data-od-alt="${escapeHtml(text)}"><span class="od-markdown__image-alt">${escapeHtml(text)}</span></span>`
+          : `<span class="od-markdown__image-alt">${escapeHtml(text)}</span>`,
       // Inside a page that already has its h1 every heading moves one level down; the class keeps the written level.
       heading(this: Renderer, { tokens, depth }) {
         return `<h${Math.min(depth + 1, 6)} class="od-markdown__h${depth}">${this.parser.parseInline(tokens)}</h${Math.min(depth + 1, 6)}>\n`;
@@ -122,7 +134,7 @@ export function splitEmbeds(source: string): Array<{ markdown: string } | { embe
 }
 
 /** Read-only Markdown for plugin text: no raw HTML, only http/https/mailto links, `[[references]]`, no images. */
-export function MarkdownText({ source, onLinkClick, onReferenceClick, referenceState, renderEmbed, className }: MarkdownTextProps) {
+export function MarkdownText({ source, onLinkClick, onReferenceClick, referenceState, renderEmbed, blobUrl, imageLabels, className }: MarkdownTextProps) {
   const parts = useMemo(() => (renderEmbed ? splitEmbeds(source) : null), [source, renderEmbed]);
   if (parts && parts.some((p) => "embed" in p)) {
     return (
@@ -131,18 +143,46 @@ export function MarkdownText({ source, onLinkClick, onReferenceClick, referenceS
           "embed" in p ? (
             <Fragment key={i}>{renderEmbed!(p.embed)}</Fragment>
           ) : (
-            <MarkdownHtml key={i} source={p.markdown} onLinkClick={onLinkClick} onReferenceClick={onReferenceClick} referenceState={referenceState} />
+            <MarkdownHtml key={i} source={p.markdown} onLinkClick={onLinkClick} onReferenceClick={onReferenceClick} referenceState={referenceState} blobUrl={blobUrl} imageLabels={imageLabels} />
           ),
         )}
       </div>
     );
   }
-  return <MarkdownHtml source={source} onLinkClick={onLinkClick} onReferenceClick={onReferenceClick} referenceState={referenceState} className={className} />;
+  return <MarkdownHtml source={source} onLinkClick={onLinkClick} onReferenceClick={onReferenceClick} referenceState={referenceState} blobUrl={blobUrl} imageLabels={imageLabels} className={className} />;
 }
 
-function MarkdownHtml({ source, onLinkClick, onReferenceClick, referenceState, className }: Omit<MarkdownTextProps, "renderEmbed">) {
+function MarkdownHtml({ source, onLinkClick, onReferenceClick, referenceState, blobUrl, imageLabels, className }: Omit<MarkdownTextProps, "renderEmbed">) {
   const html = useMemo(() => renderMarkdown(source, referenceState), [source, referenceState]);
+  const box = useRef<HTMLDivElement>(null);
+  const [large, setLarge] = useState<{ src: string; alt: string } | null>(null);
+  // D484 §16: fill each stored image's place with the image (an element made here, not markup).
+  useEffect(() => {
+    const root = box.current;
+    if (!root || !blobUrl) return;
+    let gone = false;
+    root.querySelectorAll<HTMLElement>("[data-od-blob]").forEach((place) => {
+      const blob = place.getAttribute("data-od-blob") ?? "";
+      const alt = place.getAttribute("data-od-alt") ?? "";
+      void blobUrl(blob).then((url) => {
+        if (gone || !url) return;
+        const img = document.createElement("img");
+        img.className = "od-markdown__img";
+        img.src = url;
+        img.alt = alt;
+        place.replaceChildren(img);
+      });
+    });
+    return () => {
+      gone = true;
+    };
+  }, [html, blobUrl]);
   const onClick = (e: MouseEvent<HTMLDivElement>) => {
+    const img = (e.target as HTMLElement).closest("img.od-markdown__img") as HTMLImageElement | null;
+    if (img) {
+      setLarge({ src: img.src, alt: img.alt });
+      return;
+    }
     const anchor = (e.target as HTMLElement).closest("a");
     if (!anchor) return;
     e.preventDefault();
@@ -156,5 +196,15 @@ function MarkdownHtml({ source, onLinkClick, onReferenceClick, referenceState, c
   };
   // The markup comes from `marked` with every raw HTML token escaped by the renderer above and every attribute value escaped.
   // eslint-disable-next-line react/no-danger
-  return <div className={cx("od-markdown", className)} onClick={onClick} dangerouslySetInnerHTML={{ __html: html }} />;
+  return (
+    <>
+      <div ref={box} className={cx("od-markdown", className)} onClick={onClick} dangerouslySetInnerHTML={{ __html: html }} />
+      {large && imageLabels && <LargeImage {...large} labels={imageLabels} onClose={() => setLarge(null)} />}
+    </>
+  );
+}
+
+/** A Markdown image shown large (the same dialog an image node uses). */
+function LargeImage({ src, alt, labels, onClose }: { src: string; alt: string; labels: { open: string; close: string }; onClose: () => void }) {
+  return <ImageView src={src} alt={alt} openLabel={labels.open} closeLabel={labels.close} startOpen onClosed={onClose} hidden />;
 }

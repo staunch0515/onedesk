@@ -16,6 +16,7 @@ import { Badge, FactRow } from "../../design";
 import { RunKeepBar } from "../parts/run-keep-bar";
 import { clashes, conversationOf, targetInput, useAssistProvider } from "../parts/ai-chat";
 import { RefCodeEditor, RefTextarea } from "../parts/ref-completion";
+import { AttachmentField, BlobScope } from "../parts/blobs";
 
 const EMPTY: Record<string, unknown> = {};
 /** D479: how many turns each tab's conversation showed last, to empty its box when a new one comes in. */
@@ -538,7 +539,17 @@ export function ViewPage({ tab, descriptor: initial }: { tab: TabState; descript
           <Pane grow={!fill && !stacked} scroll={!stacked} pad="lg" gap="md" width="form">
             {rest.map((f) => (
               <FormField key={f.name} label={tx(f.label)} required={f.required} requiredMark="*" description={f.hint ? tx(f.hint) : undefined}>
-                <FieldControl field={f} size="md" readOnly={readOnly} value={fieldValue(f)} secret={secretOf(f)} onChange={(v) => setBound(f.bind ?? f.name, v)} />
+                {f.kind === "attachment" ? (
+                  // D484 §16: the value is an object (the stored file), not text.
+                  <AttachmentField
+                    label={tx(f.label)}
+                    value={f.bind && f.bind in draft ? draft[f.bind] : values[f.bind ?? f.name]}
+                    readOnly={readOnly || Boolean(f.readOnly)}
+                    onChange={(v) => actions.setDraft(tab.id, f.bind ?? f.name, v, values[f.bind ?? f.name])}
+                  />
+                ) : (
+                  <FieldControl field={f} size="md" readOnly={readOnly} value={fieldValue(f)} secret={secretOf(f)} onChange={(v) => setBound(f.bind ?? f.name, v)} />
+                )}
               </FormField>
             ))}
           </Pane>
@@ -590,6 +601,7 @@ export function ViewPage({ tab, descriptor: initial }: { tab: TabState; descript
   );
   return (
     <>
+    <BlobScope.Provider value={descriptor.resourceId ?? undefined}>
     <Frame tab={tab} descriptor={descriptor} actions={items} panel={descriptor.resultTabs.length > 0 || tab.runId ? <ResultArea tab={tab} descriptor={descriptor} /> : undefined}>
       {conflictBar}
       {descriptor.runId && <RunHeader runId={descriptor.runId} />}
@@ -603,6 +615,7 @@ export function ViewPage({ tab, descriptor: initial }: { tab: TabState; descript
         )}
       </Pane>
     </Frame>
+    </BlobScope.Provider>
       <Dialog
         open={applyAsk !== null}
         onOpenChange={(open) => !open && setApplyAsk(null)}

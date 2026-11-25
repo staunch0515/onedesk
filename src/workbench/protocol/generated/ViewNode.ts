@@ -2,6 +2,7 @@
 import type { ConversationInput } from "./ConversationInput";
 import type { ConversationTurn } from "./ConversationTurn";
 import type { FormLayout } from "./FormLayout";
+import type { ImageWidth } from "./ImageWidth";
 import type { Label } from "./Label";
 import type { LineTone } from "./LineTone";
 import type { OutputColumn } from "./OutputColumn";
@@ -49,7 +50,7 @@ rowKeys?: Array<string>,
  * row's key (needs `rowKeys`); the row whose key it holds is shown selected. The page's
  * render and events get it in `ctx.params` like any view state.
  */
-selectParam?: string, } | { "type": "link", id: string, label: Label, target: string, } | { "type": "conversation", id: string, turns: Array<ConversationTurn>, input?: ConversationInput, 
+selectParam?: string, } | { "type": "link", id: string, label: Label, target: string, } | { "type": "image", id: string, blob: string, alt?: string, width?: ImageWidth, } | { "type": "conversation", id: string, turns: Array<ConversationTurn>, input?: ConversationInput, 
 /**
  * The tab whose unsaved values and description go along with every run started on this page
  * (as `input["target.draft"]` and `input["target.description"]`); a tab that is not open adds nothing.

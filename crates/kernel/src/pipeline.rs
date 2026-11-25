@@ -263,6 +263,9 @@ pub enum Command {
     RunDelete { id: String },
     /// Drops finished runs from the task panel.
     RunClearFinished,
+    /// D484 §16: a stored file's row (the file is already written); blobs nobody used before `cutoff` go
+    /// (`report.gone` lists them, for their files to be removed).
+    BlobPut { info: onedesk_protocol::BlobInfo, cutoff: i64 },
     /// Round 18 (D442): a plugin keeps `data` (JSON text) beside a run; audited as `runs.saveArtifact`.
     ArtifactSave { id: String, run: String, plugin: String, name: String, kind: String, data: String },
     /// Round 18 (D442): removes one of the plugin's own; audited as `runs.deleteArtifact`.
@@ -309,6 +312,8 @@ pub struct KindRule {
     pub text_refs: Vec<String>,
     /// Body keys of single-reference fields (`{ "ref": id }`).
     pub ref_fields: Vec<String>,
+    /// D484 §16: body keys of attachment fields (`{ "blob": … }`).
+    pub attachment_fields: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -444,7 +449,7 @@ struct Writer {
 /// Kind rules of every installed plugin version; replaced when the plugins folder is read again.
 pub type SharedRules = Arc<std::sync::RwLock<HashMap<String, KindRule>>>;
 
-fn db_err(e: rusqlite::Error) -> onedesk_protocol::ProtocolError {
+pub(crate) fn db_err(e: rusqlite::Error) -> onedesk_protocol::ProtocolError {
     internal(e)
 }
 
@@ -594,6 +599,18 @@ impl Writer {
                     cx.audit("runs.deleteArtifact", &id, &json!({}))?;
                     Outcome { id: Some(id), changed: true, rows: vec![], ..Default::default() }
                 }
+                Command::BlobPut { info, cutoff } => {
+                    cx.tx
+                        .execute(
+                            "INSERT INTO blobs (hash, type, size, width, height, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                             ON CONFLICT(hash) DO UPDATE SET created_at = excluded.created_at",
+                            params![info.blob, info.r#type, info.size as i64, info.width, info.height, cx.at],
+                        )
+                        .map_err(db_err)?;
+                    let gone = crate::blobs::unused_before(cx.tx, cutoff).map_err(db_err)?;
+                    cx.audit("blob.put", &info.blob, &json!({ "type": info.r#type, "size": info.size }))?;
+                    Outcome { changed: true, report: json!({ "gone": gone }), ..Default::default() }
+                }
                 Command::RunClearFinished => {
                     let n = cx.tx.execute("UPDATE runs SET in_task_panel = 0 WHERE status <> 'running' AND in_task_panel = 1", []).map_err(db_err)?;
                     Outcome { changed: n > 0, ..Default::default() }
@@ -723,6 +740,7 @@ fn describe(cmd: &Command) -> (String, String) {
         Command::RunKeep { id, .. } => ("run.keep".into(), id.clone()),
         Command::RunDelete { id } => ("run.delete".into(), id.clone()),
         Command::RunClearFinished => ("run.clearFinished".into(), String::new()),
+        Command::BlobPut { info, .. } => ("blob.put".into(), info.blob.clone()),
         Command::ArtifactSave { run, .. } => ("runs.saveArtifact".into(), run.clone()),
         Command::ArtifactDelete { id, .. } => ("runs.deleteArtifact".into(), id.clone()),
         Command::PluginState { plugin, .. } => ("plugin.state".into(), plugin.clone()),
@@ -788,6 +806,8 @@ impl Tx<'_> {
         if let Some(rule) = self.rules.get(&row.kind) {
             let t = crate::refs::update(self.tx, rule, row, changed).map_err(db_err)?;
             self.touched.borrow_mut().extend(t);
+            // D484 §16: the files it refers to now (kept for its history too).
+            crate::blobs::record(self.tx, rule, row)?;
         }
         Ok(())
     }
@@ -1579,6 +1599,8 @@ impl Tx<'_> {
             self.touch_ends(&r.id)?;
             self.tx.execute("DELETE FROM refs WHERE source_id = ?1", [&r.id]).map_err(db_err)?;
             self.tx.execute("UPDATE refs SET target_id = NULL WHERE target_id = ?1", [&r.id]).map_err(db_err)?;
+            // D484 §16: its files are no longer kept for it (unused ones go a day after they came).
+            self.tx.execute("DELETE FROM blob_uses WHERE resource_id = ?1", [&r.id]).map_err(db_err)?;
             self.tx
                 .execute("DELETE FROM search WHERE rowid = (SELECT rowid FROM resources WHERE id = ?1)", [&r.id])
                 .map_err(db_err)?;

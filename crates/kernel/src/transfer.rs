@@ -340,6 +340,8 @@ impl Tx<'_> {
             if let Some(rule) = self.rules.get(&row.kind) {
                 let t = crate::refs::import_rows(self.tx, rule, &row, &it.hints, &it.lost).map_err(db_err)?;
                 self.touched.borrow_mut().extend(t);
+                // D484 §16: the files it uses (imported before the rows); one that did not come is only text.
+                let _ = crate::blobs::record(self.tx, rule, &row);
             }
         }
         // D330: references here that were waiting for an imported name.
@@ -398,6 +400,7 @@ fn valid_body(decl: Option<&KindDecl>, r: &ExportResource) -> bool {
             DeclType::Boolean => v.is_boolean(),
             DeclType::Ref => v.get("ref").is_some_and(|x| x.is_string() || x.is_null()),
             DeclType::Secret => v.get("secret").is_some_and(|x| x.is_string() || x.is_null()),
+            DeclType::Attachment => v.get("blob").is_some_and(|x| x.as_str().is_some_and(crate::blobs::is_blob)),
         },
     })
 }
@@ -530,8 +533,8 @@ impl Inner {
             return Err(bad("too large".into()));
         }
         let mut answer: EmbedOut = serde_json::from_value(raw).map_err(|e| bad(e.to_string()))?;
-        if answer.view.iter().any(|n| !matches!(n, ViewNode::Text { .. } | ViewNode::Table { .. } | ViewNode::Link { .. })) {
-            return Err(bad("only text, table and link nodes".into()));
+        if answer.view.iter().any(|n| !matches!(n, ViewNode::Text { .. } | ViewNode::Table { .. } | ViewNode::Link { .. } | ViewNode::Image { .. })) {
+            return Err(bad("only text, table, link and image nodes".into()));
         }
         self.check_tables(plugin, Some(&row.id), &mut answer.view)?;
         out.view = Some(answer.view);
@@ -712,13 +715,27 @@ impl Inner {
                 return Err(invalid("notEmpty"));
             }
         }
-        let (files, counts) = self.export_files()?;
+        let (files, mut counts) = self.export_files()?;
+        // D484 §16: every file a resource uses goes along, under its blob name.
+        let blobs: Vec<String> = self.read(|c| {
+            let mut st = c.prepare("SELECT DISTINCT hash FROM blob_uses ORDER BY hash")?;
+            let v = st.query_map([], |r| r.get(0))?.collect::<Result<Vec<String>, _>>();
+            v
+        })?;
+        counts.blobs = blobs.len() as u32;
+        let ws_dir = self.ws.dir.clone();
         let tmp = target.with_file_name(format!(".{}.onedesk-export-{}", target.file_name().unwrap_or_default().to_string_lossy(), new_id()));
         let write = || -> std::io::Result<()> {
             std::fs::create_dir(&tmp)?;
             std::fs::create_dir(tmp.join("blobs"))?;
             for (name, bytes) in &files {
                 std::fs::write(tmp.join(name), bytes)?;
+            }
+            for b in &blobs {
+                let from = crate::blobs::path(&ws_dir, b);
+                if from.exists() {
+                    std::fs::copy(&from, tmp.join("blobs").join(b))?;
+                }
             }
             if target.exists() {
                 std::fs::remove_dir(&target)?;
@@ -1093,6 +1110,22 @@ impl Inner {
 
     pub async fn import(&self, p: ImportParams) -> KResult<ImportResult> {
         let a = self.analyze(&p.folder)?.map_err(invalid)?;
+        // D484 §16: the files first (resources that use them are checked against them). Only what is what its name says.
+        if let Ok(dir) = std::fs::read_dir(Path::new(&p.folder).join("blobs")) {
+            for e in dir.flatten() {
+                let name = e.file_name().to_string_lossy().into_owned();
+                if !crate::blobs::is_blob(&name) {
+                    continue;
+                }
+                let Ok(bytes) = std::fs::read(e.path()) else { continue };
+                if crate::blobs::hash(&bytes) != name {
+                    continue;
+                }
+                if let Ok(info) = crate::blobs::prepare(&self.ws.dir, &bytes) {
+                    self.execute(Actor::User, Command::BlobPut { info, cutoff: 0 }).await?;
+                }
+            }
+        }
         if a.fingerprint != p.fingerprint {
             return Err(invalid("fingerprintChanged"));
         }

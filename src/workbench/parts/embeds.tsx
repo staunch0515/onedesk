@@ -4,6 +4,7 @@ import { useI18n } from "../i18n";
 import type { RefInfo } from "../protocol";
 import { useQuery, useUi, useWorkbench } from "../state/context";
 import { useOpenHere, ViewNodes } from "./view-nodes";
+import { BlobScope, useBlobUrl, useImageLabels } from "./blobs";
 
 /**
  * D481 (docs/redesign/embed-book.md §3): `![[name]]` / `![[name#section]]` in Markdown shows the other resource's
@@ -42,9 +43,13 @@ export function RefMarkdown({ source, ...place }: Place & { source: string }) {
   const { refs } = place;
   const referenceState = useCallback((name: string): ReferenceState => refOf(refs, name)?.state ?? "missing", [refs]);
   const renderEmbed = useCallback((text: string) => <Embed text={text} {...place} />, [place]);
+  const imageUrl = useBlobUrl();
+  const imageLabels = useImageLabels();
   return (
     <MarkdownText
       source={source}
+      blobUrl={imageUrl}
+      imageLabels={imageLabels}
       referenceState={referenceState}
       renderEmbed={renderEmbed}
       onLinkClick={(href) => void actions.openExternal(href)}
@@ -85,11 +90,14 @@ export function Embed({ text, refs, envId, depth, chain }: Place & { text: strin
       place={e.path.length > 0 ? e.path.join(" › ") : undefined}
       note={e.sectionMissing ? t("embed.sectionMissing", { section: section ?? "" }) : undefined}
     >
-      {e.view
-        ? e.view.map((n, i) =>
-            n.type === "text" && n.format === "markdown" && !n.mono ? <RefMarkdown key={i} source={n.text} {...inner} /> : <ViewNodes key={i} nodes={[n]} />,
-          )
-        : e.description && <Text tone="muted">{e.description}</Text>}
+      {/* D484 §16: images inside are read for the embedded resource. */}
+      <BlobScope.Provider value={e.id}>
+        {e.view
+          ? e.view.map((n, i) =>
+              n.type === "text" && n.format === "markdown" && !n.mono ? <RefMarkdown key={i} source={n.text} {...inner} /> : <ViewNodes key={i} nodes={[n]} />,
+            )
+          : e.description && <Text tone="muted">{e.description}</Text>}
+      </BlobScope.Provider>
     </EmbedBlock>
   );
 }

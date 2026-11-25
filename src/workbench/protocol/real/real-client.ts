@@ -1,4 +1,4 @@
-import type { AssistProvider, ConnectionState, EmbedResult, RefSuggestion, EventMessage, HelloResult, TreePage } from "../generated";
+import type { AssistProvider, BlobInfo, ConnectionState, EmbedResult, RefSuggestion, EventMessage, HelloResult, TreePage } from "../generated";
 import type { ProtocolClient } from "../client";
 import type { ExportResult, ImportPreview, ImportResult, KnownParam, RefInfo, RunExportResult, InstallPreview, InstallRequest, PluginVersionParams, SecretInfo, UndoUpgradeResult, UpgradeResult, PageEventResult, PaletteCommand, PluginDetail, Run, ViewNode, TreeMoveResult, AuditFacets, AuditFilter, McpInfo, McpStatus, AuditRow, EnvOption, EnvView, HistoryEntry, ResolvedParam, ResultAction, SearchHit, CommandContext, CommandEffect, NewItem, PageContext, PageDescriptor, PageSaveResult, PluginGrants, Resource, TreeInfo, TreeNode, WorkspaceEntry, WorkspacesResult, WorkspaceInfo, LanguageInfo, ShellTexts } from "../types";
 import { EventBus } from "./event-bus";
@@ -24,6 +24,7 @@ export interface KernelClient {
   run: ProtocolClient["run"];
   result: ProtocolClient["result"];
   assist?: ProtocolClient["assist"];
+  blob?: ProtocolClient["blob"];
   command: ProtocolClient["command"];
   plugin: Pick<ProtocolClient["plugin"], "grants" | "grantFolder" | "revokeFolder" | "replaceFolder" | "get" | "setEnabled" | "setSetting" | "reload" | "activateVersion" | "setPinned" | "undoUpgrade" | "confirmPermissions" | "installRequests" | "answerInstallRequest">;
   app: NonNullable<ProtocolClient["app"]>;
@@ -153,6 +154,10 @@ export async function createKernelClient(transport: Transport, locale?: () => st
     },
     assist: {
       provider: () => call<AssistProvider>("assist.provider"),
+    },
+    blob: {
+      put: (p) => call<BlobInfo>("blob.put", compact({ data: p.data, path: p.path })),
+      read: (blob, resource) => call<{ type: string; data: string }>("blob.read", compact({ blob, resource })),
     },
     run: {
       start: (request) => call<string>("run.start", compact({ locale: locale?.(), action: request.action, resourceId: request.resourceId, target: request.target, tabId: request.tabId, envId: request.envId, input: request.input, params: request.params, resultRun: request.resultRun })),

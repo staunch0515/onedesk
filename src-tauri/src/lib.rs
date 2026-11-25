@@ -77,6 +77,17 @@ async fn pick_package_file(app: tauri::AppHandle) -> Option<String> {
     rx.await.ok().flatten().and_then(|p| p.into_path().ok()).map(|p| p.to_string_lossy().into_owned())
 }
 
+/// D484 §16: the system "open" dialog for an image (png, jpeg, gif, webp). Choosing the file is the user's consent to
+/// store it; the kernel reads it and checks what it is.
+#[tauri::command]
+async fn pick_image_file(app: tauri::AppHandle) -> Option<String> {
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    app.dialog().file().add_filter("Image", &["png", "jpg", "jpeg", "gif", "webp"]).pick_file(move |p| {
+        let _ = tx.send(p);
+    });
+    rx.await.ok().flatten().and_then(|p| p.into_path().ok()).map(|p| p.to_string_lossy().into_owned())
+}
+
 /// The system "save as" dialog (exporting a result). The user chooses where the new file goes; the
 /// file itself is written by the kernel. `name` is the suggested file name.
 #[tauri::command]
@@ -145,7 +156,7 @@ pub fn run() {
             }
         }))
         .plugin(tauri_plugin_dialog::init())
-        .invoke_handler(tauri::generate_handler![protocol_request, pick_folder, pick_package_file, pick_save_file, open_external, open_window])
+        .invoke_handler(tauri::generate_handler![protocol_request, pick_folder, pick_package_file, pick_image_file, pick_save_file, open_external, open_window])
         .on_window_event(|window, event| {
             let Some(state) = window.try_state::<HostState>() else { return };
             let Some(host) = state.host.clone() else { return };

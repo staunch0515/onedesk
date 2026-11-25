@@ -2,6 +2,7 @@ import type {
   AssistProvider,
   EmbedResult,
   RefSuggestion,
+  BlobInfo,
   ProtocolError,
   InstallAnswer,
   InstallPreview,
@@ -97,7 +98,7 @@ export interface ProtocolClient {
     shell(locale: string): Promise<ShellTexts>;
   };
 
-  readonly platform?: { /** Opens an address in the system browser; the main process checks the protocol again (D380). Absent in a plain browser. */ openExternal?: (url: string) => Promise<void>; pickFolder?: () => Promise<string | null>; /** D456: a plugin package file (.odplugin). */ pickPackageFile?: () => Promise<string | null>; pickSaveFile?: (name?: string) => Promise<string | null> };
+  readonly platform?: { /** Opens an address in the system browser; the main process checks the protocol again (D380). Absent in a plain browser. */ openExternal?: (url: string) => Promise<void>; pickFolder?: () => Promise<string | null>; /** D456: a plugin package file (.odplugin). */ pickPackageFile?: () => Promise<string | null>; /** D484: an image file. */ pickImageFile?: () => Promise<string | null>; pickSaveFile?: (name?: string) => Promise<string | null> };
 
   readonly demo?: { tree(id: string): boolean; target(target: string): boolean };
 
@@ -251,6 +252,14 @@ export interface ProtocolClient {
    *  `command` is its "AI chat" command (run with the page as context). */
   assist?: {
     provider(): Promise<AssistProvider>;
+  };
+
+  /** D484 §16: files kept by their content (images). Absent in the demo. */
+  blob?: {
+    /** Stores pasted or dropped content (base64), or a file the user chose (`path`). */
+    put(params: { data?: string; path?: string }): Promise<BlobInfo>;
+    /** A stored file, for a resource that uses it (or one this client just put). */
+    read(blob: string, resource?: string): Promise<{ type: string; data: string }>;
   };
 
   result: {

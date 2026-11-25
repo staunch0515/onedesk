@@ -1,0 +1,88 @@
+/* D484 §16: an image at one of four widths; clicking it shows it large. */
+.od-image {
+  display: inline-flex;
+  align-items: flex-start;
+  flex-direction: column;
+  gap: var(--space-1);
+  max-width: 100%;
+  margin: 0;
+}
+
+.od-image__button {
+  display: block;
+  width: fit-content;
+  max-width: 100%;
+  padding: 0;
+  border: var(--border-width) solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--bg-inset);
+  cursor: zoom-in;
+  overflow: hidden;
+}
+
+.od-image__img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}
+
+.od-image--small .od-image__img { width: var(--image-small); }
+.od-image--medium .od-image__img { width: var(--image-medium); }
+.od-image--large .od-image__img { width: var(--image-large); }
+
+.od-image__placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--image-small);
+  height: calc(var(--image-small) * 0.6);
+  color: var(--fg-subtle);
+  font-size: var(--text-xs);
+}
+
+.od-image__caption {
+  color: var(--fg-muted);
+  font-size: var(--text-xs);
+}
+
+.od-image__full {
+  display: block;
+  max-width: 100%;
+  max-height: var(--image-full-max-height);
+  margin: 0 auto;
+}
+
+/* The place to put an image: drop, paste or choose. */
+.od-image-drop {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: var(--border-width) dashed var(--border-strong);
+  border-radius: var(--radius-lg);
+  background: var(--bg-subtle);
+  outline: none;
+}
+
+.od-image-drop:focus-visible,
+.od-image-drop--over {
+  border-color: var(--accent-border);
+  background: var(--accent-subtle);
+}
+
+.od-image-drop__hint {
+  color: var(--fg-muted);
+  font-size: var(--text-sm);
+}
+
+.od-image-drop__row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.od-image-drop__facts {
+  color: var(--fg-muted);
+  font-size: var(--text-xs);
+}

@@ -1,0 +1,9 @@
+{
+  "plugin.name": "Images",
+  "plugin.description": "Images kept in the workspace: drop, paste or choose one; embed it anywhere with ![[name]].",
+  "kind.image": "Image",
+  "kind.image.new": "Untitled image",
+  "field.image": "Image",
+  "action.save": "Save",
+  "embed.empty": "No image yet."
+}

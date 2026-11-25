@@ -1,0 +1,9 @@
+{
+  "plugin.name": "图片",
+  "plugin.description": "存在工作区里的图片：拖入、粘贴或选择；在任何地方用 ![[名称]] 嵌入。",
+  "kind.image": "图片",
+  "kind.image.new": "未命名图片",
+  "field.image": "图片",
+  "action.save": "保存",
+  "embed.empty": "还没有图片。"
+}

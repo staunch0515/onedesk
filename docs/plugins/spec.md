@@ -203,11 +203,12 @@
 
 | 字段 | 说明 |
 |---|---|
-| `type`（必填） | `text`、`longtext`、`code`、`number`、`boolean`、`date`、`datetime`、`enum`、`secret`、`ref` |
+| `type`（必填） | `text`、`longtext`、`code`、`number`、`boolean`、`date`、`datetime`、`enum`、`secret`、`ref`、`attachment`（D484） |
 | `grants` | 只能是 `"network"`，只用于 `type: "text"`：这个字段里网址的主机会放行给插件。要求 `requires.network.fromResources: true`，否则 `grantsUndeclared`；别的值 `badGrants` |
 | `secrets` | 只用于 `text`/`longtext`/`code`，不能与 `grants` 同时用：文字里可以写 `{{secret:名字}}`，保存的文字里出现的名字就是用户允许这个资源使用的密钥。违反 `badSecretsField` |
 | `refs` | 只用于 `text`/`longtext`/`code`，不能与 `grants` 同时用：文字里的 `[[名字]]` 是对其他资源的引用。`type: "ref"` 的字段不能再带 `refs`/`grants`。违反 `badRefsField` |
 | `label` | 字段名（语言键），显示在引用面板等处 |
+| `accept` | 只用于 `type: "attachment"`，必填，目前只能是 `["image"]`。附件字段不能带 `refs`/`secrets`/`grants`。违反 `badAttachmentField` |
 
 - `type: "secret"` 的字段由框架直接写进钥匙串；资源里只存 `{ "secret": "<名字>" }`，插件永远拿不到值，也不能写它。
 - 带 `grants`、`secrets` 或 `type: "secret"` 的字段是**受保护字段**：插件不能改（只有用户能改），升级迁移也不能改（§9）。
@@ -482,6 +483,12 @@ export default {
 ### 6.4 `link`
 
 `{ type: "link", id, label: Label, target }`，`target` 是 `resource:<id>` 等目标。
+
+### 6.4b `image`（D484）
+
+`{ type: "image", id, blob, alt?, width? }`：显示一张存在工作区里的图片。`blob` 是文件号（附件字段值里的 `blob`），内核检查它确实存在；界面只为“用到它的资源”读取它，所以插件只能显示自己资源（或正在嵌入的资源）的图片。`width` 是 `small`、`medium`（默认）、`large`、`original`。
+
+**附件字段**（`fields.<键>.type: "attachment"`）：值是 `{ blob, name?, type, size, width?, height? }` 或 `null`。在 `render` 里把它写成 `kind: "attachment"` 的表单字段，外壳会画成放图片的区域：拖入、粘贴，或者用系统对话框选择文件。插件不能上传文件，也读不到文件内容。声明了 `refs: true` 的文本字段里，`![说明](blob:文件号)` 是正文里的图片，粘贴截图时外壳会自动写进去。参考 `org.onedesk.image`。
 
 ### 6.4a `conversation`（D479）
 

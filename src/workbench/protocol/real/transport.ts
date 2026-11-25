@@ -10,6 +10,8 @@ export interface Transport {
   pickFolder?(): Promise<string | null>;
   /** Opens the system open-file dialog limited to plugin package files, `.odplugin`/`.zip` (desktop only, D456). */
   pickPackageFile?(): Promise<string | null>;
+  /** D484 §16: an image file (system dialog). */
+  pickImageFile?(): Promise<string | null>;
   /** Opens the system "save as" dialog with a suggested file name (desktop only). */
   pickSaveFile?(name?: string): Promise<string | null>;
   /** Opens an address with the system's default browser (desktop only; the main process checks the protocol). */

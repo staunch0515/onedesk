@@ -201,6 +201,7 @@ export function createMixedClient(kernel: KernelClient, mock: ProtocolClient): P
     result: { actions: (runId) => runSide(runId).result.actions(runId) },
     // Writing help needs the kernel's plugins: none on demo pages.
     assist: kernel.assist,
+    blob: kernel.blob,
     command: {
       ...mock.command,
       palette: () => kernel.command.palette(),
@@ -237,6 +238,7 @@ export function createMixedClient(kernel: KernelClient, mock: ProtocolClient): P
             openExternal: kernel.transport.openExternal ? (url) => kernel.transport.openExternal!(url) : undefined,
             pickFolder: kernel.transport.pickFolder ? () => kernel.transport.pickFolder!() : undefined,
             pickPackageFile: kernel.transport.pickPackageFile ? () => kernel.transport.pickPackageFile!() : undefined,
+            pickImageFile: kernel.transport.pickImageFile ? () => kernel.transport.pickImageFile!() : undefined,
             pickSaveFile: kernel.transport.pickSaveFile ? (name) => kernel.transport.pickSaveFile!(name) : undefined,
           }
         : undefined,

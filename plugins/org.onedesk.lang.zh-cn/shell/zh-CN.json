@@ -1021,5 +1021,17 @@
   "refs.staleHint": "原文写的路径已经对不上了（上级改了名或者搬了家），引用仍然连着 {place} 里的那个。",
   "refs.rewrite": "改成唯一写法",
   "refs.rewritten": "已改写成“{text}”。",
-  "refs.topLevel": "最上层"
+  "refs.topLevel": "最上层",
+  "image.alt": "图片",
+  "image.open": "看大图",
+  "image.failed": "这张图片显示不出来。",
+  "image.drop": "把图片拖到这里、粘贴，或选择文件（PNG、JPEG、GIF、WebP，最大 20 MB）。",
+  "image.choose": "选择图片…",
+  "image.replace": "替换…",
+  "image.remove": "移除",
+  "image.tooLarge": "图片超过了 20 MB。",
+  "image.pasted": "图片",
+  "kernel.error.invalid.notAnImage": "这不是 OneDesk 收的图片（PNG、JPEG、GIF 或 WebP）。",
+  "kernel.error.invalid.unknownBlob": "这张图片不在这个工作区里。",
+  "kernel.error.invalid.tooManyBlobs": "一个资源最多放 200 张图片。"
 }

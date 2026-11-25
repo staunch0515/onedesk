@@ -1,0 +1,39 @@
+{
+  "id": "org.onedesk.image",
+  "version": "0.1.0",
+  "apiVersion": "2",
+  "name": "plugin.name",
+  "description": "plugin.description",
+  "icon": "image",
+  "main": "main.js",
+  "author": "OneDesk",
+  "license": "MIT",
+  "requires": { "files": false },
+  "contributes": {
+    "kinds": [
+      {
+        "id": "image",
+        "label": "kind.image",
+        "icon": "image",
+        "tree": "resources",
+        "page": "image",
+        "newName": "kind.image.new",
+        "defaults": { "image": null },
+        "fields": { "image": { "type": "attachment", "accept": ["image"], "label": "field.image" } },
+        "draggable": true,
+        "accepts": [],
+        "embed": true
+      }
+    ],
+    "pages": [
+      {
+        "id": "image",
+        "actions": [
+          { "id": "save", "role": "save", "label": "action.save", "icon": "save", "primary": true, "shortcut": ["Mod", "S"] }
+        ]
+      }
+    ],
+    "menus": { "new": ["image"] },
+    "locales": { "en-US": "locales/en-US.json", "zh-CN": "locales/zh-CN.json", "ja-JP": "locales/ja-JP.json" }
+  }
+}

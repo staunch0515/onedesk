@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState, type KeyboardEvent } from "react";
+import { useEffect, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent } from "react";
+import { putFiles } from "./blobs";
 import { CodeEditor, SuggestAnchor, SuggestList, Textarea, type CodeEditorProps, type TextareaProps } from "../../design";
 import { useI18n } from "../i18n";
 import type { RefSuggestion } from "../protocol";
@@ -115,7 +116,31 @@ function useRefCompletion(onValue: (value: string) => void) {
         }))}
       />
     ) : null;
-  return { el, look, onKeyDown, list, close: () => setMark(null) };
+  // D484 §16: an image pasted or dropped here is stored and written in where the caret is: `![Image](blob:…)`.
+  const { actions } = useWorkbench();
+  const addImages = (files: File[]) => {
+    const ta = el.current;
+    if (!ta || files.length === 0 || !client.blob) return false;
+    const at = ta.selectionStart;
+    void putFiles(client, files).then(
+      (list) => {
+        const text = list.map((a) => `![${t("image.pasted")}](blob:${a.blob})`).join("\n");
+        const v = ta.value;
+        onValue(v.slice(0, at) + text + v.slice(at));
+        requestAnimationFrame(() => ta.setSelectionRange(at + text.length, at + text.length));
+      },
+      (e) => actions.fail(e instanceof Error && e.message === "tooLarge" ? new Error(t("image.tooLarge")) : e),
+    );
+    return true;
+  };
+  const imagesOf = (list: FileList | null | undefined) => Array.from(list ?? []).filter((f) => f.type.startsWith("image/"));
+  const onPaste = (e: ClipboardEvent<HTMLTextAreaElement>) => {
+    if (addImages(imagesOf(e.clipboardData?.files))) e.preventDefault();
+  };
+  const onDrop = (e: DragEvent<HTMLTextAreaElement>) => {
+    if (addImages(imagesOf(e.dataTransfer?.files))) e.preventDefault();
+  };
+  return { el, look, onKeyDown, onPaste, onDrop, list, close: () => setMark(null) };
 }
 
 /** A text box where references are written. */
@@ -131,6 +156,8 @@ export function RefTextarea({ onValue, ...rest }: Omit<TextareaProps, "onChange"
           c.look();
         }}
         onKeyDown={c.onKeyDown}
+        onPaste={c.onPaste}
+        onDrop={c.onDrop}
         onKeyUp={(e) => !["ArrowDown", "ArrowUp", "Enter", "Tab", "Escape"].includes(e.key) && c.look()}
         onClick={c.look}
         onBlur={c.close}
@@ -153,6 +180,8 @@ export function RefCodeEditor({ onChange, ...rest }: Omit<CodeEditorProps, "ref"
           requestAnimationFrame(c.look);
         }}
         onKeyDown={c.onKeyDown}
+        onPaste={c.onPaste}
+        onDrop={c.onDrop}
       />
       {c.list}
     </SuggestAnchor>

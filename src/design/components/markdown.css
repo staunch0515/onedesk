@@ -192,3 +192,12 @@
   flex-direction: column;
   gap: var(--space-3);
 }
+
+/* D484 §16: a stored image in Markdown, at the medium width; clicking shows it large. */
+.od-markdown .od-markdown__img {
+  display: block;
+  max-width: min(100%, var(--image-medium));
+  height: auto;
+  border-radius: var(--radius-md);
+  cursor: zoom-in;
+}

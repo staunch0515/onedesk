@@ -182,6 +182,11 @@
   --code-tab-size: 2;
   --drag-ghost-offset: 14px;
   --form-max-width: 720px;
+  /* D484 §16: the widths an image can be drawn at (small, medium, large); original = its own, at most the page. */
+  --image-small: 240px;
+  --image-medium: 480px;
+  --image-large: 720px;
+  --image-full-max-height: 75vh;
   --env-select-width: 168px;
 
   /* Focus ring */

@@ -296,6 +296,9 @@ pub struct FieldDecl {
     /// Round 6: a label key (or text) for the field, shown e.g. in the reference panel.
     #[serde(default)]
     pub label: Option<String>,
+    /// D484 §16: for an `attachment` field, what it takes (only `image` so far).
+    #[serde(default)]
+    pub accept: Vec<String>,
 }
 
 /// Type of a declared body field: the view field kinds plus `ref` (a single reference stored as
@@ -313,6 +316,8 @@ pub enum DeclType {
     Enum,
     Secret,
     Ref,
+    /// D484 §16: a file kept by its content, `{ "blob": … }`.
+    Attachment,
 }
 
 impl FieldDecl {
@@ -1143,6 +1148,12 @@ pub fn parse_package(dir: &Path, bytes: &[u8], check_folder: bool) -> Result<Plu
             {
                 return Err(reject(dir, "badRefsField", format!("kind {} field {name}", k.id)));
             }
+            // D484 §16: an attachment field takes images and carries no other marks; `accept` is for it only.
+            if (f.ty == F::Attachment && (f.refs || f.secrets || f.grants.is_some() || f.accept.is_empty() || f.accept.iter().any(|a| a != "image")))
+                || (f.ty != F::Attachment && !f.accept.is_empty())
+            {
+                return Err(reject(dir, "badAttachmentField", format!("kind {} field {name}", k.id)));
+            }
             match f.grants.as_deref() {
                 None => {}
                 Some("network") if f.ty == DeclType::Text => {
@@ -1889,10 +1900,14 @@ impl Registry {
                     k.fields.iter().filter(|(_, f)| f.text_refs()).map(|(n, _)| n.clone()).collect(),
                     k.fields.iter().filter(|(_, f)| f.ty == DeclType::Ref).map(|(n, _)| n.clone()).collect(),
                 );
+                let mut attachment_fields: Vec<String> = k.fields.iter().filter(|(_, f)| f.ty == DeclType::Attachment).map(|(n, _)| n.clone()).collect();
                 if let Some(prev) = m.get(&p.full(&k.id)) {
                     text_refs.extend(prev.text_refs.iter().cloned());
                     ref_fields.extend(prev.ref_fields.iter().cloned());
+                    attachment_fields.extend(prev.attachment_fields.iter().cloned());
                 }
+                attachment_fields.sort();
+                attachment_fields.dedup();
                 for v in [&mut text_refs, &mut ref_fields] {
                     v.sort();
                     v.dedup();
@@ -1905,6 +1920,7 @@ impl Registry {
                         protected,
                         text_refs,
                         ref_fields,
+                        attachment_fields,
                     },
                 );
             }
@@ -2364,6 +2380,12 @@ mod tests {
         assert_eq!(reason(net(field(json!({ "type": "ref", "grants": "network" })))), "badRefsField");
         assert_eq!(reason(field(json!({ "type": "ref", "secrets": true }))), "badSecretsField");
         assert_eq!(reason(field(json!({ "type": "text", "refs": "yes" }))), "schema");
+        // D484 §16: an attachment field takes images and carries no other marks; `accept` belongs to it only.
+        assert_eq!(reason(field(json!({ "type": "attachment", "accept": ["image"] }))), "ok");
+        for bad in [json!({ "type": "attachment" }), json!({ "type": "attachment", "accept": ["pdf"] }), json!({ "type": "text", "accept": ["image"] }), json!({ "type": "attachment", "accept": ["image"], "secrets": true })] {
+            assert_eq!(reason(field(bad.clone())), if bad["secrets"] == json!(true) { "badSecretsField" } else { "badAttachmentField" }, "{bad}");
+        }
+        assert_eq!(reason(field(json!({ "type": "attachment", "accept": ["image"], "refs": true }))), "badRefsField");
         // The write rules carry the reference fields.
         let tmp = tempfile::tempdir().unwrap();
         let m = with(good(), &["contributes", "kinds", "0", "fields"], json!({ "body": { "type": "longtext", "refs": true }, "to": { "type": "ref" } }));

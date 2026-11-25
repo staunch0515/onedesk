@@ -489,6 +489,9 @@ pub enum FieldKind {
     /// D477: several of `options` at once; the value is their `value`s joined with `,` in the
     /// order of `options` (so option values never contain a comma). Empty = none chosen.
     Multi,
+    /// D484 §16: a file (an image) kept by its content; the value is `{ blob, name?, type, size, width?, height? }`
+    /// or `null`. The interface lets the user drop, paste or choose one (`blob.put`) and shows it.
+    Attachment,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -658,6 +661,14 @@ pub enum ViewNode {
         label: Label,
         target: String,
     },
+    /// D484 §16 (K2): an image kept by its content (`blob`). The kernel checks the blob is stored; the interface reads
+    /// it with `blob.read` for the resource the page (or the embed view) shows.
+    Image {
+        id: String,
+        blob: String,
+        alt: Option<String>,
+        width: Option<ImageWidth>,
+    },
     /// D479 (docs/redesign/ai-chat.md): a conversation — turns said by the user or the assistant,
     /// shown in order, with an input box at the bottom. Each turn's buttons send the page event named
     /// by their `id`, with the turn's index as `context.row` (like a table's row actions).
@@ -669,6 +680,18 @@ pub enum ViewNode {
         /// (as `input["target.draft"]` and `input["target.description"]`); a tab that is not open adds nothing.
         target_tab: Option<String>,
     },
+}
+
+/// D484 §16: how wide an image is drawn — sizes the design system defines; `original` is the image's own size, never
+/// wider than the page.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum ImageWidth {
+    Small,
+    Medium,
+    Large,
+    Original,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -2136,10 +2159,60 @@ pub mod method5 {
     pub const RUN_EXPORT: &str = "run.export";
     /// D481: `ResourceEmbedParams` → `EmbedResult`: what a resource shows where another embeds it (`![[name]]`).
     pub const RESOURCE_EMBED: &str = "resource.embed";
+    /// D484 §16: `BlobPutParams` → `BlobInfo`: stores a file (an image) by its content. The user's only (never a plugin).
+    pub const BLOB_PUT: &str = "blob.put";
+    /// D484 §16: `BlobReadParams` → `BlobData`: a stored file, for a resource that uses it or one this client just put.
+    pub const BLOB_READ: &str = "blob.read";
     /// D482: `RefsSuggestParams` → `Vec<RefSuggestion>`: candidates while typing `[[…`.
     pub const REFS_SUGGEST: &str = "refs.suggest";
     /// D482: `RefsRewriteParams` → `RefsRewriteResult`: writes one reference so it means only its target.
     pub const REFS_REWRITE: &str = "refs.rewrite";
+}
+
+/// D484 §16: either the content (base64; pasted or dropped) or a file the user chose in the system dialog.
+#[skip_serializing_none]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, optional_fields)]
+pub struct BlobPutParams {
+    pub data: Option<String>,
+    pub path: Option<String>,
+}
+
+/// D484 §16: a stored file: its content hash (`blob`), media type, size in bytes, and an image's size in pixels.
+#[skip_serializing_none]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, optional_fields)]
+pub struct BlobInfo {
+    pub blob: String,
+    #[serde(rename = "type")]
+    #[ts(rename = "type")]
+    pub r#type: String,
+    pub size: u64,
+    pub width: Option<u32>,
+    pub height: Option<u32>,
+}
+
+#[skip_serializing_none]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, optional_fields)]
+pub struct BlobReadParams {
+    pub blob: String,
+    /// The resource the page shows (or the embedded one); absent for a file this client has just put.
+    pub resource: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct BlobData {
+    #[serde(rename = "type")]
+    #[ts(rename = "type")]
+    pub r#type: String,
+    /// base64
+    pub data: String,
 }
 
 /// D482: what has been typed after `[[` (the name or a part of it; a path is allowed).

@@ -3,6 +3,7 @@ import { Button, Chat, ChatInput, ChatTurn, CodeEditor, DataGrid, EmptyState, Ic
 import { useI18n } from "../i18n";
 import type { OutputCell, RefInfo, ViewNode } from "../protocol";
 import { RefMarkdown, useTabEnv } from "./embeds";
+import { BlobImage } from "./blobs";
 import { useQuery, useUi, useWorkbench } from "../state/context";
 import { textLines } from "./terminal-lines";
 import { TOKENIZERS } from "./sql-tokens";
@@ -180,6 +181,12 @@ export function ViewNodes({
               </Chat>
             );
           }
+          case "image":
+            return (
+              <Pane key={node.id} pad="md" align="start">
+                <BlobImage blob={node.blob} alt={node.alt ?? undefined} width={node.width ?? undefined} />
+              </Pane>
+            );
           case "link":
             return (
               <Pane key={node.id} pad="sm" align="start">
