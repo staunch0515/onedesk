@@ -29,6 +29,11 @@ export const OWN_ROLES = {
   afterword: { role: "afterword", part: "back", single: false, container: false, numbering: "none" },
   page: { role: "body", part: "body", single: false, container: false, numbering: "level" },
   appendix: { role: "appendix", part: "back", single: false, container: true, numbering: "letter" },
+  // D487 §15
+  references: { role: "references", part: "back", single: true, container: false, numbering: "none" },
+  reference: { role: "reference", part: "none", single: false, container: false, numbering: "none" },
+  index: { role: "index", part: "back", single: true, container: false, numbering: "none" },
+  figures: { role: "figures", part: "front", single: true, container: false, numbering: "none" },
 };
 
 /** A group (篇, 章) and any resource that says nothing: body, numbered by depth, what is below it read too. */

@@ -91,7 +91,7 @@ function ItemContent({ id, args, level }: { id: string; args?: unknown; level: n
       {e.view
         ? e.view.map((n, i) =>
             n.type === "text" && n.format === "markdown" && !n.mono ? (
-              <RefMarkdown key={i} source={n.text} headingShift={level} {...place} />
+              <RefMarkdown key={i} source={n.text} headingShift={level} refLabels={n.refLabels ?? undefined} {...place} />
             ) : (
               <ViewNodes key={i} nodes={[n]} />
             ),

@@ -26,6 +26,32 @@ const CAPTION = /^\s*(图|圖|図|Figure|Fig\.|表|Table)\s*[:：]\s*(.+?)\s*$/i
 const FOOTNOTE_DEF = /^\s*\[\^([^\]\s]{1,40})\]:\s*(.*)$/;
 const FOOTNOTE_REF = /\[\^([^\]\s]{1,40})\](?!:)/g;
 const SUPERSCRIPT = "⁰¹²³⁴⁵⁶⁷⁸⁹";
+// D487 §15: citations `[@key]`, `[@key, note]`, `[@a; @b]`; index terms `{{索引:term}}`, `{{index:main/sub}}` (hidden
+// in reading); an embed line right above a caption is what the caption is about.
+const CITE = /\[@([^\]\n]{1,500})\]/g;
+const TERM = /\{\{\s*(?:索引|index)\s*[:：]\s*([^{}\n]{1,200}?)\s*\}\}/gi;
+const EMBED_LINE = /^\s*!\[\[([^[\]\n]{1,200})\]\]\s*$/;
+
+/** The citations inside one `[@…]`: `{ keys, notes }` (a note is null when there is none). */
+export function parseCite(inner) {
+  const keys = [];
+  const notes = [];
+  for (const part of String(inner).split(/[;；]/)) {
+    const p = part.trim().replace(/^@/, "");
+    if (!p) continue;
+    const i = p.search(/[,，]/);
+    keys.push((i < 0 ? p : p.slice(0, i)).trim());
+    notes.push(i < 0 ? null : p.slice(i + 1).trim() || null);
+  }
+  return { keys, notes };
+}
+
+/** One index term: `{ term, sub }` (`main/sub`: a term under a main term). */
+export function parseTerm(raw) {
+  const [term, ...rest] = String(raw).split("/");
+  const sub = rest.join("/").trim();
+  return { term: term.trim(), sub: sub || null };
+}
 
 function captionType(word) {
   return /^(表|table)$/i.test(word) ? "table" : "figure";
@@ -56,19 +82,40 @@ export function sectionOf(text, section) {
 export function outlineOf(text) {
   const headings = [];
   const figures = [];
+  const cites = [];
+  const terms = [];
   let fence = false;
+  let above = null;
   for (const line of String(text || "").split("\n")) {
     if (FENCE.test(line)) fence = !fence;
     if (fence) continue;
     const h = HEADING.exec(line);
     if (h) {
       headings.push({ text: h[2].trim(), level: h[1].length });
+      above = null;
       continue;
     }
     const c = CAPTION.exec(line);
-    if (c) figures.push({ type: captionType(c[1]), caption: c[2] });
+    if (c) {
+      const f = { type: captionType(c[1]), caption: c[2] };
+      if (above) f.of = above;
+      figures.push(f);
+      above = null;
+      continue;
+    }
+    for (const m of line.matchAll(CITE)) {
+      const one = parseCite(m[1]);
+      if (one.keys.length > 0) cites.push(one);
+    }
+    for (const m of line.matchAll(TERM)) {
+      const t = parseTerm(m[1]);
+      if (t.term) terms.push(t);
+    }
+    const e = EMBED_LINE.exec(line);
+    if (e) above = e[1].split("#")[0].trim();
+    else if (line.trim()) above = null;
   }
-  return { headings, figures };
+  return { headings, figures, cites, terms };
 }
 
 /**
@@ -86,6 +133,7 @@ export function readable(ctx, text, at) {
   }
   const order = [];
   const out = [];
+  let citeIndex = 0;
   let fence = false;
   for (const line of lines) {
     if (FENCE.test(line)) fence = !fence;
@@ -103,7 +151,16 @@ export function readable(ctx, text, at) {
       continue;
     }
     out.push(
-      line.replace(FOOTNOTE_REF, (all, id) => {
+      line
+        .replace(TERM, "")
+        .replace(CITE, (all, inner) => {
+          const one = parseCite(inner);
+          if (one.keys.length === 0) return all;
+          const label = at && Array.isArray(at.cites) ? at.cites[citeIndex] : undefined;
+          citeIndex += 1;
+          return typeof label === "string" ? label : `[${one.keys.join("; ")}]`;
+        })
+        .replace(FOOTNOTE_REF, (all, id) => {
         if (!notes.has(id)) return all;
         if (!order.includes(id)) order.push(id);
         return String(order.indexOf(id) + 1)
@@ -167,7 +224,10 @@ export async function embedText(ctx, ask) {
   const part = section ? sectionOf(text, section) : text;
   if (part === null) return { view: [], sectionMissing: true };
   const at = ask && ask.args && typeof ask.args === "object" ? ask.args.book : null;
-  return { view: [{ type: "text", id: "embed", text: readable(ctx, await filled(ctx, part), at), format: "markdown" }] };
+  const node = { type: "text", id: "embed", text: readable(ctx, await filled(ctx, part), at), format: "markdown" };
+  // D487 §15: references to what the book numbers are shown with their numbers.
+  if (at && at.labels && typeof at.labels === "object" && Object.keys(at.labels).length > 0) node.refLabels = at.labels;
+  return { view: [node] };
 }
 
 /** The read/edit switch of the action bar. */

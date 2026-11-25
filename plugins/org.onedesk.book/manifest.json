@@ -21,7 +21,9 @@
       "actions": [
         "roles",
         "outline",
-        "entries"
+        "entries",
+        "number",
+        "cite"
       ],
       "kind": "page",
       "kinds": [
@@ -30,7 +32,11 @@
         "toc",
         "preface",
         "afterword",
-        "appendix"
+        "appendix",
+        "references",
+        "reference",
+        "index",
+        "figures"
       ]
     }
   },
@@ -38,7 +44,9 @@
     "actions": [
       "roles",
       "outline",
-      "entries"
+      "entries",
+      "number",
+      "cite"
     ]
   },
   "contributes": {
@@ -173,6 +181,74 @@
         "accepts": [
           "*"
         ]
+      },
+      {
+        "id": "references",
+        "label": "kind.references",
+        "icon": "library",
+        "tree": "resources",
+        "page": "references",
+        "newName": "kind.references.new",
+        "defaults": {
+          "system": "numeric",
+          "list": "cited"
+        },
+        "draggable": true,
+        "accepts": [
+          "reference"
+        ],
+        "embed": true
+      },
+      {
+        "id": "reference",
+        "label": "kind.reference",
+        "icon": "quote",
+        "tree": "resources",
+        "page": "reference",
+        "newName": "kind.reference.new",
+        "defaults": {
+          "type": "M",
+          "authors": "",
+          "title": "",
+          "container": "",
+          "edition": "",
+          "place": "",
+          "publisher": "",
+          "year": "",
+          "volume": "",
+          "issue": "",
+          "pages": "",
+          "url": "",
+          "accessed": "",
+          "doi": ""
+        },
+        "draggable": true,
+        "accepts": [],
+        "embed": true
+      },
+      {
+        "id": "index",
+        "label": "kind.index",
+        "icon": "list",
+        "tree": "resources",
+        "page": "index",
+        "newName": "kind.index.new",
+        "defaults": {},
+        "draggable": true,
+        "accepts": [],
+        "embed": true
+      },
+      {
+        "id": "figures",
+        "label": "kind.figures",
+        "icon": "images",
+        "tree": "resources",
+        "page": "figures",
+        "newName": "kind.figures.new",
+        "defaults": {},
+        "draggable": true,
+        "accepts": [],
+        "embed": true
       }
     ],
     "pages": [
@@ -289,6 +365,72 @@
             ]
           }
         ]
+      },
+      {
+        "id": "references",
+        "recompute": true,
+        "actions": [
+          {
+            "id": "save",
+            "role": "save",
+            "label": "action.save",
+            "icon": "save",
+            "primary": true,
+            "shortcut": [
+              "Mod",
+              "S"
+            ]
+          }
+        ]
+      },
+      {
+        "id": "reference",
+        "recompute": true,
+        "actions": [
+          {
+            "id": "save",
+            "role": "save",
+            "label": "action.save",
+            "icon": "save",
+            "primary": true,
+            "shortcut": [
+              "Mod",
+              "S"
+            ]
+          }
+        ]
+      },
+      {
+        "id": "index",
+        "actions": [
+          {
+            "id": "save",
+            "role": "save",
+            "label": "action.save",
+            "icon": "save",
+            "primary": true,
+            "shortcut": [
+              "Mod",
+              "S"
+            ]
+          }
+        ]
+      },
+      {
+        "id": "figures",
+        "actions": [
+          {
+            "id": "save",
+            "role": "save",
+            "label": "action.save",
+            "icon": "save",
+            "primary": true,
+            "shortcut": [
+              "Mod",
+              "S"
+            ]
+          }
+        ]
       }
     ],
     "actions": [
@@ -316,6 +458,16 @@
         "id": "entries",
         "label": "action.entries",
         "output": "none"
+      },
+      {
+        "id": "number",
+        "label": "action.number",
+        "output": "none"
+      },
+      {
+        "id": "cite",
+        "label": "action.cite",
+        "output": "none"
       }
     ],
     "events": [
@@ -329,7 +481,11 @@
         "afterword",
         "appendix",
         "cover",
-        "toc"
+        "toc",
+        "references",
+        "reference",
+        "index",
+        "figures"
       ]
     },
     "locales": {

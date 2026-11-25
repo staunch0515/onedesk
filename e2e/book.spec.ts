@@ -172,6 +172,70 @@ test("export prints the book to a granted folder, with its images beside it", as
   await shot(page, "exported");
 });
 
+test("step ③: citations, references, an index, a list of figures and cross references shown as numbers", async ({ page }) => {
+  await openKernel(page, host);
+  const top = await kids(page, book);
+  const seconds = top.find((n) => n.label === "Seconds")!.key;
+  await make(page, "org.onedesk.note:note", null, { name: "Circuit", "body.text": "A circuit diagram." });
+  const refs = await make(page, `${B}:references`, book, { name: "References" });
+  await make(page, `${B}:reference`, refs, { name: "Zhang2020", "body.type": "M", "body.authors": "Zhang S", "body.title": "Circuits", "body.place": "Beijing", "body.publisher": "Press", "body.year": "2020" });
+  await make(page, `${B}:reference`, refs, { name: "Li2019", "body.type": "J", "body.authors": "Li S", "body.title": "Fields", "body.container": "Physics", "body.year": "2019", "body.volume": "68", "body.issue": "3" });
+  await make(page, `${B}:page`, book, {
+    name: "Electric",
+    "body.text": "![[Circuit]]\nFigure: Parallel circuit\n\nSee [@Zhang2020] and [@Li2019, p. 12]. [@Nobody]{{index:Ohm's law}}{{index:Circuit/Parallel}}\n\nAs [[Circuit]] shows; see [[Seconds]].",
+  });
+  await make(page, `${B}:index`, book, { name: "Index" });
+  await make(page, `${B}:figures`, book, { name: "Figures" });
+
+  // Read through: citations numbered, cross references as numbers (still links).
+  await page.reload();
+  await page.getByRole("treeitem", { name: "Collected", exact: true }).click();
+  await page.getByRole("button", { name: /reading/ }).click();
+  const nav = contents(page);
+  await expect(nav).toBeVisible({ timeout: 15_000 });
+  await nav.getByRole("button", { name: "Chapter 3 Electric" }).click();
+  const electric = page.getByRole("region", { name: "Chapter 3 Electric" });
+  await expect(electric).toContainText("Figure 3-1 Parallel circuit", { timeout: 15_000 });
+  await expect(electric).toContainText("See [1] and [2: p. 12]. [?Nobody]");
+  await expect(electric).toContainText("As Figure 3-1 shows; see Chapter 2.");
+  await shot(page, "cited");
+  // The list of figures and the index come in their places.
+  await expect(nav.getByRole("button", { name: "Figures" })).toBeVisible();
+  await expect(nav.getByRole("button", { name: "Index" })).toBeVisible();
+
+  // The references page: the list in order of citation, and the citation with no entry.
+  await page.getByRole("treeitem", { name: "References", exact: true }).click();
+  await expect(page.getByText("Zhang S. Circuits[M]. Beijing: Press, 2020.")).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByText("Li S. Fields[J]. Physics, 2019, 68(3).")).toBeVisible();
+  await expect(page.getByText("Citations with no entry")).toBeVisible();
+  await shot(page, "references");
+  // Author and year: the text follows.
+  await call(page, "page.save", { target: `resource:${refs}`, changes: { "body.system": "authorYear" } });
+  // The index, sorted, with places.
+  await page.getByRole("treeitem", { name: "Index", exact: true }).click();
+  const rows = page.getByRole("row");
+  await expect(rows.nth(1)).toContainText("Circuit", { timeout: 15_000 });
+  await expect(rows.nth(2)).toContainText("Parallel");
+  await expect(rows.nth(2)).toContainText("Chapter 3");
+  await expect(rows.nth(3)).toContainText("Ohm's law");
+  // The list of figures.
+  await page.getByRole("treeitem", { name: "Figures", exact: true }).click();
+  await expect(page.getByText("Parallel circuit")).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByText("Figure 3-1")).toBeVisible();
+
+  // Renaming the chapter referred to keeps its number; author and year show in the text.
+  await call(page, "page.save", { target: `resource:${seconds}`, changes: { name: "Second hand" } });
+  await page.reload();
+  await page.getByRole("treeitem", { name: "Collected", exact: true }).click();
+  await page.getByRole("button", { name: /reading/ }).click();
+  await contents(page).getByRole("button", { name: "Chapter 3 Electric" }).click();
+  const again = page.getByRole("region", { name: "Chapter 3 Electric" });
+  await expect(again).toContainText("see Chapter 2.", { timeout: 15_000 });
+  await expect(again).toContainText("See (Zhang, 2020) and (Li, 2019: p. 12).");
+  await again.getByRole("link", { name: "Chapter 2" }).click();
+  await expect(page.getByRole("heading", { level: 1, name: "Second hand" })).toBeVisible();
+});
+
 test("a book of 300 pages loads only what is in view", async ({ page }) => {
   await openKernel(page, host);
   const long = await make(page, `${B}:book`, null, { name: "Long book" });

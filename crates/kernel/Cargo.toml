@@ -31,6 +31,14 @@ security-framework = "3"
 # call needs: objc2, objc2-encode, bitflags, libc (no new package).
 objc2 = "0.6"
 objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSFileManager", "NSURL", "NSError", "NSString"] }
+# D487 §15 (K-j): sorting by language (pinyin for Chinese); Unicode-3.0, like the ICU4X parts already in the tree.
+icu_collator = { version = "2", optional = true }
+icu_locale_core = { version = "2", optional = true }
+
+[features]
+# D487 §15 (K-j): sorting by language with ICU collation. Turned on by the worker (where the app's kernel runs), not by
+# the host the window links: that keeps the window's build as it is.
+collate = ["dep:icu_collator", "dep:icu_locale_core"]
 
 [dev-dependencies]
 tempfile.workspace = true

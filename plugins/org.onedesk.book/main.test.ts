@@ -25,11 +25,12 @@ const B = "org.onedesk.book";
 type Res = { id: string; kind: string; name: string; parentId: string | null; body: Record<string, any>; rev: number };
 
 /** A workspace: resources in tree order, and the host a book's code gets. */
-function world(spec: Array<[string, string, string, string | null, Record<string, any>?]>, opts: { implementers?: Record<string, any> } = {}) {
+function world(spec: Array<[string, string, string, string | null, Record<string, any>?]>, opts: { implementers?: Record<string, any>; refs?: Record<string, Array<{ text: string; to: string | null; embed?: boolean }>> } = {}) {
   const res = new Map<string, Res>();
   const order: string[] = [];
   for (const [id, kind, name, parent, body] of spec) {
-    res.set(id, { id, kind, name, parentId: parent, body: body ?? {}, rev: 1 });
+    // Revisions differ between worlds: the plugin keeps what it read by id and revision.
+    res.set(id, { id, kind, name, parentId: parent, body: body ?? {}, rev: ++revs });
     order.push(id);
   }
   const kids = (p: string) => order.filter((x) => res.get(x)!.parentId === p);
@@ -62,6 +63,9 @@ function world(spec: Array<[string, string, string, string | null, Record<string
         res.set(id, { id, kind, name: EN[`kind.${spec.kind}.new`], parentId: spec.parent, body: {}, rev: 1 });
         order.push(id);
         return res.get(id);
+      },
+      async refs(id: string) {
+        return (opts.refs?.[id] ?? []).map((r) => ({ text: r.text, embed: r.embed ?? false, section: null, target: r.to ? { id: r.to, name: res.get(r.to)?.name, kind: res.get(r.to)?.kind } : null }));
       },
       async embed(id: string) {
         const r = res.get(id)!;
@@ -109,12 +113,19 @@ function world(spec: Array<[string, string, string, string | null, Record<string
       },
     },
     params: { async get() { return { found: false }; } },
+    util: {
+      async collate(texts: string[], locale: string) {
+        const c = new Intl.Collator(locale);
+        return texts.map((_, i) => i).sort((a, b) => c.compare(texts[a]!, texts[b]!) || a - b);
+      },
+    },
   };
   const ctx = (id: string | null, extra: Record<string, any> = {}) => ({ t, locale: "zh-CN", host, params: {}, resource: id ? res.get(id) : null, ...extra });
   return { res, host, ctx, storage, files, blobs };
 }
 
 const k = (s: string) => `${B}:${s}`;
+let revs = 0;
 
 /** A book: cover, contents, preface, two chapters (one a group with two pages), an appendix with a table, an afterword. */
 function sample() {
@@ -338,7 +349,7 @@ describe("text pages (D487 §13.5)", () => {
     expect(r).toContain("图：不是题注");
     expect(readable(zh, "図：一", null)).toContain("*图 1　一*");
     expect(outlineOf(text).figures).toEqual([
-      { type: "figure", caption: "并联电路" },
+      { type: "figure", caption: "并联电路", of: "电路" },
       { type: "table", caption: "电阻" },
       { type: "figure", caption: "two" },
     ]);
@@ -375,15 +386,132 @@ describe("the interface and the manifest (D487 §13.6, §13.7)", () => {
     expect(e[1]).toMatchObject({ title: "第一章 秒的认识", level: 2 });
   });
 
-  it("seven kinds; the book binds and places; the contents exports; every key in every language", () => {
+  it("eleven kinds; the book binds and places; the contents exports; every key in every language", () => {
     const kinds = manifest.contributes.kinds.map((x: any) => x.id);
-    expect(kinds).toEqual(["book", "cover", "toc", "preface", "page", "afterword", "appendix"]);
+    expect(kinds).toEqual(["book", "cover", "toc", "preface", "page", "afterword", "appendix", "references", "reference", "index", "figures"]);
+    expect(manifest.implements["onedesk.book/1"].kinds).toEqual(expect.arrayContaining(["references", "reference", "index", "figures"]));
     expect(manifest.contributes.kinds[0]).toMatchObject({ accepts: ["*"], place: true, embed: true });
     expect(manifest.requires).toEqual({ files: true, resources: true, contents: true });
-    expect(manifest.implements["onedesk.book/1"].actions).toEqual(["roles", "outline", "entries"]);
+    expect(manifest.implements["onedesk.book/1"].actions).toEqual(["roles", "outline", "entries", "number", "cite"]);
     const keys = Object.keys(EN);
     for (const f of ["zh-CN", "ja-JP"]) expect(Object.keys(locale(f)).sort(), f).toEqual([...keys].sort());
     const used = JSON.stringify(manifest).match(/"(kind|action|tab|plugin|field)\.[\w.]+"/g)!.map((s) => s.slice(1, -1));
     for (const key of used) expect(EN[key], key).toBeTruthy();
+  });
+});
+
+// @ts-ignore
+import { authorsText, formatEntry } from "./references.js";
+
+describe("step ③: references, index, figures, cross references (D487 §15)", () => {
+  /** A book with references (two entries), a figure list, an index, and pages citing, marking terms and referring. */
+  function scholar(system = "numeric", list = "cited") {
+    return world(
+      [
+        ["bk", k("book"), "书", null],
+        ["tc", k("toc"), "目录", "bk", {}],
+        ["fg", k("figures"), "图表目录", "bk"],
+        ["c1", k("page"), "电学", "bk", { text: "![[电路]]\n图：并联电路\n\n见[@张三2020]与[@李四2019, 第 12 页; @张三2020]，{{索引:欧姆定律}}{{索引:电路/并联}}\n\n如[[电路]]所示，见[[磁学]]，[@无此人]" }],
+        ["c2", k("page"), "磁学", "bk", { text: "表：单位\n\n{{索引:电路/串联}}{{索引:安培}}[@李四2019]" }],
+        ["pic", "x.pics:pic", "电路", "c1"],
+        ["rf", k("references"), "参考文献", "bk", { system, list }],
+        ["e1", k("reference"), "张三2020", "rf", { type: "M", authors: "张三, 王五", title: "电学原理", place: "北京", publisher: "某出版社", year: "2020" }],
+        ["e2", k("reference"), "李四2019", "rf", { type: "J", authors: "李四", title: "磁场", container: "物理学报", year: "2019", volume: "68", issue: "3", pages: "1-9" }],
+        ["e3", k("reference"), "Smith2018", "rf", { type: "EB/OL", authors: "Smith, John", title: "Web", year: "2018", accessed: "2026-01-01", url: "https://x.org" }],
+        ["ix", k("index"), "索引", "bk"],
+      ],
+      { refs: { c1: [{ text: "电路", to: "pic", embed: true }, { text: "电路", to: "pic" }, { text: "磁学", to: "c2" }] } },
+    );
+  }
+
+  it("GB/T 7714: books, articles, web pages; more than three authors", () => {
+    expect(formatEntry({ type: "M", authors: "张三", title: "书", place: "北京", publisher: "社", year: "2020", pages: "12" })).toBe("张三. 书[M]. 北京: 社, 2020: 12.");
+    expect(formatEntry({ type: "J", authors: "李四", title: "文", container: "学报", year: "2019", volume: "68", issue: "3", pages: "1-9" })).toBe("李四. 文[J]. 学报, 2019, 68(3): 1-9.");
+    expect(formatEntry({ type: "EB/OL", authors: "Smith", title: "Web", year: "2018", accessed: "2026-01-01", url: "https://x.org" })).toBe("Smith. Web[EB/OL]. (2018)[2026-01-01]. https://x.org.");
+    expect(formatEntry({ type: "C", authors: "甲", title: "篇", container: "论文集", place: "上海", publisher: "社", year: "2001", doi: "10.1/x" })).toBe("甲. 篇[C]//论文集. 上海: 社, 2001. DOI: 10.1/x.");
+    expect(authorsText("甲, 乙, 丙, 丁")).toBe("甲, 乙, 丙, 等");
+    expect(authorsText("A, B, C, D")).toBe("A, B, C, et al.");
+  });
+
+  it("citations are numbered in the order first cited; notes; a missing key; the list and what was not found", async () => {
+    const w = scholar();
+    const e = await entriesOf(w.ctx(null), "bk", settingsOf(w.ctx(null), {}, null));
+    const c1 = e.items.find((x: any) => x.key === "c1");
+    expect(c1.args.book.cites).toEqual(["[1]", "[2: 第 12 页, 1]", "[?无此人]"]);
+    expect(e.items.find((x: any) => x.key === "c2").args.book.cites).toEqual(["[2]"]);
+    const { pages } = registry(plugin);
+    const out = await pages.references.render(w.ctx("rf"));
+    expect(checkView(out.view)).toEqual([]);
+    const table = out.view.find((n: any) => n.id === "list");
+    expect(table.rows).toEqual([["[1]", "张三, 王五. 电学原理[M]. 北京: 某出版社, 2020."], ["[2]", "李四. 磁场[J]. 物理学报, 2019, 68(3): 1-9."]]);
+    expect(table.rowTargets).toEqual(["resource:e1", "resource:e2"]);
+    const lost = out.view.find((n: any) => n.id === "lost");
+    expect(lost.rows).toEqual([["无此人", "第一章 电学"]]);
+    // All entries: the uncited one comes after.
+    const all = await pages.references.render(scholar("numeric", "all").ctx("rf"));
+    expect(all.view.find((n: any) => n.id === "list").rows).toHaveLength(3);
+  });
+
+  it("author and year: in the text and the list (sorted)", async () => {
+    const w = scholar("authorYear");
+    const e = await entriesOf(w.ctx(null), "bk", settingsOf(w.ctx(null), {}, null));
+    expect(e.items.find((x: any) => x.key === "c1").args.book.cites).toEqual(["（张三，等，2020）", "（李四，2019：第 12 页；张三，等，2020）", "（?无此人）"]);
+    const en = await entriesOf(w.ctx(null, { locale: "en-US" }), "bk", settingsOf(w.ctx(null, { locale: "en-US" }), {}, null));
+    expect(en.items.find((x: any) => x.key === "c2").args.book.cites).toEqual(["(李四, 2019)"]);
+    const out = await registry(plugin).pages.references.render(w.ctx("rf"));
+    expect(out.view.find((n: any) => n.id === "list").rows.map((r: any) => r[0].slice(0, 2))).toEqual(["李四", "张三"]);
+  });
+
+  it("cross references show numbers: a chapter, a captioned image; in the page's text", async () => {
+    const w = scholar();
+    const e = await entriesOf(w.ctx(null), "bk", settingsOf(w.ctx(null), {}, null));
+    expect(e.items.find((x: any) => x.key === "c1").args.book.labels).toEqual({ 电路: "图 1-1", 磁学: "第二章" });
+    const { kinds } = registry(plugin);
+    const r = await kinds.page.embed(w.ctx("c1"), { args: e.items.find((x: any) => x.key === "c1").args });
+    expect(r.view[0].refLabels).toEqual({ 电路: "图 1-1", 磁学: "第二章" });
+    expect(r.view[0].text).toContain("见[1]与[2: 第 12 页, 1]");
+    expect(r.view[0].text).not.toContain("{{索引");
+    expect(checkView(r.view)).toEqual([]);
+    // Alone: names, keys as written.
+    const alone = await kinds.page.embed(w.ctx("c1"), {});
+    expect(alone.view[0].refLabels).toBeUndefined();
+    expect(alone.view[0].text).toContain("见[张三2020]");
+  });
+
+  it("the index: sorted by pinyin, sub-terms under their term, places once each", async () => {
+    const w = scholar();
+    const out = await registry(plugin).pages.index.render(w.ctx("ix"));
+    expect(checkView(out.view)).toEqual([]);
+    expect(out.view[0].rows).toEqual([
+      ["安培", "第二章"],
+      ["电路", ""],
+      ["　并联", "第一章"],
+      ["　串联", "第二章"],
+      ["欧姆定律", "第一章"],
+    ]);
+    expect(out.view[0].rowTargets[0]).toBe("resource:c2");
+  });
+
+  it("the list of figures: figures and tables with numbers, captions and chapters", async () => {
+    const w = scholar();
+    const out = await registry(plugin).pages.figures.render(w.ctx("fg"));
+    expect(checkView(out.view)).toEqual([]);
+    expect(out.view.find((n: any) => n.id === "figure").rows).toEqual([["图 1-1", "并联电路", "第一章"]]);
+    expect(out.view.find((n: any) => n.id === "table").rows).toEqual([["表 2-1", "单位", "第二章"]]);
+    const lone = await registry(plugin).pages.figures.render(world([["f", k("figures"), "x", null]]).ctx("f"));
+    expect(lone.view[0].id).toBe("alone");
+  });
+
+  it("the interface: number and cite; entries says figures, terms and citations", async () => {
+    const w = scholar();
+    const { actions } = registry(plugin);
+    const n = await actions.number(w.ctx("tc"), { targets: ["c2", "pic", "nobody"] });
+    expect(n.data.labels).toEqual({ c2: "第二章", pic: "图 1-1" });
+    const c = await actions.cite(w.ctx("rf"), { cites: [{ keys: ["李四2019"] }, { keys: ["张三2020"], notes: ["5"] }] });
+    expect(c.data.labels).toEqual(["[1]", "[2: 5]"]);
+    const e = (await actions.entries(w.ctx("tc"), {})).data;
+    expect(e.figures.map((f: any) => f.number)).toEqual(["1-1", "2-1"]);
+    expect(e.terms).toHaveLength(4);
+    expect(e.cites[0]).toEqual({ keys: ["张三2020"], notes: [null], item: "c1" });
   });
 });

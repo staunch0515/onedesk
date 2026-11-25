@@ -37,7 +37,7 @@ interface Place {
 }
 
 /** Markdown with its `[[links]]` and `![[embeds]]` resolved against `refs` (the references of the resource it comes from). */
-export function RefMarkdown({ source, headingShift, ...place }: Place & { source: string; headingShift?: number }) {
+export function RefMarkdown({ source, headingShift, refLabels, ...place }: Place & { source: string; headingShift?: number; refLabels?: Record<string, string> }) {
   const { actions } = useWorkbench();
   const openHere = useOpenHere();
   const { refs } = place;
@@ -51,6 +51,7 @@ export function RefMarkdown({ source, headingShift, ...place }: Place & { source
       blobUrl={imageUrl}
       imageLabels={imageLabels}
       headingShift={headingShift}
+      referenceLabels={refLabels}
       referenceState={referenceState}
       renderEmbed={renderEmbed}
       onLinkClick={(href) => void actions.openExternal(href)}
@@ -95,7 +96,7 @@ export function Embed({ text, refs, envId, depth, chain }: Place & { text: strin
       <BlobScope.Provider value={e.id}>
         {e.view
           ? e.view.map((n, i) =>
-              n.type === "text" && n.format === "markdown" && !n.mono ? <RefMarkdown key={i} source={n.text} {...inner} /> : <ViewNodes key={i} nodes={[n]} />,
+              n.type === "text" && n.format === "markdown" && !n.mono ? <RefMarkdown key={i} source={n.text} refLabels={n.refLabels ?? undefined} {...inner} /> : <ViewNodes key={i} nodes={[n]} />,
             )
           : e.description && <Text tone="muted">{e.description}</Text>}
       </BlobScope.Provider>

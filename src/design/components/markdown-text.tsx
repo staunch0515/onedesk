@@ -17,6 +17,8 @@ export interface MarkdownTextProps {
   onReferenceClick?: (name: string) => void;
   /** Says what a `[[name]]` points to; without it every reference shows as unresolved. */
   referenceState?: (name: string) => ReferenceState;
+  /** D487 §15: words a `[[name]]` is shown with instead of its name (it still opens what it points to). */
+  referenceLabels?: Record<string, string>;
   /**
    * D481: draws a line that is only `![[text]]` (outside code blocks) as an embedded block; it gets the text inside.
    * Without it, and for `![[…]]` inside a sentence, the mark is shown as a reference.
@@ -45,6 +47,8 @@ const escapeHtml = (text: string) => text.replace(/&/g, "&amp;").replace(/</g, "
 let referenceLookup: ((name: string) => ReferenceState) | undefined;
 /** D487 §13: how many more levels headings go down in the render in progress. */
 let headingShiftNow = 0;
+/** D487 §15: the words references are shown with in the render in progress. */
+let referenceLabelsNow: Record<string, string> | undefined;
 
 function createRenderer(): Marked {
   const md = new Marked({
@@ -76,7 +80,8 @@ function createRenderer(): Marked {
           const name = String(token["text"]);
           const state = referenceLookup?.(name) ?? "missing";
           const cls = state === "ok" ? "od-markdown__ref" : "od-markdown__ref od-markdown__ref--broken";
-          return `<a href="#" class="${cls}" data-od-ref="${escapeHtml(name)}">${escapeHtml(name)}</a>`;
+          const shown = referenceLabelsNow && Object.prototype.hasOwnProperty.call(referenceLabelsNow, name) ? referenceLabelsNow[name]! : name;
+          return `<a href="#" class="${cls}" data-od-ref="${escapeHtml(name)}">${escapeHtml(shown)}</a>`;
         },
       },
     ],
@@ -111,15 +116,17 @@ function createRenderer(): Marked {
 let shared: Marked | undefined;
 
 /** The HTML for a source. Exported for tests; nothing else should put this into a page. */
-export function renderMarkdown(source: string, referenceState?: (name: string) => ReferenceState, headingShift = 0): string {
+export function renderMarkdown(source: string, referenceState?: (name: string) => ReferenceState, headingShift = 0, referenceLabels?: Record<string, string>): string {
   shared ??= createRenderer();
   referenceLookup = referenceState;
   headingShiftNow = Math.max(0, Math.min(5, Math.floor(headingShift)));
+  referenceLabelsNow = referenceLabels;
   try {
     return shared.parse(source) as string;
   } finally {
     referenceLookup = undefined;
     headingShiftNow = 0;
+    referenceLabelsNow = undefined;
   }
 }
 
@@ -144,7 +151,7 @@ export function splitEmbeds(source: string): Array<{ markdown: string } | { embe
 }
 
 /** Read-only Markdown for plugin text: no raw HTML, only http/https/mailto links, `[[references]]`, no images. */
-export function MarkdownText({ source, onLinkClick, onReferenceClick, referenceState, renderEmbed, blobUrl, imageLabels, headingShift, className }: MarkdownTextProps) {
+export function MarkdownText({ source, onLinkClick, onReferenceClick, referenceState, referenceLabels, renderEmbed, blobUrl, imageLabels, headingShift, className }: MarkdownTextProps) {
   const parts = useMemo(() => (renderEmbed ? splitEmbeds(source) : null), [source, renderEmbed]);
   if (parts && parts.some((p) => "embed" in p)) {
     return (
@@ -153,17 +160,17 @@ export function MarkdownText({ source, onLinkClick, onReferenceClick, referenceS
           "embed" in p ? (
             <Fragment key={i}>{renderEmbed!(p.embed)}</Fragment>
           ) : (
-            <MarkdownHtml key={i} source={p.markdown} onLinkClick={onLinkClick} onReferenceClick={onReferenceClick} referenceState={referenceState} blobUrl={blobUrl} imageLabels={imageLabels} headingShift={headingShift} />
+            <MarkdownHtml key={i} source={p.markdown} onLinkClick={onLinkClick} onReferenceClick={onReferenceClick} referenceState={referenceState} referenceLabels={referenceLabels} blobUrl={blobUrl} imageLabels={imageLabels} headingShift={headingShift} />
           ),
         )}
       </div>
     );
   }
-  return <MarkdownHtml source={source} onLinkClick={onLinkClick} onReferenceClick={onReferenceClick} referenceState={referenceState} blobUrl={blobUrl} imageLabels={imageLabels} headingShift={headingShift} className={className} />;
+  return <MarkdownHtml source={source} onLinkClick={onLinkClick} onReferenceClick={onReferenceClick} referenceState={referenceState} referenceLabels={referenceLabels} blobUrl={blobUrl} imageLabels={imageLabels} headingShift={headingShift} className={className} />;
 }
 
-function MarkdownHtml({ source, onLinkClick, onReferenceClick, referenceState, blobUrl, imageLabels, headingShift, className }: Omit<MarkdownTextProps, "renderEmbed">) {
-  const html = useMemo(() => renderMarkdown(source, referenceState, headingShift), [source, referenceState, headingShift]);
+function MarkdownHtml({ source, onLinkClick, onReferenceClick, referenceState, referenceLabels, blobUrl, imageLabels, headingShift, className }: Omit<MarkdownTextProps, "renderEmbed">) {
+  const html = useMemo(() => renderMarkdown(source, referenceState, headingShift, referenceLabels), [source, referenceState, headingShift, referenceLabels]);
   const box = useRef<HTMLDivElement>(null);
   const [large, setLarge] = useState<{ src: string; alt: string } | null>(null);
   // D484 §16: fill each stored image's place with the image (an element made here, not markup).

@@ -102,7 +102,7 @@ const ROUND17_FILES: &[&str] =
 /// transfers and artifacts are refused.
 fn ai_allows(method: &str, args: &Value) -> bool {
     match method {
-        "resources.get" | "resources.list" | "resources.search" | "resources.kinds" => true,
+        "resources.get" | "resources.list" | "resources.search" | "resources.kinds" | "resources.tree" | "resources.embed" | "resources.refs" => true,
         "files.roots" | "files.list" | "files.stat" | "files.readText" | "files.find" => true,
         "settings.get" | "runs.partial" | "runs.progress" => true,
         "network.output" | "network.stop" => true,
@@ -137,7 +137,7 @@ impl Inner {
         // D301: `migrate` is pure computation — only reads; `storage.readFrom` only there.
         // D487 §13: also reading the subtree and embeds, and calling interfaces (the callee computes only, too).
         const PURE_OK: &[&str] = &[
-            "resources.get", "resources.list", "resources.tree", "resources.embed", "interfaces.list", "interfaces.call", "files.roots", "files.list", "files.stat", "files.readText",
+            "resources.get", "resources.list", "resources.tree", "resources.embed", "resources.refs", "util.collate", "interfaces.list", "interfaces.call", "files.roots", "files.list", "files.stat", "files.readText",
             "params.get", "params.config", "storage.get", "storage.keys", "storage.readFrom", "settings.get", "process.ready",
         ];
         // Review #7: `process.*` answers `notInRun` itself (and audits `run`), in `migrate` too;
@@ -175,6 +175,10 @@ impl Inner {
             // D487 §13 (K-a, K-b): the subtree below a resource; what another resource shows embedded.
             "resources" if op == "tree" => self.host_tree(plugin, info, &args),
             "resources" if op == "embed" => self.host_embed(plugin, info, &args).await,
+            // D487 §15 (K-h): what a resource refers to.
+            "resources" if op == "refs" => self.host_refs(plugin, info, &args),
+            // D487 §15 (K-j): sorting for a language.
+            "util" if op == "collate" => self.host_collate(&args),
             "resources" => self.host_resources(plugin, info, op, &args).await,
             // D487 §13 (K-g): a stored file written to a granted folder.
             "files" if op == "writeBlob" => self.host_write_blob(plugin, info, &args).await,

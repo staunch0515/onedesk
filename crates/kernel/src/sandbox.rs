@@ -481,7 +481,7 @@ const BOOTSTRAP: &str = r#"
         get: c("resources.get"), list: c("resources.list"), create: c("resources.create"),
         update: c("resources.update"), move: c("resources.move"), remove: c("resources.remove"),
         search: c("resources.search"), kinds: c("resources.kinds"), upsertByKey: c("resources.upsertByKey"),
-        tree: c("resources.tree"), embed: c("resources.embed"),
+        tree: c("resources.tree"), embed: c("resources.embed"), refs: c("resources.refs"),
       }),
       files: Object.freeze({
         roots: c("files.roots"), list: c("files.list"), stat: c("files.stat"),
@@ -504,7 +504,7 @@ const BOOTSTRAP: &str = r#"
         readFrom: c("storage.readFrom"),
       }),
       settings: Object.freeze({ get: c("settings.get") }),
-      util: Object.freeze({ sleep: c("util.sleep") }),
+      util: Object.freeze({ sleep: c("util.sleep"), collate: c("util.collate") }),
       network: Object.freeze({ request: (opts) => runNetwork(callId, opts) }),
       secrets: Object.freeze({ get: c("secrets.get") }),
       plugins: Object.freeze({ requestInstall: c("plugins.requestInstall"), list: c("plugins.list") }),

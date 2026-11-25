@@ -32,7 +32,12 @@ lineTones?: Array<LineTone | null>,
 /**
  * Round 17 (X10): absent = `plain`.
  */
-appearance?: TextAppearance, } | { "type": "table", id: string, columns: Array<OutputColumn>, rows: Array<Array<JsonValue>>, 
+appearance?: TextAppearance, 
+/**
+ * D487 §15 (K-i): Markdown `[[…]]` references shown with these words instead of their text (still opening
+ * their target): reference text → words. At most 500, each at most 200 characters.
+ */
+refLabels?: { [key in string]: string }, } | { "type": "table", id: string, columns: Array<OutputColumn>, rows: Array<Array<JsonValue>>, 
 /**
  * What clicking a row opens; as long as `rows`. Round 12 (D393): `null` (or a target the
  * plugin may not open) = that row opens nothing.

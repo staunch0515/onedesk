@@ -47,4 +47,11 @@ describe("SequenceView (D487 §13)", () => {
     expect(renderMarkdown("### A", undefined, 5)).toContain("<h6");
     expect(renderMarkdown("# A")).toContain("<h2 class=\"od-markdown__h1\">A</h2>");
   });
+
+  it("D487 §15: a reference shown with given words still points to its name", () => {
+    const html = renderMarkdown("See [[Circuit]] and [[Other]].", () => "ok", 0, { Circuit: "Figure 2-1" });
+    expect(html).toContain('data-od-ref="Circuit">Figure 2-1</a>');
+    expect(html).toContain('data-od-ref="Other">Other</a>');
+    expect(renderMarkdown("[[Circuit]]", () => "ok")).toContain(">Circuit</a>");
+  });
 });

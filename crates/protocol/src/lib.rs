@@ -638,6 +638,9 @@ pub enum ViewNode {
         line_tones: Option<Vec<Option<LineTone>>>,
         /// Round 17 (X10): absent = `plain`.
         appearance: Option<TextAppearance>,
+        /// D487 §15 (K-i): Markdown `[[…]]` references shown with these words instead of their text (still opening
+        /// their target): reference text → words. At most 500, each at most 200 characters.
+        ref_labels: Option<std::collections::BTreeMap<String, String>>,
     },
     Table {
         id: String,

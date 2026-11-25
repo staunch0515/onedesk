@@ -29,7 +29,7 @@ export function useOpenHere(): (target: string) => void {
   return useCallback((target: string) => actions.open(target, envId ? { envId } : undefined), [actions, envId]);
 }
 
-function MarkdownNode({ source }: { source: string }) {
+function MarkdownNode({ source, refLabels }: { source: string; refLabels?: Record<string, string> }) {
   const target = useUi((s) => s.tabs.find((x) => x.id === s.activeTabId)?.target ?? "");
   const resourceId = target.startsWith("resource:") ? target.slice("resource:".length) : null;
   const refs = useQuery((c) => (resourceId ? c.refs.outgoing(resourceId) : Promise.resolve([])), [resourceId], resourceId ? [`resource:${resourceId}`] : []);
@@ -37,7 +37,7 @@ function MarkdownNode({ source }: { source: string }) {
   // D481: `![[…]]` lines show the other resource's content in place (embeds.tsx).
   return (
     <Pane pad="md">
-      <RefMarkdown source={source} refs={refs.data ?? NO_REFS} envId={envId} depth={0} chain={resourceId ? [resourceId] : []} />
+      <RefMarkdown source={source} refLabels={refLabels} refs={refs.data ?? NO_REFS} envId={envId} depth={0} chain={resourceId ? [resourceId] : []} />
     </Pane>
   );
 }
@@ -89,7 +89,7 @@ export function ViewNodes({
                 </Pane>
               );
             }
-            if (node.format === "markdown" && !node.mono) return <MarkdownNode key={node.id} source={node.text} />;
+            if (node.format === "markdown" && !node.mono) return <MarkdownNode key={node.id} source={node.text} refLabels={node.refLabels ?? undefined} />;
             return node.mono ? (
               <CodeEditor key={node.id} label={node.id} value={node.text} readOnly tokenize={node.language ? TOKENIZERS[node.language] : undefined} />
             ) : (

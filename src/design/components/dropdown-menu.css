@@ -7,6 +7,9 @@
   background: var(--bg-elevated);
   box-shadow: var(--shadow-md);
   animation: od-rise-in var(--duration-fast) var(--ease-out);
+  /* A long menu (e.g. every kind of resource) scrolls within the room the window has. */
+  max-height: var(--radix-dropdown-menu-content-available-height, var(--radix-context-menu-content-available-height, none));
+  overflow-y: auto;
 }
 
 .od-menu__item {

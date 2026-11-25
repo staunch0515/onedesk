@@ -4,6 +4,8 @@
 //! - K-b `host.resources.embed(id, { section?, args? })`: what another resource shows where it is embedded;
 //!   `requires.contents`.
 //! - K-c `place`: a kind decides where a node lands when it is moved into (or made in) a resource of the kind.
+//! - K-h `host.resources.refs(id)`: what a resource refers to now (its `[[…]]` and `![[…]]`); `requires.resources`.
+//! - K-j `host.util.collate(texts, locale)`: the order texts sort in for a language (pinyin for Chinese).
 //! - K-g `host.files.writeBlob(blob, path)`: a stored file written to a granted folder; the blob must be used by a
 //!   resource the plugin may read.
 //!
@@ -21,6 +23,12 @@ use crate::pipeline::MoveDest;
 use crate::sandbox::CallInfo;
 use crate::store::{self, Row};
 use crate::util::*;
+
+/// Most texts one `util.collate` call sorts.
+pub const COLLATE_MAX: usize = 20_000;
+/// Most entries, and the longest label, of a text node's `refLabels`.
+pub const MAX_REF_LABELS: usize = 500;
+pub const MAX_REF_LABEL: usize = 200;
 
 /// Most nodes one `resources.tree` call returns (and the default).
 pub const TREE_MAX: usize = 2000;
@@ -100,6 +108,44 @@ impl Inner {
         let p = ResourceEmbedParams { id, section, env_id: info.env_id.clone(), locale: None, args: call_args };
         let out = self.resource_embed(p).await?;
         serde_json::to_value(out).map_err(internal)
+    }
+
+    /// K-h: the references a resource makes, as its info panel shows them.
+    pub(crate) fn host_refs(&self, plugin: &Plugin, info: &CallInfo, args: &Value) -> KResult<Value> {
+        if !plugin.manifest.requires.resources {
+            return Err(denied("notRequested"));
+        }
+        let id = args.get(0).and_then(Value::as_str).ok_or_else(|| invalid_params("id must be a string"))?;
+        if info.ai && !self.read(|c| store::is_ai_visible(c, id))? {
+            return Err(not_found("resource"));
+        }
+        if self.read(|c| store::get(c, id))?.is_none() {
+            return Err(not_found("resource"));
+        }
+        let out: Vec<Value> = self
+            .refs_outgoing(id)?
+            .into_iter()
+            .map(|r| {
+                let target = r.target.as_ref().filter(|_| r.state == RefState::Ok).map(|t| {
+                    let kind = self.read(|c| store::get(c, &t.id)).ok().flatten().map(|row| row.kind);
+                    json!({ "id": t.id, "name": t.name, "kind": kind })
+                });
+                json!({ "text": r.text, "target": target, "section": r.section, "embed": r.embed })
+            })
+            .collect();
+        Ok(Value::Array(out))
+    }
+
+    /// K-j: the order `texts` sort in for `locale` (indexes into `texts`).
+    pub(crate) fn host_collate(&self, args: &Value) -> KResult<Value> {
+        let texts: Vec<String> = serde_json::from_value(args.get(0).cloned().unwrap_or(Value::Null)).map_err(|_| invalid_params("texts must be a list of strings"))?;
+        if texts.len() > COLLATE_MAX {
+            return Err(invalid_params("texts: at most 20000"));
+        }
+        let locale = args.get(1).and_then(Value::as_str).unwrap_or("en-US");
+        let mut order: Vec<usize> = (0..texts.len()).collect();
+        order.sort_by(|&a, &b| collate_cmp(locale, &texts[a], &texts[b]).then(a.cmp(&b)));
+        Ok(json!(order))
     }
 
     /// K-g: a stored file written to a granted folder (never over an existing file).
@@ -218,4 +264,38 @@ fn kids(c: &rusqlite::Connection, id: &str) -> rusqlite::Result<Vec<Row>> {
     let mut st = c.prepare_cached(&format!("SELECT {} FROM resources WHERE parent_id = ?1 AND deleted_at IS NULL ORDER BY pos, id", store::COLUMNS))?;
     let rows = st.query_map([id], store::from_row)?;
     rows.collect()
+}
+
+/// Compares two texts the way `locale` sorts them (ICU collation; Chinese: pinyin). An unknown language sorts as the
+/// root order.
+#[cfg(feature = "collate")]
+pub fn collate_cmp(locale: &str, a: &str, b: &str) -> std::cmp::Ordering {
+    use icu_collator::{options::CollatorOptions, Collator, CollatorPreferences};
+    let loc = icu_locale_core::Locale::try_from_str(locale).unwrap_or(icu_locale_core::Locale::UNKNOWN);
+    match Collator::try_new(CollatorPreferences::from(&loc), CollatorOptions::default()) {
+        Ok(c) => c.compare(a, b),
+        Err(_) => a.cmp(b),
+    }
+}
+
+/// Without the `collate` feature (a kernel linked into the window or the development host): case-insensitive, then by
+/// characters.
+#[cfg(not(feature = "collate"))]
+pub fn collate_cmp(_locale: &str, a: &str, b: &str) -> std::cmp::Ordering {
+    a.to_lowercase().cmp(&b.to_lowercase()).then_with(|| a.cmp(b))
+}
+
+#[cfg(all(test, feature = "collate"))]
+mod tests {
+    use super::collate_cmp;
+    use std::cmp::Ordering::Less;
+
+    #[test]
+    fn chinese_sorts_by_pinyin_and_others_by_their_letters() {
+        assert_eq!(collate_cmp("zh-CN", "阿", "比"), Less);
+        assert_eq!(collate_cmp("zh-CN", "比", "词"), Less);
+        assert_eq!(collate_cmp("zh-CN", "勾股定理", "三角形"), Less);
+        assert_eq!(collate_cmp("en-US", "apple", "Banana"), Less);
+        assert_eq!(collate_cmp("xx-bad-!!", "a", "b"), Less);
+    }
 }

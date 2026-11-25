@@ -58,6 +58,9 @@ export default {
         if (b.mode === "bigArgs") items[0].args = { x: "y".repeat(5000) };
         if (b.mode === "viewEvent") node.positionEvent = "view.x";
         if (b.mode === "unknown") items[0].color = "red";
+        if (b.mode === "labels") return { view: [{ type: "text", id: "t", text: "[[a]]", format: "markdown", refLabels: { a: "Chapter 3" } }] };
+        if (b.mode === "manyLabels") { const l = {}; for (let i = 0; i < 501; i++) l["n" + i] = "x"; return { view: [{ type: "text", id: "t", text: "x", refLabels: l }] }; }
+        if (b.mode === "longLabel") return { view: [{ type: "text", id: "t", text: "x", refLabels: { a: "y".repeat(201) } }] };
         if (b.mode === "many") { node.items = []; for (let i = 0; i < 20001; i++) node.items.push({ key: "k" + i, title: "t", level: 1 }); }
         return { view: [node] };
       },
@@ -107,7 +110,7 @@ fn plugins(dir: &Path) -> PathBuf {
             "kinds": [
                 { "id": "shelf", "label": "shelf", "icon": "box", "tree": "resources", "draggable": true, "accepts": ["*"], "place": true },
                 { "id": "card", "label": "card", "icon": "box", "tree": "resources", "draggable": true, "embed": true,
-                  "fields": { "image": { "type": "attachment", "accept": ["image"] } } },
+                  "fields": { "image": { "type": "attachment", "accept": ["image"] }, "text": { "type": "longtext", "refs": true } } },
                 { "id": "seq", "label": "seq", "icon": "box", "tree": "resources", "draggable": true, "page": "seq" }
             ],
             "pages": [ { "id": "seq" } ],
@@ -310,7 +313,11 @@ async fn a_sequence_is_checked_and_items_whose_resource_is_gone_keep_only_their_
     // The position event carries the item's key.
     let r = c.ok("page.event", json!({ "target": format!("resource:{seq}"), "event": "position", "context": { "row": "k1" } })).await;
     assert!(r.to_string().contains("position@k1"), "{r}");
-    for mode in ["level0", "dupKey", "bigArgs", "viewEvent", "unknown", "many"] {
+    // D487 §15 (K-i): words for references.
+    c.probe("test.binder", "resources.update", json!([seq, { "body.mode": "labels" }])).await;
+    let p = c.ok("page.resolve", json!({ "target": format!("resource:{seq}"), "context": {} })).await;
+    assert_eq!(p["view"][0]["refLabels"], json!({ "a": "Chapter 3" }));
+    for mode in ["level0", "dupKey", "bigArgs", "viewEvent", "unknown", "many", "manyLabels", "longLabel"] {
         // Written by the plugin itself (saving through the page would draw the broken page first).
         let w = c.probe("test.binder", "resources.update", json!([seq, { "body.mode": mode }])).await;
         assert!(w.get("ok").is_some(), "{w}");
@@ -385,4 +392,34 @@ async fn a_used_blob_is_written_to_a_granted_folder_never_over_a_file() {
     // Without `files`.
     let e = c.probe("test.blind", "files.writeBlob", json!([blob, target])).await;
     assert_eq!(e["params"]["reason"], "notRequested");
+}
+
+/* ------------------------------------------------------------------ K-h, K-j */
+
+#[tokio::test(flavor = "multi_thread")]
+async fn what_a_resource_refers_to_now_and_sorting_for_a_language() {
+    let (_env, c) = world().await;
+    let target = create(&c, "test.binder:card", None, json!({ "name": "Target" })).await;
+    let src = create(&c, "test.binder:card", None, json!({ "name": "Source", "body.text": "See [[Target]], ![[Target#Part]] and [[Nobody]]." })).await;
+    let r = c.probe("test.binder", "resources.refs", json!([src])).await;
+    let list = r["ok"].as_array().unwrap();
+    assert_eq!(list.len(), 3, "{r}");
+    assert_eq!(list[0]["text"], "Target");
+    assert_eq!(list[0]["target"]["id"], json!(target));
+    assert_eq!(list[0]["target"]["kind"], "test.binder:card");
+    assert_eq!(list[1]["embed"], true);
+    assert_eq!(list[1]["section"], "Part");
+    assert!(list[2]["target"].is_null());
+    // After a rename the reference still points to it.
+    c.ok("page.save", json!({ "target": format!("resource:{target}"), "changes": { "name": "Renamed" } })).await;
+    let r = c.probe("test.binder", "resources.refs", json!([src])).await;
+    assert_eq!(r["ok"][0]["target"]["name"], "Renamed", "{r}");
+    // Permission and a missing resource.
+    assert_eq!(c.probe("test.blind", "resources.refs", json!([src])).await["params"]["reason"], "notRequested");
+    assert_eq!(c.probe("test.binder", "resources.refs", json!(["nope"])).await["error"], "notFound");
+    // Sorting: indexes in order, ties keep their order.
+    let r = c.probe("test.binder", "util.collate", json!([["b", "A", "c"], "en-US"])).await;
+    assert_eq!(r["ok"], json!([1, 0, 2]), "{r}");
+    let big: Vec<String> = (0..20_001).map(|i| i.to_string()).collect();
+    assert_eq!(c.probe("test.binder", "util.collate", json!([big, "en-US"])).await["error"], "invalidParams");
 }

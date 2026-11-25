@@ -7,7 +7,7 @@ const ASSIST_KEYS = new Set(["off", "hint", "format"]);
 const KINDS = new Set(["text", "longtext", "code", "number", "boolean", "date", "datetime", "enum", "secret", "time", "ref", "multi", "attachment"]);
 const NODE_KEYS: Record<string, string[]> = {
   form: ["type", "id", "layout", "label", "fields"],
-  text: ["type", "id", "text", "mono", "language", "tone", "format", "lineTones", "appearance"],
+  text: ["type", "id", "text", "mono", "language", "tone", "format", "lineTones", "appearance", "refLabels"],
   table: ["type", "id", "columns", "rows", "rowTargets", "rowKeys", "rowActions", "selectParam"],
   link: ["type", "id", "label", "target"],
   // D484 §16

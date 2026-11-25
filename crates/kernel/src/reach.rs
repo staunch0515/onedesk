@@ -123,6 +123,16 @@ impl Inner {
                 }
                 continue;
             }
+            // D487 §15 (K-i): the words references are shown with.
+            if let ViewNode::Text { id, ref_labels: Some(labels), .. } = node {
+                let too_many = labels.len() > crate::subtree::MAX_REF_LABELS;
+                if too_many || labels.iter().any(|(k, v)| k.chars().count() > crate::subtree::MAX_REF_LABEL || v.chars().count() > crate::subtree::MAX_REF_LABEL) {
+                    let mut e = err_p(ErrorCode::PluginError, &[("reason", "badOutput"), ("plugin", &plugin.id)]);
+                    e.detail = Some(format!("text {id}: refLabels: at most 500, each at most 200 characters"));
+                    return Err(e);
+                }
+                continue;
+            }
             // D487 §13 (K-d): a sequence — sizes, levels and arguments; items whose resource is gone show only their title.
             if let ViewNode::Sequence { id, items, start, position_event, .. } = node {
                 let bad = |what: &str| {

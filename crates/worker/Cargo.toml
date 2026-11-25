@@ -7,7 +7,7 @@ license.workspace = true
 
 [dependencies]
 onedesk-protocol.workspace = true
-onedesk-kernel.workspace = true
+onedesk-kernel = { workspace = true, features = ["collate"] }
 tokio.workspace = true
 
 [dev-dependencies]

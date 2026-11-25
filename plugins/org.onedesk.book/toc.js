@@ -5,6 +5,7 @@
 import { allNodes, childrenMap, full, GROUP, IFACE, PART_RANK, PLUGIN, roleFinder, split } from "./roles.js";
 import { outlineOf, TEXT_KINDS } from "./text-page.js";
 import { chineseNumber, letter, say, usesChineseNumerals } from "./words.js";
+import { citeLabels, REFERENCES } from "./references.js";
 
 export const TOC = full("toc");
 export const BOOK = full("book");
@@ -70,7 +71,7 @@ async function outlineFor(ctx, node, role) {
       outline = outlineOf(r && r.body ? r.body.text : "");
     } else if (role.declared) {
       const r = await ctx.host.interfaces.call(IFACE, "outline", { resource: node.id }, { resource: node.id });
-      if (r && r.data && Array.isArray(r.data.figures)) outline = { headings: r.data.headings || [], figures: r.data.figures };
+      if (r && r.data && Array.isArray(r.data.figures)) outline = { headings: r.data.headings || [], figures: r.data.figures, cites: r.data.cites || [], terms: r.data.terms || [] };
     }
   } catch {
     // Not readable: no captions.
@@ -89,9 +90,118 @@ async function outlineFor(ctx, node, role) {
  */
 export async function entriesOf(ctx, bookId, settings, opts = {}) {
   const nodes = opts.nodes || (await allNodes(ctx, bookId));
-  const env = { ctx, kids: childrenMap(nodes), role: opts.role || roleFinder(ctx), counts: new Map(), items: [], meta: [] };
+  const env = {
+    ctx,
+    kids: childrenMap(nodes),
+    nodes: new Map(nodes.map((n) => [n.id, n])),
+    role: opts.role || roleFinder(ctx),
+    counts: new Map(),
+    items: [],
+    meta: [],
+    figures: [],
+    terms: [],
+    cites: [],
+    scope: [],
+    numbers: [],
+  };
   await walkBook(env, bookId, settings, opts.level || 1, 0);
-  return { items: env.items, meta: env.meta };
+  const labels = await crossLabels(env);
+  await citations(env);
+  return { items: env.items, meta: env.meta, figures: env.figures, terms: env.terms, cites: env.cites, labels };
+}
+
+/* ------------------------------------------------------------------ cross references and citations (§15.5, §15.3) */
+
+// What each page refers to, by revision.
+const refsCache = new Map();
+
+async function refsOf(ctx, node) {
+  const hit = refsCache.get(node.id);
+  if (hit && hit.rev === node.rev) return hit.refs;
+  let refs = [];
+  try {
+    refs = await ctx.host.resources.refs(node.id);
+  } catch {
+    refs = [];
+  }
+  if (refsCache.size >= MAX_OUTLINES) [...refsCache.keys()].slice(0, MAX_OUTLINES / 2).forEach((k) => refsCache.delete(k));
+  refsCache.set(node.id, { rev: node.rev, refs });
+  return refs;
+}
+
+/** What each resource in the book is called by number: its full number, or a figure's "Figure 2-1". */
+async function labelMap(env) {
+  const labels = new Map();
+  env.items.forEach((x, i) => {
+    const full = env.meta[i].full;
+    if (full) labels.set(x.key, full);
+  });
+  const word = { figure: say(env.ctx, "caption.figure"), table: say(env.ctx, "caption.table") };
+  for (const f of env.figures) {
+    if (!f.of) continue;
+    const node = env.nodes.get(f.item);
+    if (!node) continue;
+    const ref = (await refsOf(env.ctx, node)).find((r) => r.embed && r.target && (r.text === f.of || r.text.split("#")[0].trim() === f.of));
+    if (ref) labels.set(ref.target.id, `${word[f.type] || word.figure} ${f.number}`);
+  }
+  return labels;
+}
+
+const MAX_ARGS = 3500;
+
+/** Puts each page's reference labels into its item; answers the map (resource id → label). */
+async function crossLabels(env) {
+  const labels = await labelMap(env);
+  if (labels.size === 0) return labels;
+  for (const x of env.items) {
+    if (!x.resource || !x.args) continue;
+    const node = env.nodes.get(x.key);
+    if (!node) continue;
+    const mine = {};
+    for (const r of await refsOf(env.ctx, node)) {
+      if (r.embed || !r.target || !labels.has(r.target.id)) continue;
+      // As written, and as readers see it after the target was renamed (D321: its current name).
+      mine[r.text] = labels.get(r.target.id);
+      const now = env.nodes.get(r.target.id);
+      if (now && now.name) mine[now.name] = labels.get(r.target.id);
+    }
+    if (Object.keys(mine).length > 0 && JSON.stringify(mine).length < MAX_ARGS / 2) x.args.book.labels = mine;
+  }
+  return labels;
+}
+
+async function citations(env) {
+  const byScope = new Map();
+  for (const c of env.cites) {
+    if (!byScope.has(c.scope)) byScope.set(c.scope, []);
+    byScope.get(c.scope).push(c);
+  }
+  for (const [scope, list] of byScope) {
+    let labels = null;
+    if (scope) {
+      const node = env.nodes.get(scope);
+      try {
+        if (node && node.kind === REFERENCES) {
+          const page = await env.ctx.host.resources.get(scope);
+          labels = (await citeLabels(env.ctx, page, list)).labels;
+        } else if (node) {
+          const r = await env.ctx.host.interfaces.call(IFACE, "cite", { resource: scope, cites: list.map(({ keys, notes }) => ({ keys, notes })) }, { resource: scope });
+          labels = r && r.data && Array.isArray(r.data.labels) ? r.data.labels : null;
+        }
+      } catch {
+        labels = null;
+      }
+    }
+    list.forEach((c, i) => {
+      const item = env.items.find((x) => x.key === c.item);
+      if (!item || !item.args) return;
+      const label = labels && typeof labels[i] === "string" ? labels[i] : `[${c.keys.join("; ")}]`;
+      const book = item.args.book;
+      book.cites = book.cites || [];
+      book.cites.push(label);
+      if (JSON.stringify(item.args).length > MAX_ARGS) book.cites.pop();
+    });
+  }
 }
 
 async function rolesOf(env, nodes) {
@@ -101,7 +211,19 @@ async function rolesOf(env, nodes) {
 }
 
 async function walkBook(env, bookId, s, level, nest) {
-  const rows = (await rolesOf(env, env.kids.get(bookId) || [])).filter((x) => x.r.part !== "none");
+  const all = await rolesOf(env, env.kids.get(bookId) || []);
+  const refsPage = all.find((x) => x.r.role === "references");
+  // Citations in this book (and in sub-books without references of their own) go to its references.
+  env.scope.push(refsPage ? refsPage.n.id : env.scope[env.scope.length - 1] || null);
+  try {
+    await walkParts(env, all, s, level, nest);
+  } finally {
+    env.scope.pop();
+  }
+}
+
+async function walkParts(env, all, s, level, nest) {
+  const rows = all.filter((x) => x.r.part !== "none");
   rows.sort((a, b) => PART_RANK[a.r.part] - PART_RANK[b.r.part]);
   let chapter = 0;
   let volume = 0;
@@ -152,7 +274,10 @@ function add(env, n, r, number, level, chapterKey, s) {
     item.args = { book: { prefix: prefixOf(s, chapterKey), figure: c.figure, table: c.table } };
   }
   env.items.push(item);
-  env.meta.push({ name: n.name, number });
+  env.numbers[level] = number;
+  env.numbers.length = level + 1;
+  const full = number ? env.numbers.slice(1).filter(Boolean).join(" ") : "";
+  env.meta.push({ name: n.name, number, full });
 }
 
 /** Captions are numbered by chapter ("Figure 2-1"); without numbers, through the whole book; front and back by themselves. */
@@ -169,14 +294,25 @@ async function addFigures(env, n, r, chapterKey, s) {
   const key = countKey(s, chapterKey);
   const c = env.counts.get(key) || { figure: 0, table: 0 };
   const o = await outlineFor(env.ctx, n, r);
-  for (const f of o.figures) c[f.type === "table" ? "table" : "figure"] += 1;
+  const prefix = prefixOf(s, chapterKey);
+  for (const f of o.figures) {
+    const type = f.type === "table" ? "table" : "figure";
+    c[type] += 1;
+    const fig = { type, number: prefix ? `${prefix}-${c[type]}` : String(c[type]), caption: f.caption, item: n.id };
+    if (f.of) fig.of = f.of;
+    env.figures.push(fig);
+  }
   env.counts.set(key, c);
+  for (const t of o.terms || []) env.terms.push({ term: t.term, sub: t.sub || null, item: n.id });
+  for (const ci of o.cites || []) env.cites.push({ keys: ci.keys, notes: ci.notes || ci.keys.map(() => null), item: n.id, scope: env.scope[env.scope.length - 1] || null });
 }
 
 async function subBook(env, n, s, level, nest, index) {
   const v = volumeText(env.ctx, s, index);
   env.items.push({ key: n.id, title: v ? `${v} ${n.name}` : n.name, level: Math.min(Math.max(level, 1), 9), book: true });
-  env.meta.push({ name: n.name, number: v });
+  env.numbers[level] = v;
+  env.numbers.length = level + 1;
+  env.meta.push({ name: n.name, number: v, full: v });
   if (nest + 1 >= MAX_NEST) return;
   const kids = await rolesOf(env, env.kids.get(n.id) || []);
   const contents = kids.find((x) => x.r.role === "toc");
@@ -190,7 +326,7 @@ async function subBook(env, n, s, level, nest, index) {
         const items = (r && r.data && Array.isArray(r.data.items) ? r.data.items : []).filter((x) => x && typeof x.key === "string");
         for (const x of items) {
           env.items.push(x);
-          env.meta.push({ name: x.title, number: "" });
+          env.meta.push({ name: x.title, number: "", full: "" });
         }
         return;
       } catch {
@@ -398,4 +534,25 @@ export async function exportBook(ctx) {
   await ctx.host.files.writeText(md, out.join("\n").replace(/\n{3,}/g, "\n\n"));
   const text = say(ctx, "export.done", { path: md, images: written.size });
   return { output: { type: "text", text }, summary: { message: text } };
+}
+
+/** The contents of the book a page is in (its parent book), numbered by that book's contents page; null outside a book. */
+export async function contentsOf(ctx, res) {
+  const book = await bookOf(ctx, res);
+  if (!book) return null;
+  const kids = await ctx.host.resources.tree(book.id, { limit: 2000 });
+  const tocNode = kids.nodes.find((n) => n.depth === 1 && n.kind === TOC);
+  let body = null;
+  if (tocNode) {
+    const t = await ctx.host.resources.get(tocNode.id);
+    body = t && t.body;
+  }
+  return entriesOf(ctx, book.id, settingsOf(ctx, body, null));
+}
+
+/** Where an item is, for lists: its full number, else its name. */
+export function whereOf(contents, key) {
+  const i = contents.items.findIndex((x) => x.key === key);
+  if (i < 0) return "";
+  return contents.meta[i].full || contents.meta[i].name;
 }

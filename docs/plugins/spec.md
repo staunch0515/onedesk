@@ -470,6 +470,7 @@ export default {
 | `mono`、`language` | 等宽；代码着色语言 |
 | `tone` | `default`、`muted`、`danger` |
 | `format` | `plain`（默认）或 `markdown`（CommonMark，无 HTML；链接只认 http/https/mailto；支持 `[[名字]]` 引用） |
+| `refLabels` | D487 §15：`{ 引用的文字: 显示的文字 }`，Markdown 里这些 `[[…]]` 显示成给的文字，点了仍然打开原来的目标（例：书里把 `[[第三章的名字]]` 显示成“第三章”）。最多 500 项，每项 ≤ 200 字 |
 | `lineTones` | 每行一个：`default`、`muted`、`success`、`warning`、`danger`、`stderr` 或 `null` |
 | `appearance` | `plain` 或 `terminal`（终端外观） |
 
@@ -556,6 +557,7 @@ export default {
 | `search(opts)` | → 结果 | 需 `requires.resources`；`{ query, kinds?, limit? }` 按相关度返回 `[{ id, kind, name, snippet, score }]`；或基本搜索 `{ text, kinds, tags, … }` |
 | `tree(id, { offset?, limit? })` | → `{ nodes: [{ id, name, kind, icon, depth, parent, rev }], next }` | D487：需 `requires.resources`；按树的顺序（先父后子）列出 `id` 下面的全部节点，`depth` 从 1 开始；每次最多 2000 个，`next` 接着读；不含正文 |
 | `embed(id, { section?, args? })` | → 和外壳的 `resource.embed` 一样（`view`、`name`、`refs`…） | D487：需 `requires.contents`；按调用所在标签页的环境 |
+| `refs(id)` | → `[{ text, target: { id, name, kind } \| null, section, embed }]` | D487 §15：需 `requires.resources`；这个资源正文里每个 `[[…]]`、`![[…]]` 现在指向谁（`text` 是写下的样子；读者看到的是目标现在的名字） |
 | `kinds()` | → `[{ kind, label, icon }]` | 需 `requires.resources`；资源树里能有的所有类型（已启用的插件，`kind` 是全名，`label` 是 Label），供“按类型”的条件让用户勾选，不要让用户手写类型全名（D477） |
 
 插件拿到的资源还带 `externalKey` 和 `missing`。
@@ -635,7 +637,7 @@ export default {
 | `copy(text)` | 复制到剪贴板 |
 | `openExternal(url)` | 用系统打开 http/https/mailto（≤ 2048 字）；只在运行中或页面事件里（`notInteractive`），每次调用最多 5 次（`tooMany`） |
 
-**util**：`sleep(ms)`（≤ 10 000；沙箱里没有计时器，等待用它）。
+**util**：`sleep(ms)`（≤ 10 000；沙箱里没有计时器，等待用它）；`collate(texts, locale)`（D487 §15）→ 按这种语言排序后的下标数组（中文按拼音，日文按读音，其他按各自的字母顺序），最多 20 000 条，同样的保持原来的顺序。
 
 ### 7.3 密钥的正确用法
 
