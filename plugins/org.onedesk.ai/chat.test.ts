@@ -186,6 +186,18 @@ describe("ai chat: answers that change the target", () => {
     expect(r).toEqual({ text: "Text", values: { "body.text": "N" } });
     expect(parseApply("Text", [])).toEqual({ text: "Text", values: null });
   });
+  it("a field whose new content holds code blocks of its own is read whole (the block ends where its JSON ends)", () => {
+    const body = "## Max\n\n```rust\nfn main() {\n    println!(\"{}\", 1);\n}\n```\n";
+    const answer = "I merged the copies.\n\n```onedesk-apply\n" + JSON.stringify({ "body.text": body }, null, 2) + "\n```\n\nDone.";
+    const r = parseApply(answer, [{ name: "body.text", editable: true }]);
+    expect(r.values).toEqual({ "body.text": body });
+    expect(r.text).toBe("I merged the copies.\n\nDone.");
+    // without the closing fence (an answer cut short) it is still read
+    expect(parseApply("x\n```onedesk-apply\n" + JSON.stringify({ "body.text": body }), [{ name: "body.text", editable: true }]).values).toEqual({ "body.text": body });
+    // a block that cannot be read stays in the text, as written
+    const broken = "x\n```onedesk-apply\n{\"body.text\": \"half\n```\n";
+    expect(parseApply(broken, [{ name: "body.text", editable: true }])).toEqual({ text: broken, values: null });
+  });
   it("one editable code field: a single block in its language is the change; a JSON block of field names too", () => {
     expect(parseApply("Try:\n```sql\nSELECT 1\n```", fields).values).toEqual({ "body.sql": "SELECT 1" });
     expect(parseApply("```sql\nA\n```\n```sql\nB\n```", fields).values).toBeNull();

@@ -265,38 +265,71 @@ export async function askWithTools(ctx, connection, system, messages, tools, dep
 // Changes to the target the answer proposes: a ```onedesk-apply block with a JSON object (field → full new
 // content); else, when the target has one editable code field, a single block in that field's language; else a
 // JSON block whose keys are all editable fields. Only editable fields, as text. The block is taken out of the text.
+// The JSON objects of the fenced blocks marked `lang`, found by the JSON's own structure (braces and strings), not by the
+// next ``` — the content of a field may hold code blocks of its own. Each: { obj, start, end } (end: after the closing
+// fence when there is one). Blocks that do not hold one whole JSON object are left out.
+export function fencedJson(text, lang) {
+  const t = str(text);
+  const out = [];
+  const open = new RegExp("```[ \\t]*" + lang.replace(/[-]/g, "\\$&") + "[ \\t]*\\r?\\n", "gi");
+  let m;
+  while ((m = open.exec(t)) !== null) {
+    let i = m.index + m[0].length;
+    while (i < t.length && /\s/.test(t[i])) i++;
+    if (t[i] !== "{") continue;
+    const from = i;
+    let depth = 0;
+    let inString = false;
+    for (; i < t.length; i++) {
+      const c = t[i];
+      if (inString) {
+        if (c === "\\") i++;
+        else if (c === '"') inString = false;
+      } else if (c === '"') inString = true;
+      else if (c === "{") depth++;
+      else if (c === "}" && --depth === 0) break;
+    }
+    if (depth !== 0 || i >= t.length) continue;
+    let obj;
+    try {
+      obj = JSON.parse(t.slice(from, i + 1));
+    } catch (e) {
+      continue;
+    }
+    let end = i + 1;
+    const close = /^\s*```/.exec(t.slice(end));
+    if (close) end += close[0].length;
+    out.push({ obj, start: m.index, end });
+    open.lastIndex = end;
+  }
+  return out;
+}
+
+// Changes to the target the answer proposes: a ```onedesk-apply block with a JSON object (field → full new
+// content); else a JSON block whose keys are all editable fields; else, when the target has one editable code field, a
+// single block in that field's language. Only editable fields, as text. The onedesk-apply block is taken out of the
+// shown text only when it was read.
 export function parseApply(text, fields) {
   const editable = (fields || []).filter((f) => f.editable);
   const t = str(text);
   if (editable.length === 0) return { text: t, values: null };
-  const blocks = [...t.matchAll(/```([^\n`]*)\n([\s\S]*?)```/g)].map((m) => ({ lang: m[1].trim().toLowerCase(), body: m[2], raw: m[0] }));
   const pick = (obj) => {
     if (!obj || typeof obj !== "object" || Array.isArray(obj)) return null;
     const values = {};
     for (const f of editable) if (f.name in obj && obj[f.name] !== null && obj[f.name] !== undefined) values[f.name] = typeof obj[f.name] === "string" ? obj[f.name] : JSON.stringify(obj[f.name], null, 2);
     return Object.keys(values).length > 0 ? values : null;
   };
-  const parse = (s) => {
-    try {
-      return JSON.parse(s);
-    } catch (e) {
-      return null;
-    }
-  };
-  const own = blocks.find((b) => b.lang === APPLY_LANG);
-  if (own) {
-    const values = pick(parse(own.body));
-    return { text: t.replace(own.raw, "").trim(), values };
+  for (const b of fencedJson(t, APPLY_LANG)) {
+    const values = pick(b.obj);
+    if (values) return { text: (t.slice(0, b.start) + t.slice(b.end)).replace(/\n{3,}/g, "\n\n").trim(), values };
   }
-  const json = blocks.find((b) => b.lang === "json" && (() => {
-    const o = parse(b.body);
-    return o && typeof o === "object" && !Array.isArray(o) && Object.keys(o).length > 0 && Object.keys(o).every((k) => editable.some((f) => f.name === k));
-  })());
-  if (json) return { text: t, values: pick(parse(json.body)) };
+  const json = fencedJson(t, "json").find((b) => !Array.isArray(b.obj) && Object.keys(b.obj).length > 0 && Object.keys(b.obj).every((k) => editable.some((f) => f.name === k)));
+  if (json) return { text: t, values: pick(json.obj) };
   const code = editable.filter((f) => f.kind === "code");
   if (editable.length === 1 && code.length === 1) {
     const lang = str(code[0].language).toLowerCase();
-    const same = blocks.filter((b) => b.lang === lang || (!lang && b.lang === ""));
+    const blocks = [...t.matchAll(/```([^\n`]*)\n([\s\S]*?)```/g)].map((x) => ({ lang: x[1].trim().toLowerCase(), body: x[2] }));
+    const same = blocks.filter((b) => b.lang === lang);
     if (lang && same.length === 1) return { text: t, values: { [code[0].name]: same[0].body.replace(/\n$/, "") } };
   }
   return { text: t, values: null };

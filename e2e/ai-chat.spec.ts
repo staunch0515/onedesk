@@ -56,6 +56,8 @@ const shot = async (page: Page, name: string) => {
   await page.waitForTimeout(300);
   await page.screenshot({ path: path.join(OUT, `ai-chat-${name}.png`) });
 };
+// New content that holds a code block of its own: the change is still read whole.
+const NEW_TEXT = "- roadmap\n- next steps\n\n```rust\nfn main() {}\n```";
 const APPLY = (values: Record<string, string>) => "Here it is.\n\n```onedesk-apply\n" + JSON.stringify(values) + "\n```";
 
 test("the AI workbench is the provider; a connection to the fake is the default", async ({ page }) => {
@@ -91,7 +93,7 @@ test("one entry point: the AI chat button opens a conversation next to the page;
   expect(chats().length).toBe(before);
   await shot(page, "preview");
 
-  ai.set({ kind: "ok", pieces: [APPLY({ "body.text": "- roadmap\n- next steps" })] });
+  ai.set({ kind: "ok", pieces: [APPLY({ "body.text": NEW_TEXT })] });
   await box(page).press("Enter");
   await expect(page.getByRole("article", { name: "AI" })).toContainText("Here it is.", { timeout: 30_000 });
   await expect(page.getByRole("article", { name: "Me" })).toContainText("Make it two bullet points");
@@ -105,11 +107,11 @@ test("one entry point: the AI chat button opens a conversation next to the page;
 
   await page.getByRole("button", { name: "Apply to Weekly sync" }).click();
   await expect(page.getByRole("heading", { level: 1, name: "Weekly sync" })).toBeVisible();
-  await expect(page.getByRole("textbox", { name: "Content", exact: true })).toHaveValue("- roadmap\n- next steps");
+  await expect(page.getByRole("textbox", { name: "Content", exact: true })).toHaveValue(NEW_TEXT);
   expect((await call<{ body: { text: string } }>(page, "resource.get", { id })).body.text, "nothing is saved by Apply").toContain("roadmap.");
   await shot(page, "applied");
   await page.keyboard.press("ControlOrMeta+s");
-  await expect.poll(async () => (await call<{ body: { text: string } }>(page, "resource.get", { id })).body.text).toBe("- roadmap\n- next steps");
+  await expect.poll(async () => (await call<{ body: { text: string } }>(page, "resource.get", { id })).body.text).toBe(NEW_TEXT);
 
   // The same button opens the same conversation, with what was said.
   await page.getByRole("button", { name: "AI chat" }).click();
