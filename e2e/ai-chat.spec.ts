@@ -194,6 +194,36 @@ test("material: a resource dropped on the conversation goes along only once the 
   await shot(page, "material");
 });
 
+test("step 2: the AI looks things up itself (read only, only what AI may see); each look-up shows as a step", async ({ page }) => {
+  await setPolicy(page, "allow");
+  await openKernel(page, host);
+  await create(page, NOTE, { name: "Secret plans", "body.text": "HIDDEN-MARKER" }); // not visible to AI
+  await create(page, `${AI}:analysis`, { name: "Look it up" });
+  await treeItem(page, "Look it up").click();
+  ai.once({ kind: "tool", pieces: ["Let me check."], calls: [{ name: "search", arguments: { query: "marker" } }] });
+  ai.set({ kind: "ok", pieces: ["The team has five people."] });
+  const before = chats().length;
+  await box(page).fill("How big is the team?");
+  await box(page).press("Enter");
+  const answer = page.getByRole("article", { name: "AI" }).last();
+  await expect(answer).toContainText("The team has five people.", { timeout: 30_000 });
+  expect(chats().length).toBe(before + 2);
+  const first = chats().at(-2)!;
+  expect(first.body.tools.map((t: { name: string }) => t.name)).toEqual(expect.arrayContaining(["search", "describe", "run", "get_run"]));
+  // The second request carries the call and what was found: the visible note, not the hidden one.
+  const second = JSON.stringify(chats().at(-1)!.body.messages);
+  expect(second).toContain("tool_result");
+  expect(second).toContain("Team facts");
+  const factsId = (await roots(page)).find((n) => n.label === "Team facts")!.key;
+  expect(second, "ids stay whole so the next look-up can use them").toContain(factsId);
+  expect(second).not.toContain("Secret plans");
+  const step = answer.getByText("Searched “marker”");
+  await expect(step).toBeVisible();
+  await step.click();
+  await expect(answer.getByText(/Team facts/)).toBeVisible();
+  await shot(page, "steps");
+});
+
 test("with ai.policy off nothing is sent and the page says so", async ({ page }) => {
   await setPolicy(page, "off");
   await openKernel(page, host);

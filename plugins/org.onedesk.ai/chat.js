@@ -12,6 +12,9 @@ export const REF_FIELD_MAX = 2000; // characters of a material's field sent
 export const RESULT_TEXT_MAX = 4000;
 export const HISTORY_TOKENS = 12000;
 export const APPLY_LANG = "onedesk-apply";
+export const MAX_STEPS = 8; // look-ups (tool calls) before one answer
+export const TOOL_RESULT_MAX = 8000; // characters of one tool result sent back
+export const STEP_DETAIL_MAX = 2000; // characters of one step kept for the page
 
 const str = (v) => (v === null || v === undefined ? "" : String(v));
 const isId = (v) => typeof v === "string" && /^[0-9a-f]{32}$/.test(v);
@@ -185,6 +188,78 @@ export function fingerprint(text) {
   return `${text.length}:${h.toString(16)}`;
 }
 
+/* ---------------------------------------------------------------- looking things up (step 2) */
+
+// Masks a tool result like everything else that leaves, but keeps resource and run ids whole: the model needs them
+// for its next look-up (an id may hold a long run of digits that would read as a number to mask).
+export function maskKeepingIds(text, max, deps) {
+  const ids = [];
+  const held = str(text).replace(/\b[0-9a-f]{32}\b/g, (m) => `\u0000${ids.push(m) - 1}\u0000`);
+  return deps.maskText(held, max).replace(/\u0000(\d+)\u0000/g, (_, i) => ids[Number(i)]);
+}
+
+// The tools the kernel offers the chat (the same as an MCP client's: search, describe, run, get_run, plugin tools).
+export async function offeredTools(ctx) {
+  try {
+    const list = ctx.host.tools && typeof ctx.host.tools.list === "function" ? await ctx.host.tools.list() : [];
+    return (Array.isArray(list) ? list : []).filter((t) => t && typeof t.name === "string").map((t) => ({ name: t.name, description: str(t.description), inputSchema: t.inputSchema || { type: "object" } }));
+  } catch (e) {
+    return [];
+  }
+}
+
+async function nameOf(ctx, id) {
+  if (!isId(id)) return str(id);
+  try {
+    const r = await ctx.host.resources.search({ ids: [id], limit: 1 });
+    const hit = (Array.isArray(r) ? r : (r && r.items) || [])[0];
+    return hit && hit.name ? str(hit.name) : id;
+  } catch (e) {
+    return id;
+  }
+}
+
+// What the page shows for one look-up.
+export async function stepLabel(ctx, call, deps) {
+  const a = (call && call.arguments) || {};
+  if (call.name === "search") return deps.tr(ctx, "chat.step.search", { query: str(a.query) });
+  if (call.name === "describe") return deps.tr(ctx, "chat.step.describe", { name: await nameOf(ctx, a.id) });
+  if (call.name === "run") return deps.tr(ctx, "chat.step.run", { name: await nameOf(ctx, a.id) });
+  if (call.name === "get_run") return deps.tr(ctx, "chat.step.getRun");
+  return deps.tr(ctx, "chat.step.tool", { name: str(call.name) });
+}
+
+// Asks, lets the model look things up (read only, what the user let AI see) and asks again, until it answers or
+// MAX_STEPS look-ups are used up (then it must answer without tools). Returns the last answer and the steps.
+export async function askWithTools(ctx, connection, system, messages, tools, deps) {
+  const convo = [...messages];
+  const steps = [];
+  for (;;) {
+    const offer = tools.length > 0 && steps.length < MAX_STEPS;
+    const answer = await deps.chat(ctx, connection, { system, messages: [...convo], ...(offer ? { tools } : {}) });
+    const calls = offer && Array.isArray(answer.toolCalls) ? answer.toolCalls.filter((c) => c && typeof c.name === "string").slice(0, MAX_STEPS - steps.length) : [];
+    if (calls.length === 0) return { answer, steps };
+    convo.push({ role: "assistant", text: str(answer.text), toolCalls: calls });
+    for (const c of calls) {
+      const label = await stepLabel(ctx, c, deps);
+      ctx.progress(undefined, deps.tr(ctx, "chat.step.doing", { label }));
+      let text;
+      let failed = false;
+      try {
+        const r = await ctx.host.tools.call(c.name, c.arguments || {});
+        text = JSON.stringify(r && r.content !== undefined ? r.content : r);
+      } catch (e) {
+        failed = true;
+        text = JSON.stringify({ error: (e && e.code) || "error", reason: (e && e.params && e.params.reason) || str(e && e.message) });
+      }
+      text = maskKeepingIds(text, TOOL_RESULT_MAX, deps);
+      convo.push({ role: "tool", toolCallId: str(c.id), name: c.name, text, ...(failed ? { failed: true } : {}) });
+      const asked = JSON.stringify(c.arguments || {});
+      steps.push({ label, detail: `${asked}\n→ ${text}`.slice(0, STEP_DETAIL_MAX), ...(failed ? { failed: true } : {}) });
+    }
+  }
+}
+
 /* ---------------------------------------------------------------- the answer */
 
 // Changes to the target the answer proposes: a ```onedesk-apply block with a JSON object (field → full new
@@ -262,6 +337,9 @@ export async function renderChat(ctx, deps) {
     const turn = { role: t.role, text: t.text };
     const note = [t.model, t.usage].filter(Boolean).join(" · ");
     if (t.role === "assistant" && note) turn.caption = note;
+    if (t.role === "assistant" && Array.isArray(t.steps) && t.steps.length > 0) {
+      turn.steps = t.steps.slice(0, 20).map((x) => ({ label: str(x.label), ...(x.detail ? { detail: str(x.detail) } : {}), ...(x.failed ? { failed: true } : {}) }));
+    }
     if (t.role === "assistant" && b.target && t.apply && t.apply.values && Object.keys(t.apply.values).length > 0 && !ctx.run) {
       turn.actions = [{ id: "apply", label: deps.tr(ctx, "chat.apply", { name: applyTo }), icon: "check" }];
     }
@@ -303,6 +381,7 @@ export async function sendChat(ctx, input, deps) {
   const system = composeSystem(ctx, { background: await deps.filled(ctx, background), target, refs, runText: b.runText, opts }, deps);
   const messages = [...history(b.turns, HISTORY_TOKENS, deps.estimateTokens), { role: "user", text: message }];
   const connection = await deps.pickConnection(ctx, b.connectionId);
+  const tools = await offeredTools(ctx);
   if (policy === "preview") {
     const full = JSON.stringify({ system, messages, connection: connection.id });
     const key = `pending:${res.id}`;
@@ -313,6 +392,7 @@ export async function sendChat(ctx, input, deps) {
       const lines = [`# ${deps.tr(ctx, "chat.preview.title", { connection: connection.name, model: connection.model || deps.tr(ctx, "info.modelDefault") })}`, "", deps.tr(ctx, "info.tokens", { tokens: deps.estimateTokens(`${system}\n${messages.map((m) => m.text).join("\n")}`) })];
       if (left.length > 0) lines.push("", `> ${deps.tr(ctx, "chat.preview.left", { names: left.join(", ") })}`);
       if (messages.length - 1 < b.turns.length) lines.push("", `> ${deps.tr(ctx, "chat.preview.turns", { shown: messages.length - 1, total: b.turns.length })}`);
+      if (tools.length > 0) lines.push("", `> ${deps.tr(ctx, "chat.preview.tools", { n: tools.length, max: MAX_STEPS })}`);
       lines.push("", `## ${deps.tr(ctx, "field.system")}`, "", system, "", `## ${deps.tr(ctx, "chat.preview.messages")}`);
       for (const m of messages) lines.push("", `**${deps.tr(ctx, m.role === "user" ? "chat.role.user" : "chat.role.assistant")}**`, "", m.text);
       return { output: { type: "text", text: lines.join("\n"), format: "markdown" }, summary: { message: deps.tr(ctx, "chat.preview.again") } };
@@ -320,12 +400,13 @@ export async function sendChat(ctx, input, deps) {
     await ctx.host.storage.remove(key);
   }
   ctx.progress(undefined, deps.tr(ctx, "step.sending", { connection: connection.name }));
-  const answer = await deps.chat(ctx, connection, { system, messages });
-  await deps.audit(ctx, { kind: "chat", connection: connection.id, model: answer.model || "", chars: system.length + messages.reduce((n, m) => n + m.text.length, 0), usage: answer.usage || null });
+  const { answer, steps } = await askWithTools(ctx, connection, system, messages, tools, deps);
+  await deps.audit(ctx, { kind: "chat", connection: connection.id, model: answer.model || "", chars: system.length + messages.reduce((n, m) => n + m.text.length, 0), steps: steps.length, usage: answer.usage || null });
   const parsed = parseApply(answer.text, target && !target.error ? target.fields : []);
   const now = new Date().toISOString();
   const said = { role: "assistant", text: parsed.text.slice(0, TURN_MAX), model: answer.model || connection.model || "", usage: deps.usageText(answer.usage), at: now };
   if (parsed.values) said.apply = { values: parsed.values };
+  if (steps.length > 0) said.steps = steps;
   const turns = [...b.turns, { role: "user", text: typed.slice(0, TURN_MAX), at: now }, said];
   await ctx.host.resources.update(res.id, { "body.turns": turns });
   const summary = parsed.values ? deps.tr(ctx, "chat.answered.apply", { name: (target && target.name) || "" }) : deps.tr(ctx, "summary.answered", { model: said.model, usage: said.usage });

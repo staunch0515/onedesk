@@ -198,3 +198,30 @@ async fn the_last_result_of_a_resource_in_an_environment() {
     let r = c.probe("test.other", "runs.latest", json!([job, null])).await;
     assert_eq!(r["params"]["reason"], "notAssistProvider", "{r}");
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_provider_uses_the_mcp_tools_without_the_mcp_switch_and_only_on_what_ai_may_see() {
+    let (_env, c) = world().await;
+    let seen = create(&c, "test.alpha:item", json!({ "name": "Seen marker", "body.text": "x" })).await;
+    let _hidden = create(&c, "test.alpha:item", json!({ "name": "Hidden marker", "body.text": "x" })).await;
+    let_ai_see(&c, &seen).await;
+    // The MCP switch is off (its default); the conversation's tools are there all the same.
+    let tools = c.probe("test.helper", "tools.list", json!([])).await;
+    let names: Vec<&str> = tools["ok"].as_array().unwrap().iter().map(|t| t["name"].as_str().unwrap()).collect();
+    for n in ["search", "describe", "run", "get_run"] {
+        assert!(names.contains(&n), "{tools}");
+    }
+    let r = c.probe("test.helper", "tools.call", json!(["search", { "query": "marker" }])).await;
+    let found = r["ok"]["content"].to_string();
+    assert!(found.contains(&seen), "{r}");
+    assert!(!found.contains("Hidden marker"), "{r}");
+    // A bad argument is refused like an outside client's.
+    let r = c.probe("test.helper", "tools.call", json!(["search", { "nope": 1 }])).await;
+    assert_eq!(r["error"], "invalidParams", "{r}");
+    // Audited as an AI client.
+    let audit = c.ok("audit.list", json!({ "operation": "mcp.call" })).await.to_string();
+    assert!(audit.contains("onedesk-chat"), "{audit}");
+    // Nobody else.
+    let r = c.probe("test.other", "tools.list", json!([])).await;
+    assert_eq!(r["params"]["reason"], "notAssistProvider", "{r}");
+}

@@ -13,7 +13,7 @@ const NODE_KEYS: Record<string, string[]> = {
   // D479
   conversation: ["type", "id", "turns", "input", "targetTab"],
 };
-const TURN_KEYS = new Set(["role", "text", "caption", "actions"]);
+const TURN_KEYS = new Set(["role", "text", "caption", "actions", "steps"]);
 const INPUT_KEYS = new Set(["name", "send", "placeholder"]);
 
 const isLabel = (l: unknown) =>

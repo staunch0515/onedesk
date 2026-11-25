@@ -11,7 +11,9 @@ export type Behavior =
   | { kind: "refusal"; pieces?: string[] }
   | { kind: "streamError"; pieces?: string[]; type?: string; message?: string } // HTTP 200, then an error event
   | { kind: "drop"; pieces?: string[] } // some chunks, then the socket is destroyed
-  | { kind: "slow"; pieces?: string[]; delayMs: number }; // like ok, but waits delayMs before each piece
+  | { kind: "slow"; pieces?: string[]; delayMs: number } // like ok, but waits delayMs before each piece
+  // D479: asks to use tools (some text first, if any); the caller answers with tool results in its next request.
+  | { kind: "tool"; pieces?: string[]; calls: Array<{ name: string; arguments?: Record<string, unknown> }> };
 
 export interface Recorded {
   method: string;
@@ -92,12 +94,27 @@ export async function startFakeAi(port = 0): Promise<FakeAi> {
     res.write(sse("message_start", { type: "message_start", message: { id: "msg_fake", model, role: "assistant", usage: { input_tokens: (b.kind === "ok" && b.inputTokens) || 10, output_tokens: 1 } } }));
     res.write(sse("content_block_start", { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } }));
     res.write(": ping\n\n");
-    const pieces = ("pieces" in b && b.pieces) || DEFAULT_PIECES;
+    const pieces = ("pieces" in b && b.pieces) || (b.kind === "tool" ? [] : DEFAULT_PIECES);
     const delay = b.kind === "slow" ? b.delayMs : b.kind === "ok" ? b.delayMs ?? 0 : 0;
     for (let i = 0; i < pieces.length; i++) {
       if (delay) await sleep(delay);
       res.write(sse("content_block_delta", { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: pieces[i] } }));
       if (b.kind === "drop" && i === Math.floor(pieces.length / 2)) return void res.destroy();
+    }
+    if (b.kind === "tool") {
+      res.write(sse("content_block_stop", { type: "content_block_stop", index: 0 }));
+      b.calls.forEach((c, n) => {
+        const index = n + 1;
+        const input = JSON.stringify(c.arguments ?? {});
+        const half = Math.floor(input.length / 2);
+        res.write(sse("content_block_start", { type: "content_block_start", index, content_block: { type: "tool_use", id: `toolu_fake_${index}`, name: c.name, input: {} } }));
+        res.write(sse("content_block_delta", { type: "content_block_delta", index, delta: { type: "input_json_delta", partial_json: input.slice(0, half) } }));
+        res.write(sse("content_block_delta", { type: "content_block_delta", index, delta: { type: "input_json_delta", partial_json: input.slice(half) } }));
+        res.write(sse("content_block_stop", { type: "content_block_stop", index }));
+      });
+      res.write(sse("message_delta", { type: "message_delta", delta: { stop_reason: "tool_use" }, usage: { output_tokens: 5 } }));
+      res.write(sse("message_stop", { type: "message_stop" }));
+      return void res.end();
     }
     if (b.kind === "streamError") {
       res.write(sse("error", { type: "error", error: { type: b.type || "overloaded_error", message: b.message || "Overloaded" } }));
@@ -119,8 +136,14 @@ export async function startFakeAi(port = 0): Promise<FakeAi> {
       line({ model, created_at: "x", message: { role: "assistant", content: "" }, done: false });
       loading = false;
     }
-    const pieces = ("pieces" in b && b.pieces) || DEFAULT_PIECES;
+    const pieces = ("pieces" in b && b.pieces) || (b.kind === "tool" ? [] : DEFAULT_PIECES);
     const delay = b.kind === "slow" ? b.delayMs : b.kind === "ok" ? b.delayMs ?? 0 : 0;
+    if (b.kind === "tool") {
+      for (const p of pieces) line({ model, created_at: "x", message: { role: "assistant", content: p }, done: false });
+      line({ model, created_at: "x", message: { role: "assistant", content: "", tool_calls: b.calls.map((c) => ({ function: { name: c.name, arguments: c.arguments ?? {} } })) }, done: false });
+      line({ model, created_at: "x", message: { role: "assistant", content: "" }, done: true, done_reason: "stop", prompt_eval_count: 12, eval_count: 3 });
+      return void res.end();
+    }
     for (let i = 0; i < pieces.length; i++) {
       if (delay) await sleep(delay);
       line({ model, created_at: "x", message: { role: "assistant", content: pieces[i] }, done: false });

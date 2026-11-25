@@ -17,6 +17,13 @@ export function Chat({ label, turns, children }: { label: string; turns: number;
   );
 }
 
+/** D479: one look-up shown before an answer; it opens to what was asked and found. */
+export interface ChatStep {
+  label: string;
+  detail?: string;
+  failed?: boolean;
+}
+
 export interface ChatTurnProps {
   role: "user" | "assistant";
   /** Who said it, as shown ("Me", "AI"). */
@@ -24,14 +31,28 @@ export interface ChatTurnProps {
   note?: string;
   /** Buttons under the turn. */
   actions?: ReactNode;
+  /** What was looked up before this answer, in order. */
+  steps?: ChatStep[];
   children: ReactNode;
 }
 
 /** One turn of a conversation. */
-export function ChatTurn({ role, who, note, actions, children }: ChatTurnProps) {
+export function ChatTurn({ role, who, note, actions, steps, children }: ChatTurnProps) {
   return (
     <article className={cx("od-chat-turn", role === "user" && "od-chat-turn--user")} aria-label={who}>
       <div className="od-chat-turn__who">{who}</div>
+      {steps && steps.length > 0 && (
+        <ul className="od-chat-steps">
+          {steps.map((s, i) => (
+            <li key={i}>
+              <details className={cx("od-chat-step", s.failed && "od-chat-step--failed")}>
+                <summary className="od-chat-step__label">{s.label}</summary>
+                {s.detail && <pre className="od-chat-step__detail od-mono">{s.detail}</pre>}
+              </details>
+            </li>
+          ))}
+        </ul>
+      )}
       {children}
       {note && <div className="od-chat-turn__note">{note}</div>}
       {actions && <div className="od-chat-turn__actions">{actions}</div>}

@@ -100,7 +100,7 @@ describe("anthropic: errors and stops", () => {
     expect(mapHttpError(400, JSON.stringify({ error: { message: "bad field" } }), {}).code).toBe("other");
   });
   it("maps stop reasons", () => {
-    expect([mapStop("end_turn"), mapStop("max_tokens"), mapStop("refusal"), mapStop("tool_use")]).toEqual(["end", "maxTokens", "refusal", "other"]);
+    expect([mapStop("end_turn"), mapStop("max_tokens"), mapStop("refusal"), mapStop("tool_use"), mapStop("pause_turn")]).toEqual(["end", "maxTokens", "refusal", "toolUse", "other"]);
   });
 });
 
@@ -266,5 +266,36 @@ describe("connection settings are a template (D466)", () => {
     expect(b.model).toBe("big-model");
     expect(b.baseUrl).toBe("https://{{h}}");
     expect(b.secret).toEqual({ secret: "k" });
+  });
+});
+
+describe("anthropic: tools (D479)", () => {
+  const TOOL = { name: "search", description: "Find resources", inputSchema: { type: "object", properties: { query: { type: "string" } } } };
+  it("offers the tools and sends earlier calls and their results as tool_use / tool_result blocks", () => {
+    const req = buildChat({}, {
+      tools: [TOOL, { name: "bad name!", description: "x" }],
+      messages: [
+        { role: "user", text: "How many?" },
+        { role: "assistant", text: "Looking.", toolCalls: [{ id: "t1", name: "search", arguments: { query: "orders" } }, { id: "t2", name: "search", arguments: { query: "users" } }] },
+        { role: "tool", toolCallId: "t1", name: "search", text: "[1]" },
+        { role: "tool", toolCallId: "t2", name: "search", text: "boom", failed: true },
+      ],
+    }).request;
+    expect(req.tools).toEqual([{ name: "search", description: "Find resources", input_schema: TOOL.inputSchema }]);
+    expect(req.messages).toEqual([
+      { role: "user", content: "How many?" },
+      { role: "assistant", content: [{ type: "text", text: "Looking." }, { type: "tool_use", id: "t1", name: "search", input: { query: "orders" } }, { type: "tool_use", id: "t2", name: "search", input: { query: "users" } }] },
+      { role: "user", content: [{ type: "tool_result", tool_use_id: "t1", content: "[1]" }, { type: "tool_result", tool_use_id: "t2", content: "boom", is_error: true }] },
+    ]);
+    expect(buildChat({}, { messages: [] }).request.tools).toBeUndefined();
+  });
+  it("reads tool calls from the stream (the input arrives in pieces) and says the model stopped to use tools", async () => {
+    reset();
+    fake.set({ kind: "tool", pieces: ["Let me check."], calls: [{ name: "search", arguments: { query: "orders", limit: 5 } }] });
+    const { host } = hostFor(fake);
+    const r = result(await actions().chat(ctxOf(host, conn(fake)), { messages: [{ role: "user", text: "hi" }], tools: [TOOL] }));
+    expect(r).toMatchObject({ text: "Let me check.", stop: "toolUse", toolCalls: [{ id: "toolu_fake_1", name: "search", arguments: { query: "orders", limit: 5 } }] });
+    expect(fake.requests.at(-1)!.body.tools[0].name).toBe("search");
+    reset();
   });
 });

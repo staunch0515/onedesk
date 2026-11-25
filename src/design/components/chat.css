@@ -49,3 +49,35 @@
   color: var(--fg-subtle);
   font-size: var(--text-xs);
 }
+
+.od-chat-steps {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-0-5);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.od-chat-step__label {
+  color: var(--fg-muted);
+  font-size: var(--text-xs);
+  cursor: pointer;
+}
+
+.od-chat-step--failed .od-chat-step__label {
+  color: var(--danger-text);
+}
+
+.od-chat-step__detail {
+  margin: var(--space-1) 0 0;
+  padding: var(--space-2);
+  border-radius: var(--radius-md);
+  background: var(--bg-inset);
+  color: var(--fg-default);
+  font-size: var(--text-xs);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: calc(var(--space-16) * 3);
+  overflow: auto;
+}

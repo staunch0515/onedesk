@@ -25,6 +25,8 @@ pub const P_FREE_QUERY: &str = "mcp.allow_free_query";
 pub const P_ENV: &str = "mcp.env";
 
 pub const DEFAULT_RATE: u32 = 30;
+/// D479: the client name of the writing help's tool calls (audited like an outside client's).
+pub const CHAT_CLIENT: &str = "onedesk-chat";
 pub const DEFAULT_MAX_ROWS: u32 = 200;
 const MAX_RATE: u32 = 600;
 const MAX_ROWS_LIMIT: u32 = 2000;
@@ -588,11 +590,16 @@ impl Inner {
     /* ---------------------------------------------------------------- mcp.call */
 
     pub(crate) async fn mcp_call(&self, client: &str, p: McpCallParams) -> KResult<McpCallResult> {
+        self.mcp_call_with(client, p, None).await
+    }
+
+    /// `mcp.call`, or (`policy`) the same tools on other terms: the AI chat's (D479).
+    async fn mcp_call_with(&self, client: &str, p: McpCallParams, policy: Option<McpPolicy>) -> KResult<McpCallResult> {
         let t0 = Instant::now();
         let args = p.arguments.clone().unwrap_or_else(|| json!({}));
         let mut info = json!({ "tool": short(&p.name), "args": capped_args(&args) });
         let mut admitted = false;
-        let res = self.mcp_call_inner(client, &p, &args, &mut info, &mut admitted).await;
+        let res = self.mcp_call_inner(client, &p, &args, &mut info, &mut admitted, policy).await;
         info["ms"] = json!(t0.elapsed().as_millis() as u64);
         // The row and the release together, under the gate (see `McpState::gate`).
         let _gate = if admitted { Some(self.mcp.gate.lock().await) } else { None };
@@ -610,8 +617,11 @@ impl Inner {
         res
     }
 
-    async fn mcp_call_inner(&self, client: &str, p: &McpCallParams, args: &Value, info: &mut Value, admitted: &mut bool) -> KResult<McpCallResult> {
-        let policy = self.mcp_policy()?;
+    async fn mcp_call_inner(&self, client: &str, p: &McpCallParams, args: &Value, info: &mut Value, admitted: &mut bool, given: Option<McpPolicy>) -> KResult<McpCallResult> {
+        let policy = match given {
+            Some(p) => p,
+            None => self.mcp_policy()?,
+        };
         if !policy.enabled {
             return Err(denied("aiOff"));
         }
@@ -642,6 +652,40 @@ impl Inner {
             }
             Target::GetRun => self.tool_get_run(client, &policy, args, info).await,
             Target::Plugin(pl, t) => self.tool_plugin(client, &policy, pl, t, args, info).await,
+        }
+    }
+
+    /* ---------------------------------------------------------------- D479: the conversation's tools */
+
+    /// The terms of the writing help's conversation tools: those of MCP (rows, free queries, the rate shared
+    /// with every outside client), but in the conversation tab's environment, and not behind the MCP switch
+    /// (that one is about outside clients; the conversation has its environment's policy).
+    fn chat_policy(&self, env: Option<String>) -> KResult<McpPolicy> {
+        let mut p = self.mcp_policy()?;
+        p.enabled = true;
+        p.env = env;
+        Ok(p)
+    }
+
+    /// `host.tools.list()` / `host.tools.call(name, arguments)`: the writing-help provider uses the tools an
+    /// MCP client has — only what the user made visible, read only, rate-limited and audited under `CHAT_CLIENT`.
+    pub(crate) async fn host_tools(&self, plugin: &'static Plugin, info: &CallInfo, op: &str, args: &Value) -> KResult<Value> {
+        self.assist_reader(plugin)?;
+        if info.ai {
+            return Err(denied("aiRun"));
+        }
+        let policy = self.chat_policy(info.env_id.clone())?;
+        match op {
+            "list" => serde_json::to_value(self.mcp_tool_list(&policy)).map_err(internal),
+            "call" => {
+                let name = args.get(0).and_then(Value::as_str).ok_or_else(|| invalid_params("name must be a string"))?.to_string();
+                let arguments = args.get(1).cloned().filter(|v| !v.is_null());
+                // Waiting for a run the tool started is not this invocation's time.
+                let _hold = info.hold.enter_wait();
+                let r = self.mcp_call_with(CHAT_CLIENT, McpCallParams { name, arguments }, Some(policy)).await?;
+                serde_json::to_value(r).map_err(internal)
+            }
+            _ => Err(err_p(ErrorCode::UnknownMethod, &[("method", &format!("tools.{op}"))])),
         }
     }
 

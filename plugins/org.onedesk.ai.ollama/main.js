@@ -83,7 +83,15 @@ export function buildChat(body, input) {
   if (i.format === "json") system = `${system ? `${system}\n\n` : ""}Respond with a single valid JSON value and nothing else.`;
   if (system) messages.push({ role: "system", content: system });
   for (const m of Array.isArray(i.messages) ? i.messages : []) {
-    if (m && (m.role === "user" || m.role === "assistant") && typeof m.text === "string") messages.push({ role: m.role, content: m.text });
+    if (!m || typeof m.text !== "string") continue;
+    if (m.role === "user") messages.push({ role: "user", content: m.text });
+    else if (m.role === "assistant") {
+      // D479: an assistant turn may carry `toolCalls`; `tool` turns answer them.
+      const calls = Array.isArray(m.toolCalls) ? m.toolCalls.filter((c) => c && typeof c.name === "string") : [];
+      const one = { role: "assistant", content: m.text };
+      if (calls.length > 0) one.tool_calls = calls.map((c) => ({ function: { name: c.name, arguments: c.arguments && typeof c.arguments === "object" ? c.arguments : {} } }));
+      messages.push(one);
+    } else if (m.role === "tool") messages.push({ role: "tool", content: m.text, ...(typeof m.name === "string" ? { tool_name: m.name } : {}) });
   }
   const options = {};
   const ctxLen = Math.floor(Number(body.numCtx));
@@ -93,6 +101,8 @@ export function buildChat(body, input) {
   const req = { model: String(body.model || "").trim(), messages, stream: true, keep_alive: String(body.keepAlive || DEFAULT_KEEP).trim() || DEFAULT_KEEP };
   if (Object.keys(options).length > 0) req.options = options;
   if (i.format === "json") req.format = "json";
+  const tools = (Array.isArray(i.tools) ? i.tools : []).filter((t) => t && typeof t.name === "string" && t.name);
+  if (tools.length > 0) req.tools = tools.map((t) => ({ type: "function", function: { name: t.name, description: String(t.description || ""), parameters: t.inputSchema && typeof t.inputSchema === "object" ? t.inputSchema : { type: "object" } } }));
   return req;
 }
 
@@ -201,10 +211,25 @@ async function runChat(ctx, input) {
   let doneLine = null;
   let lineError = null;
   let started = false;
+  const toolCalls = [];
   const parser = ndjsonParser((o) => {
     if (typeof o.error === "string") lineError = { code: "other", message: o.error };
     if (o.model) model = o.model;
     if (o.message && typeof o.message.content === "string") text += o.message.content;
+    // Ollama gives no id: one is made up, in order.
+    for (const c of (o.message && Array.isArray(o.message.tool_calls) ? o.message.tool_calls : [])) {
+      const f = c && c.function;
+      if (!f || typeof f.name !== "string") continue;
+      let args = f.arguments;
+      if (typeof args === "string") {
+        try {
+          args = JSON.parse(args);
+        } catch {
+          args = {};
+        }
+      }
+      toolCalls.push({ id: `call_${toolCalls.length + 1}`, name: f.name, arguments: args && typeof args === "object" && !Array.isArray(args) ? args : {} });
+    }
     if (o.done === true) doneLine = o;
   });
 
@@ -245,6 +270,7 @@ async function runChat(ctx, input) {
   if (!doneLine) return failure(ctx, { code: "network", message: tr(ctx, "error.cutOff") });
   const hasUsage = typeof doneLine.prompt_eval_count === "number" || typeof doneLine.eval_count === "number";
   const usage = hasUsage ? { input: doneLine.prompt_eval_count || 0, output: doneLine.eval_count || 0 } : undefined;
+  if (toolCalls.length > 0) return finish(ctx, { text, model, ...(usage ? { usage } : {}), toolCalls, stop: "toolUse" });
   return finish(ctx, { text, model, ...(usage ? { usage } : {}), stop: mapStop(doneLine.done_reason) });
 }
 

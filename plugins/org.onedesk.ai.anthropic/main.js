@@ -90,16 +90,48 @@ export function buildChat(body, input) {
   const wanted = Number(i.maxTokens) || Number(body.maxTokens) || DEFAULT_MAX;
   const maxTokens = Math.max(1, Math.min(MAX_TOKENS_CAP, Math.floor(wanted)));
   const effort = EFFORTS.includes(i.effort) ? i.effort : EFFORTS.includes(body.effort) ? body.effort : "medium";
-  const messages = (Array.isArray(i.messages) ? i.messages : [])
-    .filter((m) => m && (m.role === "user" || m.role === "assistant") && typeof m.text === "string")
-    .map((m) => ({ role: m.role, content: m.text }));
+  const messages = toMessages(i.messages);
   let system = typeof i.system === "string" ? i.system : "";
   if (i.format === "json") system = `${system ? `${system}\n\n` : ""}Respond with a single valid JSON value and nothing else.`;
   const req = { model, max_tokens: maxTokens, stream: true, messages, output_config: { effort } };
   if (system) req.system = system;
+  const tools = toTools(i.tools);
+  if (tools.length > 0) req.tools = tools;
   const fallback = body.fallback !== "false" && body.fallback !== false && supportsFallback(model);
   if (fallback) req.fallbacks = "default";
   return { request: req, fallback };
+}
+
+// D479: the interface's turns → Messages API turns. An assistant turn may carry `toolCalls` ({ id, name, arguments });
+// `tool` turns ({ toolCallId, text, failed? }) answer them and go back as one user turn of tool_result blocks.
+export function toMessages(list) {
+  const out = [];
+  for (const m of Array.isArray(list) ? list : []) {
+    if (!m || typeof m.text !== "string") continue;
+    if (m.role === "user") out.push({ role: "user", content: m.text });
+    else if (m.role === "assistant") {
+      const calls = Array.isArray(m.toolCalls) ? m.toolCalls.filter((c) => c && typeof c.id === "string" && typeof c.name === "string") : [];
+      if (calls.length === 0) out.push({ role: "assistant", content: m.text });
+      else {
+        const blocks = m.text ? [{ type: "text", text: m.text }] : [];
+        for (const c of calls) blocks.push({ type: "tool_use", id: c.id, name: c.name, input: c.arguments && typeof c.arguments === "object" ? c.arguments : {} });
+        out.push({ role: "assistant", content: blocks });
+      }
+    } else if (m.role === "tool" && typeof m.toolCallId === "string") {
+      const block = { type: "tool_result", tool_use_id: m.toolCallId, content: m.text, ...(m.failed ? { is_error: true } : {}) };
+      const last = out[out.length - 1];
+      if (last && last.role === "user" && Array.isArray(last.content) && last.content.every((b) => b.type === "tool_result")) last.content.push(block);
+      else out.push({ role: "user", content: [block] });
+    }
+  }
+  return out;
+}
+
+// D479: the tools the caller offers ({ name, description, inputSchema }) → the Messages API's.
+export function toTools(list) {
+  return (Array.isArray(list) ? list : [])
+    .filter((t) => t && typeof t.name === "string" && /^[A-Za-z0-9_-]{1,64}$/.test(t.name))
+    .map((t) => ({ name: t.name, description: String(t.description || ""), input_schema: t.inputSchema && typeof t.inputSchema === "object" ? t.inputSchema : { type: "object" } }));
 }
 
 // Incremental SSE reader: feed() takes decoded text in any split; calls onEvent({event, data}) per complete event.
@@ -182,6 +214,7 @@ export function mapStreamError(type, message) {
 
 export function mapStop(reason) {
   if (reason === "end_turn" || reason === "stop_sequence") return "end";
+  if (reason === "tool_use") return "toolUse";
   if (reason === "max_tokens") return "maxTokens";
   if (reason === "refusal") return "refusal";
   return "other";
@@ -228,6 +261,7 @@ async function runChat(ctx, input) {
   let outputTokens;
   let stop = "";
   let streamError = null;
+  const calls = []; // tool_use blocks, by content index: { id, name, json }
   let raw = ""; // body of a non-2xx answer
   const partial = ctx.host.runs && typeof ctx.host.runs.partial === "function" ? ctx.host.runs.partial : null;
 
@@ -244,6 +278,10 @@ async function runChat(ctx, input) {
       if (d.message.usage && d.message.usage.input_tokens !== undefined) inputTokens = d.message.usage.input_tokens;
     } else if (type === "content_block_delta" && d.delta && d.delta.type === "text_delta" && typeof d.delta.text === "string") {
       text += d.delta.text;
+    } else if (type === "content_block_start" && d.content_block && d.content_block.type === "tool_use") {
+      calls[d.index] = { id: String(d.content_block.id || ""), name: String(d.content_block.name || ""), json: "" };
+    } else if (type === "content_block_delta" && d.delta && d.delta.type === "input_json_delta" && calls[d.index]) {
+      calls[d.index].json += String(d.delta.partial_json || "");
     } else if (type === "message_delta") {
       if (d.delta && d.delta.stop_reason) stop = d.delta.stop_reason;
       if (d.usage) {
@@ -281,7 +319,16 @@ async function runChat(ctx, input) {
   if (streamError) return failure(ctx, streamError);
   if (!stop && text === "") return failure(ctx, { code: "network", message: tr(ctx, "error.cutOff") });
   const usage = inputTokens !== undefined || outputTokens !== undefined ? { input: inputTokens || 0, output: outputTokens || 0 } : undefined;
-  return finish(ctx, { text, model, ...(usage ? { usage } : {}), stop: stop ? mapStop(stop) : "other" });
+  const toolCalls = calls.filter(Boolean).map((c) => {
+    let args = {};
+    try {
+      args = c.json ? JSON.parse(c.json) : {};
+    } catch {
+      args = {};
+    }
+    return { id: c.id, name: c.name, arguments: args && typeof args === "object" && !Array.isArray(args) ? args : {} };
+  });
+  return finish(ctx, { text, model, ...(usage ? { usage } : {}), ...(toolCalls.length > 0 ? { toolCalls } : {}), stop: stop ? mapStop(stop) : "other" });
 }
 
 async function getJson(ctx, body, path) {

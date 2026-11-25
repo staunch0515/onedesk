@@ -480,6 +480,7 @@ const BOOTSTRAP: &str = r#"
         addRoot: c("files.addRoot"), replaceRoot: c("files.replaceRoot"), removeRoot: c("files.removeRoot"),
       }),
       pages: Object.freeze({ fields: c("pages.fields") }),
+      tools: Object.freeze({ list: c("tools.list"), call: c("tools.call") }),
       runs: Object.freeze({ partial: c("runs.partial"), read: c("runs.read"), latest: c("runs.latest"),
         saveArtifact: c("runs.saveArtifact"), listArtifacts: c("runs.listArtifacts"),
         getArtifact: c("runs.getArtifact"), deleteArtifact: c("runs.deleteArtifact") }),

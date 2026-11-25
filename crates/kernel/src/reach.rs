@@ -73,6 +73,8 @@ struct DropAnswer {
 pub const MAX_ROW_ACTIONS: usize = 4;
 /// D479: turns a conversation view node may show.
 pub const MAX_TURNS: usize = 500;
+/// D479: look-ups one turn may show.
+pub const MAX_TURN_STEPS: usize = 20;
 pub const MAX_ROW_KEY: usize = 1000;
 
 impl Inner {
@@ -122,6 +124,9 @@ impl Inner {
                     let a = t.actions.as_deref().unwrap_or_default();
                     if a.len() > MAX_ROW_ACTIONS || a.iter().any(|x| x.id.is_empty()) {
                         return Err(bad(&format!("{id}: a turn has more than {MAX_ROW_ACTIONS} buttons or one without id")));
+                    }
+                    if t.steps.as_ref().is_some_and(|s| s.len() > MAX_TURN_STEPS) {
+                        return Err(bad(&format!("{id}: a turn has more than {MAX_TURN_STEPS} steps")));
                     }
                 }
                 if let Some(i) = input {

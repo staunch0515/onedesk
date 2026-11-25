@@ -162,6 +162,7 @@ export function ViewNodes({
                     role={turn.role}
                     who={turn.role === "user" ? t("chat.me") : t("chat.ai")}
                     note={turn.caption ?? undefined}
+                    steps={turn.steps?.map((x) => ({ label: x.label, detail: x.detail ?? undefined, failed: x.failed ?? undefined }))}
                     actions={
                       onRowAction && turn.actions && turn.actions.length > 0
                         ? turn.actions.map((a) => (

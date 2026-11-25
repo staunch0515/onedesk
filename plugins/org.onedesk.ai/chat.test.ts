@@ -3,7 +3,9 @@ import { describe, expect, it, vi } from "vitest";
 // @ts-ignore plain JS module, no types
 import plugin from "./main.js";
 // @ts-ignore plain JS module, no types
-import { fingerprint, history, MAX_REFS, parseApply } from "./chat.js";
+import { fingerprint, history, maskKeepingIds, MAX_REFS, MAX_STEPS, parseApply } from "./chat.js";
+// @ts-ignore plain JS module, no types
+import { maskText, MASK, isSensitiveColumn } from "./main.js";
 import { checkActionResult, checkView, hostError, onlyKeys, registry, RENDER_KEYS } from "../_testing/view-check";
 
 const load = (f: string) => JSON.parse(readFileSync(new URL(`./locales/${f}.json`, import.meta.url), "utf8")) as Record<string, string>;
@@ -241,5 +243,81 @@ describe("ai chat: material and the AI chat button", () => {
   it("the fingerprint changes with the text", () => {
     expect(fingerprint("a")).not.toBe(fingerprint("b"));
     expect(fingerprint("same")).toBe(fingerprint("same"));
+  });
+});
+
+describe("ai chat: looking things up (step 2)", () => {
+  const TOOLS = [{ name: "search", description: "Find", inputSchema: { type: "object" } }, { name: "run", description: "Run", inputSchema: { type: "object" } }];
+  const withTools = (answers: any[], call?: (name: string, args: any) => any) => {
+    const host = fakeHost({ env: { "ai.policy": "allow" } });
+    host.tools = {
+      list: vi.fn(async () => TOOLS),
+      call: vi.fn(async (name: string, args: any) => (call ? call(name, args) : { content: { items: [{ id: QUERY, name: "Orders", email: "x@y.z" }] }, truncated: false })),
+    };
+    let n = 0;
+    host.interfaces.call = vi.fn(async () => answers[Math.min(n++, answers.length - 1)]);
+    return host;
+  };
+  const ask = (id: string, name: string, args: Record<string, unknown>) => ({ text: "Let me look.", model: "m1", stop: "toolUse", toolCalls: [{ id, name, arguments: args }] });
+
+  it("offers the kernel's tools, runs what the model asks, sends the (masked) result back and stores the steps with the answer", async () => {
+    const host = withTools([ask("t1", "search", { query: "orders" }), ask("t2", "run", { id: QUERY }), { text: "There are 2 orders.", model: "m1", stop: "end" }]);
+    const res = await send(host, chatCtx(host, chatBody({ target: "", refs: [] }), { params: { message: "How many orders?" } }));
+    expect(res.output.text).toBe("There are 2 orders.");
+    expect(host.tools.call.mock.calls).toEqual([["search", { query: "orders" }], ["run", { id: QUERY }]]);
+    const calls = host.interfaces.call.mock.calls.map((c: any) => c[2]);
+    expect(calls).toHaveLength(3);
+    expect(calls[0].tools.map((t: any) => t.name)).toEqual(["search", "run"]);
+    // the second request: the model's call and its result, in order
+    const second = calls[1].messages;
+    expect(second.at(-2)).toEqual({ role: "assistant", text: "Let me look.", toolCalls: [{ id: "t1", name: "search", arguments: { query: "orders" } }] });
+    expect(second.at(-1)).toMatchObject({ role: "tool", toolCallId: "t1", name: "search" });
+    expect(second.at(-1).text).toContain("Orders");
+    expect(second.at(-1).text).not.toContain("x@y.z");
+    const turns = host.resources.update.mock.calls[0][1]["body.turns"];
+    expect(turns[1].steps.map((x: any) => x.label)).toEqual(["Searched “orders”", "Ran Orders"]);
+    expect(turns[1].steps[0].detail).toContain('{"query":"orders"}');
+    // the page shows them
+    const out = await registry(plugin).pages.analysis.render(chatCtx(host, chatBody({ target: "", refs: [], turns })));
+    expect(checkView(out.view)).toEqual([]);
+    expect(out.view.find((n: any) => n.type === "conversation").turns[1].steps).toHaveLength(2);
+    expect(JSON.parse((await host.storage.get("audit"))!)[0]).toMatchObject({ kind: "chat", steps: 2 });
+  });
+  it("tool results are masked, but ids stay whole", () => {
+    const deps = { maskText, MASK, isSensitiveColumn };
+    const id = "3467557e51223fb3a53e123456789abc";
+    const out = maskKeepingIds(JSON.stringify({ id, mail: "ann@example.com", card: "4111 1111 1111 1111" }), 1000, deps);
+    expect(out).toContain(id);
+    expect(out).not.toContain("ann@example.com");
+    expect(out).not.toContain("4111 1111");
+  });
+  it("a look-up that is refused is a failed step; the model hears why and goes on", async () => {
+    const host = withTools([ask("t1", "run", { id: "nope" }), { text: "I could not read it.", stop: "end" }], () => {
+      throw hostError("notFound", { reason: "resource" });
+    });
+    await send(host, chatCtx(host, chatBody({ target: "", refs: [] }), { params: { message: "x" } }));
+    const turns = host.resources.update.mock.calls[0][1]["body.turns"];
+    expect(turns[1].steps[0]).toMatchObject({ failed: true });
+    const back = host.interfaces.call.mock.calls[1][2].messages.at(-1);
+    expect(back).toMatchObject({ role: "tool", failed: true });
+    expect(back.text).toContain("notFound");
+  });
+  it("at most MAX_STEPS look-ups: then it is asked once more without tools and must answer", async () => {
+    const host = withTools([ask("t", "search", { query: "again" })]);
+    host.interfaces.call = vi.fn(async (_i: string, _a: string, input: any) => (input.tools ? ask("t", "search", { query: "again" }) : { text: "Enough.", stop: "end" }));
+    const res = await send(host, chatCtx(host, chatBody({ target: "", refs: [] }), { params: { message: "x" } }));
+    expect(res.output.text).toBe("Enough.");
+    expect(host.tools.call).toHaveBeenCalledTimes(MAX_STEPS);
+    expect(host.interfaces.call.mock.calls.at(-1)[2].tools).toBeUndefined();
+  });
+  it("without tools on offer it asks once, as before; the preview says the model may look things up", async () => {
+    const plain = fakeHost({ env: { "ai.policy": "allow" } });
+    await send(plain, chatCtx(plain, chatBody({ target: "", refs: [] }), { params: { message: "x" } }));
+    expect(plain.interfaces.call.mock.calls[0][2].tools).toBeUndefined();
+    const host = withTools([{ text: "ok", stop: "end" }]);
+    host.params.get = vi.fn(async (n: string) => (n === "ai.connection" ? { found: true, value: "c1" } : { found: false, value: "" }));
+    const first = await send(host, chatCtx(host, chatBody({ target: "", refs: [] }), { params: { message: "x" } }));
+    expect(first.output.text).toContain("look things up itself");
+    expect(host.tools.call).not.toHaveBeenCalled();
   });
 });

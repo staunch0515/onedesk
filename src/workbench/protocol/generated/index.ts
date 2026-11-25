@@ -157,6 +157,7 @@ export type * from "./TreePage";
 export type * from "./TreeRenameParams";
 export type * from "./TreeSource";
 export type * from "./TurnRole";
+export type * from "./TurnStep";
 export type * from "./UiGetParams";
 export type * from "./UiSetParams";
 export type * from "./UndoUpgradeParams";

@@ -114,5 +114,12 @@
   "chat.error.noInstruction": "Write what you want, or a description in the info panel, first.",
   "chat.error.noPage": "Open a page first.",
   "tab.answer": "Answer",
-  "request.docs": "Reference documents"
+  "request.docs": "Reference documents",
+  "chat.step.search": "Searched “{query}”",
+  "chat.step.describe": "Looked at {name}",
+  "chat.step.run": "Ran {name}",
+  "chat.step.getRun": "Read more of a result",
+  "chat.step.tool": "Used {name}",
+  "chat.step.doing": "{label}…",
+  "chat.preview.tools": "The AI may also look things up itself, read only and only in what you let AI see: {n} tools, at most {max} look-ups per answer. What it finds is sent to it too."
 }

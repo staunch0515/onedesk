@@ -686,6 +686,19 @@ pub struct ConversationTurn {
     pub caption: Option<String>,
     /// At most 4 buttons under the turn.
     pub actions: Option<Vec<TableRowAction>>,
+    /// D479 (step 2): what was looked up before this answer, in order (at most 20); each opens to its `detail`.
+    pub steps: Option<Vec<TurnStep>>,
+}
+
+/// D479: one look-up an assistant made (a tool call): a line, and what was asked and found.
+#[skip_serializing_none]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[ts(export, optional_fields)]
+pub struct TurnStep {
+    pub label: String,
+    pub detail: Option<String>,
+    pub failed: Option<bool>,
 }
 
 /// D479: the input box of a conversation. What is typed is the page parameter `name` (a run parameter,

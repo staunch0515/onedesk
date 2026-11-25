@@ -206,6 +206,7 @@ impl Inner {
             "runs" if op == "read" => self.host_runs_read(plugin, info, &args).await,
             "runs" if op == "latest" => self.host_runs_latest(plugin, info, &args).await,
             "pages" if op == "fields" => self.host_pages_fields(plugin, info, &args).await,
+            "tools" => self.host_tools(plugin, info, op, &args).await,
             "runs" if op == "progress" => {
                 if let Some(run) = &info.run_id {
                     self.run_progress(run, args.get(0).and_then(Value::as_f64), args.get(1).and_then(Value::as_str).map(String::from)).await;

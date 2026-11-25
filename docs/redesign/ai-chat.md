@@ -1,6 +1,6 @@
 # AI 对话（ai-chat）设计稿
 
-> 状态：用户 2026-11-25 确认 §10 全部按推荐；第一步已实现（D479，实际做法见 §11）。第二步（§8.2 工具调用）待做。
+> 状态：用户 2026-11-25 确认 §10 全部按推荐；第一步、第二步都已实现（D479、D480，实际做法见 §11、§12）。
 > 取代：`ai-assist.md` §9（D462）的对话框、D470 的“按说明直接生成”，以及 AI 工作台的“分析”页。`onedesk.ai.chat/1`（服务商接口）和 SQL 用的 `onedesk.ai.generate/1` 保留。
 
 ## 1. 要解决的问题
@@ -195,3 +195,13 @@ AI 工作台现在有“分析”类型：一个标签页，有将要发送的�
 - 清除对话是页面上的一个运行操作（带确认），因为页面事件不能要求确认。
 
 测试：内核 `crates/kernel/tests/ai_chat.rs`；插件 `plugins/org.onedesk.ai/chat.test.ts`、`main.test.ts`；外壳 `src/workbench/parts/ai-chat.test.ts`、`src/design/components/chat.test.tsx`；界面（真内核 + 假 AI）`e2e/ai-chat.spec.ts`（从新建开始：按钮、预览再发送、应用到并保存、覆盖未保存修改前询问、未保存的新笔记按说明生成、资料要允许 AI 才发送、策略 off）、`e2e/round18.spec.ts`（分析、打码、流式、连接选择、错误、取消）。
+
+## 12. 第二步的实际做法（D480）
+
+- **宿主接口** `host.tools.list()` / `host.tools.call(name, arguments)`（不叫 `host.ai.*`：内核里不能出现插件相关的词），只给写作辅助的实现者，不能在 AI 运行里再调用。工具和 MCP 客户端的完全相同：`search`、`describe`、`run`、`get_run` 和各插件的 `aiTools`；规则也相同：只看 AI 可见的资源、只读、行数上限、“自由查询”开关、限流（和所有 AI 客户端合计）、审计（客户端名 `onedesk-chat`）。不同的两点：在**对话标签页的环境**里运行（不是 MCP 设置里的环境），不受 MCP 总开关限制（那是给外部客户端的；对话由环境的 `ai.policy` 管）。等工具运行结束的时间不算进发送这次运行的 60 秒。
+- **服务商接口** `onedesk.ai.chat/1` 增加可选的 `tools` 输入、`toolCalls` 输出和两种消息（带 `toolCalls` 的 assistant、`tool` 结果），见 `ai-plugins.md` §3。Anthropic 用 `tool_use`/`tool_result` 块（流式里拼 `input_json_delta`），Ollama 用 `tools`/`tool_calls`（没有 id，按顺序编 `call_1`…）。不支持工具的服务商照旧只回答。
+- **AI 工作台**：每次回答最多查 8 次；用完后再问一次且不给工具，必须回答。工具结果和其他发出的内容一样打码（邮箱、长数字串），但 32 位的资源和运行 id 保持原样，模型下一步要用。每次查询记成这一轮的一个“步骤”（如“搜索了“订单””“运行了 订单库查询”），点开看问了什么、查到什么（最多 2000 字）；被拒绝的查询标红，模型也会收到原因，接着回答。审计记步骤数，不记内容。
+- **预览**：`preview` 策略下只在第一次发送时确认（§10 第 3 条），预览里说明 AI 还可能自己去查、最多几次。
+- **视图节点**：`conversation` 的一轮增加 `steps: [{ label, detail?, failed? }]`（最多 20 个），外壳画成可以展开的小字行。
+
+测试：内核 `crates/kernel/tests/ai_chat.rs`（MCP 开关关着也能用、只找到 AI 可见的、参数检查、审计、别的插件不能用）；服务商 `plugins/org.onedesk.ai.anthropic/main.test.ts`、`plugins/org.onedesk.ai.ollama/main.test.ts`（工具的请求格式和流式解析，假 AI 新增 `kind: "tool"`）；AI 工作台 `chat.test.ts`（查询循环、失败的查询、次数上限、没有工具时照旧、打码保留 id）；界面 `e2e/ai-chat.spec.ts`（真内核 + 假 AI：模型先要求搜索，步骤显示在回答里，第二次请求带着只含 AI 可见内容的结果和完整 id）。

@@ -114,5 +114,12 @@
   "chat.error.noInstruction": "先写要说的话，或在信息面板里写说明。",
   "chat.error.noPage": "请先打开一个页面。",
   "tab.answer": "回答",
-  "request.docs": "参考文档"
+  "request.docs": "参考文档",
+  "chat.step.search": "搜索了“{query}”",
+  "chat.step.describe": "查看了 {name}",
+  "chat.step.run": "运行了 {name}",
+  "chat.step.getRun": "读取了更多结果",
+  "chat.step.tool": "用了 {name}",
+  "chat.step.doing": "{label}……",
+  "chat.preview.tools": "AI 还可以自己去查：只读，只在你允许 AI 查看的内容里；{n} 个工具，每次回答最多查 {max} 次。查到的内容也会发给它。"
 }

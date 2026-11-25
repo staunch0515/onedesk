@@ -209,7 +209,7 @@ impl Inner {
         Ok(json!({ "runId": row.id, "output": output, "meta": meta }))
     }
 
-    fn assist_reader(&self, p: &'static Plugin) -> KResult<()> {
+    pub(crate) fn assist_reader(&self, p: &'static Plugin) -> KResult<()> {
         if !p.manifest.requires.resources {
             return Err(denied("notRequested"));
         }

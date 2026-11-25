@@ -114,5 +114,12 @@
   "chat.error.noInstruction": "先に依頼を書くか、情報パネルに説明を書いてください。",
   "chat.error.noPage": "先にページを開いてください。",
   "tab.answer": "回答",
-  "request.docs": "参考ドキュメント"
+  "request.docs": "参考ドキュメント",
+  "chat.step.search": "「{query}」を検索しました",
+  "chat.step.describe": "{name} を見ました",
+  "chat.step.run": "{name} を実行しました",
+  "chat.step.getRun": "結果の続きを読みました",
+  "chat.step.tool": "{name} を使いました",
+  "chat.step.doing": "{label}…",
+  "chat.preview.tools": "AI は自分で調べることもあります（読み取りのみ、AI に許可した内容だけ）。ツール {n} 個、1 回の回答で最大 {max} 回。見つけた内容も送られます。"
 }

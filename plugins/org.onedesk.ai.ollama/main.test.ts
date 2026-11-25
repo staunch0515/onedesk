@@ -255,3 +255,30 @@ describe("connection settings are a template (D466)", () => {
     expect(b.secret).toEqual({ secret: "k" });
   });
 });
+
+describe("ollama: tools (D479)", () => {
+  const TOOL = { name: "search", description: "Find resources", inputSchema: { type: "object" } };
+  it("offers the tools as functions and sends earlier calls and their results", () => {
+    const req = buildChat({ model: "m" }, {
+      tools: [TOOL],
+      messages: [
+        { role: "user", text: "How many?" },
+        { role: "assistant", text: "", toolCalls: [{ id: "call_1", name: "search", arguments: { query: "orders" } }] },
+        { role: "tool", toolCallId: "call_1", name: "search", text: "[1]" },
+      ],
+    });
+    expect(req.tools).toEqual([{ type: "function", function: { name: "search", description: "Find resources", parameters: { type: "object" } } }]);
+    expect(req.messages).toEqual([
+      { role: "user", content: "How many?" },
+      { role: "assistant", content: "", tool_calls: [{ function: { name: "search", arguments: { query: "orders" } } }] },
+      { role: "tool", content: "[1]", tool_name: "search" },
+    ]);
+  });
+  it("reads tool calls from the stream and gives them ids", async () => {
+    reset();
+    fake.set({ kind: "tool", calls: [{ name: "search", arguments: { query: "orders" } }, { name: "run", arguments: { id: "x" } }] });
+    const r = result(await actions().chat(ctxOf(hostFor().host, conn()), { messages: [{ role: "user", text: "hi" }], tools: [TOOL] }));
+    expect(r).toMatchObject({ stop: "toolUse", toolCalls: [{ id: "call_1", name: "search", arguments: { query: "orders" } }, { id: "call_2", name: "run", arguments: { id: "x" } }] });
+    reset();
+  });
+});

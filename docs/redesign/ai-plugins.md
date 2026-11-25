@@ -39,14 +39,20 @@ org.onedesk.ai.ollama        Ollama 连接（地址、模型、上下文长度�
   "messages": [{ "role": "user" | "assistant", "text": "…" }],
   "maxTokens": 16000,                    // 可选，服务商有默认
   "effort": "low" | "medium" | "high",   // 可选，服务商不支持就忽略
-  "format": "text" | "json"              // 可选；json 时服务商尽量让回答是 JSON
+  "format": "text" | "json",             // 可选；json 时服务商尽量让回答是 JSON
+  // D479（可选）：模型可以调用的工具；不支持的服务商忽略它
+  "tools": [{ "name": "search", "description": "…", "inputSchema": { "type": "object", … } }]
 }
+// messages 里另外两种（D479）：
+//   { "role": "assistant", "text": "…", "toolCalls": [{ "id": "…", "name": "search", "arguments": { … } }] }
+//   { "role": "tool", "toolCallId": "…", "name": "search", "text": "结果", "failed": true? }
 // 输出
 {
   "text": "…",
   "model": "实际用的模型",
   "usage": { "input": 1234, "output": 567 },   // 拿不到就省略
-  "stop": "end" | "maxTokens" | "refusal" | "other"
+  "toolCalls": [{ "id": "…", "name": "…", "arguments": { … } }],   // D479：模型要用工具时（stop 为 toolUse）
+  "stop": "end" | "maxTokens" | "refusal" | "toolUse" | "other"
 }
 // 出错：{ "error": { "code": "auth" | "rateLimit" | "overloaded" | "timeout" | "tooLong" | "refusal" | "network" | "other", "message": "…", "retryAfter": 秒 } }
 ```

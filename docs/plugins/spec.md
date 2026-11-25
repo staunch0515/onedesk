@@ -482,7 +482,7 @@ export default {
 ### 6.4a `conversation`（D479）
 
 `{ type: "conversation", id, turns, input?, targetTab? }`：一段对话，外壳画成一轮一轮的发言，最下面是输入框。
-- `turns[]`：`{ role: "user" | "assistant", text, caption?, actions? }`。`text` 是 Markdown（用户的话按原样显示）；`caption` 是下面一行灰色小字（模型、token）；`actions` 最多 4 个按钮 `{ id, label, icon? }`，点了发送以 `id` 为名的页面事件，`ctx.row` 是这一轮的序号（和表格的 `rowActions` 一样）。
+- `turns[]`：`{ role: "user" | "assistant", text, caption?, actions?, steps? }`。`steps` 是回答前查过的东西（最多 20 个）`{ label, detail?, failed? }`，外壳画成可展开的小字行。`text` 是 Markdown（用户的话按原样显示）；`caption` 是下面一行灰色小字（模型、token）；`actions` 最多 4 个按钮 `{ id, label, icon? }`，点了发送以 `id` 为名的页面事件，`ctx.row` 是这一轮的序号（和表格的 `rowActions` 一样）。
 - `input`：`{ name, send, placeholder? }`。输入框里的文字是运行参数 `name`（不能以 `view.` 开头），回车运行页面上 `id` 为 `send` 的操作，Shift+回车换行；新的一轮出现时输入框清空。
 - `targetTab`：从这个页面开始的运行带上那个标签页的当前值（`input["target.draft"]`，不含密钥）和信息面板里写的说明（`input["target.description"]`）；标签页没开着时不带。
 - 同一页面上的表格不再撑满页面，按行数显示。
@@ -682,11 +682,11 @@ AI 辅助由**外壳和 AI 工作台统一提供**（`docs/redesign/ai-chat.md`�
    ] }
    ```
    `hint` 是给 AI 的说明（用 `ctx.t` 取本地化文字）；`format` 是 `text`、`markdown`、`json` 或 `code:<语言>`，省略时按字段类型推断；`off: true` 时 AI 看得到这个字段（作为背景），但不能修改它。
-3. 用户在信息面板里允许“AI 可见”的资源，才会作为资料发给 AI；点“AI 对话”本身就是允许这个页面。资料是拖到对话上的任意资源（内容和在当前环境下最近一次运行的结果）。
+3. 用户在信息面板里允许“AI 可见”的资源，才会作为资料发给 AI；点“AI 对话”本身就是允许这个页面。资料是拖到对话上的任意资源（内容和在当前环境下最近一次运行的结果）。AI 回答前还可以自己去查（D480）：用的就是外部 AI 客户端经 MCP 用的工具，所以插件想让 AI 能查到什么，就照 §4.9 在动作上写 `ai: { readOnly: true }` 或贡献 `aiTools`，不需要为对话另做什么。
 4. 插件**不得**：直接调用 AI 服务商插件或 `uses: ["onedesk.ai.chat/1"]`；自己画 AI 按钮、预览、发送或模型选择；把数据行塞进字段供 AI 读取。
 5. 旧接口 `onedesk.ai.generate/1`（只支持 `kind: "sql"`）仍可用，供 SQL 插件这类已有实现；**新插件不要再用**。
 
-**实现 AI 对话的插件**（只有 AI 工作台，规则 10）：实现接口 `onedesk.assist/2`（不带 `kind`），贡献命令 `openChat`（外壳的按钮以页面为上下文运行它：`target`、`tabId`、`args.envId`、`args.name`）。只有它可以：在页面事件结果里返回 `apply: { target, tabId?, label?, values }`（内核只留下目标页面可编辑的文本字段）；调用 `host.pages.fields(target, envId?)`（页面的字段和值，不含密钥；资源须“AI 可见”）和 `host.runs.latest(resourceId, envId?)`（最近一次成功运行的结果）；在 `host.resources.search` 的结果里看到 `aiVisible`。
+**实现 AI 对话的插件**（只有 AI 工作台，规则 10）：实现接口 `onedesk.assist/2`（不带 `kind`），贡献命令 `openChat`（外壳的按钮以页面为上下文运行它：`target`、`tabId`、`args.envId`、`args.name`）。只有它可以：在页面事件结果里返回 `apply: { target, tabId?, label?, values }`（内核只留下目标页面可编辑的文本字段）；调用 `host.tools.list()` / `host.tools.call(name, arguments)`（和 MCP 相同的只读工具，在调用它的标签页的环境里）；调用 `host.pages.fields(target, envId?)`（页面的字段和值，不含密钥；资源须“AI 可见”）和 `host.runs.latest(resourceId, envId?)`（最近一次成功运行的结果）；在 `host.resources.search` 的结果里看到 `aiVisible`。
 
 ## 12. 沙箱限制
 
