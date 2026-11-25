@@ -87,6 +87,9 @@ function RefRow({ info, side }: { info: RefInfo; side: "outgoing" | "incoming" }
           </span>
         </Tooltip>
       )}
+      {/* D481: an embed shows the content where it is written; links only point. */}
+      {info.embed && <Badge tone="accent" icon="layers">{t("refs.embedded")}</Badge>}
+      {info.section && <Text size="xs" tone="muted">{`› ${info.section}`}</Text>}
       {fieldLabel && <Text size="xs" tone="muted">{t("refs.field", { field: tx(fieldLabel) })}</Text>}
     </Pane>
   );

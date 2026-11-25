@@ -21,6 +21,7 @@
         "fields": { "text": { "type": "longtext", "refs": true } },
         "draggable": true,
         "accepts": [],
+        "embed": true,
         "menu": ["duplicate"]
       }
     ],

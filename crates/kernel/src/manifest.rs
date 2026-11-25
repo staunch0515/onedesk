@@ -482,6 +482,10 @@ pub struct KindDecl {
     /// Round 12 (D390): drops onto its nodes go to the code (`kinds.handle(kind, { drop })`).
     #[serde(default)]
     pub drop: bool,
+    /// D481: what a resource of the kind shows where another embeds it comes from the code
+    /// (`kinds.handle(kind, { embed })`).
+    #[serde(default)]
+    pub embed: bool,
 }
 
 impl KindDecl {

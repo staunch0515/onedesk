@@ -33,6 +33,9 @@ fn output_type_of(row: &RunRow) -> Option<OutputType> {
 }
 
 /// A run whose result a result-area action may be given: finished well, with an output.
+/// D481: embeds read for the writing help in one field.
+const MAX_EMBEDS_READ: usize = 50;
+
 /// D479: rows of a result `runs.latest` hands over.
 const LATEST_ROWS: usize = 1000;
 
@@ -158,9 +161,13 @@ impl Inner {
             _ => return Err(invalid("badTarget")),
         };
         let shown = self.resolve(&target, onedesk_protocol::PageContext { env_id: env_id.clone(), ..Default::default() }, None).await?;
-        let editable = self.editable_fields(&target, env_id, None).await?;
+        let editable = self.editable_fields(&target, env_id.clone(), None).await?;
         let secret = |f: &onedesk_protocol::ViewField| f.kind == onedesk_protocol::FieldKind::Secret;
-        let fields: Vec<Value> = shown
+        let source = match crate::pages::parse_target(&target) {
+            crate::pages::Target::Resource(id) => Some(id),
+            _ => None,
+        };
+        let mut fields: Vec<Value> = shown
             .view
             .iter()
             .filter_map(|n| match n {
@@ -183,7 +190,58 @@ impl Inner {
                 })
             })
             .collect();
+        // D481: what the `![[…]]` lines of a field show, beside the text as written (which an edit keeps).
+        if let Some(src) = &source {
+            for f in fields.iter_mut() {
+                let Some(text) = f["value"].as_str().map(String::from) else { continue };
+                let embeds = self.embedded_texts(src, &text, env_id.clone()).await;
+                if !embeds.is_empty() {
+                    f["embeds"] = Value::Array(embeds);
+                }
+            }
+        }
         Ok(json!({ "target": target, "name": name, "description": description, "kindLabel": shown.kind_label, "title": shown.title, "fields": fields }))
+    }
+
+    /// D481: for every line of `text` that is only `![[name#section]]` (outside fenced code), what that embed shows as
+    /// text — `{ mark, name, section?, text }` — when its target exists and the user let AI see it. One level: marks
+    /// inside an embedded text stay as they are. At most `MAX_EMBEDS_READ` of them.
+    pub(crate) async fn embedded_texts(&self, source: &str, text: &str, env: Option<String>) -> Vec<Value> {
+        let Ok(rows) = self.read(|c| crate::refs::rows_of(c, source)) else { return vec![] };
+        let mut out = Vec::new();
+        let mut fence = false;
+        for line in text.lines() {
+            let t = line.trim();
+            if t.starts_with("```") || t.starts_with("~~~") {
+                fence = !fence;
+            }
+            if fence || !t.starts_with("![[") || !t.ends_with("]]") || out.len() >= MAX_EMBEDS_READ {
+                continue;
+            }
+            let inner = &t[3..t.len() - 2];
+            if inner.is_empty() || inner.contains("[[") || inner.contains("]]") {
+                continue;
+            }
+            let Some(target) = rows.iter().find(|r| r.text == inner).and_then(|r| r.target.clone()) else { continue };
+            if !self.read(|c| store::is_ai_visible(c, &target)).unwrap_or(false) {
+                continue;
+            }
+            let section = crate::refs::split(inner).1.map(String::from);
+            let p = onedesk_protocol::ResourceEmbedParams { id: target, section: section.clone(), env_id: env.clone(), locale: None };
+            let Ok(e) = self.resource_embed(p).await else { continue };
+            let body: Vec<String> = e
+                .view
+                .unwrap_or_default()
+                .into_iter()
+                .filter_map(|n| match n {
+                    onedesk_protocol::ViewNode::Text { text, .. } => Some(text),
+                    _ => None,
+                })
+                .collect();
+            let body = if body.is_empty() { e.description.unwrap_or_default() } else { body.join("\n\n") };
+            out.push(json!({ "mark": t, "name": e.name, "section": section, "text": body }));
+        }
+        out
     }
 
     /// D479: the result of the last successful run of a resource the user let AI see — in `envId` when

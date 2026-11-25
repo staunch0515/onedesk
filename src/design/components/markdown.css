@@ -185,3 +185,10 @@
   color: var(--fg-muted);
   font-style: italic;
 }
+
+/* D481: Markdown with embedded blocks between its pieces. */
+.od-markdown-flow {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}

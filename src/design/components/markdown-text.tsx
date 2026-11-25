@@ -1,4 +1,4 @@
-import { useMemo, type MouseEvent } from "react";
+import { Fragment, useMemo, type MouseEvent, type ReactNode } from "react";
 import { Marked, Renderer } from "marked";
 import { cx } from "./cx";
 import { isOpenableUrl, normalizeLinkHref } from "./open-url";
@@ -16,6 +16,11 @@ export interface MarkdownTextProps {
   onReferenceClick?: (name: string) => void;
   /** Says what a `[[name]]` points to; without it every reference shows as unresolved. */
   referenceState?: (name: string) => ReferenceState;
+  /**
+   * D481: draws a line that is only `![[text]]` (outside code blocks) as an embedded block; it gets the text inside.
+   * Without it, and for `![[…]]` inside a sentence, the mark is shown as a reference.
+   */
+  renderEmbed?: (text: string) => ReactNode;
   className?: string;
 }
 
@@ -32,6 +37,17 @@ function createRenderer(): Marked {
     breaks: false,
     async: false,
     extensions: [
+      {
+        // D481: `![[…]]` where it is not a block of its own reads as a reference (the `!` is not shown).
+        name: "odEmbedInline",
+        level: "inline",
+        start: (src: string) => src.indexOf("![["),
+        tokenizer(src: string) {
+          const m = /^!\[\[([^[\]\n]{1,200})\]\]/.exec(src);
+          if (!m || m[1]!.trim() === "" || m[1]!.length > MAX_REFERENCE) return undefined;
+          return { type: "odReference", raw: m[0], text: m[1]! };
+        },
+      },
       {
         name: "odReference",
         level: "inline",
@@ -85,8 +101,46 @@ export function renderMarkdown(source: string, referenceState?: (name: string) =
   }
 }
 
+const EMBED_LINE = /^\s*!\[\[([^[\]\n]{1,200})\]\]\s*$/;
+
+/** D481: the source cut at the lines that are only `![[…]]` (not inside fenced code): Markdown pieces and embeds, in order. */
+export function splitEmbeds(source: string): Array<{ markdown: string } | { embed: string }> {
+  const out: Array<{ markdown: string } | { embed: string }> = [];
+  let chunk: string[] = [];
+  let fence = false;
+  for (const line of source.split("\n")) {
+    if (/^\s*(```|~~~)/.test(line)) fence = !fence;
+    const m = fence ? null : EMBED_LINE.exec(line);
+    if (m && m[1]!.trim() !== "") {
+      if (chunk.length > 0) out.push({ markdown: chunk.join("\n") });
+      chunk = [];
+      out.push({ embed: m[1]! });
+    } else chunk.push(line);
+  }
+  if (chunk.length > 0) out.push({ markdown: chunk.join("\n") });
+  return out;
+}
+
 /** Read-only Markdown for plugin text: no raw HTML, only http/https/mailto links, `[[references]]`, no images. */
-export function MarkdownText({ source, onLinkClick, onReferenceClick, referenceState, className }: MarkdownTextProps) {
+export function MarkdownText({ source, onLinkClick, onReferenceClick, referenceState, renderEmbed, className }: MarkdownTextProps) {
+  const parts = useMemo(() => (renderEmbed ? splitEmbeds(source) : null), [source, renderEmbed]);
+  if (parts && parts.some((p) => "embed" in p)) {
+    return (
+      <div className={cx("od-markdown-flow", className)}>
+        {parts.map((p, i) =>
+          "embed" in p ? (
+            <Fragment key={i}>{renderEmbed!(p.embed)}</Fragment>
+          ) : (
+            <MarkdownHtml key={i} source={p.markdown} onLinkClick={onLinkClick} onReferenceClick={onReferenceClick} referenceState={referenceState} />
+          ),
+        )}
+      </div>
+    );
+  }
+  return <MarkdownHtml source={source} onLinkClick={onLinkClick} onReferenceClick={onReferenceClick} referenceState={referenceState} className={className} />;
+}
+
+function MarkdownHtml({ source, onLinkClick, onReferenceClick, referenceState, className }: Omit<MarkdownTextProps, "renderEmbed">) {
   const html = useMemo(() => renderMarkdown(source, referenceState), [source, referenceState]);
   const onClick = (e: MouseEvent<HTMLDivElement>) => {
     const anchor = (e.target as HTMLElement).closest("a");

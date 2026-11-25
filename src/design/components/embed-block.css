@@ -1,0 +1,47 @@
+/* D481: another resource's content shown inside this one. */
+.od-embed {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3) var(--space-3);
+  border: var(--border-width) solid var(--border-subtle);
+  border-left: var(--border-width-thick) solid var(--accent-border);
+  border-radius: var(--radius-md);
+  background: var(--bg-surface);
+  min-width: 0;
+}
+
+.od-embed--broken {
+  border-left-color: var(--danger-border);
+  color: var(--fg-muted);
+}
+
+.od-embed__head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1-5);
+  color: var(--fg-muted);
+  font-size: var(--text-xs);
+}
+
+.od-embed__title {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--fg-muted);
+  font: inherit;
+  cursor: pointer;
+}
+
+.od-embed__title:hover {
+  color: var(--accent-text);
+}
+
+.od-embed__note {
+  color: var(--fg-subtle);
+  font-size: var(--text-xs);
+}

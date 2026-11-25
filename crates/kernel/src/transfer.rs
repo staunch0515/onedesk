@@ -19,7 +19,7 @@ use crate::store::{self, Row, KIND_CONFIG, KIND_ENV, KIND_GROUP, TREE_PLUGIN_STA
 use crate::util::*;
 
 pub const METHODS: &[&str] =
-    &[M::REFS_OUTGOING, M::REFS_INCOMING, M::PARAMS_KNOWN, M::WORKSPACE_EXPORT, M::WORKSPACE_IMPORT_PREVIEW, M::WORKSPACE_IMPORT, M::RUN_EXPORT];
+    &[M::REFS_OUTGOING, M::REFS_INCOMING, M::RESOURCE_EMBED, M::PARAMS_KNOWN, M::WORKSPACE_EXPORT, M::WORKSPACE_IMPORT_PREVIEW, M::WORKSPACE_IMPORT, M::RUN_EXPORT];
 
 pub const EXPORT_FORMAT: &str = "onedesk-export";
 pub const EXPORT_VERSION: u32 = 1;
@@ -402,11 +402,34 @@ fn valid_body(decl: Option<&KindDecl>, r: &ExportResource) -> bool {
     })
 }
 
+/// D481: an embed view, serialized, at most this many bytes.
+const MAX_EMBED_BYTES: usize = 512 * 1024;
+
+/// D481: whether the reference is written `![[…]]`, and its section (none when the target's whole name is the text).
+fn mark_of(src: &Row, r: &crate::refs::RefRow, target_name: Option<&str>) -> (Option<bool>, Option<String>) {
+    let key = r.field.strip_prefix("body.").unwrap_or(&r.field);
+    let embed = src
+        .body
+        .get(key)
+        .and_then(Value::as_str)
+        .and_then(|t| crate::refs::marks(t).into_iter().nth(r.seq as usize))
+        .is_some_and(|m| m.embed && m.text == r.text);
+    let section = match crate::refs::split(&r.text) {
+        (_, Some(s)) if target_name != Some(r.text.as_str()) => Some(s.to_string()),
+        _ => None,
+    };
+    (embed.then_some(true), section)
+}
+
 impl Inner {
     pub async fn handle5(&self, m: &str, params: Value) -> Option<KResult<Value>> {
         Some(match m {
             M::REFS_OUTGOING => parse::<RefsParams>(params).and_then(|p| self.refs_outgoing(&p.id)).and_then(to_value),
             M::REFS_INCOMING => parse::<RefsParams>(params).and_then(|p| self.refs_incoming(&p.id)).and_then(to_value),
+            M::RESOURCE_EMBED => match parse::<ResourceEmbedParams>(params) {
+                Ok(p) => self.resource_embed(p).await.and_then(to_value),
+                Err(e) => Err(e),
+            },
             M::PARAMS_KNOWN => to_value(crate::policy::known()),
             M::WORKSPACE_EXPORT => match parse::<WorkspaceFolderParams>(params) {
                 Ok(p) => self.export(&p.folder).await.and_then(to_value),
@@ -454,13 +477,70 @@ impl Inner {
         }
     }
 
+    /// D481 `resource.embed`: what `id` shows where another resource embeds it. Its plugin's `embed` (when the kind
+    /// declares it and the plugin runs) gives a read-only view — text, table and link nodes only, at most
+    /// `MAX_EMBED_BYTES`, in the environment of the tab it is shown on; otherwise only the card's facts come back.
+    pub async fn resource_embed(&self, p: ResourceEmbedParams) -> KResult<EmbedResult> {
+        let row = self.visible_row(&p.id)?;
+        if row.deleted_at.is_some() || !crate::refs::referenceable(&row) {
+            return Err(not_found("resource"));
+        }
+        let meta = self.row_meta(&row);
+        let mut out = EmbedResult {
+            id: row.id.clone(),
+            name: row.name.clone(),
+            icon: meta.icon.clone(),
+            kind_label: Some(meta.label.clone()),
+            description: (!row.description.is_empty()).then(|| row.description.clone()),
+            view: None,
+            section_missing: None,
+            refs: self.refs_outgoing(&row.id)?,
+        };
+        let Some((plugin, kind)) = self.registry.kind_at(&row.kind, row.plugin_version.as_deref()) else { return Ok(out) };
+        if !kind.embed || meta.state != NodeState::Ok || !self.plugin_enabled(&plugin.id) {
+            return Ok(out);
+        }
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct EmbedOut {
+            view: Vec<ViewNode>,
+            #[serde(default, rename = "sectionMissing")]
+            section_missing: bool,
+        }
+        let resource = serde_json::to_value(self.resource(&row)?).map_err(internal)?;
+        let resource = crate::deps::without_secrets(resource, &self.secret_fields(&row.kind, row.plugin_version.as_deref()));
+        let ctx = json!({ "resource": resource, "envId": p.env_id, "locale": p.locale, "params": {} });
+        let info = crate::sandbox::CallInfo { env_id: p.env_id.clone(), resource_id: Some(row.id.clone()), ..Default::default() };
+        let bad = |why: String| {
+            let mut e = err_p(ErrorCode::PluginError, &[("reason", "badOutput"), ("plugin", &plugin.id)]);
+            e.detail = Some(format!("embed: {why}"));
+            e
+        };
+        let raw = self
+            .call_version(plugin, "kinds", &kind.id, "embed", json!([ctx, { "section": p.section }]), info, None, None)
+            .await
+            .map_err(|e| e.to_protocol())?;
+        if serde_json::to_vec(&raw).map(|v| v.len()).unwrap_or(usize::MAX) > MAX_EMBED_BYTES {
+            return Err(bad("too large".into()));
+        }
+        let mut answer: EmbedOut = serde_json::from_value(raw).map_err(|e| bad(e.to_string()))?;
+        if answer.view.iter().any(|n| !matches!(n, ViewNode::Text { .. } | ViewNode::Table { .. } | ViewNode::Link { .. })) {
+            return Err(bad("only text, table and link nodes".into()));
+        }
+        self.check_tables(plugin, Some(&row.id), &mut answer.view)?;
+        out.view = Some(answer.view);
+        out.section_missing = answer.section_missing.then_some(true);
+        Ok(out)
+    }
+
     pub fn refs_outgoing(&self, id: &str) -> KResult<Vec<RefInfo>> {
         let src = self.visible_row(id)?;
         let mut out = Vec::new();
         for r in self.read(|c| crate::refs::rows_of(c, id))? {
             let (target, state) = self.ref_target(r.target.as_deref())?;
             let field_label = self.field_label(&src, &r.field);
-            out.push(RefInfo { source: self.named(&src), field: r.field, text: r.text, target, state, field_label });
+            let (embed, section) = mark_of(&src, &r, target.as_ref().map(|t| t.name.as_str()));
+            out.push(RefInfo { source: self.named(&src), field: r.field, text: r.text, target, state, field_label, embed, section });
         }
         Ok(out)
     }
@@ -472,7 +552,8 @@ impl Inner {
         for (src, r) in self.read(|c| crate::refs::sources_of(c, id, false))? {
             let Some(s) = self.read(|c| store::get(c, &src))? else { continue };
             let field_label = self.field_label(&s, &r.field);
-            out.push(RefInfo { source: self.named(&s), field: r.field, text: r.text, target: Some(self.named(&me)), state, field_label });
+            let (embed, section) = mark_of(&s, &r, Some(&me.name));
+            out.push(RefInfo { source: self.named(&s), field: r.field, text: r.text, target: Some(self.named(&me)), state, field_label, embed, section });
         }
         Ok(out)
     }

@@ -18,8 +18,44 @@ export function textOf(ctx) {
   return b && typeof b.text === "string" ? b.text : "";
 }
 
+// D481: one section of a note — from the heading whose text is `section` (case and spaces at the ends do not matter,
+// a leading number like "1." or "第三十六条" is part of the text) to the next heading of the same or a higher level.
+// Headings inside fenced code blocks are not headings. `null` when there is no such heading.
+export function sectionOf(text, section) {
+  const want = String(section || "").trim().toLowerCase();
+  const lines = String(text || "").split("\n");
+  let fence = false;
+  let from = -1;
+  let level = 0;
+  for (let i = 0; i < lines.length; i++) {
+    if (/^\s*(```|~~~)/.test(lines[i])) fence = !fence;
+    if (fence) continue;
+    const m = /^(#{1,6})\s+(.*?)\s*#*\s*$/.exec(lines[i]);
+    if (!m) continue;
+    if (from >= 0 && m[1].length <= level) return lines.slice(from, i).join("\n").trimEnd();
+    if (from < 0 && m[2].trim().toLowerCase() === want) {
+      from = i;
+      level = m[1].length;
+    }
+  }
+  return from >= 0 ? lines.slice(from).join("\n").trimEnd() : null;
+}
+
 export default {
   activate(host) {
+    // D481: where another resource embeds a note (`![[name]]`, `![[name#heading]]`): its text, or one section of it,
+    // filled from the environment of the tab it is shown on, as Markdown.
+    host.kinds.handle("note", {
+      async embed(ctx, ask) {
+        const b = ctx.resource && ctx.resource.body;
+        const text = b && typeof b.text === "string" ? b.text : "";
+        const section = ask && typeof ask.section === "string" && ask.section ? ask.section : null;
+        const part = section ? sectionOf(text, section) : text;
+        if (part === null) return { view: [], sectionMissing: true };
+        return { view: [{ type: "text", id: "embed", text: await filled(ctx, part), format: "markdown" }] };
+      },
+    });
+
     host.pages.handle("editor", {
       async render(ctx) {
         const text = textOf(ctx);

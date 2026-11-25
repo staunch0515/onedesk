@@ -22,4 +22,12 @@ target?: NamedRef, state: RefState,
 /**
  * The label of the field in the source kind's declaration (round 6); absent when it has none.
  */
-fieldLabel?: Label, };
+fieldLabel?: Label, 
+/**
+ * D481: written `![[…]]` — the content is shown, not only a link.
+ */
+embed?: boolean, 
+/**
+ * D481: the part after `#` (`[[name#section]]`); the name is what comes before it.
+ */
+section?: string, };

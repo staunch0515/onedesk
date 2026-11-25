@@ -1007,5 +1007,10 @@
   "activity.wide": "展开图标栏：以图标显示全部视图",
   "activity.narrow": "收起图标栏",
   "activity.filter": "查找视图",
-  "activity.noMatch": "没有匹配的视图"
+  "activity.noMatch": "没有匹配的视图",
+  "embed.missing": "引用的内容已不存在。",
+  "embed.tooDeep": "嵌套太深，或者嵌入了自己：打开它来看。",
+  "embed.failed": "这部分内容显示不出来。",
+  "embed.sectionMissing": "里面没有“{section}”这一节。",
+  "refs.embedded": "嵌入"
 }

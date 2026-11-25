@@ -121,5 +121,6 @@
   "chat.step.getRun": "Read more of a result",
   "chat.step.tool": "Used {name}",
   "chat.step.doing": "{label}…",
-  "chat.preview.tools": "The AI may also look things up itself, read only and only in what you let AI see: {n} tools, at most {max} look-ups per answer. What it finds is sent to it too."
+  "chat.preview.tools": "The AI may also look things up itself, read only and only in what you let AI see: {n} tools, at most {max} look-ups per answer. What it finds is sent to it too.",
+  "chat.request.embeds": "The lines written ![[…]] in it show other resources' content (read only; keep these lines as they are when you change the field):"
 }

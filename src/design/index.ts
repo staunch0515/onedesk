@@ -39,6 +39,7 @@ export { CommandPalette, type CommandPaletteProps, type CommandGroup, type Comma
 export { Markdown, type MarkdownProps } from "./components/markdown";
 export { isOpenableUrl, normalizeLinkHref } from "./components/open-url";
 export { MarkdownText, renderMarkdown, type MarkdownTextProps, type ReferenceState } from "./components/markdown-text";
+export { EmbedBlock, type EmbedBlockProps } from "./components/embed-block";
 export { Chat, ChatInput, ChatTurn, type ChatInputProps, type ChatStep, type ChatTurnProps } from "./components/chat";
 export { TextLink, type TextLinkProps } from "./components/text-link";
 export { TextBlock, type TextBlockProps } from "./components/text-block";

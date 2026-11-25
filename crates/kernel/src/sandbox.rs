@@ -311,6 +311,11 @@ const BOOTSTRAP: &str = r#"
           e.code = "denied";
           throw e;
         }
+        if (kind === "kinds" && h && h.embed !== undefined && !declared.kind_embed.includes(name)) {
+          const e = new Error("undeclared embed of kind: " + name);
+          e.code = "denied";
+          throw e;
+        }
         reg[kind][name] = h;
       },
     });
@@ -539,7 +544,7 @@ const BOOTSTRAP: &str = r#"
     try {
       // `kinds.migrate` takes (body, fromVersion, ctx), as the manifest documentation writes it;
       // everything else, `kinds.children` and `kinds.drop` included, takes ctx first.
-      const out = kind === "kinds" && fn !== "children" && fn !== "drop" ? await f.call(h, ...args.slice(1), ctx) : await f.call(h, ctx, ...args.slice(1));
+      const out = kind === "kinds" && fn !== "children" && fn !== "drop" && fn !== "embed" ? await f.call(h, ...args.slice(1), ctx) : await f.call(h, ctx, ...args.slice(1));
       return JSON.stringify({ ok: out === undefined ? null : out });
     } catch (e) {
       // A host error the handler did not catch keeps its code.
@@ -568,6 +573,8 @@ pub struct Declarations {
     pub kind_children: Vec<String>,
     /// Round 12 (D390): kinds whose manifest declares `drop`; only they may register a `drop` handler.
     pub kind_drop: Vec<String>,
+    /// D481: kinds that declare `embed`.
+    pub kind_embed: Vec<String>,
     pub events: Vec<String>,
 }
 

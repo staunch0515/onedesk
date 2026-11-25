@@ -2130,6 +2130,40 @@ pub mod method5 {
     pub const WORKSPACE_IMPORT_PREVIEW: &str = "workspace.importPreview";
     pub const WORKSPACE_IMPORT: &str = "workspace.import";
     pub const RUN_EXPORT: &str = "run.export";
+    /// D481: `ResourceEmbedParams` → `EmbedResult`: what a resource shows where another embeds it (`![[name]]`).
+    pub const RESOURCE_EMBED: &str = "resource.embed";
+}
+
+/// D481 (docs/redesign/embed-book.md §3): the resource to show embedded, the section (`![[name#section]]`), and the
+/// tab it is shown on (its environment fills the templates).
+#[skip_serializing_none]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, optional_fields)]
+pub struct ResourceEmbedParams {
+    pub id: String,
+    pub section: Option<String>,
+    pub env_id: Option<String>,
+    pub locale: Option<String>,
+}
+
+/// D481: an embedded resource. `view` is what its plugin's `embed` gives (read only: text, table and link nodes);
+/// absent when the kind has no embed view (the interface shows a card). `sectionMissing`: the section asked for is
+/// not there. `refs`: the resource's own references, for `[[…]]` and `![[…]]` inside the view.
+#[skip_serializing_none]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, optional_fields)]
+pub struct EmbedResult {
+    pub id: String,
+    pub name: String,
+    pub icon: String,
+    pub kind_label: Option<Label>,
+    pub description: Option<String>,
+    pub view: Option<Vec<ViewNode>>,
+    pub section_missing: Option<bool>,
+    #[serde(default)]
+    pub refs: Vec<RefInfo>,
 }
 
 /// `refs.outgoing` / `refs.incoming`: the resource whose references are asked for.
@@ -2169,6 +2203,10 @@ pub struct RefInfo {
     /// The label of the field in the source kind's declaration (round 6); absent when it has none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub field_label: Option<Label>,
+    /// D481: written `![[…]]` — the content is shown, not only a link.
+    pub embed: Option<bool>,
+    /// D481: the part after `#` (`[[name#section]]`); the name is what comes before it.
+    pub section: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]

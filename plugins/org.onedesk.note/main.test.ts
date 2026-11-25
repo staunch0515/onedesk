@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 // @ts-ignore plain JS module, no types
-import plugin from "./main.js";
+import plugin, { sectionOf } from "./main.js";
 import { RENDER_KEYS, checkView, onlyKeys, registry, t } from "../_testing/view-check";
 
 const ctxOf = (host: unknown, extra: Record<string, unknown> = {}) => ({ target: "resource:r1", locale: "en-US", host, t, ...extra });
@@ -168,5 +168,32 @@ describe("note plugin", () => {
       const l = JSON.parse(readFileSync(new URL(`./locales/${lang}.json`, import.meta.url), "utf8"));
       expect(l["field.placeholder"]).toContain(token);
     }
+  });
+});
+
+describe("note plugin: embedded in another resource (D481)", () => {
+  const LAW = "# 劳动法\n\n## 第三十五条\n三十五。\n\n## 第三十六条\n每日工作时间不超过八小时，{{who}}。\n\n### 说明\n细则。\n\n## 第三十七条\n三十七。\n\n```md\n## 第三十六条\n```";
+  it("a section runs from its heading to the next heading of the same or a higher level; headings in code are not headings", () => {
+    expect(sectionOf(LAW, "第三十六条")).toBe("## 第三十六条\n每日工作时间不超过八小时，{{who}}。\n\n### 说明\n细则。");
+    expect(sectionOf(LAW, " 说明 ")).toBe("### 说明\n细则。");
+    expect(sectionOf(LAW, "第三十七条")).toBe("## 第三十七条\n三十七。\n\n```md\n## 第三十六条\n```");
+    expect(sectionOf(LAW, "第九十九条")).toBeNull();
+    expect(sectionOf("# A\ntext", "a")).toBe("# A\ntext");
+  });
+  it("embed gives the section as Markdown, filled from the tab's environment; a missing section says so", async () => {
+    const { kinds } = registry(plugin);
+    const ctx = ctxOf(envHost({ who: "司机" }), { resource: { id: "r1", body: { text: LAW } } });
+    const out = await kinds.note.embed(ctx, { section: "第三十六条" });
+    expect(checkView(out.view)).toEqual([]);
+    expect(out.view[0]).toMatchObject({ type: "text", format: "markdown" });
+    expect(out.view[0].text).toContain("不超过八小时，司机。");
+    expect(out.view[0].text).not.toContain("三十七");
+    expect(await kinds.note.embed(ctx, { section: "第九十九条" })).toEqual({ view: [], sectionMissing: true });
+    const whole = await kinds.note.embed(ctx, {});
+    expect(whole.view[0].text).toContain("第三十七条");
+  });
+  it("the kind declares its embed view", () => {
+    const manifest = JSON.parse(readFileSync(new URL("./manifest.json", import.meta.url), "utf8"));
+    expect(manifest.contributes.kinds[0].embed).toBe(true);
   });
 });

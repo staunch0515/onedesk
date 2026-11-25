@@ -2,7 +2,7 @@
 import "../testing/jsdom-setup";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import { MarkdownText, renderMarkdown } from "./markdown-text";
+import { MarkdownText, renderMarkdown, splitEmbeds } from "./markdown-text";
 
 describe("MarkdownText", () => {
   it("shows raw HTML as text and never makes elements from it", () => {
@@ -94,5 +94,27 @@ describe("MarkdownText", () => {
     fireEvent.click(screen.getByText("Gone"));
     expect(onRef).toHaveBeenCalledTimes(1);
     expect(onLink).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("MarkdownText embeds (D481)", () => {
+  it("cuts the source at lines that are only ![[…]], not inside code", () => {
+    expect(splitEmbeds("Intro\n\n![[Law#Art 36]]\n\nAfter\n```\n![[Code]]\n```")).toEqual([
+      { markdown: "Intro\n" },
+      { embed: "Law#Art 36" },
+      { markdown: "\nAfter\n```\n![[Code]]\n```" },
+    ]);
+  });
+  it("draws each embed with renderEmbed between the Markdown pieces; inside a sentence it is a reference", () => {
+    render(<MarkdownText source={"Before ![[Inline]] text\n\n![[Law]]\n\nAfter"} onLinkClick={() => undefined} referenceState={() => "ok"} renderEmbed={(text) => <aside>embedded {text}</aside>} />);
+    expect(screen.getByText("embedded Law")).toBeTruthy();
+    expect(screen.getByText("After")).toBeTruthy();
+    const inline = screen.getByText("Inline");
+    expect(inline.tagName).toBe("A");
+    expect(document.body.textContent).not.toContain("!Inline");
+  });
+  it("without renderEmbed an embed line is shown as a reference", () => {
+    expect(renderMarkdown("![[Law]]", () => "ok")).toContain('data-od-ref="Law"');
+    expect(renderMarkdown("![[Law]]", () => "ok")).not.toContain("!<a");
   });
 });

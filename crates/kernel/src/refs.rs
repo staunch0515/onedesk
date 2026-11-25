@@ -16,12 +16,34 @@ use crate::store::{self, Row, KIND_CONFIG, KIND_ENV, KIND_GROUP, KIND_PLUGIN_STA
 /// Longest name between `[[` and `]]`, in characters.
 pub const MAX_LEN: usize = 200;
 
-/// One `[[text]]` in a string: byte range of the whole mark and the text inside.
+/// One `[[text]]` in a string: byte range of the whole mark and the text inside. D481: `embed` when it is written
+/// `![[text]]` (the `!` is before `start`); the text may name a section, `name#section`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Mark {
     pub start: usize,
     pub end: usize,
     pub text: String,
+    pub embed: bool,
+}
+
+/// D481: the name and the section of a mark's text: `name#section` → (`name`, `section`). A `#` with nothing after it
+/// (or at the start) is part of the name.
+pub fn split(text: &str) -> (&str, Option<&str>) {
+    match text.find('#') {
+        Some(i) if i > 0 && i + 1 < text.len() => (&text[..i], Some(&text[i + 1..])),
+        _ => (text, None),
+    }
+}
+
+/// D481: the target of a mark's text: a resource with exactly that name, else (`name#section`) one with the name part.
+pub fn resolve_mark(conn: &Connection, text: &str, source: &Row) -> rusqlite::Result<Option<String>> {
+    if let Some(id) = resolve(conn, text, source)? {
+        return Ok(Some(id));
+    }
+    match split(text) {
+        (name, Some(_)) => resolve(conn, name, source),
+        _ => Ok(None),
+    }
 }
 
 /// Every reference mark, in order. `\[[` is not a mark; the text may not be empty, contain a line
@@ -44,7 +66,9 @@ pub fn marks(s: &str) -> Vec<Mark> {
                 i += 2;
                 continue;
             }
-            out.push(Mark { start: i, end: from + off + 2, text: inner.to_string() });
+            // D481: `![[…]]` embeds; `\![[…]]` is a `!` and a link.
+            let embed = i > 0 && b[i - 1] == b'!' && !(i > 1 && b[i - 2] == b'\\');
+            out.push(Mark { start: i, end: from + off + 2, text: inner.to_string(), embed });
             i = from + off + 2;
             continue;
         }
@@ -170,9 +194,9 @@ pub fn update(conn: &Connection, rule: &KindRule, row: &Row, changed: Option<&[S
         let text = row.body.get(key).and_then(Value::as_str).unwrap_or_default();
         let mut rows = Vec::new();
         for (i, m) in marks(text).into_iter().enumerate() {
-            let target = match keep.get(&m.text) {
+            let target = match keep.get(&m.text).or_else(|| keep.get(split(&m.text).0)) {
                 Some(t) => Some(t.clone()),
-                None => resolve(conn, &m.text, row)?,
+                None => resolve_mark(conn, &m.text, row)?,
             };
             if let Some(t) = &target {
                 touched.insert(t.clone());
@@ -210,7 +234,10 @@ pub fn connect_name(conn: &Connection, row: &Row) -> rusqlite::Result<BTreeSet<S
     if !referenceable(row) || row.deleted_at.is_some() {
         return Ok(touched);
     }
-    let mut st = conn.prepare_cached("SELECT source_id, field, seq FROM refs WHERE target_id IS NULL AND ever = 0 AND text = ?1")?;
+    // D481: `name#section` waits for `name` too.
+    let mut st = conn.prepare_cached(
+        "SELECT source_id, field, seq FROM refs WHERE target_id IS NULL AND ever = 0 AND (text = ?1 OR substr(text, 1, length(?1) + 1) = ?1 || '#')",
+    )?;
     let waiting: Vec<(String, String, i64)> = st.query_map([&row.name], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?.collect::<Result<_, _>>()?;
     drop(st);
     for (source, field, seq) in waiting {
@@ -308,7 +335,7 @@ pub fn import_rows(conn: &Connection, rule: &KindRule, row: &Row, hints: &[RefRo
             let hint = hints.iter().find(|h| h.field == field && h.seq == i as i64 && h.text == m.text);
             let target = match hint {
                 Some(h) => h.target.clone().filter(|t| store::get_any(conn, t).ok().flatten().is_some_and(|r| referenceable(&r))),
-                None => resolve(conn, &m.text, row)?,
+                None => resolve_mark(conn, &m.text, row)?,
             };
             touched.extend(target.clone());
             rows.push(RefRow { field: field.clone(), seq: i as i64, text: m.text, target, ever: false });
@@ -372,6 +399,13 @@ pub fn display(conn: &Connection, rule: Option<&KindRule>, row: &Row) -> rusqlit
             s.push_str(&text[at..m.start]);
             s.push_str("[[");
             s.push_str(&t.name);
+            // D481: the section stays as written.
+            if r.text != t.name {
+                if let (_, Some(section)) = split(&r.text) {
+                    s.push('#');
+                    s.push_str(section);
+                }
+            }
             s.push_str("]]");
             at = m.end;
         }
@@ -405,6 +439,16 @@ mod tests {
         assert_eq!(texts("[[unclosed"), Vec::<String>::new());
         let m = &marks("ab[[c]]d")[0];
         assert_eq!((m.start, m.end), (2, 7));
+    }
+
+    #[test]
+    fn embeds_and_sections_d481() {
+        let all = marks("x ![[Law#Art 36]] [[Law]] \\![[Not embed]]");
+        assert_eq!(all.iter().map(|m| (m.text.as_str(), m.embed)).collect::<Vec<_>>(), [("Law#Art 36", true), ("Law", false), ("Not embed", false)]);
+        assert_eq!(split("Law#Art 36"), ("Law", Some("Art 36")));
+        assert_eq!(split("C#"), ("C#", None));
+        assert_eq!(split("#tag"), ("#tag", None));
+        assert_eq!(split("Plain"), ("Plain", None));
     }
 }
 

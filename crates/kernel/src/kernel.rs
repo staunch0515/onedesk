@@ -1482,6 +1482,7 @@ impl Inner {
                 kinds: plugin.manifest.contributes.kinds.iter().map(|k| k.id.clone()).collect(),
                 kind_children: plugin.manifest.contributes.kinds.iter().filter(|k| k.children).map(|k| k.id.clone()).collect(),
                 kind_drop: plugin.manifest.contributes.kinds.iter().filter(|k| k.drop).map(|k| k.id.clone()).collect(),
+                kind_embed: plugin.manifest.contributes.kinds.iter().filter(|k| k.embed).map(|k| k.id.clone()).collect(),
                 events: plugin.manifest.contributes.events.iter().chain(&plugin.manifest.activation).cloned().collect(),
             },
             labels: plugin.all_labels(),

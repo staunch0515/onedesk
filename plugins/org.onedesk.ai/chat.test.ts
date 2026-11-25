@@ -333,3 +333,17 @@ describe("ai chat: looking things up (step 2)", () => {
     expect(host.tools.call).not.toHaveBeenCalled();
   });
 });
+
+describe("ai chat: embedded content (D481)", () => {
+  it("what a field's ![[…]] lines show goes along, masked, with the field as written", async () => {
+    const host = fakeHost({ env: { "ai.policy": "allow" } });
+    const fields = { ...noteFields, fields: [{ name: "body.text", label: "Text", kind: "longtext", value: "Intro\n![[Law#Art 36]]", editable: true, embeds: [{ mark: "![[Law#Art 36]]", name: "Law", section: "Art 36", text: "Eight hours; ask hr@example.com" }] }] };
+    host.pages.fields = vi.fn(async () => fields);
+    await send(host, chatCtx(host, chatBody({ refs: [] }), { params: { message: "x" } }));
+    const system = host.interfaces.call.mock.calls[0][2].system;
+    expect(system).toContain("![[Law#Art 36]]");
+    expect(system).toContain("Eight hours");
+    expect(system).toContain("keep these lines as they are");
+    expect(system).not.toContain("hr@example.com");
+  });
+});

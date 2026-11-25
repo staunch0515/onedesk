@@ -121,5 +121,6 @@
   "chat.step.getRun": "读取了更多结果",
   "chat.step.tool": "用了 {name}",
   "chat.step.doing": "{label}……",
-  "chat.preview.tools": "AI 还可以自己去查：只读，只在你允许 AI 查看的内容里；{n} 个工具，每次回答最多查 {max} 次。查到的内容也会发给它。"
+  "chat.preview.tools": "AI 还可以自己去查：只读，只在你允许 AI 查看的内容里；{n} 个工具，每次回答最多查 {max} 次。查到的内容也会发给它。",
+  "chat.request.embeds": "其中写成 ![[…]] 的行显示的是别的资源的内容（只读；修改这个字段时把这些行原样保留）："
 }

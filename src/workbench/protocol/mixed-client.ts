@@ -114,6 +114,7 @@ export function createMixedClient(kernel: KernelClient, mock: ProtocolClient): P
       async incoming(id) {
         return (await ownerOf(id)) === "kernel" ? kernel.refs.incoming(id) : fromMock(await mock.refs.incoming(id));
       },
+      embed: kernel.refs.embed,
     },
     params: kernel.params,
     app: kernel.app,

@@ -195,6 +195,7 @@
 | `menu` | string[] | 否 | 右键菜单命令：自己的命令短名或内核命令。未知 `unknownCommand` |
 | `children` | bool | 否 | 代码在存储的子节点之后再补子节点（`host.kinds.handle(kind, { children })`）。必须有 `tree`，否则 `childrenWithoutTree` |
 | `drop` | bool | 否 | 拖到它节点上的东西交给代码处理（`host.kinds.handle(kind, { drop })`）。必须有 `tree`，否则 `dropWithoutTree` |
+| `embed` | bool | 否 | D481：别的资源用 `![[名称]]` / `![[名称#标题]]` 嵌入它时，显示什么由代码给出（`host.kinds.handle(kind, { embed })`）。不声明时显示成卡片（图标、名称、说明） |
 
 `fields.<键>`：
 
@@ -411,11 +412,12 @@ export default {
 - `children(ctx, parentKey, offset)` → `{ nodes, next? }`。`parentKey` 为 `null` 是顶层；`next` 是下一批的 offset，不给表示没有了。每个节点只能有 `key`、`label`、`icon`、`expandable`、`target?`、`badge?`、`menu?`（自己的命令 id 或 `node.*`）、`draggable?`、`accepts?`（`TREE_NODE_KEYS`）。
 - `path(ctx, key)` → 从顶层到该节点的 key 数组（用于定位）。
 
-### 5.7 kind 处理函数 `host.kinds.handle(kind, { migrate?, children?, drop? })`
+### 5.7 kind 处理函数 `host.kinds.handle(kind, { migrate?, children?, drop?, embed? })`
 
 - `migrate(body, fromVersion, ctx)`：升级接管旧版本资源时调用（§9），返回新 body 或 `null`（不变）。这是纯计算：只能读（`resources.get/list`、`files` 读、`params`、`storage.get/keys/readFrom`、`settings.get`、`process.ready`），写会被拒 `pureCall`。
 - `children(ctx, node, own)`：清单 `children: true` 才可注册，补充子节点；参考 `org.onedesk.collection`。
 - `drop(ctx, event)`：清单 `drop: true` 才可注册；只能 `resources.update`（随 drop 一起写入），其他写被拒 `inDrop`；参考 `org.onedesk.composite`。
+- `embed(ctx, { section })`（D481）：清单 `embed: true` 才可注册。别的资源写了 `![[名称]]`（`section` 为 `null`）或 `![[名称#标题]]` 时调用，返回 `{ view, sectionMissing? }`：`view` 只能有 `text`、`table`、`link` 节点（只读，序列化后最多 512 KB），`ctx.resource` 是被嵌入的资源，`ctx.envId` 是显示它的标签页的环境（`{{名字}}` 照常用 `host.params.get` 取值）；找不到那一节时返回 `{ view: [], sectionMissing: true }`。Markdown 正文的插件按标题取节，参考 `org.onedesk.note` 的 `sectionOf`。
 
 ### 5.8 事件 `host.events.on(name, async (ctx, event) => …)`
 

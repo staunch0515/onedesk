@@ -1,7 +1,8 @@
 import { useCallback } from "react";
-import { Button, Chat, ChatInput, ChatTurn, CodeEditor, DataGrid, EmptyState, IconButton, MarkdownText, Pane, Text, TerminalText, TextBlock, type DataGridColumn, type ReferenceState } from "../../design";
+import { Button, Chat, ChatInput, ChatTurn, CodeEditor, DataGrid, EmptyState, IconButton, MarkdownText, Pane, Text, TerminalText, TextBlock, type DataGridColumn } from "../../design";
 import { useI18n } from "../i18n";
-import type { OutputCell, ViewNode } from "../protocol";
+import type { OutputCell, RefInfo, ViewNode } from "../protocol";
+import { RefMarkdown, useTabEnv } from "./embeds";
 import { useQuery, useUi, useWorkbench } from "../state/context";
 import { textLines } from "./terminal-lines";
 import { TOKENIZERS } from "./sql-tokens";
@@ -27,30 +28,19 @@ export function useOpenHere(): (target: string) => void {
 }
 
 function MarkdownNode({ source }: { source: string }) {
-  const { actions } = useWorkbench();
   const target = useUi((s) => s.tabs.find((x) => x.id === s.activeTabId)?.target ?? "");
   const resourceId = target.startsWith("resource:") ? target.slice("resource:".length) : null;
   const refs = useQuery((c) => (resourceId ? c.refs.outgoing(resourceId) : Promise.resolve([])), [resourceId], resourceId ? [`resource:${resourceId}`] : []);
-  const lookup = useCallback(
-    (name: string) => (refs.data ?? []).find((r) => r.text === name),
-    [refs.data],
-  );
-  const referenceState = useCallback((name: string): ReferenceState => lookup(name)?.state ?? "missing", [lookup]);
-  const openHere = useOpenHere();
+  const envId = useTabEnv();
+  // D481: `![[…]]` lines show the other resource's content in place (embeds.tsx).
   return (
     <Pane pad="md">
-      <MarkdownText
-        source={source}
-        referenceState={referenceState}
-        onLinkClick={(href) => void actions.openExternal(href)}
-        onReferenceClick={(name) => {
-          const to = lookup(name)?.target;
-          if (to) openHere(`resource:${to.id}`);
-        }}
-      />
+      <RefMarkdown source={source} refs={refs.data ?? NO_REFS} envId={envId} depth={0} chain={resourceId ? [resourceId] : []} />
     </Pane>
   );
 }
+
+const NO_REFS: RefInfo[] = [];
 
 /** Draws the read-only view nodes (text, table, link, placeholder). Forms are drawn by the view page. */
 export function ViewNodes({

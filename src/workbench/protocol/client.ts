@@ -1,5 +1,6 @@
 import type {
   AssistProvider,
+  EmbedResult,
   ProtocolError,
   InstallAnswer,
   InstallPreview,
@@ -130,6 +131,8 @@ export interface ProtocolClient {
     outgoing(id: string): Promise<RefInfo[]>;
     /** Who refers to this resource (deleted sources are not listed). */
     incoming(id: string): Promise<RefInfo[]>;
+    /** D481: what a resource shows where another embeds it (`![[name#section]]`), in the tab's environment. Absent in the demo. */
+    embed?(params: { id: string; section?: string; envId?: string | null }): Promise<EmbedResult>;
   };
 
   tree: {

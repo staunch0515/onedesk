@@ -1007,5 +1007,10 @@
   "activity.wide": "すべてのビューをアイコンで表示",
   "activity.narrow": "アイコン列に戻す",
   "activity.filter": "ビューを検索",
-  "activity.noMatch": "一致するビューはありません"
+  "activity.noMatch": "一致するビューはありません",
+  "embed.missing": "埋め込んだ内容はもうありません。",
+  "embed.tooDeep": "入れ子が深すぎるか、自分自身を埋め込んでいます。開いて読んでください。",
+  "embed.failed": "この内容は表示できません。",
+  "embed.sectionMissing": "「{section}」という節はありません。",
+  "refs.embedded": "埋め込み"
 }

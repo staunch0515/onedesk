@@ -131,6 +131,14 @@ function resultMarkdown(ctx, latest, deps, opts) {
   return "";
 }
 
+// D481: what the field's `![[…]]` lines show (the kernel gives it as `embeds`), masked and cut like the field.
+function embedLines(ctx, f, max, lines, deps) {
+  const list = Array.isArray(f.embeds) ? f.embeds : [];
+  if (list.length === 0) return;
+  lines.push("", deps.tr(ctx, "chat.request.embeds"));
+  for (const e of list) lines.push("", `\`${str(e.mark)}\``, "", fence("markdown", deps.maskText(str(e.text), max)));
+}
+
 // The system text: who the model is, the background, the target with its fields, the material.
 export function composeSystem(ctx, parts, deps) {
   const { background, target, refs, runText } = parts;
@@ -144,6 +152,7 @@ export function composeSystem(ctx, parts, deps) {
       if (f.hint) lines.push(f.hint);
       const v = fieldValue(f, FIELD_MAX, deps);
       lines.push(v ? fence(formatOf(f), v) : deps.tr(ctx, "assist.request.empty"));
+      embedLines(ctx, f, FIELD_MAX, lines, deps);
     }
     if (target.fields.some((f) => f.editable)) lines.push("", deps.tr(ctx, "chat.system.apply", { lang: APPLY_LANG }));
   }
@@ -157,6 +166,7 @@ export function composeSystem(ctx, parts, deps) {
       for (const f of r.fields || []) {
         const v = fieldValue(f, REF_FIELD_MAX, deps);
         if (v) lines.push("", `**${f.label}**`, "", fence(formatOf(f), v));
+        embedLines(ctx, f, REF_FIELD_MAX, lines, deps);
       }
       const res = resultMarkdown(ctx, r.latest, deps, parts.opts);
       if (res) lines.push("", res);
