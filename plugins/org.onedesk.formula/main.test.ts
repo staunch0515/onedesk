@@ -81,6 +81,20 @@ describe("the formula plugin (D487 §17.3)", () => {
     expect(broken.view[0].tone).toBe("danger");
   });
 
+  it("D487 §19: where it is embedded, the reader tries other values and computes (nothing is saved)", async () => {
+    const { kinds } = registry(plugin);
+    const plain = await kinds.formula.embed(ctx(C2F), {});
+    expect(plain.actions).toEqual([{ id: "compute", label: t("action.compute"), icon: "calculator" }]);
+    expect(plain.view.find((n: any) => n.id === "try").fields.map((f: any) => [f.name, f.bind])).toEqual([["C", undefined]]);
+    expect(plain.values).toEqual({ C: "20" });
+    const r = await kinds.formula.embedAct(ctx(C2F), { action: "compute", values: { C: "100" } });
+    expect(checkView(r.view)).toEqual([]);
+    expect(r.view.find((n: any) => n.id === "worked").text).toContain("**F = 212 °F**");
+    expect(r.values).toEqual({ C: "100" });
+    const bad = await kinds.formula.embedAct(ctx(C2F), { action: "compute", values: { C: "热" } });
+    expect(bad.view.find((n: any) => n.id === "worked").tone).toBe("danger");
+  });
+
   it("the page: formula, unit and places, one row per parameter found, trying values on the tab", async () => {
     const { pages } = registry(plugin);
     const out = await pages.formula.render(ctx(C2F, { params: { "try.C": "37" } }));

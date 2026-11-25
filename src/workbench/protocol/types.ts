@@ -108,6 +108,7 @@ export type {
   LanguageInfo,
   I18nShellResult as ShellTexts,
   AssistProvider,
+  EmbedActResult,
   EmbedResult,
   RefSuggestion,
   BlobInfo,

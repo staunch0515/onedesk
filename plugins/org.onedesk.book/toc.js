@@ -575,6 +575,12 @@ export async function exportBook(ctx) {
 export async function contentsOf(ctx, res) {
   const book = await bookOf(ctx, res);
   if (!book) return null;
+  return contentsOfBook(ctx, book.id);
+}
+
+/** The contents of a book, numbered by its contents page's settings (or the defaults). */
+export async function contentsOfBook(ctx, bookId, seed) {
+  const book = { id: bookId };
   const kids = await ctx.host.resources.tree(book.id, { limit: 2000 });
   const tocNode = kids.nodes.find((n) => n.depth === 1 && n.kind === TOC);
   let body = null;
@@ -582,7 +588,7 @@ export async function contentsOf(ctx, res) {
     const t = await ctx.host.resources.get(tocNode.id);
     body = t && t.body;
   }
-  return entriesOf(ctx, book.id, settingsOf(ctx, body, null));
+  return entriesOf(ctx, book.id, settingsOf(ctx, body, null), seed ? { role: roleFinder(ctx, seed) } : {});
 }
 
 /** Where an item is, for lists: its full number, else its name. */

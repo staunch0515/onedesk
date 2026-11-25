@@ -33,5 +33,6 @@
   "error.notNumber": "“{value}”不是数字（参数 {name}）",
   "error.divZero": "第 {line} 行：除以零",
   "error.notFinite": "第 {line} 行：结果不是数字",
-  "error.unknownParam": "没有参数 {name}"
+  "error.unknownParam": "没有参数 {name}",
+  "action.compute": "计算"
 }

@@ -3,9 +3,8 @@ import { Button, SequenceView, Text } from "../../design";
 import { useI18n } from "../i18n";
 import type { ViewNode } from "../protocol";
 import { useQuery } from "../state/context";
-import { BlobScope } from "./blobs";
-import { RefMarkdown, useTabEnv } from "./embeds";
-import { useOpenHere, ViewNodes } from "./view-nodes";
+import { EmbedBody, useTabEnv } from "./embeds";
+import { useOpenHere } from "./view-nodes";
 
 type SequenceNode = Extract<ViewNode, { type: "sequence" }>;
 
@@ -85,18 +84,5 @@ function ItemContent({ id, args, level }: { id: string; args?: unknown; level: n
   const q = useQuery((c) => (c.refs.embed ? c.refs.embed({ id, envId, args }) : Promise.resolve(null)), [id, envId, JSON.stringify(args ?? null)], [`resource:${id}`]);
   const e = q.data;
   if (!e) return <Text tone="muted">{q.error ? t("embed.failed") : t("common.loading")}</Text>;
-  const place = { refs: e.refs, envId, depth: 1, chain: [e.id] };
-  return (
-    <BlobScope.Provider value={e.id}>
-      {e.view
-        ? e.view.map((n, i) =>
-            n.type === "text" && n.format === "markdown" && !n.mono ? (
-              <RefMarkdown key={i} source={n.text} headingShift={level} refLabels={n.refLabels ?? undefined} {...place} />
-            ) : (
-              <ViewNodes key={i} nodes={[n]} />
-            ),
-          )
-        : e.description && <Text tone="muted">{e.description}</Text>}
-    </BlobScope.Provider>
-  );
+  return <EmbedBody e={e} args={args} headingShift={level} place={{ refs: e.refs, envId, depth: 1, chain: [e.id] }} />;
 }

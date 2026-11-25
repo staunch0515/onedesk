@@ -20,7 +20,8 @@ export default {
     host.kinds.handle("doc", {
       async embed(ctx, ask) {
         const b = ctx.resource.body;
-        if (b.mode === "form") return { view: [{ type: "form", id: "x", layout: "stack", fields: [] }] };
+        // D487 §19 (K11): a form in an embed may not write the resource (no `bind`).
+        if (b.mode === "form") return { view: [{ type: "form", id: "x", layout: "stack", fields: [{ name: "t", label: "T", kind: "text", bind: "body.t" }] }] };
         if (b.mode === "extra") return { view: [], other: 1 };
         let text = String(b.text || "");
         if (ask.section) {
@@ -158,7 +159,7 @@ async fn the_embedded_plugin_draws_its_section_in_the_tab_s_environment() {
     let e = c.ok("resource.embed", json!({ "id": card })).await;
     assert!(e.get("view").is_none(), "{e}");
     assert_eq!(e["description"], "A card");
-    // The view is read only and checked.
+    // The view writes nothing and is checked.
     for mode in ["form", "extra"] {
         let bad = create(&c, "test.docs:doc", json!({ "name": mode, "body.mode": mode })).await;
         let err = c.call("resource.embed", json!({ "id": bad })).await.unwrap_err();

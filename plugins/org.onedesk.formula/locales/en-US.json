@@ -33,5 +33,6 @@
   "error.notNumber": "“{value}” is not a number (parameter {name}).",
   "error.divZero": "Line {line}: division by zero.",
   "error.notFinite": "Line {line}: the result is not a number.",
-  "error.unknownParam": "There is no parameter {name}."
+  "error.unknownParam": "There is no parameter {name}.",
+  "action.compute": "Compute"
 }

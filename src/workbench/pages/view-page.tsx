@@ -548,7 +548,15 @@ export function ViewPage({ tab, descriptor: initial }: { tab: TabState; descript
                     onChange={(v) => actions.setDraft(tab.id, f.bind ?? f.name, v, values[f.bind ?? f.name])}
                   />
                 ) : (
-                  <FieldControl field={f} size="md" readOnly={readOnly} value={fieldValue(f)} secret={secretOf(f)} onChange={(v) => setBound(f.bind ?? f.name, v)} />
+                  // A page parameter (`param`) lives in the tab, in a stacked form as in a strip (D487 §19).
+                  <FieldControl
+                    field={f}
+                    size="md"
+                    readOnly={readOnly && !f.param}
+                    value={f.param ? (tab.params[f.name] ?? "") : fieldValue(f)}
+                    secret={secretOf(f)}
+                    onChange={(v) => (f.param ? setParam(f.name, v) : setBound(f.bind ?? f.name, v))}
+                  />
                 )}
               </FormField>
             ))}

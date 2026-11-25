@@ -1,0 +1,351 @@
+{
+  "id": "org.onedesk.exercise",
+  "version": "0.1.0",
+  "apiVersion": "2",
+  "name": "plugin.name",
+  "description": "plugin.description",
+  "icon": "graduation-cap",
+  "main": "main.js",
+  "author": "OneDesk",
+  "license": "MIT",
+  "requires": {
+    "files": false,
+    "resources": true
+  },
+  "uses": [
+    "onedesk.book/1"
+  ],
+  "implements": {
+    "onedesk.book/1": {
+      "actions": [
+        "roles",
+        "outline",
+        "entries"
+      ],
+      "kind": "practice",
+      "kinds": [
+        "question",
+        "test",
+        "lessons"
+      ]
+    }
+  },
+  "exports": {
+    "actions": [
+      "roles",
+      "outline",
+      "entries"
+    ]
+  },
+  "contributes": {
+    "trees": [
+      {
+        "id": "records",
+        "label": "tree.records",
+        "icon": "graduation-cap",
+        "source": "stored"
+      }
+    ],
+    "kinds": [
+      {
+        "id": "question",
+        "label": "kind.question",
+        "icon": "circle-help",
+        "tree": "resources",
+        "page": "question",
+        "newName": "kind.question.new",
+        "defaults": {
+          "type": "fill",
+          "stem": "",
+          "options": "",
+          "answers": "",
+          "rule": "number",
+          "points": 1,
+          "hint": "",
+          "explanation": "",
+          "difficulty": null
+        },
+        "draggable": true,
+        "accepts": [],
+        "embed": true,
+        "fields": {
+          "stem": {
+            "type": "longtext",
+            "refs": true
+          },
+          "explanation": {
+            "type": "longtext",
+            "refs": true
+          },
+          "hint": {
+            "type": "longtext",
+            "refs": true
+          }
+        }
+      },
+      {
+        "id": "practice",
+        "label": "kind.practice",
+        "icon": "pencil-line",
+        "tree": "resources",
+        "page": "practice",
+        "newName": "kind.practice.new",
+        "defaults": {},
+        "draggable": true,
+        "accepts": [
+          "question"
+        ],
+        "embed": true
+      },
+      {
+        "id": "test",
+        "label": "kind.test",
+        "icon": "clipboard-check",
+        "tree": "resources",
+        "page": "test",
+        "newName": "kind.test.new",
+        "defaults": {
+          "timing": "submit",
+          "tries": 0,
+          "keep": "best",
+          "limit": 0,
+          "editable": true,
+          "partial": false,
+          "items": []
+        },
+        "draggable": true,
+        "accepts": [
+          "question"
+        ],
+        "embed": true
+      },
+      {
+        "id": "lessons",
+        "label": "kind.lessons",
+        "icon": "list-checks",
+        "tree": "resources",
+        "page": "lessons",
+        "newName": "kind.lessons.new",
+        "defaults": {},
+        "draggable": true,
+        "accepts": [],
+        "embed": true
+      },
+      {
+        "id": "subject",
+        "label": "kind.subject",
+        "icon": "folder",
+        "tree": "records",
+        "page": "grades",
+        "newName": "kind.subject.new",
+        "defaults": {},
+        "draggable": true,
+        "accepts": [
+          "attempt"
+        ]
+      },
+      {
+        "id": "attempt",
+        "label": "kind.attempt",
+        "icon": "file-check",
+        "tree": "records",
+        "page": "attempt",
+        "newName": "kind.attempt.new",
+        "defaults": {},
+        "draggable": true,
+        "accepts": []
+      },
+      {
+        "id": "grades",
+        "label": "kind.grades",
+        "icon": "chart-column",
+        "tree": "records",
+        "page": "grades",
+        "newName": "kind.grades.new",
+        "defaults": {},
+        "draggable": true,
+        "accepts": []
+      },
+      {
+        "id": "mistakes",
+        "label": "kind.mistakes",
+        "icon": "notebook-pen",
+        "tree": "records",
+        "page": "mistakes",
+        "newName": "kind.mistakes.new",
+        "defaults": {},
+        "draggable": true,
+        "accepts": []
+      }
+    ],
+    "pages": [
+      {
+        "id": "question",
+        "recompute": true,
+        "actions": [
+          {
+            "id": "save",
+            "role": "save",
+            "label": "action.save",
+            "icon": "save",
+            "primary": true,
+            "shortcut": [
+              "Mod",
+              "S"
+            ]
+          }
+        ]
+      },
+      {
+        "id": "practice",
+        "actions": [
+          {
+            "id": "check",
+            "role": "event",
+            "label": "action.check",
+            "icon": "check"
+          },
+          {
+            "id": "again",
+            "role": "event",
+            "label": "action.again",
+            "icon": "rotate-ccw"
+          },
+          {
+            "id": "generate",
+            "role": "event",
+            "label": "action.generate",
+            "icon": "list-plus"
+          },
+          {
+            "id": "save",
+            "role": "save",
+            "label": "action.save",
+            "icon": "save",
+            "primary": true,
+            "shortcut": [
+              "Mod",
+              "S"
+            ]
+          }
+        ]
+      },
+      {
+        "id": "test",
+        "recompute": true,
+        "actions": [
+          {
+            "id": "start",
+            "role": "event",
+            "label": "action.start",
+            "icon": "play"
+          },
+          {
+            "id": "generate",
+            "role": "event",
+            "label": "action.generate",
+            "icon": "list-plus"
+          },
+          {
+            "id": "refer",
+            "role": "event",
+            "label": "action.refer",
+            "icon": "link"
+          },
+          {
+            "id": "save",
+            "role": "save",
+            "label": "action.save",
+            "icon": "save",
+            "primary": true,
+            "shortcut": [
+              "Mod",
+              "S"
+            ]
+          }
+        ]
+      },
+      {
+        "id": "attempt",
+        "recompute": true,
+        "actions": [
+          {
+            "id": "submit",
+            "role": "event",
+            "label": "action.submit",
+            "icon": "send"
+          },
+          {
+            "id": "save",
+            "role": "save",
+            "label": "action.save",
+            "icon": "save",
+            "primary": true,
+            "shortcut": [
+              "Mod",
+              "S"
+            ]
+          }
+        ]
+      },
+      {
+        "id": "grades",
+        "actions": []
+      },
+      {
+        "id": "mistakes",
+        "actions": [
+          {
+            "id": "retry",
+            "role": "event",
+            "label": "action.retry",
+            "icon": "rotate-ccw"
+          }
+        ]
+      },
+      {
+        "id": "lessons",
+        "actions": [
+          {
+            "id": "toggle",
+            "role": "event",
+            "label": "action.pages",
+            "icon": "book-open"
+          }
+        ]
+      }
+    ],
+    "actions": [
+      {
+        "id": "roles",
+        "label": "action.roles",
+        "output": "none"
+      },
+      {
+        "id": "outline",
+        "label": "action.outline",
+        "output": "none"
+      },
+      {
+        "id": "entries",
+        "label": "action.entries",
+        "output": "none"
+      }
+    ],
+    "menus": {
+      "new": [
+        "question",
+        "practice",
+        "test",
+        "lessons",
+        "grades",
+        "mistakes"
+      ]
+    },
+    "locales": {
+      "en-US": "locales/en-US.json",
+      "zh-CN": "locales/zh-CN.json",
+      "ja-JP": "locales/ja-JP.json"
+    }
+  }
+}

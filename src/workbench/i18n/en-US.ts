@@ -1030,6 +1030,8 @@ export const enUS = {
   "kernel.permission.resourcesAll": "Read the name, type and location (not the content) of everything in this workspace",
   "kernel.error.reason.refused|message": "{message}",
   "kernel.error.invalid.refused": "It cannot go there.",
+  "kernel.error.invalid.noEmbedAct": "This cannot be acted on here.",
+  "kernel.error.invalid.badParams": "The parameters are written wrongly.",
   "kernel.permission.contents": "Read what other resources show where they are embedded (their content)",
   "sequence.toc": "Contents",
   "sequence.previous": "Previous",

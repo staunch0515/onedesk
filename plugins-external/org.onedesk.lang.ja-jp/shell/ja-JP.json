@@ -1045,5 +1045,7 @@
   "refs.call": "呼び出し",
   "refs.callWith": "呼び出し {params}",
   "call.badParams": "パラメーターの書き方が違います",
-  "call.cannot": "これは計算できません"
+  "call.cannot": "これは計算できません",
+  "kernel.error.invalid.noEmbedAct": "ここではこの操作はできません。",
+  "kernel.error.invalid.badParams": "パラメーターの書き方が違います。"
 }

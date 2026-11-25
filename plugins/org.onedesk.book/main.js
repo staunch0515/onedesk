@@ -8,7 +8,7 @@ import { embedBook, onBookCreated, place, renderBook } from "./book.js";
 import { embedCover, renderCover } from "./cover.js";
 import { full, rolesData, split } from "./roles.js";
 import { embedText, outlineOf, renderText, TEXT_KINDS, toggleText } from "./text-page.js";
-import { bookOf, contentsOf, embedToc, entriesOf, exportBook, renderToc, settingsOf, tocEvent } from "./toc.js";
+import { bookOf, contentsOf, contentsOfBook, embedToc, entriesOf, exportBook, renderToc, settingsOf, tocEvent } from "./toc.js";
 import { citeLabels, embedReference, embedReferences, renderReference, renderReferences } from "./references.js";
 import { embedIndex, renderIndex } from "./index.js";
 import { embedFigures, renderFigures } from "./figures.js";
@@ -55,6 +55,13 @@ export default {
       return { output: NONE, data: TEXT_KINDS.includes(short) ? outlineOf(text) : { headings: [], figures: [] } };
     });
     host.actions.handle("entries", async (ctx, input) => {
+      // D487 §19: by book (`{ book }`, called with `{ plugin }`): numbered as this plugin numbers, for another contents.
+      if (input && typeof input.book === "string") {
+        const b = await ctx.host.resources.get(input.book);
+        if (!b || b.kind !== full("book")) return { output: NONE, data: { items: [] } };
+        const e = await contentsOfBook(ctx, b.id, input.roles);
+        return { output: NONE, data: { items: e.items, figures: e.figures, terms: e.terms, cites: e.cites.map(({ keys, notes, item }) => ({ keys, notes, item })) } };
+      }
       const toc = ctx.resource;
       const book = toc && toc.kind === full("toc") ? await bookOf(ctx, toc) : null;
       if (!book) return { output: NONE, data: { items: [] } };

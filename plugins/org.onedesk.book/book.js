@@ -65,7 +65,13 @@ export async function renderBook(ctx) {
   if (!book || !book.id) return { view: [{ type: "text", id: "unsaved", text: say(ctx, "book.unsaved"), tone: "muted" }] };
   const pages = await topPages(ctx, book.id);
   const cover = pages.find((n) => n.kind === COVER);
-  const toc = pages.find((n) => n.kind === TOC_KIND);
+  // Whichever page plays the contents (this plugin's, or another's such as a textbook's).
+  const role = roleFinder(ctx);
+  let toc = null;
+  for (const n of pages) if ((await role(n.kind)).role === "toc") {
+    toc = n;
+    break;
+  }
   const view = [];
   if (toc) {
     const pos = await ctx.host.storage.get(`pos:${toc.id}`);

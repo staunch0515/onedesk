@@ -1045,5 +1045,7 @@
   "refs.call": "调用",
   "refs.callWith": "调用 {params}",
   "call.badParams": "参数写错了",
-  "call.cannot": "它不能计算"
+  "call.cannot": "它不能计算",
+  "kernel.error.invalid.noEmbedAct": "这里不能这样操作。",
+  "kernel.error.invalid.badParams": "参数写错了。"
 }

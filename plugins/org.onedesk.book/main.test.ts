@@ -386,6 +386,28 @@ describe("the interface and the manifest (D487 §13.6, §13.7)", () => {
     expect(e[1]).toMatchObject({ title: "第一章 秒的认识", level: 2 });
   });
 
+  it("D487 §19: entries by book, with the caller's roles told along (not asked back)", async () => {
+    let asked = 0;
+    const w = world(
+      [
+        ["bk", k("book"), "书", null],
+        ["ls", "x.ex:lessons", "课本目录", "bk"],
+        ["p", "x.ex:practice", "练一练", "bk"],
+        ["q", "x.ex:question", "题", "p"],
+      ],
+      { implementers: { "x.ex": { roles: () => { asked++; return { kinds: [] }; } } } },
+    );
+    const { actions } = registry(plugin);
+    const roles = { "x.ex": [{ kind: "lessons", role: "toc", part: "none" }, { kind: "practice", role: "practice", part: "body", container: false }, { kind: "question", role: "question", part: "none" }] };
+    const e = (await actions.entries(w.ctx(null), { book: "bk", roles })).data.items;
+    expect(e.map((x: any) => x.title)).toEqual(["第一章 练一练"]);
+    expect(asked).toBe(0);
+    expect((await actions.entries(w.ctx(null), { book: "nope" })).data.items).toEqual([]);
+    // Opening the book goes to whichever page plays the contents.
+    const page = await registry(plugin).pages.book.render({ ...w.ctx("bk"), host: { ...w.host, interfaces: { list: async () => [{ plugin: "x.ex" }], call: async () => ({ data: roles["x.ex"] ? { kinds: roles["x.ex"] } : {} }) } } });
+    expect(page.view[0]).toMatchObject({ type: "link", target: "resource:ls" });
+  });
+
   it("eleven kinds; the book binds and places; the contents exports; every key in every language", () => {
     const kinds = manifest.contributes.kinds.map((x: any) => x.id);
     expect(kinds).toEqual(["book", "cover", "toc", "preface", "page", "afterword", "appendix", "references", "reference", "index", "figures"]);

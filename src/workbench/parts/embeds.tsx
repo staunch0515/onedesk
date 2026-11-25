@@ -1,7 +1,7 @@
-import { useCallback } from "react";
-import { EmbedBlock, MarkdownText, Text, type CallValue, type ReferenceState } from "../../design";
+import { useCallback, useEffect, useState } from "react";
+import { Button, Checkbox, EmbedBlock, FormField, Input, MarkdownText, MultiSelect, Pane, Select, Text, Textarea, useToast, type CallValue, type ReferenceState } from "../../design";
 import { useI18n } from "../i18n";
-import type { RefInfo } from "../protocol";
+import type { EmbedResult, RefInfo, ViewField, ViewNode } from "../protocol";
 import { useQuery, useUi, useWorkbench } from "../state/context";
 import { useOpenHere, ViewNodes } from "./view-nodes";
 import { BlobScope, useBlobUrl, useImageLabels } from "./blobs";
@@ -130,14 +130,7 @@ export function Embed({ text, refs, envId, depth, chain }: Place & { text: strin
       place={e.path.length > 0 ? e.path.join(" › ") : undefined}
       note={e.badParams ? t("call.badParams") : e.sectionMissing ? t("embed.sectionMissing", { section: section ?? "" }) : undefined}
     >
-      {/* D484 §16: images inside are read for the embedded resource. */}
-      <BlobScope.Provider value={e.id}>
-        {e.view
-          ? e.view.map((n, i) =>
-              n.type === "text" && n.format === "markdown" && !n.mono ? <RefMarkdown key={i} source={n.text} refLabels={n.refLabels ?? undefined} {...inner} /> : <ViewNodes key={i} nodes={[n]} />,
-            )
-          : e.description && <Text tone="muted">{e.description}</Text>}
-      </BlobScope.Provider>
+      <EmbedBody e={e} section={section} params={params} place={inner} />
     </EmbedBlock>
   );
 }
@@ -148,4 +141,95 @@ export function useTabEnv(): string | null {
     const tab = s.tabs.find((x) => x.id === s.activeTabId);
     return tab?.usesEnv ? (tab.envId ?? null) : null;
   });
+}
+
+/**
+ * What an embedded resource shows (D481), and (D487 §19, K11) its forms and buttons: the fields' values stay with this
+ * embed; a button sends `resource.embedAct` and the answer replaces the view. Images inside are read for the embedded
+ * resource (D484 §16).
+ */
+export function EmbedBody({ e, section, params, args, place, headingShift }: { e: EmbedResult; section?: string; params?: string; args?: unknown; place: Place; headingShift?: number }) {
+  const { client } = useWorkbench();
+  const { tx } = useI18n();
+  const { toast } = useToast();
+  const [shown, setShown] = useState<{ view: EmbedResult["view"]; actions: EmbedResult["actions"] }>({ view: e.view, actions: e.actions });
+  const [values, setValues] = useState<Record<string, string>>(e.values ?? {});
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    setShown({ view: e.view, actions: e.actions });
+    setValues(e.values ?? {});
+  }, [e]);
+  const act = async (action: string) => {
+    if (!client.refs.embedAct) return;
+    setBusy(true);
+    try {
+      const r = await client.refs.embedAct({ id: e.id, section, params, args, envId: place.envId, action, values });
+      if (r.view) setShown({ view: r.view, actions: r.actions ?? undefined });
+      else if (r.actions) setShown((s) => ({ ...s, actions: r.actions }));
+      if (r.values) setValues(r.values);
+      if (r.message) toast({ tone: "neutral", title: tx(r.message) });
+    } catch {
+      toast({ tone: "danger", title: tx({ "en-US": "?" }) });
+    } finally {
+      setBusy(false);
+    }
+  };
+  const set = (name: string, v: string) => setValues((x) => ({ ...x, [name]: v }));
+  return (
+    <BlobScope.Provider value={e.id}>
+      {shown.view
+        ? shown.view.map((n, i) =>
+            n.type === "text" && n.format === "markdown" && !n.mono ? (
+              <RefMarkdown key={i} source={n.text} headingShift={headingShift} refLabels={n.refLabels ?? undefined} {...place} />
+            ) : n.type === "form" ? (
+              <EmbedForm key={i} node={n} values={values} onChange={set} />
+            ) : (
+              <ViewNodes key={i} nodes={[n]} />
+            ),
+          )
+        : e.description && <Text tone="muted">{e.description}</Text>}
+      {shown.actions && shown.actions.length > 0 && (
+        <Pane direction="row" gap="xs" justify="end">
+          {shown.actions.map((a) => (
+            <Button key={a.id} size="sm" icon={a.icon ?? undefined} disabled={busy} onClick={() => void act(a.id)}>
+              {tx(a.label)}
+            </Button>
+          ))}
+        </Pane>
+      )}
+    </BlobScope.Provider>
+  );
+}
+
+/** D487 §19 (K11): a form inside an embed — bound to nothing; its values are the embed's. */
+function EmbedForm({ node, values, onChange }: { node: Extract<ViewNode, { type: "form" }>; values: Record<string, string>; onChange: (name: string, v: string) => void }) {
+  const { tx } = useI18n();
+  return (
+    <Pane direction={node.layout === "strip" ? "row" : "column"} gap="sm" wrap align={node.layout === "strip" ? "end" : undefined}>
+      {node.label && <Text tone="muted">{tx(node.label)}</Text>}
+      {node.fields.map((f) => (
+        <FormField key={f.name} label={tx(f.label)} description={f.hint ? tx(f.hint) : undefined}>
+          <EmbedControl field={f} value={values[f.name] ?? ""} onChange={(v) => onChange(f.name, v)} />
+        </FormField>
+      ))}
+    </Pane>
+  );
+}
+
+function EmbedControl({ field: f, value, onChange }: { field: ViewField; value: string; onChange: (v: string) => void }) {
+  const { tx } = useI18n();
+  const disabled = f.readOnly ?? false;
+  const options = (f.options ?? []).map((o) => ({ value: o.value, label: tx(o.label) }));
+  switch (f.kind) {
+    case "enum":
+      return <Select size="sm" options={options} value={value || undefined} onValueChange={onChange} disabled={disabled} placeholder={f.placeholder ? tx(f.placeholder) : undefined} aria-label={tx(f.label)} />;
+    case "multi":
+      return <MultiSelect size="sm" options={options} value={value ? value.split(",") : []} onValueChange={(v) => onChange(v.join(","))} disabled={disabled} aria-label={tx(f.label)} />;
+    case "boolean":
+      return <Checkbox checked={value === "true"} onCheckedChange={(c) => onChange(c ? "true" : "false")} disabled={disabled} aria-label={tx(f.label)} />;
+    case "longtext":
+      return <Textarea value={value} onChange={(ev) => onChange(ev.target.value)} disabled={disabled} placeholder={f.placeholder ? tx(f.placeholder) : undefined} aria-label={tx(f.label)} />;
+    default:
+      return <Input size="sm" value={value} onChange={(ev) => onChange(ev.target.value)} disabled={disabled} placeholder={f.placeholder ? tx(f.placeholder) : undefined} aria-label={tx(f.label)} />;
+  }
 }

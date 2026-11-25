@@ -19,7 +19,7 @@ use crate::store::{self, Row, KIND_CONFIG, KIND_ENV, KIND_GROUP, TREE_PLUGIN_STA
 use crate::util::*;
 
 pub const METHODS: &[&str] =
-    &[M::REFS_OUTGOING, M::REFS_INCOMING, M::RESOURCE_EMBED, M::REFS_SUGGEST, M::REFS_REWRITE, M::PARAMS_KNOWN, M::WORKSPACE_EXPORT, M::WORKSPACE_IMPORT_PREVIEW, M::WORKSPACE_IMPORT, M::RUN_EXPORT];
+    &[M::REFS_OUTGOING, M::REFS_INCOMING, M::RESOURCE_EMBED, M::RESOURCE_EMBED_ACT, M::REFS_SUGGEST, M::REFS_REWRITE, M::PARAMS_KNOWN, M::WORKSPACE_EXPORT, M::WORKSPACE_IMPORT_PREVIEW, M::WORKSPACE_IMPORT, M::RUN_EXPORT];
 
 pub const EXPORT_FORMAT: &str = "onedesk-export";
 pub const EXPORT_VERSION: u32 = 1;
@@ -412,6 +412,8 @@ pub const MAX_EMBED_ARGS: usize = 4 * 1024;
 /// D487 §17 (K3): the longest inline answer, and how many results are kept.
 pub const MAX_INLINE_TEXT: usize = 200;
 pub const EMBED_CACHE_SIZE: usize = 1000;
+/// D487 §19 (K11): buttons one embedded view may have.
+pub const MAX_EMBED_ACTIONS: usize = 4;
 
 /// D487 §17: results of calls, kept by everything they depend on; the oldest go first.
 #[derive(Default)]
@@ -476,6 +478,10 @@ impl Inner {
             },
             M::RESOURCE_EMBED => match parse::<ResourceEmbedParams>(params) {
                 Ok(p) => self.resource_embed(p).await.and_then(to_value),
+                Err(e) => Err(e),
+            },
+            M::RESOURCE_EMBED_ACT => match parse::<ResourceEmbedActParams>(params) {
+                Ok(p) => self.resource_embed_act(p).await.and_then(to_value),
                 Err(e) => Err(e),
             },
             M::PARAMS_KNOWN => to_value(crate::policy::known()),
@@ -577,6 +583,8 @@ impl Inner {
             error: None,
             bad_params: None,
             args: None,
+            actions: None,
+            values: None,
         };
         // D487 §17 (K3): the parameters written after `|`, environment values filled in; given to the kind as `args`.
         let mut call_args: Option<serde_json::Map<String, Value>> = match &p.args {
@@ -625,6 +633,11 @@ impl Inner {
             view: Vec<ViewNode>,
             #[serde(default, rename = "sectionMissing")]
             section_missing: bool,
+            /// D487 §19 (K11).
+            #[serde(default)]
+            actions: Option<Vec<TableRowAction>>,
+            #[serde(default)]
+            values: Option<std::collections::BTreeMap<String, String>>,
         }
         // D487 §13 (K-e): the caller's arguments go to the kind as they are.
         if p.args.as_ref().is_some_and(|a| crate::runs::json_size(a) > MAX_EMBED_ARGS) {
@@ -666,17 +679,104 @@ impl Inner {
             return Err(bad("too large".into()));
         }
         let mut answer: EmbedOut = serde_json::from_value(raw).map_err(|e| bad(e.to_string()))?;
-        // D487 §13: a sequence too (a part of a book shown where it is embedded).
-        if answer.view.iter().any(|n| !matches!(n, ViewNode::Text { .. } | ViewNode::Table { .. } | ViewNode::Link { .. } | ViewNode::Image { .. } | ViewNode::Sequence { .. })) {
-            return Err(bad("only text, table, link, image and sequence nodes".into()));
-        }
+        self.check_embed_view(plugin, &row.id, &mut answer.view, answer.actions.as_deref()).map_err(bad)?;
         self.check_tables(plugin, Some(&row.id), &mut answer.view)?;
+        out.actions = answer.actions.filter(|a| !a.is_empty());
+        out.values = answer.values.filter(|v| !v.is_empty());
         out.view = Some(answer.view);
         out.section_missing = answer.section_missing.then_some(true);
         if let Some(k) = key {
             self.embed_cache.lock().unwrap().put(k, out.clone());
         }
         Ok(out)
+    }
+
+    /// D487 §13, §19: what an embedded view may hold — text, tables, links, images, sequences, and (K11) forms whose
+    /// fields are bound to nothing (their values stay with the embed); at most `MAX_EMBED_ACTIONS` buttons.
+    fn check_embed_view(&self, _plugin: &crate::manifest::Plugin, _id: &str, view: &mut [ViewNode], actions: Option<&[TableRowAction]>) -> Result<(), String> {
+        for n in view.iter() {
+            match n {
+                ViewNode::Text { .. } | ViewNode::Table { .. } | ViewNode::Link { .. } | ViewNode::Image { .. } | ViewNode::Sequence { .. } => {}
+                ViewNode::Form { fields, .. } => {
+                    if fields.iter().any(|f| f.bind.is_some()) {
+                        return Err("a form in an embedded view binds nothing".into());
+                    }
+                }
+                _ => return Err("only text, table, link, image, sequence and form nodes".into()),
+            }
+        }
+        if let Some(a) = actions {
+            if a.len() > MAX_EMBED_ACTIONS || a.iter().any(|x| x.id.is_empty()) {
+                return Err(format!("at most {MAX_EMBED_ACTIONS} buttons, each with an id"));
+            }
+        }
+        Ok(())
+    }
+
+    /// D487 §19 (K11) `resource.embedAct`: the reader clicked a button inside an embedded view. The kind's
+    /// `embedAct(ctx, { section, args, action, values })` answers `{ view?, actions?, message? }`; as a user's act, it may
+    /// write the plugin's own resources (audited as the plugin), as a page event may.
+    pub async fn resource_embed_act(&self, p: ResourceEmbedActParams) -> KResult<EmbedActResult> {
+        let row = self.visible_row(&p.id)?;
+        if row.deleted_at.is_some() || !crate::refs::referenceable(&row) {
+            return Err(not_found("resource"));
+        }
+        if p.action.is_empty() || p.values.len() > 200 || p.values.values().any(|v| v.chars().count() > 20_000) {
+            return Err(invalid_params("action and values"));
+        }
+        let Some((plugin, kind)) = self.registry.kind_at(&row.kind, row.plugin_version.as_deref()) else { return Err(invalid("noEmbedAct")) };
+        if !kind.embed || !self.plugin_enabled(&plugin.id) {
+            return Err(invalid("noEmbedAct"));
+        }
+        let mut call_args: Option<serde_json::Map<String, Value>> = match &p.args {
+            Some(Value::Object(m)) => Some(m.clone()),
+            _ => None,
+        };
+        if let Some(raw) = p.params.as_deref().filter(|r| !r.trim().is_empty()) {
+            let list = crate::refs::read_params(raw).ok_or_else(|| invalid("badParams"))?;
+            let m = call_args.get_or_insert_with(Default::default);
+            for (name, value) in list {
+                let v = self.fill_env(p.env_id.as_deref(), &value)?;
+                m.insert(name, Value::String(v));
+            }
+        }
+        let resource = serde_json::to_value(self.resource(&row)?).map_err(internal)?;
+        let resource = crate::deps::without_secrets(resource, &self.secret_fields(&row.kind, row.plugin_version.as_deref()));
+        let ctx = json!({ "resource": resource, "envId": p.env_id, "locale": p.locale, "params": {} });
+        let info = crate::sandbox::CallInfo { env_id: p.env_id.clone(), resource_id: Some(row.id.clone()), page_event: true, ..Default::default() };
+        let ask = json!({ "section": p.section, "args": call_args.map(Value::Object), "action": p.action, "values": p.values });
+        let bad = |why: String| {
+            let mut e = err_p(ErrorCode::PluginError, &[("reason", "badOutput"), ("plugin", &plugin.id)]);
+            e.detail = Some(format!("embedAct: {why}"));
+            e
+        };
+        let raw = self.call_version(plugin, "kinds", &kind.id, "embedAct", json!([ctx, ask]), info, None, None).await.map_err(|e| e.to_protocol())?;
+        if raw.is_null() {
+            return Ok(EmbedActResult::default());
+        }
+        if serde_json::to_vec(&raw).map(|v| v.len()).unwrap_or(usize::MAX) > MAX_EMBED_BYTES {
+            return Err(bad("too large".into()));
+        }
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct ActOut {
+            #[serde(default)]
+            view: Option<Vec<ViewNode>>,
+            #[serde(default)]
+            actions: Option<Vec<TableRowAction>>,
+            #[serde(default)]
+            values: Option<std::collections::BTreeMap<String, String>>,
+            #[serde(default)]
+            message: Option<Label>,
+        }
+        let mut answer: ActOut = serde_json::from_value(raw).map_err(|e| bad(e.to_string()))?;
+        if let Some(v) = answer.view.as_mut() {
+            self.check_embed_view(plugin, &row.id, v, answer.actions.as_deref()).map_err(bad)?;
+            self.check_tables(plugin, Some(&row.id), v)?;
+        } else if let Some(a) = answer.actions.as_deref() {
+            self.check_embed_view(plugin, &row.id, &mut [], Some(a)).map_err(bad)?;
+        }
+        Ok(EmbedActResult { view: answer.view, actions: answer.actions, values: answer.values, message: answer.message })
     }
 
     /// D482 `refs.suggest`: resources whose name holds `text` (its name part; a path narrows them down), exact names

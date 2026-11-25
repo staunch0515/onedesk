@@ -46,10 +46,26 @@ export default {
       },
     });
     host.kinds.handle("card", {
+      async embedAct(ctx, ask) {
+        if (ask.action === "go") {
+          const made = await ctx.host.resources.create({ kind: "card", name: "made " + ask.values.x });
+          return { view: [{ type: "text", id: "t", text: "got " + ask.values.x + " " + JSON.stringify(ask.args) }], message: { "en-US": "saved " + made.name } };
+        }
+        if (ask.action === "foreign") {
+          try { await ctx.host.resources.update(ask.values.id, { "body.x": 1 }); return { view: [] }; } catch (e) { return { message: { "en-US": e.code + "/" + (e.params || {}).reason } }; }
+        }
+        if (ask.action === "bad") return { view: [{ type: "conversation", id: "c", turns: [] }] };
+        if (ask.action === "none") return undefined;
+        return { message: { "en-US": "?" } };
+      },
       async embed(ctx, ask) {
         // D487 §17: counts how often it is really asked (calls are kept a while).
         const n = ((await ctx.host.storage.get("asked")) || 0) + 1;
         await ctx.host.storage.set("asked", n);
+        // D487 §19 (K11): a form and buttons inside the embed.
+        if (ask.args && ask.args.mode === "form") return { view: [{ type: "form", id: "f", layout: "strip", fields: [{ name: "x", label: "X", kind: "text" }] }], actions: [{ id: "go", label: "Go" }] };
+        if (ask.args && ask.args.mode === "bound") return { view: [{ type: "form", id: "f", layout: "strip", fields: [{ name: "x", label: "X", kind: "text", bind: "body.x" }] }] };
+        if (ask.args && ask.args.mode === "buttons") return { view: [], actions: [1, 2, 3, 4, 5].map((i) => ({ id: "a" + i, label: "a" })) };
         if (ask.inline) {
           const a = ask.args || {};
           if (a.mode === "long") return { text: "x".repeat(201) };
@@ -493,4 +509,35 @@ async fn calls_read_their_parameters_fill_the_environment_answer_inline_and_are_
     // Plugins call too (exporting writes results).
     let r = c.probe("test.binder", "resources.embed", json!([calc, { "params": "C=1", "inline": true }])).await;
     assert!(r["ok"]["text"].as_str().unwrap().starts_with("C=1"), "{r}");
+}
+
+/* ------------------------------------------------------------------ K11 (D487 §19) */
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_embedded_view_may_hold_a_form_and_buttons_and_the_kind_answers_the_readers_act() {
+    let (_env, c) = world().await;
+    let card = create(&c, "test.binder:card", None, json!({ "name": "Card" })).await;
+    let e = c.ok("resource.embed", json!({ "id": card, "args": { "mode": "form" } })).await;
+    assert_eq!(e["view"][0]["type"], "form", "{e}");
+    assert_eq!(e["actions"][0]["id"], "go");
+    // A form in an embed binds nothing; at most four buttons.
+    for mode in ["bound", "buttons"] {
+        let err = c.call("resource.embed", json!({ "id": card, "args": { "mode": mode } })).await.unwrap_err();
+        assert_eq!(err.code, ErrorCode::PluginError, "{mode}");
+    }
+    // The act: values and arguments reach the kind; it writes its own resources (audited as the plugin).
+    let r = c.ok("resource.embedAct", json!({ "id": card, "args": { "mode": "form" }, "params": "q=1", "action": "go", "values": { "x": "7" } })).await;
+    assert!(r["view"][0]["text"].as_str().unwrap().starts_with("got 7 "), "{r}");
+    assert!(r["view"][0]["text"].as_str().unwrap().contains("\"q\":\"1\""));
+    assert_eq!(r["message"]["en-US"], "saved made 7");
+    let audit = c.ok("audit.list", json!({ "operation": "resource.create" })).await.to_string();
+    assert!(audit.contains("plugin:test.binder"), "{audit}");
+    // Not another plugin's resources.
+    let stone = create(&c, "test.part:stone", None, json!({ "name": "S" })).await;
+    let r = c.ok("resource.embedAct", json!({ "id": card, "action": "foreign", "values": { "id": stone } })).await;
+    assert_eq!(r["message"]["en-US"], "denied/foreignKind");
+    // A broken answer; no answer; a kind without an embed view.
+    assert_eq!(c.call("resource.embedAct", json!({ "id": card, "action": "bad" })).await.unwrap_err().code, ErrorCode::PluginError);
+    assert_eq!(c.ok("resource.embedAct", json!({ "id": card, "action": "none" })).await, json!({}));
+    assert_eq!(c.call("resource.embedAct", json!({ "id": stone, "action": "go" })).await.unwrap_err().code, ErrorCode::Invalid);
 }

@@ -316,6 +316,11 @@ const BOOTSTRAP: &str = r#"
           e.code = "denied";
           throw e;
         }
+        if (kind === "kinds" && h && h.embedAct !== undefined && !declared.kind_embed.includes(name)) {
+          const e = new Error("undeclared embedAct of kind: " + name);
+          e.code = "denied";
+          throw e;
+        }
         if (kind === "kinds" && h && h.place !== undefined && !declared.kind_place.includes(name)) {
           const e = new Error("undeclared place of kind: " + name);
           e.code = "denied";
@@ -551,7 +556,7 @@ const BOOTSTRAP: &str = r#"
     try {
       // `kinds.migrate` takes (body, fromVersion, ctx), as the manifest documentation writes it;
       // everything else, `kinds.children`, `kinds.drop`, `kinds.embed` and `kinds.place` included, takes ctx first.
-      const out = kind === "kinds" && fn !== "children" && fn !== "drop" && fn !== "embed" && fn !== "place" ? await f.call(h, ...args.slice(1), ctx) : await f.call(h, ctx, ...args.slice(1));
+      const out = kind === "kinds" && fn !== "children" && fn !== "drop" && fn !== "embed" && fn !== "embedAct" && fn !== "place" ? await f.call(h, ...args.slice(1), ctx) : await f.call(h, ctx, ...args.slice(1));
       return JSON.stringify({ ok: out === undefined ? null : out });
     } catch (e) {
       // A host error the handler did not catch keeps its code.

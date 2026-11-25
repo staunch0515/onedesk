@@ -229,6 +229,8 @@ export const KERNEL_ERRORS: Table = {
   "reason.readonly|layerName": "kernel.error.reason.readonly|layerName",
   "reason.refused|message": "kernel.error.reason.refused|message",
   "invalid.refused": "kernel.error.invalid.refused",
+  "invalid.noEmbedAct": "kernel.error.invalid.noEmbedAct",
+  "invalid.badParams": "kernel.error.invalid.badParams",
   "reason.noExport|layerName": "kernel.error.reason.noExport|layerName",
   "reason.notExport": "kernel.error.reason.notExport",
   "reason.badVersion": "kernel.error.reason.badVersion",

@@ -33,5 +33,6 @@
   "error.notNumber": "「{value}」は数値ではありません（パラメーター {name}）",
   "error.divZero": "{line} 行目：ゼロで割っています",
   "error.notFinite": "{line} 行目：結果が数値ではありません",
-  "error.unknownParam": "パラメーター {name} はありません"
+  "error.unknownParam": "パラメーター {name} はありません",
+  "action.compute": "計算"
 }

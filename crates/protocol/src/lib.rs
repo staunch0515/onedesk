@@ -2200,6 +2200,8 @@ pub mod method5 {
     pub const RUN_EXPORT: &str = "run.export";
     /// D481: `ResourceEmbedParams` → `EmbedResult`: what a resource shows where another embeds it (`![[name]]`).
     pub const RESOURCE_EMBED: &str = "resource.embed";
+    /// D487 §19 (K11): `ResourceEmbedActParams` → `EmbedActResult`: a button inside an embedded view was clicked.
+    pub const RESOURCE_EMBED_ACT: &str = "resource.embedAct";
     /// D484 §16: `BlobPutParams` → `BlobInfo`: stores a file (an image) by its content. The user's only (never a plugin).
     pub const BLOB_PUT: &str = "blob.put";
     /// D484 §16: `BlobReadParams` → `BlobData`: a stored file, for a resource that uses it or one this client just put.
@@ -2348,6 +2350,42 @@ pub struct EmbedResult {
     pub bad_params: Option<bool>,
     /// D487 §17 (K3): the parameters as read, environment values filled in (name → value).
     pub args: Option<std::collections::BTreeMap<String, String>>,
+    /// D487 §19 (K11): buttons under the embedded view; clicking one sends `resource.embedAct`.
+    pub actions: Option<Vec<TableRowAction>>,
+    /// D487 §19 (K11): the starting values of the view's form fields (name → text).
+    pub values: Option<std::collections::BTreeMap<String, String>>,
+}
+
+/// D487 §19 (K11): the reader acted inside an embedded view — clicked one of its buttons. `values` are the fields of the
+/// view's forms as the reader left them (name → text). The rest says which embed it is, as for `resource.embed`.
+#[skip_serializing_none]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, optional_fields)]
+pub struct ResourceEmbedActParams {
+    pub id: String,
+    pub section: Option<String>,
+    pub params: Option<String>,
+    #[ts(type = "unknown")]
+    pub args: Option<Value>,
+    pub env_id: Option<String>,
+    pub locale: Option<String>,
+    pub action: String,
+    #[serde(default)]
+    pub values: std::collections::BTreeMap<String, String>,
+}
+
+/// D487 §19 (K11): what the embedded view becomes after the reader's action (absent: unchanged), its buttons, and a
+/// message to show.
+#[skip_serializing_none]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, optional_fields)]
+pub struct EmbedActResult {
+    pub view: Option<Vec<ViewNode>>,
+    pub actions: Option<Vec<TableRowAction>>,
+    pub values: Option<std::collections::BTreeMap<String, String>>,
+    pub message: Option<Label>,
 }
 
 /// `refs.outgoing` / `refs.incoming`: the resource whose references are asked for.

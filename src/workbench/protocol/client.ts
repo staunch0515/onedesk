@@ -1,5 +1,6 @@
 import type {
   AssistProvider,
+  EmbedActResult,
   EmbedResult,
   RefSuggestion,
   BlobInfo,
@@ -135,6 +136,8 @@ export interface ProtocolClient {
     incoming(id: string): Promise<RefInfo[]>;
     /** D481: what a resource shows where another embeds it (`![[name#section]]`), in the tab's environment. Absent in the demo. */
     embed?(params: { id: string; section?: string; envId?: string | null; args?: unknown; params?: string; inline?: boolean }): Promise<EmbedResult>;
+    /** D487 §19 (K11): a button inside an embedded view was clicked (absent in the demo). */
+    embedAct?(params: { id: string; section?: string; envId?: string | null; args?: unknown; params?: string; action: string; values: Record<string, string> }): Promise<EmbedActResult>;
     /** D482: candidates while typing `[[…` (absent in the demo). */
     suggest?(text: string, limit?: number): Promise<RefSuggestion[]>;
     /** D482: writes one reference again so that it means only its target (an ordinary, undoable write). */

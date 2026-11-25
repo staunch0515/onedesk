@@ -68,8 +68,9 @@ export function normalize(r) {
  * A role lookup for one piece of work (one page drawn, one placement): other plugins are asked once each, and only
  * those that implement the interface.
  */
-export function roleFinder(ctx) {
-  const tables = new Map();
+export function roleFinder(ctx, seed) {
+  // `seed`: roles a caller told along with its call (`{ plugin: kinds[] }`) — not asked back (no call cycle).
+  const tables = new Map(Object.entries(seed && typeof seed === "object" ? seed : {}).filter(([, v]) => Array.isArray(v)));
   let implementers = null;
   return async (kind) => {
     const [plugin, short] = split(kind);

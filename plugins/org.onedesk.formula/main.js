@@ -111,18 +111,44 @@ export async function embedFormula(ctx, ask) {
   const a = analyze(b.text);
   if (a.error) return { view: [{ type: "text", id: "error", text: errorText(ctx, a.error), tone: "danger" }] };
   const view = [{ type: "text", id: "formula", text: shown(ctx, b, a), format: "markdown" }];
-  if (!calls) return { view };
-  if (r.error) {
-    view.push({ type: "text", id: "error", text: errorText(ctx, r.error), tone: "danger" });
-    return { view };
-  }
+  if (calls) view.push(worked(ctx, b, r));
+  return withTry(ctx, a, view, r.values || {});
+}
+
+/** The worked result of a call, or what went wrong. */
+function worked(ctx, b, r) {
+  if (r.error) return { type: "text", id: "worked", text: errorText(ctx, r.error), tone: "danger" };
   const lines = [say(ctx, "given")];
-  for (const p of a.params) lines.push(`- ${p} = ${str(r.values[p])}${unitText(b[`param.${p}.unit`])}`);
+  for (const p of r.a.params) lines.push(`- ${p} = ${str(r.values[p])}${unitText(b[`param.${p}.unit`])}`);
   const steps = r.out.steps;
   for (let i = 0; i < steps.length - 1; i++) lines.push(`- ${steps[i].name} = ${format(steps[i].value, decimalsOf(b))}`);
   lines.push("", `**${r.a.result} = ${format(r.out.result, decimalsOf(b))}${unitText(b.unit)}**`);
-  view.push({ type: "text", id: "worked", text: lines.join("\n"), format: "markdown" });
-  return { view };
+  return { type: "text", id: "worked", text: lines.join("\n"), format: "markdown" };
+}
+
+/**
+ * D487 §19 (K11): where it is embedded, the reader can try other values — one box per parameter and “Compute” —
+ * without saving anything.
+ */
+function withTry(ctx, a, view, values) {
+  if (a.params.length === 0) return { view };
+  view.push({ type: "form", id: "try", layout: "strip", fields: a.params.map((p) => ({ name: p, label: p, kind: "text" })) });
+  const start = {};
+  for (const p of a.params) if (typeof values[p] === "string") start[p] = values[p];
+  return { view, actions: [{ id: "compute", label: ctx.t("action.compute"), icon: "calculator" }], values: start };
+}
+
+/** “Compute” inside an embed: the formula worked out with the values typed there. */
+export async function actFormula(ctx, ask) {
+  if (!ask || ask.action !== "compute") return { message: ctx.t("action.compute") };
+  const b = (ctx.resource && ctx.resource.body) || {};
+  const typed = {};
+  for (const [k, v] of Object.entries(ask.values || {})) if (typeof v === "string" && v.trim()) typed[k] = v;
+  const a = analyze(b.text);
+  if (a.error) return { view: [{ type: "text", id: "error", text: errorText(ctx, a.error), tone: "danger" }] };
+  const r = await run(ctx, b, typed);
+  const view = [{ type: "text", id: "formula", text: shown(ctx, b, a), format: "markdown" }, worked(ctx, b, r.error ? r : r)];
+  return withTry(ctx, a, view, Object.assign({}, r.values || {}, ask.values || {}));
 }
 
 /** The page: the formula; the result's unit and places; each parameter found in it; trying values out. */
@@ -184,7 +210,7 @@ export async function renderFormula(ctx) {
 
 export default {
   activate(host) {
-    host.kinds.handle("formula", { embed: embedFormula });
+    host.kinds.handle("formula", { embed: embedFormula, embedAct: actFormula });
     host.pages.handle("formula", { render: renderFormula });
     // `onedesk.book/1`: placed in a book, a formula is a calculation page — in the body, numbered by depth.
     host.actions.handle("roles", async () => ({
