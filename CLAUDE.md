@@ -6,7 +6,7 @@ OneDesk 是个人和企业日常工作的统一桌面入口：一个“内核 + 
 
 Tauri 2（Rust stable）· React 19 · TypeScript 7 · Vite 8 · SQLite（rusqlite）· rquickjs（插件沙箱）· ts-rs（协议类型生成）· Radix UI + 自有 CSS token · lucide 图标 · vitest · Playwright。仅 macOS 11.3+。包管理 pnpm，Node 22（`.nvmrc`）。
 
-设计在 `docs/redesign/`（内核 `kernel-design.md`、计划 `dev-plan.md`、AI 辅助 `ai-assist.md`）；协议约定见 `docs/handoff/week1-protocol.md`。插件开发、测试、打包、验收见 `docs/plugins/`。第二十一轮之前的交接、验收记录、截图和技术小样已清理，需要时看标签 `v0-r21-before-cleanup`。
+设计在 `docs/redesign/`（内核 `kernel-design.md`、计划 `dev-plan.md`、AI 辅助 `ai-assist.md`、书 `book.md`）；**书相关的开发必须严格遵守 `book.md` §0：书只装订，逻辑放在担当它的角色（页类型）里，加功能就是加角色，先问实体书怎么做（D487）**；协议约定见 `docs/handoff/week1-protocol.md`。插件开发、测试、打包、验收见 `docs/plugins/`。第二十一轮之前的交接、验收记录、截图和技术小样已清理，需要时看标签 `v0-r21-before-cleanup`。
 
 ## 命令
 
