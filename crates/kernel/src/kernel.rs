@@ -198,6 +198,8 @@ pub(crate) struct Inner {
     pub(crate) mcp: crate::mcp::McpState,
     /// D484 §16: blobs each client has put and may read before any resource uses them.
     pub(crate) blob_pending: Mutex<HashMap<String, std::collections::HashSet<String>>>,
+    /// D487 §17 (K3): results of calls (`[[=…]]`, `![[… | …]]`).
+    pub(crate) embed_cache: Mutex<crate::transfer::EmbedCache>,
 }
 
 pub(crate) fn parse<T: DeserializeOwned>(v: Value) -> KResult<T> {
@@ -288,6 +290,7 @@ impl Kernel {
             warned: Mutex::new(Default::default()),
             mcp: Default::default(),
             blob_pending: Default::default(),
+            embed_cache: Default::default(),
         });
         // Round 13 (D400): a new workspace copies the settings it was created with, once.
         let init = inner.read(|c| Ok(crate::workspace_settings::take_init_settings(&inner.ws.dir, c))).ok().flatten();

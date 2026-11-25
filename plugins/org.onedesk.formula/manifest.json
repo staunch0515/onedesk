@@ -1,0 +1,96 @@
+{
+  "id": "org.onedesk.formula",
+  "version": "0.1.0",
+  "apiVersion": "2",
+  "name": "plugin.name",
+  "description": "plugin.description",
+  "icon": "calculator",
+  "main": "main.js",
+  "author": "OneDesk",
+  "license": "MIT",
+  "requires": {
+    "files": false
+  },
+  "implements": {
+    "onedesk.book/1": {
+      "actions": [
+        "roles",
+        "outline"
+      ],
+      "kind": "formula"
+    }
+  },
+  "exports": {
+    "actions": [
+      "roles",
+      "outline"
+    ]
+  },
+  "contributes": {
+    "kinds": [
+      {
+        "id": "formula",
+        "label": "kind.formula",
+        "icon": "calculator",
+        "tree": "resources",
+        "page": "formula",
+        "newName": "kind.formula.new",
+        "defaults": {
+          "text": "",
+          "unit": "",
+          "decimals": 2
+        },
+        "fields": {
+          "text": {
+            "type": "code",
+            "label": "field.text"
+          }
+        },
+        "draggable": true,
+        "accepts": [],
+        "embed": true
+      }
+    ],
+    "pages": [
+      {
+        "id": "formula",
+        "recompute": true,
+        "actions": [
+          {
+            "id": "save",
+            "role": "save",
+            "label": "action.save",
+            "icon": "save",
+            "primary": true,
+            "shortcut": [
+              "Mod",
+              "S"
+            ]
+          }
+        ]
+      }
+    ],
+    "actions": [
+      {
+        "id": "roles",
+        "label": "action.roles",
+        "output": "none"
+      },
+      {
+        "id": "outline",
+        "label": "action.outline",
+        "output": "none"
+      }
+    ],
+    "menus": {
+      "new": [
+        "formula"
+      ]
+    },
+    "locales": {
+      "en-US": "locales/en-US.json",
+      "zh-CN": "locales/zh-CN.json",
+      "ja-JP": "locales/ja-JP.json"
+    }
+  }
+}

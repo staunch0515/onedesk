@@ -89,7 +89,12 @@ function RefRow({ info, side, seq }: { info: RefInfo; side: "outgoing" | "incomi
         </Tooltip>
       )}
       {/* D481: an embed shows the content where it is written; links only point. */}
-      {info.embed && <Badge tone="accent" icon="layers">{t("refs.embedded")}</Badge>}
+{/* D487 §17: a call computes with its parameters. */}
+      {info.call ? (
+        <Badge tone="accent" icon="calculator">{info.params ? t("refs.callWith", { params: info.params }) : t("refs.call")}</Badge>
+      ) : (
+        info.embed && <Badge tone="accent" icon="layers">{t("refs.embedded")}</Badge>
+      )}
       {info.section && <Text size="xs" tone="muted">{`› ${info.section}`}</Text>}
       {/* D482: what is written means several resources, or its path no longer leads there: offer the unique writing. */}
       {side === "outgoing" && (info.ambiguous || info.stale) && (

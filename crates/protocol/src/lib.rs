@@ -2314,6 +2314,11 @@ pub struct ResourceEmbedParams {
     /// D487 §13 (K-e): handed to the kind's `embed(ctx, { section, args })` as they are (at most 4 KB).
     #[ts(type = "unknown")]
     pub args: Option<Value>,
+    /// D487 §17 (K3): what follows `|` in the reference, as written; the kernel reads it (`name=value, …`, values may
+    /// hold `{{environment parameters}}`) and hands the values to the kind as `args`.
+    pub params: Option<String>,
+    /// D487 §17 (K3): an inline call (`[[=name | …]]`): the answer is one line of `text`.
+    pub inline: Option<bool>,
 }
 
 /// D481: an embedded resource. `view` is what its plugin's `embed` gives (read only: text, table and link nodes);
@@ -2336,6 +2341,13 @@ pub struct EmbedResult {
     /// D482: where it is: its parents' names, outermost first.
     #[serde(default)]
     pub path: Vec<String>,
+    /// D487 §17 (K3): an inline call's result (one line), or with `error` what went wrong (the kind's words).
+    pub text: Option<String>,
+    pub error: Option<bool>,
+    /// D487 §17 (K3): the parameters could not be read (no `=`, an unclosed quote): nothing was computed.
+    pub bad_params: Option<bool>,
+    /// D487 §17 (K3): the parameters as read, environment values filled in (name → value).
+    pub args: Option<std::collections::BTreeMap<String, String>>,
 }
 
 /// `refs.outgoing` / `refs.incoming`: the resource whose references are asked for.
@@ -2385,6 +2397,9 @@ pub struct RefInfo {
     pub stale: Option<bool>,
     /// D482: with `ambiguous` or `stale`, where the target is: its parents' names, outermost first.
     pub place: Option<Vec<String>>,
+    /// D487 §17 (K3): a call — `[[=…]]`, or `![[…]]` with parameters — and the parameters as written.
+    pub call: Option<bool>,
+    pub params: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]

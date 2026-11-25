@@ -1041,5 +1041,9 @@
   "sequence.next": "下一页",
   "sequence.page": "{n} / {total}",
   "sequence.open": "打开",
-  "kernel.error.invalid.refused": "放不到这里。"
+  "kernel.error.invalid.refused": "放不到这里。",
+  "refs.call": "调用",
+  "refs.callWith": "调用 {params}",
+  "call.badParams": "参数写错了",
+  "call.cannot": "它不能计算"
 }

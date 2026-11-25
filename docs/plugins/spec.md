@@ -423,7 +423,7 @@ export default {
 - `children(ctx, node, own)`：清单 `children: true` 才可注册，补充子节点；参考 `org.onedesk.collection`。
 - `drop(ctx, event)`：清单 `drop: true` 才可注册；只能 `resources.update`（随 drop 一起写入），其他写被拒 `inDrop`；参考 `org.onedesk.composite`。
 - `place(ctx, { node, before })`（D487）：清单 `place: true` 才可注册。`ctx.resource` 是父资源，`node` 是 `{ id, kind, name }`（新建时 `id` 为 `null`），`before` 是用户想放在它前面的兄弟（`null` = 最后）。返回 `{ before }`（放在哪个兄弟前面，`null` = 最后）或 `{ refuse: Label }`（拒绝，提示用户）。纯计算（只能读，可以 `resources.tree`、`interfaces.call`），1 秒内不返回或返回不对，就按用户拖的位置放。只对用户的操作生效；插件自己 `resources.create/move` 不经过它。参考 `org.onedesk.book` 的 `book.js`。
-- `embed(ctx, { section, args })`（D481；`args` 是 D487）：清单 `embed: true` 才可注册。`args` 是调用方给的参数（`sequence` 的项、`host.resources.embed`），原样交来，最多 4 KB。别的资源写了 `![[名称]]`（`section` 为 `null`）或 `![[名称#标题]]` 时调用，返回 `{ view, sectionMissing? }`：`view` 只能有 `text`、`table`、`link`、`image`、`sequence` 节点（只读，序列化后最多 512 KB），`ctx.resource` 是被嵌入的资源，`ctx.envId` 是显示它的标签页的环境（`{{名字}}` 照常用 `host.params.get` 取值）；找不到那一节时返回 `{ view: [], sectionMissing: true }`。Markdown 正文的插件按标题取节，参考 `org.onedesk.note` 的 `sectionOf`。
+- `embed(ctx, { section, args, inline })`（D481；`args`、`inline` 是 D487）：清单 `embed: true` 才可注册。`args` 是调用方给的参数（`sequence` 的项、`host.resources.embed`），最多 4 KB；**带参数的引用**（D487 §17）`![[名称 | C=37]]`、`[[=名称 | C=37]]` 的参数由内核读好（`名字=值`，逗号分开，双引号里可以有逗号，`{{环境参数}}` 按标签页的环境填好）放进 `args`（名字 → 文字）。`inline: true` 表示行内调用：返回 `{ text, error? }`（一行，最多 200 字；`error: true` 时 `text` 是出错的说明），不返回 `view`。参数写错时内核不调用插件。参考 `org.onedesk.formula`。别的资源写了 `![[名称]]`（`section` 为 `null`）或 `![[名称#标题]]` 时调用，返回 `{ view, sectionMissing? }`：`view` 只能有 `text`、`table`、`link`、`image`、`sequence` 节点（只读，序列化后最多 512 KB），`ctx.resource` 是被嵌入的资源，`ctx.envId` 是显示它的标签页的环境（`{{名字}}` 照常用 `host.params.get` 取值）；找不到那一节时返回 `{ view: [], sectionMissing: true }`。Markdown 正文的插件按标题取节，参考 `org.onedesk.note` 的 `sectionOf`。
 
 ### 5.8 事件 `host.events.on(name, async (ctx, event) => …)`
 
@@ -556,7 +556,7 @@ export default {
 | `remove(id)` | → `null` | 进回收站 |
 | `search(opts)` | → 结果 | 需 `requires.resources`；`{ query, kinds?, limit? }` 按相关度返回 `[{ id, kind, name, snippet, score }]`；或基本搜索 `{ text, kinds, tags, … }` |
 | `tree(id, { offset?, limit? })` | → `{ nodes: [{ id, name, kind, icon, depth, parent, rev }], next }` | D487：需 `requires.resources`；按树的顺序（先父后子）列出 `id` 下面的全部节点，`depth` 从 1 开始；每次最多 2000 个，`next` 接着读；不含正文 |
-| `embed(id, { section?, args? })` | → 和外壳的 `resource.embed` 一样（`view`、`name`、`refs`…） | D487：需 `requires.contents`；按调用所在标签页的环境 |
+| `embed(id, { section?, args?, params?, inline? })` | → 和外壳的 `resource.embed` 一样（`view`、`name`、`refs`…；行内调用是 `text`、`error`；参数写错是 `badParams`） | D487：需 `requires.contents`；按调用所在标签页的环境；`params` 是引用里 `\|` 后面的原文 |
 | `refs(id)` | → `[{ text, target: { id, name, kind } \| null, section, embed }]` | D487 §15：需 `requires.resources`；这个资源正文里每个 `[[…]]`、`![[…]]` 现在指向谁（`text` 是写下的样子；读者看到的是目标现在的名字） |
 | `kinds()` | → `[{ kind, label, icon }]` | 需 `requires.resources`；资源树里能有的所有类型（已启用的插件，`kind` 是全名，`label` 是 Label），供“按类型”的条件让用户勾选，不要让用户手写类型全名（D477） |
 

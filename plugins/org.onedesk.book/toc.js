@@ -137,12 +137,13 @@ async function labelMap(env) {
     if (full) labels.set(x.key, full);
   });
   const word = { figure: say(env.ctx, "caption.figure"), table: say(env.ctx, "caption.table") };
+  const label = (f) => (f.type === "equation" ? say(env.ctx, "caption.equationNumbered", { n: f.number }) : `${word[f.type] || word.figure} ${f.number}`);
   for (const f of env.figures) {
     if (!f.of) continue;
     const node = env.nodes.get(f.item);
     if (!node) continue;
     const ref = (await refsOf(env.ctx, node)).find((r) => r.embed && r.target && (r.text === f.of || r.text.split("#")[0].trim() === f.of));
-    if (ref) labels.set(ref.target.id, `${word[f.type] || word.figure} ${f.number}`);
+    if (ref) labels.set(ref.target.id, label(f));
   }
   return labels;
 }
@@ -159,7 +160,8 @@ async function crossLabels(env) {
     if (!node) continue;
     const mine = {};
     for (const r of await refsOf(env.ctx, node)) {
-      if (r.embed || !r.target || !labels.has(r.target.id)) continue;
+      // A call (`[[=…]]`) shows what it computes, never a number.
+      if (r.embed || r.call || /^=\s*\S/.test(r.text) || !r.target || !labels.has(r.target.id)) continue;
       // As written, and as readers see it after the target was renamed (D321: its current name).
       mine[r.text] = labels.get(r.target.id);
       const now = env.nodes.get(r.target.id);
@@ -270,8 +272,8 @@ function add(env, n, r, number, level, chapterKey, s) {
   if (n.kind !== GROUP) {
     item.resource = n.id;
     const key = countKey(s, chapterKey);
-    const c = env.counts.get(key) || { figure: 0, table: 0 };
-    item.args = { book: { prefix: prefixOf(s, chapterKey), figure: c.figure, table: c.table } };
+    const c = env.counts.get(key) || { figure: 0, table: 0, equation: 0 };
+    item.args = { book: { prefix: prefixOf(s, chapterKey), figure: c.figure, table: c.table, equation: c.equation || 0 } };
   }
   env.items.push(item);
   env.numbers[level] = number;
@@ -292,12 +294,12 @@ function prefixOf(s, chapterKey) {
 async function addFigures(env, n, r, chapterKey, s) {
   if (n.kind === GROUP) return;
   const key = countKey(s, chapterKey);
-  const c = env.counts.get(key) || { figure: 0, table: 0 };
+  const c = env.counts.get(key) || { figure: 0, table: 0, equation: 0 };
   const o = await outlineFor(env.ctx, n, r);
   const prefix = prefixOf(s, chapterKey);
   for (const f of o.figures) {
-    const type = f.type === "table" ? "table" : "figure";
-    c[type] += 1;
+    const type = f.type === "table" || f.type === "equation" ? f.type : "figure";
+    c[type] = (c[type] || 0) + 1;
     const fig = { type, number: prefix ? `${prefix}-${c[type]}` : String(c[type]), caption: f.caption, item: n.id };
     if (f.of) fig.of = f.of;
     env.figures.push(fig);
@@ -465,6 +467,39 @@ function tableMarkdown(node) {
 }
 
 const BLOB_REF = /\(blob:([0-9a-f]{64})\)/g;
+// D487 §17: an inline call `[[=name | …]]` is printed as its result.
+const CALL = /\[\[(=[^[\]\n]{1,200})\]\]/g;
+
+/** The text with each inline call replaced by what it computes (as the page that holds it calls it). */
+async function withCalls(ctx, resource, text) {
+  const marks = [...String(text).matchAll(CALL)];
+  if (marks.length === 0) return text;
+  let refs = [];
+  try {
+    refs = await ctx.host.resources.refs(resource);
+  } catch {
+    refs = [];
+  }
+  let out = String(text);
+  for (const m of marks) {
+    const inner = m[1];
+    const bar = inner.indexOf("|");
+    const name = (bar < 0 ? inner : inner.slice(0, bar)).replace(/^=\s*/, "").trim();
+    const params = bar < 0 ? undefined : inner.slice(bar + 1).trim();
+    const ref = refs.find((r) => r.target && (r.text === inner || r.target.name === name));
+    let value = name;
+    if (ref) {
+      try {
+        const e = await ctx.host.resources.embed(ref.target.id, { params, inline: true });
+        if (e && typeof e.text === "string") value = e.text;
+      } catch {
+        // as its name
+      }
+    }
+    out = out.split(m[0]).join(value);
+  }
+  return out;
+}
 
 /** Prints the book (in contents order, numbered) to `<granted folder>/<book>.md`, its images beside it (§13.4.7). */
 export async function exportBook(ctx) {
@@ -524,7 +559,7 @@ export async function exportBook(ctx) {
       continue;
     }
     for (const n of (e && e.view) || []) {
-      if (n.type === "text") out.push(await withImages(n.text), "");
+      if (n.type === "text") out.push(await withImages(await withCalls(ctx, x.resource, n.text)), "");
       else if (n.type === "table") out.push(tableMarkdown(n), "");
       else if (n.type === "image") out.push(`![${n.alt || ""}](<${await image(n.blob)}>)`, "");
       else if (n.type === "link") out.push(labelText(ctx, n.label), "");

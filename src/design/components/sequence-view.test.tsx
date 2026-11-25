@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
 import "../testing/jsdom-setup";
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { SequenceView } from "./sequence-view";
-import { renderMarkdown } from "./markdown-text";
+import { MarkdownText, renderMarkdown } from "./markdown-text";
 
 const labels = { toc: "Contents", previous: "Previous", next: "Next", page: (n: number, total: number) => `${n} / ${total}` };
 const items = Array.from({ length: 20 }, (_, i) => ({ key: `k${i}`, title: `Item ${i}`, level: i % 3 === 0 ? 1 : 2, book: i === 0 }));
@@ -53,5 +53,25 @@ describe("SequenceView (D487 §13)", () => {
     expect(html).toContain('data-od-ref="Circuit">Figure 2-1</a>');
     expect(html).toContain('data-od-ref="Other">Other</a>');
     expect(renderMarkdown("[[Circuit]]", () => "ok")).toContain(">Circuit</a>");
+  });
+
+  it("D487 §17: calls show their results, asked together; errors red; the call is the hover text", async () => {
+    const asked: string[] = [];
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((r) => (release = r));
+    const callValue = async (text: string) => {
+      asked.push(text);
+      await gate;
+      return text.includes("bad") ? { text: "Parameter C is missing", error: true, title: "Bad" } : { text: "98.6 °F", title: "C2F（C=37）" };
+    };
+    const { container } = render(<MarkdownText source="Hot: [[=C2F | C=37]] and [[=bad]]." referenceState={() => "ok"} callValue={callValue} onLinkClick={() => undefined} />);
+    const calls = container.querySelectorAll(".od-markdown__call");
+    expect([...calls].map((c) => c.textContent)).toEqual(["…", "…"]);
+    expect(asked).toEqual(["=C2F | C=37", "=bad"]);
+    release();
+    await waitFor(() => expect(calls[0]!.textContent).toBe("98.6 °F"));
+    expect(calls[0]!.getAttribute("title")).toBe("C2F（C=37）");
+    expect(calls[1]!.textContent).toBe("Parameter C is missing");
+    expect(calls[1]!.classList.contains("od-markdown__call--error")).toBe(true);
   });
 });

@@ -28,7 +28,7 @@
   "message.pages": "One page at a time",
   "message.scroll": "One after another",
   "field.text": "Content",
-  "field.placeholder": "Write here. Footnotes: text[^1] and a line [^1]: the note. Captions: a line Figure: … under an image, Table: … above a table.",
+  "field.placeholder": "Write here. Footnotes: text[^1] and a line [^1]: the note. Captions: a line Figure: … under an image, Table: … above a table. Equations: a line Equation: under an embedded formula.",
   "field.variant": "Kind",
   "variant.preface": "Preface",
   "variant.foreword": "Foreword",
@@ -125,5 +125,7 @@
   "figures.tables": "Tables",
   "figures.column.number": "No.",
   "figures.column.caption": "Caption",
-  "figures.column.where": "Where"
+  "figures.column.where": "Where",
+  "caption.equationNumbered": "Equation ({n})",
+  "figures.equations": "Equations"
 }

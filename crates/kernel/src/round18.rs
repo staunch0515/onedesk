@@ -227,7 +227,7 @@ impl Inner {
                 continue;
             }
             let section = crate::refs::parse(inner).section;
-            let p = onedesk_protocol::ResourceEmbedParams { id: target, section: section.clone(), env_id: env.clone(), locale: None, args: None };
+            let p = onedesk_protocol::ResourceEmbedParams { id: target, section: section.clone(), env_id: env.clone(), locale: None, args: None, params: None, inline: None };
             let Ok(e) = self.resource_embed(p).await else { continue };
             let body: Vec<String> = e
                 .view

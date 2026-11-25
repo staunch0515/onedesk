@@ -180,6 +180,20 @@
   cursor: default;
 }
 
+/* D487 §17: a call shows its result, underlined with a thin dashed line; an error is red. */
+.od-markdown .od-markdown__call {
+  color: inherit;
+  text-decoration: underline;
+  text-decoration-style: dashed;
+  text-decoration-color: var(--accent-border);
+  text-underline-offset: var(--space-0-5);
+}
+
+.od-markdown .od-markdown__call--error {
+  color: var(--danger-text);
+  text-decoration-color: var(--danger-border);
+}
+
 /* Images are not loaded; the alternative text stands in. */
 .od-markdown .od-markdown__image-alt {
   color: var(--fg-muted);

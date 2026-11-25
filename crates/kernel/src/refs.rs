@@ -123,6 +123,81 @@ impl Parsed {
     }
 }
 
+/// D487 §17 (K3): the parameters written after `|` — `name=value`, separated by commas; a value in double quotes may
+/// hold commas and spaces at its ends (`\"` is a quote). `None` when any part cannot be read (no `=`, an empty or bad
+/// name, an unclosed quote): the call then computes nothing. Later names win.
+pub fn read_params(text: &str) -> Option<Vec<(String, String)>> {
+    let mut out: Vec<(String, String)> = Vec::new();
+    let chars: Vec<char> = text.chars().collect();
+    let mut i = 0;
+    let skip_ws = |i: &mut usize| {
+        while *i < chars.len() && chars[*i].is_whitespace() {
+            *i += 1;
+        }
+    };
+    skip_ws(&mut i);
+    if i >= chars.len() {
+        return Some(out);
+    }
+    loop {
+        skip_ws(&mut i);
+        let start = i;
+        while i < chars.len() && chars[i] != '=' && chars[i] != ',' {
+            i += 1;
+        }
+        if i >= chars.len() || chars[i] != '=' {
+            return None;
+        }
+        let name: String = chars[start..i].iter().collect::<String>().trim().to_string();
+        let ok = !name.is_empty() && name.chars().count() <= 64 && !name.starts_with(|c: char| c.is_ascii_digit()) && name.chars().all(|c| c.is_alphanumeric() || c == '_');
+        if !ok {
+            return None;
+        }
+        i += 1;
+        skip_ws(&mut i);
+        let value = if i < chars.len() && chars[i] == '"' {
+            i += 1;
+            let mut v = String::new();
+            loop {
+                if i >= chars.len() {
+                    return None;
+                }
+                match chars[i] {
+                    '\\' if i + 1 < chars.len() && chars[i + 1] == '"' => {
+                        v.push('"');
+                        i += 2;
+                    }
+                    '"' => {
+                        i += 1;
+                        break;
+                    }
+                    c => {
+                        v.push(c);
+                        i += 1;
+                    }
+                }
+            }
+            skip_ws(&mut i);
+            if i < chars.len() && chars[i] != ',' {
+                return None;
+            }
+            v
+        } else {
+            let st = i;
+            while i < chars.len() && chars[i] != ',' {
+                i += 1;
+            }
+            chars[st..i].iter().collect::<String>().trim().to_string()
+        };
+        out.retain(|(n, _)| n != &name);
+        out.push((name, value));
+        if i >= chars.len() {
+            return Some(out);
+        }
+        i += 1; // the comma
+    }
+}
+
 /// D481 (kept for callers): the name part and the section of a mark's text.
 pub fn split(text: &str) -> (String, Option<String>) {
     let p = parse(text);
@@ -681,6 +756,19 @@ mod rebuild_tests {
 #[cfg(test)]
 mod review_tests {
     use super::*;
+
+    #[test]
+    fn parameters_are_read_whole_or_not_at_all() {
+        let p = |s: &str| read_params(s).map(|v| v.into_iter().map(|(a, b)| format!("{a}={b}")).collect::<Vec<_>>());
+        assert_eq!(p("C=37, 精度 = 2"), Some(vec!["C=37".into(), "精度=2".into()]));
+        assert_eq!(p(r#"城市="北京, 海淀", q=" a ""#), Some(vec!["城市=北京, 海淀".into(), "q= a ".into()]));
+        assert_eq!(p(r#"s="say \"hi\"""#), Some(vec![r#"s=say "hi""#.into()]));
+        assert_eq!(p("t={{室温}}, a=1, a=2"), Some(vec!["t={{室温}}".into(), "a=2".into()]));
+        assert_eq!(p(""), Some(vec![]));
+        for bad in ["C", "=1", "1a=2", r#"a="open"#, "a=1,, b=2", r#"a="x" y"#] {
+            assert_eq!(read_params(bad), None, "{bad}");
+        }
+    }
 
     #[test]
     fn names_that_would_not_read_back_are_not_substituted() {

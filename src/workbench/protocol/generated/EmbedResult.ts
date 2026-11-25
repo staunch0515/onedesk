@@ -12,4 +12,16 @@ export type EmbedResult = { id: string, name: string, icon: string, kindLabel?: 
 /**
  * D482: where it is: its parents' names, outermost first.
  */
-path: Array<string>, };
+path: Array<string>, 
+/**
+ * D487 §17 (K3): an inline call's result (one line), or with `error` what went wrong (the kind's words).
+ */
+text?: string, error?: boolean, 
+/**
+ * D487 §17 (K3): the parameters could not be read (no `=`, an unclosed quote): nothing was computed.
+ */
+badParams?: boolean, 
+/**
+ * D487 §17 (K3): the parameters as read, environment values filled in (name → value).
+ */
+args?: { [key in string]: string }, };

@@ -22,7 +22,8 @@ export function textOf(ctx) {
 const FENCE = /^\s*(```|~~~)/;
 const HEADING = /^(#{1,6})\s+(.*?)\s*#*\s*$/;
 // "图：…" / "Figure: …" / "図：…" and "表：…" / "Table: …", a line of their own.
-const CAPTION = /^\s*(图|圖|図|Figure|Fig\.|表|Table)\s*[:：]\s*(.+?)\s*$/i;
+// D487 §17: `式：` / `Equation:` numbers the formula above it; its words may be left out.
+const CAPTION = /^\s*(图|圖|図|Figure|Fig\.|表|Table|式|Equation|Eq\.)\s*[:：]\s*(.*?)\s*$/i;
 const FOOTNOTE_DEF = /^\s*\[\^([^\]\s]{1,40})\]:\s*(.*)$/;
 const FOOTNOTE_REF = /\[\^([^\]\s]{1,40})\](?!:)/g;
 const SUPERSCRIPT = "⁰¹²³⁴⁵⁶⁷⁸⁹";
@@ -54,7 +55,14 @@ export function parseTerm(raw) {
 }
 
 function captionType(word) {
-  return /^(表|table)$/i.test(word) ? "table" : "figure";
+  if (/^(表|table)$/i.test(word)) return "table";
+  if (/^(式|equation|eq\.)$/i.test(word)) return "equation";
+  return "figure";
+}
+
+/** Figures and tables need words; an equation's are optional. */
+function captionOk(m) {
+  return m && (m[2] !== "" || captionType(m[1]) === "equation");
 }
 
 /** One section of the text (from the heading named `section` to the next of the same or a higher level), or null. */
@@ -96,7 +104,7 @@ export function outlineOf(text) {
       continue;
     }
     const c = CAPTION.exec(line);
-    if (c) {
+    if (captionOk(c)) {
       const f = { type: captionType(c[1]), caption: c[2] };
       if (above) f.of = above;
       figures.push(f);
@@ -124,7 +132,7 @@ export function outlineOf(text) {
  */
 export function readable(ctx, text, at) {
   const prefix = at && typeof at.prefix === "string" ? at.prefix : "";
-  const count = { figure: (at && Number(at.figure)) || 0, table: (at && Number(at.table)) || 0 };
+  const count = { figure: (at && Number(at.figure)) || 0, table: (at && Number(at.table)) || 0, equation: (at && Number(at.equation)) || 0 };
   const lines = String(text || "").split("\n");
   const notes = new Map();
   for (const line of lines) {
@@ -143,11 +151,12 @@ export function readable(ctx, text, at) {
     }
     if (FOOTNOTE_DEF.test(line)) continue;
     const c = CAPTION.exec(line);
-    if (c) {
+    if (captionOk(c)) {
       const type = captionType(c[1]);
       count[type] += 1;
       const n = prefix ? `${prefix}-${count[type]}` : String(count[type]);
-      out.push(`*${say(ctx, type === "table" ? "caption.table" : "caption.figure")} ${n}　${c[2]}*`);
+      if (type === "equation") out.push(`*${say(ctx, "caption.equationNumbered", { n })}${c[2] ? `　${c[2]}` : ""}*`);
+      else out.push(`*${say(ctx, type === "table" ? "caption.table" : "caption.figure")} ${n}　${c[2]}*`);
       continue;
     }
     out.push(

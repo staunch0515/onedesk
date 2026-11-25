@@ -5,6 +5,13 @@ import { cx } from "./cx";
 import { isOpenableUrl, normalizeLinkHref } from "./open-url";
 import "./markdown.css";
 
+/** D487 §17: what a call shows. */
+export interface CallValue {
+  text: string;
+  error?: boolean;
+  title: string;
+}
+
 /** Where a `[[name]]` points: `ok` opens it, anything else shows as a broken reference. */
 export type ReferenceState = "ok" | "missing" | "deleted";
 
@@ -19,6 +26,11 @@ export interface MarkdownTextProps {
   referenceState?: (name: string) => ReferenceState;
   /** D487 §15: words a `[[name]]` is shown with instead of its name (it still opens what it points to). */
   referenceLabels?: Record<string, string>;
+  /**
+   * D487 §17: the result of a call `[[=name | …]]` (its text without the brackets): one line, whether it is an error,
+   * and what to show when the pointer rests on it. All calls of the text are asked together and shown at once.
+   */
+  callValue?: (text: string) => Promise<CallValue>;
   /**
    * D481: draws a line that is only `![[text]]` (outside code blocks) as an embedded block; it gets the text inside.
    * Without it, and for `![[…]]` inside a sentence, the mark is shown as a reference.
@@ -79,6 +91,11 @@ function createRenderer(): Marked {
         renderer(token) {
           const name = String(token["text"]);
           const state = referenceLookup?.(name) ?? "missing";
+          // D487 §17: a call shows its result, filled in by the component once every call of the text has answered.
+          if (/^=\s*\S/.test(name)) {
+            const cls = state === "ok" ? "od-markdown__call" : "od-markdown__call od-markdown__call--error";
+            return `<a href="#" class="${cls}" data-od-ref="${escapeHtml(name)}" data-od-call="${escapeHtml(name)}" title="${escapeHtml(name.slice(1).trim())}">…</a>`;
+          }
           const cls = state === "ok" ? "od-markdown__ref" : "od-markdown__ref od-markdown__ref--broken";
           const shown = referenceLabelsNow && Object.prototype.hasOwnProperty.call(referenceLabelsNow, name) ? referenceLabelsNow[name]! : name;
           return `<a href="#" class="${cls}" data-od-ref="${escapeHtml(name)}">${escapeHtml(shown)}</a>`;
@@ -151,7 +168,7 @@ export function splitEmbeds(source: string): Array<{ markdown: string } | { embe
 }
 
 /** Read-only Markdown for plugin text: no raw HTML, only http/https/mailto links, `[[references]]`, no images. */
-export function MarkdownText({ source, onLinkClick, onReferenceClick, referenceState, referenceLabels, renderEmbed, blobUrl, imageLabels, headingShift, className }: MarkdownTextProps) {
+export function MarkdownText({ source, onLinkClick, onReferenceClick, referenceState, referenceLabels, callValue, renderEmbed, blobUrl, imageLabels, headingShift, className }: MarkdownTextProps) {
   const parts = useMemo(() => (renderEmbed ? splitEmbeds(source) : null), [source, renderEmbed]);
   if (parts && parts.some((p) => "embed" in p)) {
     return (
@@ -160,16 +177,16 @@ export function MarkdownText({ source, onLinkClick, onReferenceClick, referenceS
           "embed" in p ? (
             <Fragment key={i}>{renderEmbed!(p.embed)}</Fragment>
           ) : (
-            <MarkdownHtml key={i} source={p.markdown} onLinkClick={onLinkClick} onReferenceClick={onReferenceClick} referenceState={referenceState} referenceLabels={referenceLabels} blobUrl={blobUrl} imageLabels={imageLabels} headingShift={headingShift} />
+            <MarkdownHtml key={i} source={p.markdown} onLinkClick={onLinkClick} onReferenceClick={onReferenceClick} referenceState={referenceState} referenceLabels={referenceLabels} callValue={callValue} blobUrl={blobUrl} imageLabels={imageLabels} headingShift={headingShift} />
           ),
         )}
       </div>
     );
   }
-  return <MarkdownHtml source={source} onLinkClick={onLinkClick} onReferenceClick={onReferenceClick} referenceState={referenceState} referenceLabels={referenceLabels} blobUrl={blobUrl} imageLabels={imageLabels} headingShift={headingShift} className={className} />;
+  return <MarkdownHtml source={source} onLinkClick={onLinkClick} onReferenceClick={onReferenceClick} referenceState={referenceState} referenceLabels={referenceLabels} callValue={callValue} blobUrl={blobUrl} imageLabels={imageLabels} headingShift={headingShift} className={className} />;
 }
 
-function MarkdownHtml({ source, onLinkClick, onReferenceClick, referenceState, referenceLabels, blobUrl, imageLabels, headingShift, className }: Omit<MarkdownTextProps, "renderEmbed">) {
+function MarkdownHtml({ source, onLinkClick, onReferenceClick, referenceState, referenceLabels, callValue, blobUrl, imageLabels, headingShift, className }: Omit<MarkdownTextProps, "renderEmbed">) {
   const html = useMemo(() => renderMarkdown(source, referenceState, headingShift, referenceLabels), [source, referenceState, headingShift, referenceLabels]);
   const box = useRef<HTMLDivElement>(null);
   const [large, setLarge] = useState<{ src: string; alt: string } | null>(null);
@@ -194,6 +211,30 @@ function MarkdownHtml({ source, onLinkClick, onReferenceClick, referenceState, r
       gone = true;
     };
   }, [html, blobUrl]);
+  // D487 §17: every call of the text asked together; the results go in at once, so the words do not jump one by one.
+  useEffect(() => {
+    const root = box.current;
+    if (!root) return;
+    const places = [...root.querySelectorAll<HTMLElement>("[data-od-call]")];
+    if (places.length === 0) return;
+    if (!callValue) {
+      for (const p of places) p.textContent = (p.getAttribute("data-od-call") ?? "").replace(/^=\s*/, "").split("|")[0]!.trim();
+      return;
+    }
+    let gone = false;
+    void Promise.all(places.map((p) => callValue(p.getAttribute("data-od-call") ?? "").catch((): CallValue => ({ text: "?", error: true, title: "" })))).then((values) => {
+      if (gone) return;
+      values.forEach((v, i) => {
+        const p = places[i]!;
+        p.textContent = v.text;
+        p.title = v.title;
+        p.classList.toggle("od-markdown__call--error", Boolean(v.error));
+      });
+    });
+    return () => {
+      gone = true;
+    };
+  }, [html, callValue]);
   const onClick = (e: MouseEvent<HTMLDivElement>) => {
     const img = (e.target as HTMLElement).closest("img.od-markdown__img") as HTMLImageElement | null;
     if (img) {

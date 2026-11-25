@@ -8,4 +8,13 @@ export type ResourceEmbedParams = { id: string, section?: string, envId?: string
 /**
  * D487 §13 (K-e): handed to the kind's `embed(ctx, { section, args })` as they are (at most 4 KB).
  */
-args: unknown, };
+args: unknown, 
+/**
+ * D487 §17 (K3): what follows `|` in the reference, as written; the kernel reads it (`name=value, …`, values may
+ * hold `{{environment parameters}}`) and hands the values to the kind as `args`.
+ */
+params?: string, 
+/**
+ * D487 §17 (K3): an inline call (`[[=name | …]]`): the answer is one line of `text`.
+ */
+inline?: boolean, };

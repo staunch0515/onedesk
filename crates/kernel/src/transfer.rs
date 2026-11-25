@@ -409,8 +409,46 @@ fn valid_body(decl: Option<&KindDecl>, r: &ExportResource) -> bool {
 const MAX_EMBED_BYTES: usize = 512 * 1024;
 /// D487 §13 (K-e): the largest `args` an embed may be asked with (serialized).
 pub const MAX_EMBED_ARGS: usize = 4 * 1024;
+/// D487 §17 (K3): the longest inline answer, and how many results are kept.
+pub const MAX_INLINE_TEXT: usize = 200;
+pub const EMBED_CACHE_SIZE: usize = 1000;
+
+/// D487 §17: results of calls, kept by everything they depend on; the oldest go first.
+#[derive(Default)]
+pub struct EmbedCache {
+    map: HashMap<String, (u64, EmbedResult)>,
+    tick: u64,
+}
+
+impl EmbedCache {
+    pub fn get(&mut self, k: &str) -> Option<EmbedResult> {
+        self.tick += 1;
+        let t = self.tick;
+        self.map.get_mut(k).map(|e| {
+            e.0 = t;
+            e.1.clone()
+        })
+    }
+
+    pub fn put(&mut self, k: String, v: EmbedResult) {
+        self.tick += 1;
+        if self.map.len() >= EMBED_CACHE_SIZE {
+            if let Some(old) = self.map.iter().min_by_key(|(_, e)| e.0).map(|(k, _)| k.clone()) {
+                self.map.remove(&old);
+            }
+        }
+        self.map.insert(k, (self.tick, v));
+    }
+}
 
 /// D481: whether the reference is written `![[…]]`, and its section (none when the target's whole name is the text).
+/// D487 §17: whether a reference is a call (`[[=…]]`, or `![[…]]` with parameters), and its parameters as written.
+fn call_of(text: &str, embed: Option<bool>) -> (Option<bool>, Option<String>) {
+    let p = crate::refs::parse(text);
+    let params = p.params.filter(|x| !x.is_empty());
+    ((p.call || (embed == Some(true) && params.is_some())).then_some(true), params)
+}
+
 fn mark_of(src: &Row, r: &crate::refs::RefRow, target_name: Option<&str>) -> (Option<bool>, Option<String>) {
     let key = r.field.strip_prefix("body.").unwrap_or(&r.field);
     let embed = src
@@ -487,6 +525,35 @@ impl Inner {
         }
     }
 
+    /// D487 §17: `{{name}}` in a parameter value, filled from the environment `env` (as `host.params.get` finds it);
+    /// a name that has no value stays as written.
+    fn fill_env(&self, env: Option<&str>, value: &str) -> KResult<String> {
+        let mut out = String::new();
+        let mut rest = value;
+        while let Some(i) = rest.find("{{") {
+            out.push_str(&rest[..i]);
+            let after = &rest[i + 2..];
+            match after.find("}}") {
+                Some(j) => {
+                    let name = &after[..j];
+                    let ok = !name.is_empty() && name.chars().count() <= 64 && name.chars().all(|c| c.is_alphanumeric() || matches!(c, '_' | '-' | '.'));
+                    let found = if ok { self.resolve_param(ParamsResolveParams { env_id: env.map(String::from), name: name.to_string() }).ok().filter(|r| r.found) } else { None };
+                    match found {
+                        Some(r) => out.push_str(&r.value),
+                        None => out.push_str(&rest[i..i + 2 + j + 2]),
+                    }
+                    rest = &after[j + 2..];
+                }
+                None => {
+                    out.push_str(&rest[i..]);
+                    rest = "";
+                }
+            }
+        }
+        out.push_str(rest);
+        Ok(out)
+    }
+
     /// D481 `resource.embed`: what `id` shows where another resource embeds it. Its plugin's `embed` (when the kind
     /// declares it and the plugin runs) gives a read-only view — text, table and link nodes only, at most
     /// `MAX_EMBED_BYTES`, in the environment of the tab it is shown on; otherwise only the card's facts come back.
@@ -506,10 +573,51 @@ impl Inner {
             section_missing: None,
             refs: self.refs_outgoing(&row.id)?,
             path: self.read(|c| store::ancestors(c, &row))?.into_iter().map(|a| a.name).collect(),
+            text: None,
+            error: None,
+            bad_params: None,
+            args: None,
         };
+        // D487 §17 (K3): the parameters written after `|`, environment values filled in; given to the kind as `args`.
+        let mut call_args: Option<serde_json::Map<String, Value>> = match &p.args {
+            Some(Value::Object(m)) => Some(m.clone()),
+            _ => None,
+        };
+        if let Some(raw) = p.params.as_deref().filter(|r| !r.trim().is_empty()) {
+            let Some(list) = crate::refs::read_params(raw) else {
+                out.bad_params = Some(true);
+                return Ok(out);
+            };
+            let mut shown = std::collections::BTreeMap::new();
+            let m = call_args.get_or_insert_with(Default::default);
+            for (name, value) in list {
+                let v = self.fill_env(p.env_id.as_deref(), &value)?;
+                m.insert(name.clone(), Value::String(v.clone()));
+                shown.insert(name, v);
+            }
+            out.args = Some(shown);
+        }
+        let inline = p.inline == Some(true);
         let Some((plugin, kind)) = self.registry.kind_at(&row.kind, row.plugin_version.as_deref()) else { return Ok(out) };
         if !kind.embed || meta.state != NodeState::Ok || !self.plugin_enabled(&plugin.id) {
             return Ok(out);
+        }
+        // D487 §17: calls are kept a while (same resource version, section, parameters, environment and language).
+        let key = (inline || p.params.is_some()).then(|| {
+            let epoch = self.read(|c| c.query_row(
+                "SELECT COALESCE(MAX(updated_at), 0) || ':' || COUNT(*) || ':' || COALESCE(MAX(rev), 0) FROM resources WHERE kind IN (?1, ?2)",
+                [store::KIND_ENV, store::KIND_CONFIG],
+                |r| r.get::<_, String>(0),
+            )).unwrap_or_default();
+            format!(
+                "{}|{}|{:?}|{:?}|{:?}|{:?}|{}|{}|{}|{}",
+                row.id, row.rev, row.plugin_version, p.section, p.env_id, p.locale, inline, Value::Object(call_args.clone().unwrap_or_default()), epoch, plugin.version
+            )
+        });
+        if let Some(k) = &key {
+            if let Some(hit) = self.embed_cache.lock().unwrap().get(k) {
+                return Ok(hit.clone());
+            }
         }
         #[derive(Deserialize)]
         #[serde(deny_unknown_fields)]
@@ -531,10 +639,29 @@ impl Inner {
             e.detail = Some(format!("embed: {why}"));
             e
         };
-        let raw = self
-            .call_version(plugin, "kinds", &kind.id, "embed", json!([ctx, { "section": p.section, "args": p.args }]), info, None, None)
-            .await
-            .map_err(|e| e.to_protocol())?;
+        let args = call_args.map(Value::Object);
+        let ask = if inline { json!({ "section": p.section, "args": args, "inline": true }) } else { json!({ "section": p.section, "args": args }) };
+        let raw = self.call_version(plugin, "kinds", &kind.id, "embed", json!([ctx, ask]), info, None, None).await.map_err(|e| e.to_protocol())?;
+        if inline {
+            // D487 §17: an inline call answers one line.
+            #[derive(Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct InlineOut {
+                text: String,
+                #[serde(default)]
+                error: bool,
+            }
+            let answer: InlineOut = serde_json::from_value(raw).map_err(|e| bad(e.to_string()))?;
+            if answer.text.contains('\n') || answer.text.chars().count() > MAX_INLINE_TEXT {
+                return Err(bad("an inline answer is one line of at most 200 characters".into()));
+            }
+            out.text = Some(answer.text);
+            out.error = answer.error.then_some(true);
+            if let Some(k) = key {
+                self.embed_cache.lock().unwrap().put(k, out.clone());
+            }
+            return Ok(out);
+        }
         if serde_json::to_vec(&raw).map(|v| v.len()).unwrap_or(usize::MAX) > MAX_EMBED_BYTES {
             return Err(bad("too large".into()));
         }
@@ -546,6 +673,9 @@ impl Inner {
         self.check_tables(plugin, Some(&row.id), &mut answer.view)?;
         out.view = Some(answer.view);
         out.section_missing = answer.section_missing.then_some(true);
+        if let Some(k) = key {
+            self.embed_cache.lock().unwrap().put(k, out.clone());
+        }
         Ok(out)
     }
 
@@ -648,7 +778,8 @@ impl Inner {
                 };
                 Ok(((n > 1).then_some(n as u32), stale.then_some(true), place))
             })?;
-            out.push(RefInfo { source: self.named(&src), field: r.field, text: r.text, target, state, field_label, embed, section, ambiguous, stale, place });
+            let (call, params) = call_of(&r.text, embed);
+            out.push(RefInfo { source: self.named(&src), field: r.field, text: r.text, target, state, field_label, embed, section, ambiguous, stale, place, call, params });
         }
         Ok(out)
     }
@@ -661,7 +792,8 @@ impl Inner {
             let Some(s) = self.read(|c| store::get(c, &src))? else { continue };
             let field_label = self.field_label(&s, &r.field);
             let (embed, section) = mark_of(&s, &r, Some(&me.name));
-            out.push(RefInfo { source: self.named(&s), field: r.field, text: r.text, target: Some(self.named(&me)), state, field_label, embed, section, ambiguous: None, stale: None, place: None });
+            let (call, params) = call_of(&r.text, embed);
+            out.push(RefInfo { source: self.named(&s), field: r.field, text: r.text, target: Some(self.named(&me)), state, field_label, embed, section, ambiguous: None, stale: None, place: None, call, params });
         }
         Ok(out)
     }

@@ -8,10 +8,11 @@ async function view(ctx) {
   const contents = ctx.resource && ctx.resource.id ? await contentsOf(ctx, ctx.resource) : null;
   if (!contents) return [{ type: "text", id: "alone", text: say(ctx, "figures.alone"), tone: "muted" }];
   const out = [];
-  for (const type of ["figure", "table"]) {
+  for (const type of ["figure", "table", "equation"]) {
     const list = contents.figures.filter((f) => f.type === type);
     if (list.length === 0) continue;
-    out.push({ type: "text", id: `${type}Title`, text: `**${say(ctx, type === "figure" ? "figures.figures" : "figures.tables")}**`, format: "markdown" });
+    const title = { figure: "figures.figures", table: "figures.tables", equation: "figures.equations" }[type];
+    out.push({ type: "text", id: `${type}Title`, text: `**${say(ctx, title)}**`, format: "markdown" });
     out.push({
       type: "table",
       id: type,
@@ -20,7 +21,11 @@ async function view(ctx) {
         { key: "caption", label: say(ctx, "figures.column.caption") },
         { key: "where", label: say(ctx, "figures.column.where") },
       ],
-      rows: list.map((f) => [`${say(ctx, type === "figure" ? "caption.figure" : "caption.table")} ${f.number}`, f.caption, whereOf(contents, f.item)]),
+      rows: list.map((f) => [
+        type === "equation" ? say(ctx, "caption.equationNumbered", { n: f.number }) : `${say(ctx, type === "figure" ? "caption.figure" : "caption.table")} ${f.number}`,
+        f.caption || f.of || "",
+        whereOf(contents, f.item),
+      ]),
       rowTargets: list.map((f) => {
         const it = contents.items.find((x) => x.key === f.item);
         return it && it.resource ? `resource:${it.resource}` : null;

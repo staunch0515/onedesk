@@ -1041,5 +1041,9 @@
   "sequence.next": "次へ",
   "sequence.page": "{n} / {total}",
   "sequence.open": "開く",
-  "kernel.error.invalid.refused": "ここには置けません。"
+  "kernel.error.invalid.refused": "ここには置けません。",
+  "refs.call": "呼び出し",
+  "refs.callWith": "呼び出し {params}",
+  "call.badParams": "パラメーターの書き方が違います",
+  "call.cannot": "これは計算できません"
 }

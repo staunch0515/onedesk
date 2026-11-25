@@ -42,4 +42,8 @@ stale?: boolean,
 /**
  * D482: with `ambiguous` or `stale`, where the target is: its parents' names, outermost first.
  */
-place?: Array<string>, };
+place?: Array<string>, 
+/**
+ * D487 §17 (K3): a call — `[[=…]]`, or `![[…]]` with parameters — and the parameters as written.
+ */
+call?: boolean, params?: string, };

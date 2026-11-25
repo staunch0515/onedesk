@@ -28,7 +28,7 @@
   "message.pages": "分页阅读",
   "message.scroll": "连续阅读",
   "field.text": "内容",
-  "field.placeholder": "在这里写。脚注：正文[^1]，另起一行 [^1]: 注释。题注：图下面一行「图：说明」，表上面一行「表：说明」。",
+  "field.placeholder": "在这里写。脚注：正文[^1]，另起一行 [^1]: 注释。题注：图下面一行「图：说明」，表上面一行「表：说明」。公式：嵌入的公式下面一行「式：」。",
   "field.variant": "种类",
   "variant.preface": "前言",
   "variant.foreword": "序",
@@ -125,5 +125,7 @@
   "figures.tables": "表格",
   "figures.column.number": "编号",
   "figures.column.caption": "题注",
-  "figures.column.where": "位置"
+  "figures.column.where": "位置",
+  "caption.equationNumbered": "式（{n}）",
+  "figures.equations": "公式"
 }

@@ -46,7 +46,20 @@ export default {
       },
     });
     host.kinds.handle("card", {
-      embed(ctx, ask) { return { view: [{ type: "text", id: "t", text: JSON.stringify({ args: ask.args || null, section: ask.section }) }] }; },
+      async embed(ctx, ask) {
+        // D487 §17: counts how often it is really asked (calls are kept a while).
+        const n = ((await ctx.host.storage.get("asked")) || 0) + 1;
+        await ctx.host.storage.set("asked", n);
+        if (ask.inline) {
+          const a = ask.args || {};
+          if (a.mode === "long") return { text: "x".repeat(201) };
+          if (a.mode === "lines") return { text: "a\nb" };
+          if (a.mode === "bad") return { view: [] };
+          if (a.mode === "fail") return { text: "no C", error: true };
+          return { text: "C=" + a.C + " #" + n };
+        }
+        return { view: [{ type: "text", id: "t", text: JSON.stringify({ args: ask.args || null, section: ask.section }) }] };
+      },
     });
     host.pages.handle("seq", {
       render(ctx) {
@@ -422,4 +435,62 @@ async fn what_a_resource_refers_to_now_and_sorting_for_a_language() {
     assert_eq!(r["ok"], json!([1, 0, 2]), "{r}");
     let big: Vec<String> = (0..20_001).map(|i| i.to_string()).collect();
     assert_eq!(c.probe("test.binder", "util.collate", json!([big, "en-US"])).await["error"], "invalidParams");
+}
+
+/* ------------------------------------------------------------------ K3 (D487 §17) */
+
+#[tokio::test(flavor = "multi_thread")]
+async fn calls_read_their_parameters_fill_the_environment_answer_inline_and_are_kept_until_something_changes() {
+    let (_env, c) = world().await;
+    let calc = create(&c, "test.binder:card", None, json!({ "name": "Calc" })).await;
+    let src = create(&c, "test.binder:card", None, json!({ "name": "Uses", "body.text": "Hot: [[=Calc | C=37]].\n\n![[Calc | C={{室温}}, note=\"a, b\"]]\n\n[[Calc]]" })).await;
+    // References say which are calls, with their parameters.
+    let refs = c.ok("refs.outgoing", json!({ "id": src })).await;
+    assert_eq!(refs[0]["call"], true, "{refs}");
+    assert_eq!(refs[0]["params"], "C=37");
+    assert_eq!(refs[1]["call"], true);
+    assert!(refs[2].get("call").is_none());
+    let incoming = c.ok("refs.incoming", json!({ "id": calc })).await;
+    assert_eq!(incoming[0]["call"], true);
+    // The environment fills `{{…}}`; a block gets the values as `args`.
+    let envs = c.ok("tree.children", json!({ "tree": "env" })).await;
+    let env = envs["nodes"].as_array().unwrap().iter().find(|n| n["label"] == "Default").unwrap()["key"].as_str().unwrap().to_string();
+    c.ok("params.set", json!({ "node": env, "name": "室温", "value": "25" })).await;
+    let b = c.ok("resource.embed", json!({ "id": calc, "params": "C={{室温}}, note=\"a, b\"", "envId": env })).await;
+    assert_eq!(b["args"], json!({ "C": "25", "note": "a, b" }), "{b}");
+    assert!(b["view"][0]["text"].as_str().unwrap().contains("\"C\":\"25\""));
+    // Without the environment the name stays as written.
+    let b = c.ok("resource.embed", json!({ "id": calc, "params": "C={{室温}}" })).await;
+    assert_eq!(b["args"]["C"], "{{室温}}");
+    // Inline: one line; kept until the resource or an environment changes.
+    let i1 = c.ok("resource.embed", json!({ "id": calc, "params": "C=37", "inline": true })).await;
+    let first = i1["text"].as_str().unwrap().to_string();
+    assert!(first.starts_with("C=37 #"), "{i1}");
+    let i2 = c.ok("resource.embed", json!({ "id": calc, "params": "C=37", "inline": true })).await;
+    assert_eq!(i2["text"], first.as_str(), "kept");
+    c.ok("page.save", json!({ "target": format!("resource:{calc}"), "changes": { "description": "changed" } })).await;
+    let i3 = c.ok("resource.embed", json!({ "id": calc, "params": "C=37", "inline": true })).await;
+    assert_ne!(i3["text"], first.as_str(), "the resource changed");
+    let kept = i3["text"].as_str().unwrap().to_string();
+    c.ok("params.set", json!({ "node": env, "name": "室温", "value": "26" })).await;
+    let i4 = c.ok("resource.embed", json!({ "id": calc, "params": "C=37", "inline": true })).await;
+    assert_ne!(i4["text"], kept.as_str(), "an environment changed");
+    // The kind's error words; parameters that cannot be read compute nothing.
+    let f = c.ok("resource.embed", json!({ "id": calc, "params": "mode=fail", "inline": true })).await;
+    assert_eq!((f["text"].as_str(), f["error"].as_bool()), (Some("no C"), Some(true)));
+    let bad = c.ok("resource.embed", json!({ "id": calc, "params": "C", "inline": true })).await;
+    assert_eq!(bad["badParams"], true);
+    assert!(bad.get("text").is_none());
+    // An inline answer is one line of at most 200 characters, and only text.
+    for mode in ["long", "lines", "bad"] {
+        let e = c.call("resource.embed", json!({ "id": calc, "params": format!("mode={mode}"), "inline": true })).await.unwrap_err();
+        assert_eq!(e.code, ErrorCode::PluginError, "{mode}");
+    }
+    // A kind without an embed view: no result.
+    let stone = create(&c, "test.part:stone", None, json!({ "name": "Stone" })).await;
+    let s = c.ok("resource.embed", json!({ "id": stone, "params": "a=1", "inline": true })).await;
+    assert!(s.get("text").is_none() && s.get("error").is_none());
+    // Plugins call too (exporting writes results).
+    let r = c.probe("test.binder", "resources.embed", json!([calc, { "params": "C=1", "inline": true }])).await;
+    assert!(r["ok"]["text"].as_str().unwrap().starts_with("C=1"), "{r}");
 }

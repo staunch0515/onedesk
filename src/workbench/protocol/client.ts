@@ -134,7 +134,7 @@ export interface ProtocolClient {
     /** Who refers to this resource (deleted sources are not listed). */
     incoming(id: string): Promise<RefInfo[]>;
     /** D481: what a resource shows where another embeds it (`![[name#section]]`), in the tab's environment. Absent in the demo. */
-    embed?(params: { id: string; section?: string; envId?: string | null; args?: unknown }): Promise<EmbedResult>;
+    embed?(params: { id: string; section?: string; envId?: string | null; args?: unknown; params?: string; inline?: boolean }): Promise<EmbedResult>;
     /** D482: candidates while typing `[[…` (absent in the demo). */
     suggest?(text: string, limit?: number): Promise<RefSuggestion[]>;
     /** D482: writes one reference again so that it means only its target (an ordinary, undoable write). */

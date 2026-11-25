@@ -28,7 +28,7 @@
   "message.pages": "1 ページずつ",
   "message.scroll": "続けて読む",
   "field.text": "内容",
-  "field.placeholder": "ここに書きます。脚注：本文[^1] と、別の行に [^1]: 注。キャプション：図の下に「図：説明」、表の上に「表：説明」。",
+  "field.placeholder": "ここに書きます。脚注：本文[^1] と、別の行に [^1]: 注。キャプション：図の下に「図：説明」、表の上に「表：説明」。数式：埋め込んだ数式の下に「式：」の行。",
   "field.variant": "種類",
   "variant.preface": "まえがき",
   "variant.foreword": "序",
@@ -125,5 +125,7 @@
   "figures.tables": "表",
   "figures.column.number": "番号",
   "figures.column.caption": "キャプション",
-  "figures.column.where": "場所"
+  "figures.column.where": "場所",
+  "caption.equationNumbered": "式（{n}）",
+  "figures.equations": "数式"
 }

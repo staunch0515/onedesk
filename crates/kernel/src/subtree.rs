@@ -105,7 +105,10 @@ impl Inner {
         let opts = args.get(1).cloned().unwrap_or(Value::Null);
         let section = opts.get("section").and_then(Value::as_str).map(String::from);
         let call_args = opts.get("args").cloned().filter(|v| !v.is_null());
-        let p = ResourceEmbedParams { id, section, env_id: info.env_id.clone(), locale: None, args: call_args };
+        // D487 §17: a call's parameters as written, and whether it is inline (exporting a book writes results).
+        let params = opts.get("params").and_then(Value::as_str).map(String::from);
+        let inline = opts.get("inline").and_then(Value::as_bool);
+        let p = ResourceEmbedParams { id, section, env_id: info.env_id.clone(), locale: None, args: call_args, params, inline };
         let out = self.resource_embed(p).await?;
         serde_json::to_value(out).map_err(internal)
     }
@@ -130,7 +133,7 @@ impl Inner {
                     let kind = self.read(|c| store::get(c, &t.id)).ok().flatten().map(|row| row.kind);
                     json!({ "id": t.id, "name": t.name, "kind": kind })
                 });
-                json!({ "text": r.text, "target": target, "section": r.section, "embed": r.embed })
+                json!({ "text": r.text, "target": target, "section": r.section, "embed": r.embed, "call": r.call, "params": r.params })
             })
             .collect();
         Ok(Value::Array(out))

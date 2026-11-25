@@ -178,8 +178,8 @@ describe("the contents (D487 §13.4)", () => {
     ]);
     // A group has no content of its own; captions carry on within a chapter.
     expect(items.find((x: any) => x.key === "g2").resource).toBeUndefined();
-    expect(items.find((x: any) => x.key === "c1").args).toEqual({ book: { prefix: "1", figure: 0, table: 0 } });
-    expect(items.find((x: any) => x.key === "p21").args).toEqual({ book: { prefix: "2", figure: 0, table: 0 } });
+    expect(items.find((x: any) => x.key === "c1").args).toEqual({ book: { prefix: "1", figure: 0, table: 0, equation: 0 } });
+    expect(items.find((x: any) => x.key === "p21").args).toEqual({ book: { prefix: "2", figure: 0, table: 0, equation: 0 } });
     expect(items.find((x: any) => x.key === "ap1").args.book.prefix).toBe("A");
     expect(checkView([{ type: "sequence", id: "s", items }])).toEqual([]);
   });
@@ -192,7 +192,7 @@ describe("the contents (D487 §13.4)", () => {
       ["b", k("page"), "b", "g", { text: "图：四" }],
     ]);
     const { items } = await entriesOf(w.ctx(null), "bk", settingsOf(w.ctx(null), {}, null));
-    expect(items.find((x: any) => x.key === "b").args.book).toEqual({ prefix: "1", figure: 2, table: 1 });
+    expect(items.find((x: any) => x.key === "b").args.book).toEqual({ prefix: "1", figure: 2, table: 1, equation: 0 });
   });
 
   it("sub-books start numbering again with their own settings, or the outer ones; volumes are named", async () => {
@@ -369,7 +369,7 @@ describe("text pages (D487 §13.5)", () => {
     expect(edit.view.map((n: any) => n.id)).toEqual(["variant", "content"]);
     const read = await pages.text.render(w.ctx("c1", { params: { "view.mode": "read" } }));
     expect(read.view[0].text).toContain("*图 1　钟面*");
-    const e = await kinds.page.embed(w.ctx("c1"), { section: null, args: { book: { prefix: "1", figure: 0, table: 0 } } });
+    const e = await kinds.page.embed(w.ctx("c1"), { section: null, args: { book: { prefix: "1", figure: 0, table: 0, equation: 0 } } });
     expect(e.view[0].text).toContain("*图 1-1　钟面*");
     expect(await kinds.page.embed(w.ctx("c1"), { section: "无" })).toEqual({ view: [], sectionMissing: true });
   });
@@ -513,5 +513,55 @@ describe("step ③: references, index, figures, cross references (D487 §15)", (
     expect(e.figures.map((f: any) => f.number)).toEqual(["1-1", "2-1"]);
     expect(e.terms).toHaveLength(4);
     expect(e.cites[0]).toEqual({ keys: ["张三2020"], notes: [null], item: "c1" });
+  });
+});
+
+describe("step ④: equations and inline results in a book (D487 §17)", () => {
+  function maths() {
+    return world(
+      [
+        ["bk", k("book"), "书", null],
+        ["tc", k("toc"), "目录", "bk", {}],
+        ["fg", k("figures"), "图表目录", "bk"],
+        ["c1", k("page"), "温度", "bk", { text: "![[摄氏转华氏]]\n式：温度换算\n\n![[另一式]]\n式：\n\n由[[摄氏转华氏]]可得，体温约 [[=摄氏转华氏 | C=37]]。" }],
+        ["f1", "org.onedesk.formula:formula", "摄氏转华氏", null],
+        ["f2", "org.onedesk.formula:formula", "另一式", null],
+        ["calc", "org.onedesk.formula:formula", "计算", "bk"],
+      ],
+      {
+        refs: { c1: [{ text: "摄氏转华氏", to: "f1", embed: true }, { text: "另一式", to: "f2", embed: true }, { text: "摄氏转华氏", to: "f1" }, { text: "=摄氏转华氏 | C=37", to: "f1" }] },
+        implementers: { "org.onedesk.formula": { roles: () => ({ kinds: [{ kind: "formula", role: "calc", part: "body", container: false, numbering: "level" }] }), outline: () => ({ headings: [], figures: [] }) } },
+      },
+    );
+  }
+
+  it("equations are numbered by chapter, words optional; referred to as 式（1-1）; listed with the figures", async () => {
+    const w = maths();
+    const e = await entriesOf(w.ctx(null), "bk", settingsOf(w.ctx(null), {}, null));
+    // A formula placed in the book is a page of its own (another plugin's role).
+    expect(e.items.map((x: any) => x.title)).toEqual(["图表目录", "第一章 温度", "第二章 计算"]);
+    expect(e.figures.map((f: any) => [f.type, f.number, f.caption, f.of])).toEqual([
+      ["equation", "1-1", "温度换算", "摄氏转华氏"],
+      ["equation", "1-2", "", "另一式"],
+    ]);
+    const c1 = e.items.find((x: any) => x.key === "c1");
+    expect(c1.args.book.labels).toEqual({ 摄氏转华氏: "式（1-1）" });
+    const r = readable({ t, locale: "zh-CN" }, w.res.get("c1")!.body.text, c1.args.book);
+    expect(r).toContain("*式（1-1）　温度换算*");
+    expect(r).toContain("*式（1-2）*");
+    expect(outlineOf("式：\n图：\n表：x").figures).toEqual([{ type: "equation", caption: "" }, { type: "table", caption: "x" }]);
+    const list = await registry(plugin).pages.figures.render(w.ctx("fg"));
+    expect(list.view.find((n: any) => n.id === "equation").rows).toEqual([["式（1-1）", "温度换算", "第一章"], ["式（1-2）", "另一式", "第一章"]]);
+  });
+
+  it("export prints an inline call as its result", async () => {
+    const w = maths();
+    const host = w.host as any;
+    host.resources.embed = async (id: string, o: any = {}) =>
+      o.inline ? { text: id === "f1" && o.params === "C=37" ? "98.6 °F" : "?" } : { view: [{ type: "text", id: "t", text: String(w.res.get(id)?.body.text ?? ""), format: "markdown" }] };
+    const { actions } = registry(plugin);
+    await actions.export(w.ctx("tc"), {});
+    const md = w.files.get("/out/书.md")!;
+    expect(md).toContain("体温约 98.6 °F。");
   });
 });
