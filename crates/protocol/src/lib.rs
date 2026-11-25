@@ -537,6 +537,10 @@ pub struct ViewField {
     /// `text`, `longtext` and `code` fields whenever an assist provider is installed.
     #[serde(default)]
     pub assist: Option<FieldAssist>,
+    /// D482: set by the kernel (never by a plugin) on a bound field whose kind declares it `refs: true`: `[[…]]`
+    /// written in it are references, and the interface offers the candidates while typing.
+    #[serde(default)]
+    pub refs: Option<bool>,
 }
 
 /// Round 21 (D462, docs/redesign/ai-assist.md §5): how the shell's writing help treats one field.
@@ -2132,6 +2136,54 @@ pub mod method5 {
     pub const RUN_EXPORT: &str = "run.export";
     /// D481: `ResourceEmbedParams` → `EmbedResult`: what a resource shows where another embeds it (`![[name]]`).
     pub const RESOURCE_EMBED: &str = "resource.embed";
+    /// D482: `RefsSuggestParams` → `Vec<RefSuggestion>`: candidates while typing `[[…`.
+    pub const REFS_SUGGEST: &str = "refs.suggest";
+    /// D482: `RefsRewriteParams` → `RefsRewriteResult`: writes one reference so it means only its target.
+    pub const REFS_REWRITE: &str = "refs.rewrite";
+}
+
+/// D482: what has been typed after `[[` (the name or a part of it; a path is allowed).
+#[skip_serializing_none]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, optional_fields)]
+pub struct RefsSuggestParams {
+    pub text: String,
+    /// 1–50; default 20.
+    pub limit: Option<u32>,
+}
+
+/// D482: one candidate: where it is (`path`, its parents' names, outermost first) and `write`, the shortest text that
+/// means only it.
+#[skip_serializing_none]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, optional_fields)]
+pub struct RefSuggestion {
+    pub id: String,
+    pub name: String,
+    pub icon: String,
+    pub kind_label: Option<Label>,
+    pub path: Vec<String>,
+    pub write: String,
+}
+
+/// D482: one reference of a resource (`field`, `seq` as `refs.outgoing` lists them).
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct RefsRewriteParams {
+    pub source: String,
+    pub field: String,
+    pub seq: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct RefsRewriteResult {
+    /// The reference as now written (between `[[` and `]]`).
+    pub text: String,
 }
 
 /// D481 (docs/redesign/embed-book.md §3): the resource to show embedded, the section (`![[name#section]]`), and the
@@ -2164,6 +2216,9 @@ pub struct EmbedResult {
     pub section_missing: Option<bool>,
     #[serde(default)]
     pub refs: Vec<RefInfo>,
+    /// D482: where it is: its parents' names, outermost first.
+    #[serde(default)]
+    pub path: Vec<String>,
 }
 
 /// `refs.outgoing` / `refs.incoming`: the resource whose references are asked for.
@@ -2207,6 +2262,12 @@ pub struct RefInfo {
     pub embed: Option<bool>,
     /// D481: the part after `#` (`[[name#section]]`); the name is what comes before it.
     pub section: Option<String>,
+    /// D482: how many resources what is written means right now, when more than one.
+    pub ambiguous: Option<u32>,
+    /// D482: the path written no longer leads to the target (a parent was renamed or it moved).
+    pub stale: Option<bool>,
+    /// D482: with `ambiguous` or `stale`, where the target is: its parents' names, outermost first.
+    pub place: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -2794,6 +2855,7 @@ mod tests {
                 max_length: None,
                 kinds: None,
                 assist: None,
+                refs: None,
             }],
         };
         assert_eq!(

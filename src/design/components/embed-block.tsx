@@ -11,6 +11,8 @@ export interface EmbedBlockProps {
   kind?: string;
   /** Opens the resource; without it the title is plain text. */
   onOpen?: () => void;
+  /** Shown when the pointer rests on the title (e.g. where the resource is). */
+  place?: string;
   /** The reference cannot be shown (gone, too deep): drawn muted, with a red edge. */
   broken?: boolean;
   /** A muted line under the content (e.g. "section not found"). */
@@ -19,12 +21,12 @@ export interface EmbedBlockProps {
 }
 
 /** D481: another resource's content inside this one, read only, with a head that opens it. */
-export function EmbedBlock({ title, icon, kind, onOpen, broken, note, children }: EmbedBlockProps) {
+export function EmbedBlock({ title, icon, kind, onOpen, place, broken, note, children }: EmbedBlockProps) {
   return (
     <figure className={cx("od-embed", broken && "od-embed--broken")} aria-label={title}>
       <figcaption className="od-embed__head">
         {onOpen ? (
-          <button type="button" className="od-embed__title" onClick={onOpen}>
+          <button type="button" className="od-embed__title" title={place} onClick={onOpen}>
             {icon && <Icon name={icon} size="sm" />}
             {title}
           </button>

@@ -82,6 +82,7 @@ export function Embed({ text, refs, envId, depth, chain }: Place & { text: strin
       icon={e.icon}
       kind={e.kindLabel ? tx(e.kindLabel) : undefined}
       onOpen={open}
+      place={e.path.length > 0 ? e.path.join(" › ") : undefined}
       note={e.sectionMissing ? t("embed.sectionMissing", { section: section ?? "" }) : undefined}
     >
       {e.view

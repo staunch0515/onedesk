@@ -30,4 +30,16 @@ embed?: boolean,
 /**
  * D481: the part after `#` (`[[name#section]]`); the name is what comes before it.
  */
-section?: string, };
+section?: string, 
+/**
+ * D482: how many resources what is written means right now, when more than one.
+ */
+ambiguous?: number, 
+/**
+ * D482: the path written no longer leads to the target (a parent was renamed or it moved).
+ */
+stale?: boolean, 
+/**
+ * D482: with `ambiguous` or `stale`, where the target is: its parents' names, outermost first.
+ */
+place?: Array<string>, };

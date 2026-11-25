@@ -1,4 +1,4 @@
-import type { AssistProvider, ConnectionState, EmbedResult, EventMessage, HelloResult, TreePage } from "../generated";
+import type { AssistProvider, ConnectionState, EmbedResult, RefSuggestion, EventMessage, HelloResult, TreePage } from "../generated";
 import type { ProtocolClient } from "../client";
 import type { ExportResult, ImportPreview, ImportResult, KnownParam, RefInfo, RunExportResult, InstallPreview, InstallRequest, PluginVersionParams, SecretInfo, UndoUpgradeResult, UpgradeResult, PageEventResult, PaletteCommand, PluginDetail, Run, ViewNode, TreeMoveResult, AuditFacets, AuditFilter, McpInfo, McpStatus, AuditRow, EnvOption, EnvView, HistoryEntry, ResolvedParam, ResultAction, SearchHit, CommandContext, CommandEffect, NewItem, PageContext, PageDescriptor, PageSaveResult, PluginGrants, Resource, TreeInfo, TreeNode, WorkspaceEntry, WorkspacesResult, WorkspaceInfo, LanguageInfo, ShellTexts } from "../types";
 import { EventBus } from "./event-bus";
@@ -90,6 +90,8 @@ export async function createKernelClient(transport: Transport, locale?: () => st
     refs: {
       outgoing: (id) => call<RefInfo[]>("refs.outgoing", { id }),
       incoming: (id) => call<RefInfo[]>("refs.incoming", { id }),
+      suggest: (text, limit) => call<RefSuggestion[]>("refs.suggest", compact({ text, limit })),
+      rewrite: (source, field, seq) => call<{ text: string }>("refs.rewrite", { source, field, seq }),
       embed: (p) => call<EmbedResult>("resource.embed", compact({ id: p.id, section: p.section, envId: p.envId ?? undefined, locale: locale?.() })),
     },
     params: {

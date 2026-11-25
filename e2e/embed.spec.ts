@@ -39,7 +39,11 @@ async function newNote(page: Page, name: string, text: string) {
   await page.getByRole("button", { name: "New", exact: true }).first().click();
   await page.getByRole("menuitem", { name: "Note", exact: true }).click();
   const info = page.getByRole("complementary", { name: "Info" });
-  await info.getByRole("textbox", { name: "Name" }).fill(name);
+  // The new tab's own info panel ("not saved yet"), not the one of the tab before.
+  await expect(info.getByText("Not saved yet")).toBeVisible();
+  const nameBox = info.getByRole("textbox", { name: "Name" });
+  await nameBox.fill(name);
+  await expect(nameBox).toHaveValue(name);
   await content(page).fill(text);
   await page.keyboard.press("ControlOrMeta+s");
   await expect(page.getByRole("heading", { level: 1, name })).toBeVisible();
@@ -94,4 +98,45 @@ test("a missing section, a missing resource and a loop say so instead of failing
   await expect(page.getByRole("figure", { name: "Nobody" })).toContainText("not there any more");
   await expect(page.getByRole("figure", { name: "Edge cases" })).toContainText("Embedded too deep, or inside itself");
   await shot(page, "edges");
+});
+
+test("D482 from New: typing ![[ offers the candidates with where they are; the one picked is written uniquely; a bare namesake is flagged and rewritten", async ({ page }) => {
+  await openKernel(page, host);
+  const groupOf = async (name: string) => (await call<{ key: string }>(page, "tree.createGroup", { tree: "resources", name })).key;
+  const a = await groupOf("Book A");
+  const b = await groupOf("Book B");
+  for (const [g, who] of [[a, "first"], [b, "second"]] as const) {
+    await call(page, "page.save", { target: `new:org.onedesk.note:note?parent=${g}`, changes: { name: "Chapter 1", "body.text": `This is the ${who} book.` } });
+  }
+  await page.reload();
+  await page.getByRole("button", { name: "New", exact: true }).first().click();
+  await page.getByRole("menuitem", { name: "Note", exact: true }).click();
+  await expect(page.getByRole("complementary", { name: "Info" }).getByText("Not saved yet")).toBeVisible();
+  await page.getByRole("complementary", { name: "Info" }).getByRole("textbox", { name: "Name" }).fill("Reader");
+  await content(page).click();
+  await page.keyboard.type("Read this:\n\n![[Chapter");
+  const list = page.getByRole("listbox", { name: "Resources to refer to" });
+  await expect(list.getByRole("option")).toHaveCount(2);
+  await expect(list).toContainText("Book A/Chapter 1");
+  await expect(list).toContainText("Book B/Chapter 1");
+  await shot(page, "suggest");
+  await list.getByRole("option", { name: /Book B\/Chapter 1/ }).click();
+  await expect(content(page)).toHaveValue("Read this:\n\n![[Book B/Chapter 1]]");
+  await page.keyboard.press("ControlOrMeta+s");
+  await expect(page.getByRole("heading", { level: 1, name: "Reader" })).toBeVisible();
+  await toggle(page).click();
+  await expect(page.getByRole("figure", { name: "Chapter 1" })).toContainText("This is the second book.");
+
+  // A bare name that two resources have: the info panel says so, and writes it uniquely on request.
+  const reader = (await roots(page)).find((n) => n.label === "Reader")!.key;
+  await call(page, "page.save", { target: `resource:${reader}`, changes: { "body.text": "![[Book B/Chapter 1]]\n\nSee [[Chapter 1]]." } });
+  await page.reload();
+  await treeItem(page, "Reader").click();
+  const info = page.getByRole("complementary", { name: "Info" });
+  await expect(info.getByText("2 with this name")).toBeVisible();
+  await shot(page, "ambiguous");
+  await info.getByRole("button", { name: "Write it uniquely" }).click();
+  await expect(info.getByText("2 with this name")).toHaveCount(0);
+  const text = (await call<{ body: { text: string } }>(page, "resource.get", { id: reader })).body.text;
+  expect(text).toMatch(/See \[\[Book [AB]\/Chapter 1\]\]\./);
 });

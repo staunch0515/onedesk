@@ -58,8 +58,9 @@ function HistorySection({ resourceId, readOnly }: { resourceId: string; readOnly
 }
 
 /** One reference: the other side opens on click; a deleted or broken one says so instead of disappearing (§10). */
-function RefRow({ info, side }: { info: RefInfo; side: "outgoing" | "incoming" }) {
-  const { actions } = useWorkbench();
+function RefRow({ info, side, seq }: { info: RefInfo; side: "outgoing" | "incoming"; seq: number }) {
+  const { actions, client } = useWorkbench();
+  const { toast } = useToast();
   const { t, tx } = useI18n();
   const fieldLabel = info.fieldLabel;
   const other = side === "outgoing" ? info.target : info.source;
@@ -90,6 +91,32 @@ function RefRow({ info, side }: { info: RefInfo; side: "outgoing" | "incoming" }
       {/* D481: an embed shows the content where it is written; links only point. */}
       {info.embed && <Badge tone="accent" icon="layers">{t("refs.embedded")}</Badge>}
       {info.section && <Text size="xs" tone="muted">{`› ${info.section}`}</Text>}
+      {/* D482: what is written means several resources, or its path no longer leads there: offer the unique writing. */}
+      {side === "outgoing" && (info.ambiguous || info.stale) && (
+        <Pane direction="row" gap="xs" align="center" wrap>
+          <Tooltip
+            content={t(info.ambiguous ? "refs.ambiguousHint" : "refs.staleHint", {
+              count: info.ambiguous ?? 0,
+              place: info.place && info.place.length > 0 ? info.place.join(" › ") : t("refs.topLevel"),
+            })}
+          >
+            <span tabIndex={0}>
+              <Badge tone="warning" icon="copy">{info.ambiguous ? t("refs.ambiguous", { count: info.ambiguous }) : t("refs.stale")}</Badge>
+            </span>
+          </Tooltip>
+          {client.refs.rewrite && (
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() =>
+                client.refs.rewrite!(info.source.id, info.field, seq).then((r) => toast({ tone: "success", title: t("refs.rewritten", { text: r.text }) }), actions.fail)
+              }
+            >
+              {t("refs.rewrite")}
+            </Button>
+          )}
+        </Pane>
+      )}
       {fieldLabel && <Text size="xs" tone="muted">{t("refs.field", { field: tx(fieldLabel) })}</Text>}
     </Pane>
   );
@@ -109,7 +136,7 @@ function RefsSection({ resourceId }: { resourceId: string }) {
       ) : rows.length === 0 ? (
         <Text size="sm" tone="subtle">{t("refs.none")}</Text>
       ) : (
-        rows.map((r, i) => <RefRow key={`${r.source.id}-${r.field}-${i}`} info={r} side={side} />)
+        rows.map((r, i) => <RefRow key={`${r.source.id}-${r.field}-${i}`} info={r} side={side} seq={rows.slice(0, i).filter((x) => x.field === r.field).length} />)
       )}
     </Pane>
   );

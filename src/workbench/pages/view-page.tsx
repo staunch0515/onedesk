@@ -15,6 +15,7 @@ import { ViewNodes } from "../parts/view-nodes";
 import { Badge, FactRow } from "../../design";
 import { RunKeepBar } from "../parts/run-keep-bar";
 import { clashes, conversationOf, targetInput, useAssistProvider } from "../parts/ai-chat";
+import { RefCodeEditor, RefTextarea } from "../parts/ref-completion";
 
 const EMPTY: Record<string, unknown> = {};
 /** D479: how many turns each tab's conversation showed last, to empty its box when a new one comes in. */
@@ -98,6 +99,8 @@ export function FieldControl({ field, value, onChange, size, readOnly, id, secre
       );
     }
     case "longtext":
+      // D482: where references are written, the candidates come up while typing `[[`.
+      if (field.refs && !locked) return <RefTextarea id={id} aria-label={label} rows={4} value={value} maxLength={field.maxLength} placeholder={placeholder} onValue={onChange} />;
       return <Textarea id={id} aria-label={label} rows={4} value={value} readOnly={locked} maxLength={field.maxLength} placeholder={placeholder} onChange={(e) => onChange(e.target.value)} />;
     case "code":
       return <CodeEditor label={label} height="auto" framed value={value} readOnly={locked} tokenize={field.language ? TOKENIZERS[field.language] : undefined} onChange={onChange} />;
@@ -540,7 +543,16 @@ export function ViewPage({ tab, descriptor: initial }: { tab: TabState; descript
             ))}
           </Pane>
         )}
-        {fill && (
+        {fill && fill.refs && !(readOnly || fill.readOnly) && (
+          <RefCodeEditor
+            label={tx(fill.label)}
+            value={bound(fill.bind ?? fill.name)}
+            placeholder={fill.placeholder ? tx(fill.placeholder) : undefined}
+            tokenize={fill.language ? TOKENIZERS[fill.language] : undefined}
+            onChange={(v) => setBound(fill.bind ?? fill.name, v)}
+          />
+        )}
+        {fill && !(fill.refs && !(readOnly || fill.readOnly)) && (
           <CodeEditor
             label={tx(fill.label)}
             value={bound(fill.bind ?? fill.name)}

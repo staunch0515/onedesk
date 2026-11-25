@@ -19,7 +19,7 @@ use crate::store::{self, Row, KIND_CONFIG, KIND_ENV, KIND_GROUP, TREE_PLUGIN_STA
 use crate::util::*;
 
 pub const METHODS: &[&str] =
-    &[M::REFS_OUTGOING, M::REFS_INCOMING, M::RESOURCE_EMBED, M::PARAMS_KNOWN, M::WORKSPACE_EXPORT, M::WORKSPACE_IMPORT_PREVIEW, M::WORKSPACE_IMPORT, M::RUN_EXPORT];
+    &[M::REFS_OUTGOING, M::REFS_INCOMING, M::RESOURCE_EMBED, M::REFS_SUGGEST, M::REFS_REWRITE, M::PARAMS_KNOWN, M::WORKSPACE_EXPORT, M::WORKSPACE_IMPORT_PREVIEW, M::WORKSPACE_IMPORT, M::RUN_EXPORT];
 
 pub const EXPORT_FORMAT: &str = "onedesk-export";
 pub const EXPORT_VERSION: u32 = 1;
@@ -414,8 +414,8 @@ fn mark_of(src: &Row, r: &crate::refs::RefRow, target_name: Option<&str>) -> (Op
         .and_then(Value::as_str)
         .and_then(|t| crate::refs::marks(t).into_iter().nth(r.seq as usize))
         .is_some_and(|m| m.embed && m.text == r.text);
-    let section = match crate::refs::split(&r.text) {
-        (_, Some(s)) if target_name != Some(r.text.as_str()) => Some(s.to_string()),
+    let section = match crate::refs::parse(&r.text).section {
+        Some(s) if target_name != Some(r.text.as_str()) => Some(s),
         _ => None,
     };
     (embed.then_some(true), section)
@@ -426,6 +426,11 @@ impl Inner {
         Some(match m {
             M::REFS_OUTGOING => parse::<RefsParams>(params).and_then(|p| self.refs_outgoing(&p.id)).and_then(to_value),
             M::REFS_INCOMING => parse::<RefsParams>(params).and_then(|p| self.refs_incoming(&p.id)).and_then(to_value),
+            M::REFS_SUGGEST => parse::<RefsSuggestParams>(params).and_then(|p| self.refs_suggest(p)).and_then(to_value),
+            M::REFS_REWRITE => match parse::<RefsRewriteParams>(params) {
+                Ok(p) => self.refs_rewrite(p).await.and_then(to_value),
+                Err(e) => Err(e),
+            },
             M::RESOURCE_EMBED => match parse::<ResourceEmbedParams>(params) {
                 Ok(p) => self.resource_embed(p).await.and_then(to_value),
                 Err(e) => Err(e),
@@ -495,6 +500,7 @@ impl Inner {
             view: None,
             section_missing: None,
             refs: self.refs_outgoing(&row.id)?,
+            path: self.read(|c| store::ancestors(c, &row))?.into_iter().map(|a| a.name).collect(),
         };
         let Some((plugin, kind)) = self.registry.kind_at(&row.kind, row.plugin_version.as_deref()) else { return Ok(out) };
         if !kind.embed || meta.state != NodeState::Ok || !self.plugin_enabled(&plugin.id) {
@@ -533,6 +539,77 @@ impl Inner {
         Ok(out)
     }
 
+    /// D482 `refs.suggest`: resources whose name holds `text` (its name part; a path narrows them down), exact names
+    /// first, then those that start with it, then the rest, each by name; with where it is and the shortest text that
+    /// means only it.
+    pub fn refs_suggest(&self, p: RefsSuggestParams) -> KResult<Vec<RefSuggestion>> {
+        let limit = p.limit.unwrap_or(20).clamp(1, 50) as usize;
+        let parsed = crate::refs::parse(&p.text);
+        let want = parsed.name.to_lowercase();
+        let rows: Vec<Row> = self.read(|c| {
+            let mut st = c.prepare_cached(&format!(
+                "SELECT {} FROM resources WHERE deleted_at IS NULL AND instr(lower(name), ?1) > 0 ORDER BY name LIMIT 1000",
+                store::COLUMNS
+            ))?;
+            let v = st.query_map([&want], store::from_row)?.collect::<Result<Vec<_>, _>>();
+            v
+        })?;
+        let mut hits: Vec<(u8, Row, Vec<String>)> = Vec::new();
+        for r in rows {
+            if !crate::refs::referenceable(&r) || self.hidden_tree(&r) || !self.in_stored_tree(&r) {
+                continue;
+            }
+            let path: Vec<String> = self.read(|c| store::ancestors(c, &r))?.into_iter().map(|a| a.name).collect();
+            if !parsed.path.is_empty() && !(parsed.path.len() <= path.len() && path[path.len() - parsed.path.len()..] == parsed.path[..]) {
+                continue;
+            }
+            let lower = r.name.to_lowercase();
+            let rank = if lower == want { 0 } else if lower.starts_with(&want) { 1 } else { 2 };
+            hits.push((rank, r, path));
+        }
+        hits.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.name.cmp(&b.1.name)).then_with(|| a.2.cmp(&b.2)));
+        hits.truncate(limit);
+        let mut memo = HashMap::new();
+        let mut out = Vec::new();
+        for (_, r, path) in hits {
+            let (short, name) = self.read(|c| crate::refs::shortest(c, &r))?;
+            let info = self.resource_info(&r, &mut memo);
+            out.push(RefSuggestion {
+                id: r.id.clone(),
+                name: r.name.clone(),
+                icon: info.icon,
+                kind_label: info.kind_label,
+                path,
+                write: crate::refs::Parsed::default().write(&short, &name),
+            });
+        }
+        Ok(out)
+    }
+
+    /// D482 `refs.rewrite`: one reference written again as the shortest text that means only its target (keeping `!`,
+    /// `=`, the section and the parameters). An ordinary write of the source: in its history, undoable.
+    pub async fn refs_rewrite(&self, p: RefsRewriteParams) -> KResult<RefsRewriteResult> {
+        let src = self.live_row(&p.source)?;
+        let key = p.field.strip_prefix("body.").ok_or_else(|| invalid_params("field"))?.to_string();
+        let row = self
+            .read(|c| crate::refs::rows_of(c, &src.id))?
+            .into_iter()
+            .find(|r| r.field == p.field && r.seq == i64::from(p.seq))
+            .ok_or_else(|| not_found("reference"))?;
+        let target = row.target.clone().ok_or_else(|| invalid("noTarget"))?;
+        let target = self.live_row(&target)?;
+        let text = src.body.get(&key).and_then(Value::as_str).unwrap_or_default().to_string();
+        let m = crate::refs::marks(&text).into_iter().nth(p.seq as usize).filter(|m| m.text == row.text).ok_or_else(|| invalid("changed"))?;
+        let (path, name) = self.read(|c| crate::refs::shortest(c, &target))?;
+        let inner = crate::refs::parse(&m.text).write(&path, &name);
+        let new_text = format!("{}[[{}]]{}", &text[..m.start], inner, &text[m.end..]);
+        let mut changes = BTreeMap::new();
+        changes.insert(p.field.clone(), Value::String(new_text));
+        let changes = crate::pipeline::Changes::from_bind_map(&changes)?;
+        self.execute(crate::pipeline::Actor::User, crate::pipeline::Command::Update { id: src.id.clone(), changes, basis: None, overwrite: vec![] }).await?;
+        Ok(RefsRewriteResult { text: inner })
+    }
+
     pub fn refs_outgoing(&self, id: &str) -> KResult<Vec<RefInfo>> {
         let src = self.visible_row(id)?;
         let mut out = Vec::new();
@@ -540,7 +617,28 @@ impl Inner {
             let (target, state) = self.ref_target(r.target.as_deref())?;
             let field_label = self.field_label(&src, &r.field);
             let (embed, section) = mark_of(&src, &r, target.as_ref().map(|t| t.name.as_str()));
-            out.push(RefInfo { source: self.named(&src), field: r.field, text: r.text, target, state, field_label, embed, section });
+            // D482: what is written may mean several resources, or no longer lead to the target.
+            let (ambiguous, stale, place) = self.read(|c| {
+                let exact = crate::refs::named(c, &r.text)?;
+                let n = if exact.is_empty() { crate::refs::candidates(c, &r.text)?.len() } else { exact.len() };
+                let path = crate::refs::parse(&r.text).path;
+                let stale = match (&r.target, exact.is_empty() && !path.is_empty()) {
+                    (Some(t), true) => match store::get(c, t)? {
+                        Some(row) => !crate::refs::path_matches(c, &row, &path)?,
+                        None => false,
+                    },
+                    _ => false,
+                };
+                let place = match (&r.target, n > 1 || stale) {
+                    (Some(t), true) => match store::get(c, t)? {
+                        Some(row) => Some(store::ancestors(c, &row)?.into_iter().map(|a| a.name).collect::<Vec<_>>()),
+                        None => None,
+                    },
+                    _ => None,
+                };
+                Ok(((n > 1).then_some(n as u32), stale.then_some(true), place))
+            })?;
+            out.push(RefInfo { source: self.named(&src), field: r.field, text: r.text, target, state, field_label, embed, section, ambiguous, stale, place });
         }
         Ok(out)
     }
@@ -553,7 +651,7 @@ impl Inner {
             let Some(s) = self.read(|c| store::get(c, &src))? else { continue };
             let field_label = self.field_label(&s, &r.field);
             let (embed, section) = mark_of(&s, &r, Some(&me.name));
-            out.push(RefInfo { source: self.named(&s), field: r.field, text: r.text, target: Some(self.named(&me)), state, field_label, embed, section });
+            out.push(RefInfo { source: self.named(&s), field: r.field, text: r.text, target: Some(self.named(&me)), state, field_label, embed, section, ambiguous: None, stale: None, place: None });
         }
         Ok(out)
     }

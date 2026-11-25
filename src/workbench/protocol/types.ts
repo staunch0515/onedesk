@@ -109,6 +109,7 @@ export type {
   I18nShellResult as ShellTexts,
   AssistProvider,
   EmbedResult,
+  RefSuggestion,
   FieldAssist,
   PageApply,
   ConversationTurn,

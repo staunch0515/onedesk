@@ -8,4 +8,8 @@ import type { ViewNode } from "./ViewNode";
  * absent when the kind has no embed view (the interface shows a card). `sectionMissing`: the section asked for is
  * not there. `refs`: the resource's own references, for `[[…]]` and `![[…]]` inside the view.
  */
-export type EmbedResult = { id: string, name: string, icon: string, kindLabel?: Label, description?: string, view?: Array<ViewNode>, sectionMissing?: boolean, refs: Array<RefInfo>, };
+export type EmbedResult = { id: string, name: string, icon: string, kindLabel?: Label, description?: string, view?: Array<ViewNode>, sectionMissing?: boolean, refs: Array<RefInfo>, 
+/**
+ * D482: where it is: its parents' names, outermost first.
+ */
+path: Array<string>, };

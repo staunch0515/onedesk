@@ -26,24 +26,157 @@ pub struct Mark {
     pub embed: bool,
 }
 
-/// D481: the name and the section of a mark's text: `name#section` → (`name`, `section`). A `#` with nothing after it
-/// (or at the start) is part of the name.
-pub fn split(text: &str) -> (&str, Option<&str>) {
-    match text.find('#') {
-        Some(i) if i > 0 && i + 1 < text.len() => (&text[..i], Some(&text[i + 1..])),
-        _ => (text, None),
+/// D481/D482: what a mark's text says — `[=]path/…/name[#section][|params]`. `\\/`, `\\#` and `\\|` are those
+/// characters in a name. A `#` with nothing after it (or at the start) is part of the name; `=` is a call only when
+/// something follows it. `params` is kept as written (the second step reads it).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Parsed {
+    pub call: bool,
+    /// Parents' names, outermost first.
+    pub path: Vec<String>,
+    pub name: String,
+    pub section: Option<String>,
+    pub params: Option<String>,
+}
+
+/// Splits at the first unescaped `sep`; the escape stays (it is removed per segment by `unescape`).
+fn split_at(s: &str, sep: char) -> (&str, Option<&str>) {
+    let mut esc = false;
+    for (i, c) in s.char_indices() {
+        if esc {
+            esc = false;
+        } else if c == '\\' {
+            esc = true;
+        } else if c == sep {
+            return (&s[..i], Some(&s[i + c.len_utf8()..]));
+        }
+    }
+    (s, None)
+}
+
+fn unescape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut it = s.chars().peekable();
+    while let Some(c) = it.next() {
+        if c == '\\' && matches!(it.peek(), Some('/' | '#' | '|')) {
+            out.push(it.next().unwrap());
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
+fn escape(s: &str) -> String {
+    s.replace('/', "\\/").replace('#', "\\#").replace('|', "\\|")
+}
+
+pub fn parse(text: &str) -> Parsed {
+    let (head, params) = split_at(text, '|');
+    let mut head = head.trim();
+    let call = head.len() > 1 && head.starts_with('=');
+    if call {
+        head = head[1..].trim_start();
+    }
+    let (body, section) = match split_at(head, '#') {
+        (b, Some(sec)) if !b.trim().is_empty() && !sec.trim().is_empty() => (b, Some(unescape(sec.trim()))),
+        _ => (head, None),
+    };
+    let mut segs: Vec<String> = Vec::new();
+    let mut rest = body;
+    loop {
+        let (seg, more) = split_at(rest, '/');
+        let seg = unescape(seg.trim());
+        if !seg.is_empty() {
+            segs.push(seg);
+        }
+        match more {
+            Some(m) => rest = m,
+            None => break,
+        }
+    }
+    let name = segs.pop().unwrap_or_default();
+    Parsed { call, path: segs, name, section, params: params.map(|p| p.trim().to_string()) }
+}
+
+impl Parsed {
+    /// The text again, with `name` and `path` as given (escaped), the rest as it was.
+    pub fn write(&self, path: &[String], name: &str) -> String {
+        let mut out = String::new();
+        if self.call {
+            out.push('=');
+        }
+        for p in path {
+            out.push_str(&escape(p));
+            out.push('/');
+        }
+        out.push_str(&escape(name));
+        if let Some(sec) = &self.section {
+            out.push('#');
+            out.push_str(&escape(sec));
+        }
+        if let Some(p) = &self.params {
+            out.push_str(" | ");
+            out.push_str(p);
+        }
+        out
     }
 }
 
-/// D481: the target of a mark's text: a resource with exactly that name, else (`name#section`) one with the name part.
+/// D481 (kept for callers): the name part and the section of a mark's text.
+pub fn split(text: &str) -> (String, Option<String>) {
+    let p = parse(text);
+    (p.name, p.section)
+}
+
+/// D482: the resources a mark's text can mean — live, referenceable, with that name, and (when it has a path) whose
+/// parents' names, nearest first, are the path's from its end.
+pub fn candidates(conn: &Connection, text: &str) -> rusqlite::Result<Vec<Row>> {
+    let p = parse(text);
+    if p.name.is_empty() {
+        return Ok(vec![]);
+    }
+    let mut out = Vec::new();
+    for r in named(conn, &p.name)? {
+        if p.path.is_empty() || path_matches(conn, &r, &p.path)? {
+            out.push(r);
+        }
+    }
+    Ok(out)
+}
+
+/// Whether `path` (outermost first) is the tail of `r`'s parents' names.
+pub fn path_matches(conn: &Connection, r: &Row, path: &[String]) -> rusqlite::Result<bool> {
+    let anc: Vec<String> = store::ancestors(conn, r)?.into_iter().map(|a| a.name).collect();
+    Ok(path.len() <= anc.len() && anc[anc.len() - path.len()..] == *path)
+}
+
+/// D481/D482: the target of a mark's text: a resource whose name is exactly the whole text, else by name and path
+/// (`candidates`), choosing among several as D322 says.
 pub fn resolve_mark(conn: &Connection, text: &str, source: &Row) -> rusqlite::Result<Option<String>> {
     if let Some(id) = resolve(conn, text, source)? {
         return Ok(Some(id));
     }
-    match split(text) {
-        (name, Some(_)) => resolve(conn, name, source),
-        _ => Ok(None),
+    let cands = candidates(conn, text)?;
+    pick(conn, cands, source)
+}
+
+/// D482: the shortest way to write `r` so that it is the only resource meant: its name, then as many of its
+/// parents (nearest first) as it takes. Returns (path, name).
+pub fn shortest(conn: &Connection, r: &Row) -> rusqlite::Result<(Vec<String>, String)> {
+    let mine: Vec<String> = store::ancestors(conn, r)?.into_iter().map(|a| a.name).collect();
+    let others: Vec<Vec<String>> = named(conn, &r.name)?
+        .into_iter()
+        .filter(|o| o.id != r.id)
+        .map(|o| store::ancestors(conn, &o).map(|a| a.into_iter().map(|x| x.name).collect()))
+        .collect::<Result<_, _>>()?;
+    for k in 0..=mine.len() {
+        let tail = &mine[mine.len() - k..];
+        if others.iter().all(|o| !(o.len() >= k && o[o.len() - k..] == *tail)) {
+            return Ok((tail.to_vec(), r.name.clone()));
+        }
     }
+    Ok((mine, r.name.clone()))
 }
 
 /// Every reference mark, in order. `\[[` is not a mark; the text may not be empty, contain a line
@@ -95,9 +228,19 @@ fn path_key(conn: &Connection, r: &Row) -> rusqlite::Result<PathKey> {
 /// D322: exact name (case-sensitive) of a live, referenceable resource; among several, the ones
 /// under the source's parent first, then the one nearest the top of the tree.
 pub fn resolve(conn: &Connection, name: &str, source: &Row) -> rusqlite::Result<Option<String>> {
+    let cands = named(conn, name)?;
+    pick(conn, cands, source)
+}
+
+/// Live, referenceable resources with exactly this name.
+pub fn named(conn: &Connection, name: &str) -> rusqlite::Result<Vec<Row>> {
     let mut st = conn.prepare_cached(&format!("SELECT {} FROM resources WHERE name = ?1 AND deleted_at IS NULL", store::COLUMNS))?;
     let all: Vec<Row> = st.query_map([name], store::from_row)?.collect::<Result<Vec<_>, _>>()?;
-    let mut cands: Vec<Row> = all.into_iter().filter(referenceable).collect();
+    Ok(all.into_iter().filter(referenceable).collect())
+}
+
+/// D322: among several, the ones under the source's parent first, then the one nearest the top of the tree.
+pub fn pick(conn: &Connection, mut cands: Vec<Row>, source: &Row) -> rusqlite::Result<Option<String>> {
     if cands.len() > 1 {
         let near: Vec<Row> =
             cands.iter().filter(|c| c.parent_id == source.parent_id && c.tree == source.tree).cloned().collect();
@@ -177,6 +320,8 @@ pub fn update(conn: &Connection, rule: &KindRule, row: &Row, changed: Option<&[S
         }
         let old: Vec<RefRow> = rows_of(conn, &row.id)?.into_iter().filter(|r| r.field == field).collect();
         let mut keep: HashMap<String, String> = HashMap::new();
+        // D482: by the target's current name, every target (two marks may mean two namesakes, told apart by path).
+        let mut by_name: HashMap<String, Vec<Row>> = HashMap::new();
         // D330: a mark whose earlier row had pointed somewhere stays "has pointed" (a purged target
         // is not replaced by a later namesake, D323).
         let pointed: BTreeSet<String> = old.iter().filter(|o| o.ever).map(|o| o.text.clone()).collect();
@@ -187,16 +332,22 @@ pub fn update(conn: &Connection, rule: &KindRule, row: &Row, changed: Option<&[S
                     // Review #3: what was written, and the target's current name (what readers saw
                     // and saved back after a rename), both keep the target.
                     keep.entry(o.text.clone()).or_insert_with(|| t.clone());
-                    keep.entry(tr.name).or_insert_with(|| t.clone());
+                    let same = by_name.entry(tr.name.clone()).or_default();
+                    if !same.iter().any(|x| x.id == tr.id) {
+                        same.push(tr);
+                    }
                 }
             }
         }
         let text = row.body.get(key).and_then(Value::as_str).unwrap_or_default();
         let mut rows = Vec::new();
         for (i, m) in marks(text).into_iter().enumerate() {
-            let target = match keep.get(&m.text).or_else(|| keep.get(split(&m.text).0)) {
+            let target = match keep.get(&m.text) {
                 Some(t) => Some(t.clone()),
-                None => resolve_mark(conn, &m.text, row)?,
+                None => match kept_by_name(conn, &by_name, &m.text)? {
+                    Some(t) => Some(t),
+                    None => resolve_mark(conn, &m.text, row)?,
+                },
             };
             if let Some(t) = &target {
                 touched.insert(t.clone());
@@ -226,6 +377,25 @@ pub fn update(conn: &Connection, rule: &KindRule, row: &Row, changed: Option<&[S
     Ok(touched)
 }
 
+/// Review #3 with D482: a mark whose name is a kept target's current name keeps that target — the one its path
+/// leads to when it has one; without a path, the first.
+fn kept_by_name(conn: &Connection, by_name: &HashMap<String, Vec<Row>>, text: &str) -> rusqlite::Result<Option<String>> {
+    if let Some(list) = by_name.get(text) {
+        return Ok(list.first().map(|r| r.id.clone()));
+    }
+    let p = parse(text);
+    let Some(list) = by_name.get(&p.name) else { return Ok(None) };
+    if p.path.is_empty() {
+        return Ok(list.first().map(|r| r.id.clone()));
+    }
+    for r in list {
+        if path_matches(conn, r, &p.path)? {
+            return Ok(Some(r.id.clone()));
+        }
+    }
+    Ok(None)
+}
+
 /// D330: `row` has just got its name (created, renamed, restored, imported). Rows that never pointed
 /// anywhere and wait for exactly that name are resolved now, each from its source's side (D322:
 /// same parent first, then nearest the top). Returns the sources and targets that changed.
@@ -234,15 +404,17 @@ pub fn connect_name(conn: &Connection, row: &Row) -> rusqlite::Result<BTreeSet<S
     if !referenceable(row) || row.deleted_at.is_some() {
         return Ok(touched);
     }
-    // D481: `name#section` waits for `name` too.
-    let mut st = conn.prepare_cached(
-        "SELECT source_id, field, seq FROM refs WHERE target_id IS NULL AND ever = 0 AND (text = ?1 OR substr(text, 1, length(?1) + 1) = ?1 || '#')",
-    )?;
-    let waiting: Vec<(String, String, i64)> = st.query_map([&row.name], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?.collect::<Result<_, _>>()?;
+    // D481/D482: `name#section` and `path/name` wait for `name` too; the whole text then says which one it means.
+    let mut st = conn.prepare_cached("SELECT source_id, field, seq, text FROM refs WHERE target_id IS NULL AND ever = 0 AND instr(text, ?1) > 0")?;
+    let waiting: Vec<(String, String, i64, String)> =
+        st.query_map([&row.name], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?.collect::<Result<_, _>>()?;
     drop(st);
-    for (source, field, seq) in waiting {
+    for (source, field, seq, text) in waiting {
+        if text != row.name && parse(&text).name != row.name {
+            continue;
+        }
         let Some(src) = store::get_any(conn, &source)? else { continue };
-        let Some(target) = resolve(conn, &row.name, &src)? else { continue };
+        let Some(target) = resolve_mark(conn, &text, &src)? else { continue };
         conn.execute(
             "UPDATE refs SET target_id = ?4, ever = 1 WHERE source_id = ?1 AND field = ?2 AND seq = ?3",
             params![source, field, seq, target],
@@ -398,13 +570,12 @@ pub fn display(conn: &Connection, rule: Option<&KindRule>, row: &Row) -> rusqlit
             }
             s.push_str(&text[at..m.start]);
             s.push_str("[[");
-            s.push_str(&t.name);
-            // D481: the section stays as written.
-            if r.text != t.name {
-                if let (_, Some(section)) = split(&r.text) {
-                    s.push('#');
-                    s.push_str(section);
-                }
+            // D481/D482: only the name is the target's current one; path, section and parameters stay as written.
+            if r.text == t.name {
+                s.push_str(&t.name);
+            } else {
+                let p = parse(&r.text);
+                s.push_str(&p.write(&p.path, &t.name));
             }
             s.push_str("]]");
             at = m.end;
@@ -445,10 +616,26 @@ mod tests {
     fn embeds_and_sections_d481() {
         let all = marks("x ![[Law#Art 36]] [[Law]] \\![[Not embed]]");
         assert_eq!(all.iter().map(|m| (m.text.as_str(), m.embed)).collect::<Vec<_>>(), [("Law#Art 36", true), ("Law", false), ("Not embed", false)]);
-        assert_eq!(split("Law#Art 36"), ("Law", Some("Art 36")));
-        assert_eq!(split("C#"), ("C#", None));
-        assert_eq!(split("#tag"), ("#tag", None));
-        assert_eq!(split("Plain"), ("Plain", None));
+        let sp = |t: &str| split(t);
+        assert_eq!(sp("Law#Art 36"), ("Law".to_string(), Some("Art 36".to_string())));
+        assert_eq!(sp("C#"), ("C#".to_string(), None));
+        assert_eq!(sp("#tag"), ("#tag".to_string(), None));
+        assert_eq!(sp("Plain"), ("Plain".to_string(), None));
+    }
+
+    #[test]
+    fn paths_escapes_calls_and_parameters_d482() {
+        let p = parse("Physics/Appendix/C to F#Use | C=37");
+        assert_eq!((p.call, p.path.clone(), p.name.as_str(), p.section.as_deref(), p.params.as_deref()), (false, vec!["Physics".to_string(), "Appendix".to_string()], "C to F", Some("Use"), Some("C=37")));
+        let p = parse("=Rate\\/Tax | x=1");
+        assert_eq!((p.call, p.path.len(), p.name.as_str()), (true, 0, "Rate/Tax"));
+        assert_eq!(parse("a\\#b").name, "a#b");
+        assert_eq!(parse("x\\|y").name, "x|y");
+        assert_eq!(parse("/lead//name/").name, "name");
+        assert_eq!(parse("=").name, "=");
+        let p = parse("Book/Ch 1#S|k=v");
+        assert_eq!(p.write(&["New".to_string()], "A/B"), "New/A\\/B#S | k=v");
+        assert_eq!(parse("=f | a=1").write(&[], "g"), "=g | a=1");
     }
 }
 

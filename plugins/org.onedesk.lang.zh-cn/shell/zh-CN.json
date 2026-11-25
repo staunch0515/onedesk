@@ -1012,5 +1012,14 @@
   "embed.tooDeep": "嵌套太深，或者嵌入了自己：打开它来看。",
   "embed.failed": "这部分内容显示不出来。",
   "embed.sectionMissing": "里面没有“{section}”这一节。",
-  "refs.embedded": "嵌入"
+  "refs.embedded": "嵌入",
+  "refs.suggestLabel": "可以引用的资源",
+  "refs.suggestEmpty": "没有这个名字的资源",
+  "refs.ambiguous": "同名 {count} 个",
+  "refs.ambiguousHint": "这样写对得上 {count} 个资源，现在连到的是 {place} 里的那个。改成只对得上它的写法。",
+  "refs.stale": "写法已过时",
+  "refs.staleHint": "原文写的路径已经对不上了（上级改了名或者搬了家），引用仍然连着 {place} 里的那个。",
+  "refs.rewrite": "改成唯一写法",
+  "refs.rewritten": "已改写成“{text}”。",
+  "refs.topLevel": "最上层"
 }

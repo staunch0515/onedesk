@@ -199,3 +199,99 @@ async fn the_writing_help_reads_what_the_embeds_show_and_the_text_as_written() {
     assert!(!field.to_string().contains("HIDDEN-MARKER"));
     let _ = secret;
 }
+
+/* ------------------------------------------------------------------ D482: precise references */
+
+async fn group(c: &Client, name: &str) -> String {
+    c.ok("tree.createGroup", json!({ "tree": "resources", "name": name })).await["key"].as_str().unwrap().to_string()
+}
+
+async fn doc_in(c: &Client, parent: &str, name: &str, text: &str) -> String {
+    let r = c.ok("page.save", json!({ "target": format!("new:test.docs:doc?parent={parent}"), "changes": { "name": name, "body.text": text } })).await;
+    r["page"]["resourceId"].as_str().unwrap().to_string()
+}
+
+async fn outgoing(c: &Client, id: &str) -> Vec<Value> {
+    c.ok("refs.outgoing", json!({ "id": id })).await.as_array().unwrap().clone()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_path_says_which_of_two_namesakes_is_meant_and_namesakes_are_flagged() {
+    let (_env, c) = world().await;
+    let a = group(&c, "Book A").await;
+    let b = group(&c, "Book B").await;
+    let ch_a = doc_in(&c, &a, "Chapter 1", "## S\na").await;
+    let ch_b = doc_in(&c, &b, "Chapter 1", "## S\nb").await;
+    let src = create(&c, "test.docs:doc", json!({ "name": "Reader", "body.text": "![[Book B/Chapter 1#S]]\n\n[[Chapter 1]]\n\n[[Book A/Chapter 1]]" })).await;
+    let refs = outgoing(&c, &src).await;
+    assert_eq!(refs[0]["target"]["id"], ch_b, "{refs:?}");
+    assert_eq!(refs[0].get("ambiguous"), None);
+    assert_eq!(refs[1]["ambiguous"], json!(2), "a bare name meaning two: {refs:?}");
+    assert_eq!(refs[2]["target"]["id"], ch_a);
+    // The embedded content is the one the path says.
+    let e = c.ok("resource.embed", json!({ "id": ch_b, "section": "S" })).await;
+    assert_eq!(e["path"], json!(["Book B"]), "{e}");
+    // The page marks the field where references are written.
+    let page = c.ok("page.resolve", json!({ "target": format!("resource:{src}") })).await;
+    assert_eq!(page["view"][0]["fields"][0]["refs"], json!(true), "{page}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn suggestions_rank_by_name_and_give_the_shortest_unique_writing() {
+    let (_env, c) = world().await;
+    let a = group(&c, "Book A").await;
+    let b = group(&c, "Book B").await;
+    doc_in(&c, &a, "Chapter 1", "").await;
+    doc_in(&c, &b, "Chapter 1", "").await;
+    create(&c, "test.docs:doc", json!({ "name": "Chapter index" })).await;
+    create(&c, "test.docs:doc", json!({ "name": "The chapter list" })).await;
+    let s = c.ok("refs.suggest", json!({ "text": "chapter" })).await;
+    let rows: Vec<(String, String)> = s.as_array().unwrap().iter().map(|x| (x["name"].as_str().unwrap().into(), x["write"].as_str().unwrap().into())).collect();
+    assert_eq!(rows[0].0, "Chapter 1", "{s}");
+    assert!(rows.contains(&("Chapter 1".into(), "Book A/Chapter 1".into())) && rows.contains(&("Chapter 1".into(), "Book B/Chapter 1".into())), "{s}");
+    assert!(rows.contains(&("Chapter index".into(), "Chapter index".into())), "{s}");
+    assert_eq!(rows.last().unwrap().0, "The chapter list", "contains, not starts with: last");
+    // A path narrows the list.
+    let s = c.ok("refs.suggest", json!({ "text": "Book B/chap" })).await;
+    assert_eq!(s.as_array().unwrap().len(), 1, "{s}");
+    assert_eq!(s[0]["path"], json!(["Book B"]));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_reference_is_rewritten_to_mean_only_its_target_and_an_outdated_path_is_flagged() {
+    let (_env, c) = world().await;
+    let a = group(&c, "Book A").await;
+    let b = group(&c, "Book B").await;
+    let ch_a = doc_in(&c, &a, "Chapter 1", "").await;
+    let ch_b = doc_in(&c, &b, "Chapter 1", "").await;
+    let src = create(&c, "test.docs:doc", json!({ "name": "Reader", "body.text": "x ![[Chapter 1#S]] y\n\n[[Book B/Chapter 1]]" })).await;
+    let before = c.ok("resource.history", json!({ "id": src })).await.as_array().unwrap().len();
+    let target = outgoing(&c, &src).await[0]["target"]["id"].clone();
+    let r = c.ok("refs.rewrite", json!({ "source": src, "field": "body.text", "seq": 0 })).await;
+    let want = if target == json!(ch_a) { "Book A/Chapter 1#S" } else { "Book B/Chapter 1#S" };
+    assert_eq!(r["text"], want, "{r}");
+    let saved = c.ok("resource.get", json!({ "id": src })).await;
+    assert!(saved["body"]["text"].as_str().unwrap().starts_with(&format!("x ![[{want}]] y")), "{saved}");
+    assert_eq!(outgoing(&c, &src).await[0]["target"]["id"], target, "the same target");
+    assert!(c.ok("resource.history", json!({ "id": src })).await.as_array().unwrap().len() > before, "in the history");
+    // A parent renamed: the reference holds; the written path is outdated, and a rewrite brings it up to date.
+    c.ok("page.save", json!({ "target": format!("resource:{b}"), "changes": { "name": "Book Two" } })).await;
+    let refs = outgoing(&c, &src).await;
+    assert_eq!((refs[1]["target"]["id"].clone(), refs[1]["stale"].clone()), (json!(ch_b), json!(true)), "{refs:?}");
+    let r = c.ok("refs.rewrite", json!({ "source": src, "field": "body.text", "seq": 1 })).await;
+    assert_eq!(r["text"], "Book Two/Chapter 1");
+    let after = outgoing(&c, &src).await;
+    assert_eq!(after[1].get("stale"), None, "{after:?}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_path_written_first_waits_for_the_resource_at_that_place() {
+    let (_env, c) = world().await;
+    let src = create(&c, "test.docs:doc", json!({ "name": "Early", "body.text": "![[Book C/Late]]" })).await;
+    let elsewhere = create(&c, "test.docs:doc", json!({ "name": "Late" })).await;
+    assert_eq!(outgoing(&c, &src).await[0].get("target"), None, "a Late elsewhere is not it");
+    let g = group(&c, "Book C").await;
+    let late = doc_in(&c, &g, "Late", "").await;
+    assert_eq!(outgoing(&c, &src).await[0]["target"]["id"], late);
+    let _ = elsewhere;
+}

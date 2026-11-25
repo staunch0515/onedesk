@@ -1,6 +1,7 @@
 import type {
   AssistProvider,
   EmbedResult,
+  RefSuggestion,
   ProtocolError,
   InstallAnswer,
   InstallPreview,
@@ -133,6 +134,10 @@ export interface ProtocolClient {
     incoming(id: string): Promise<RefInfo[]>;
     /** D481: what a resource shows where another embeds it (`![[name#section]]`), in the tab's environment. Absent in the demo. */
     embed?(params: { id: string; section?: string; envId?: string | null }): Promise<EmbedResult>;
+    /** D482: candidates while typing `[[…` (absent in the demo). */
+    suggest?(text: string, limit?: number): Promise<RefSuggestion[]>;
+    /** D482: writes one reference again so that it means only its target (an ordinary, undoable write). */
+    rewrite?(source: string, field: string, seq: number): Promise<{ text: string }>;
   };
 
   tree: {

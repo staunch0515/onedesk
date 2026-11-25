@@ -45,4 +45,9 @@ kinds?: Array<string>,
  * Round 21 (D462): writing help for this field. Absent = the shell offers it on editable
  * `text`, `longtext` and `code` fields whenever an assist provider is installed.
  */
-assist?: FieldAssist, };
+assist?: FieldAssist, 
+/**
+ * D482: set by the kernel (never by a plugin) on a bound field whose kind declares it `refs: true`: `[[…]]`
+ * written in it are references, and the interface offers the candidates while typing.
+ */
+refs?: boolean, };

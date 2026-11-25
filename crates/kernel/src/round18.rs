@@ -226,7 +226,7 @@ impl Inner {
             if !self.read(|c| store::is_ai_visible(c, &target)).unwrap_or(false) {
                 continue;
             }
-            let section = crate::refs::split(inner).1.map(String::from);
+            let section = crate::refs::parse(inner).section;
             let p = onedesk_protocol::ResourceEmbedParams { id: target, section: section.clone(), env_id: env.clone(), locale: None };
             let Ok(e) = self.resource_embed(p).await else { continue };
             let body: Vec<String> = e

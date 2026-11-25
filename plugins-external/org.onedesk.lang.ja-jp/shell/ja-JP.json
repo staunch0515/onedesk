@@ -1012,5 +1012,14 @@
   "embed.tooDeep": "入れ子が深すぎるか、自分自身を埋め込んでいます。開いて読んでください。",
   "embed.failed": "この内容は表示できません。",
   "embed.sectionMissing": "「{section}」という節はありません。",
-  "refs.embedded": "埋め込み"
+  "refs.embedded": "埋め込み",
+  "refs.suggestLabel": "参照できるリソース",
+  "refs.suggestEmpty": "その名前のリソースはありません",
+  "refs.ambiguous": "同名が {count} 件",
+  "refs.ambiguousHint": "この書き方は {count} 件のリソースに当てはまります。今は {place} のものを指しています。それだけに当てはまる書き方にします。",
+  "refs.stale": "書き方が古くなっています",
+  "refs.staleHint": "書かれたパスはもう合いません（上位の名前が変わったか移動しました）。参照は {place} のものを指したままです。",
+  "refs.rewrite": "一意な書き方にする",
+  "refs.rewritten": "「{text}」と書き直しました。",
+  "refs.topLevel": "最上位"
 }

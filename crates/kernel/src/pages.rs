@@ -222,6 +222,7 @@ fn param_form(r: &Row, ref_options: &dyn Fn(&str) -> Option<Vec<FieldOption>>) -
             max_length: None,
             kinds: None,
             assist: None,
+            refs: None,
         });
     }
     (vec![ViewNode::Form { id: "params".into(), layout: FormLayout::Stack, label: None, fields }], values)
@@ -303,6 +304,20 @@ impl Inner {
         };
         let r = self.read(|c| crate::policy::restrictions(c, env.as_deref()))?;
         d.restrictions = (!r.is_empty()).then_some(r);
+        // D482: the fields where `[[…]]` are references (the kind's `refs: true` text fields); plugins do not say it.
+        let kind = match parse_target(target) {
+            Target::Resource(id) => self.read(|c| store::get(c, &id))?.map(|r| r.kind),
+            Target::New { kind, .. } => Some(kind),
+            _ => None,
+        };
+        let refs: Vec<String> = kind.and_then(|k| self.rules.read().unwrap().get(&k).map(|r| r.text_refs.iter().map(|f| format!("body.{f}")).collect())).unwrap_or_default();
+        for n in d.view.iter_mut() {
+            if let ViewNode::Form { fields, .. } = n {
+                for f in fields.iter_mut() {
+                    f.refs = (f.param != Some(true) && f.bind.as_ref().is_some_and(|b| refs.contains(b))).then_some(true);
+                }
+            }
+        }
         Ok(d)
     }
 
