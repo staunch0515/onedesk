@@ -76,6 +76,9 @@ pub const MAX_TURNS: usize = 500;
 /// D479: look-ups one turn may show.
 pub const MAX_TURN_STEPS: usize = 20;
 pub const MAX_ROW_KEY: usize = 1000;
+/// D487 §13 (K-d): items one sequence may list, and the longest title.
+pub const MAX_SEQUENCE_ITEMS: usize = 20_000;
+pub const MAX_SEQUENCE_TITLE: usize = 500;
 
 impl Inner {
     /// D395: the stored trees the user sees resources in — the kernel's resource tree and the
@@ -117,6 +120,45 @@ impl Inner {
                     let mut e = err_p(ErrorCode::PluginError, &[("reason", "badOutput"), ("plugin", &plugin.id)]);
                     e.detail = Some(format!("image {id}: not a stored file"));
                     return Err(e);
+                }
+                continue;
+            }
+            // D487 §13 (K-d): a sequence — sizes, levels and arguments; items whose resource is gone show only their title.
+            if let ViewNode::Sequence { id, items, start, position_event, .. } = node {
+                let bad = |what: &str| {
+                    let mut e = err_p(ErrorCode::PluginError, &[("reason", "badOutput"), ("plugin", &plugin.id)]);
+                    e.detail = Some(format!("sequence {id}: {what}"));
+                    e
+                };
+                if items.len() > MAX_SEQUENCE_ITEMS {
+                    return Err(bad(&format!("more than {MAX_SEQUENCE_ITEMS} items")));
+                }
+                if position_event.as_ref().is_some_and(|e| e.is_empty() || e.starts_with("view.")) {
+                    return Err(bad("positionEvent must be an event name"));
+                }
+                if start.as_ref().is_some_and(|s| s.chars().count() > MAX_ROW_KEY) {
+                    return Err(bad("start is too long"));
+                }
+                let mut keys = std::collections::HashSet::new();
+                for it in items.iter_mut() {
+                    if it.key.is_empty() || it.key.chars().count() > MAX_ROW_KEY || !keys.insert(it.key.clone()) {
+                        return Err(bad("every item needs a key of its own (at most 1000 characters)"));
+                    }
+                    if !(1..=9).contains(&it.level) {
+                        return Err(bad("level must be 1 to 9"));
+                    }
+                    if it.title.chars().count() > MAX_SEQUENCE_TITLE {
+                        return Err(bad(&format!("a title is over {MAX_SEQUENCE_TITLE} characters")));
+                    }
+                    if it.args.as_ref().is_some_and(|a| crate::runs::json_size(a) > crate::transfer::MAX_EMBED_ARGS) {
+                        return Err(bad("args over 4 KB"));
+                    }
+                    if let Some(r) = &it.resource {
+                        let live = self.read(|c| store::get(c, r))?.is_some_and(|row| crate::refs::referenceable(&row));
+                        if !live {
+                            it.resource = None;
+                        }
+                    }
                 }
                 continue;
             }

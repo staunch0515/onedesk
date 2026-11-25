@@ -1033,5 +1033,13 @@
   "image.pasted": "图片",
   "kernel.error.invalid.notAnImage": "这不是 OneDesk 收的图片（PNG、JPEG、GIF 或 WebP）。",
   "kernel.error.invalid.unknownBlob": "这张图片不在这个工作区里。",
-  "kernel.error.invalid.tooManyBlobs": "一个资源最多放 200 张图片。"
+  "kernel.error.invalid.tooManyBlobs": "一个资源最多放 200 张图片。",
+  "kernel.error.reason.refused|message": "{message}",
+  "kernel.permission.contents": "读取其他资源被嵌入时显示的内容（正文）",
+  "sequence.toc": "目录",
+  "sequence.previous": "上一页",
+  "sequence.next": "下一页",
+  "sequence.page": "{n} / {total}",
+  "sequence.open": "打开",
+  "kernel.error.invalid.refused": "放不到这里。"
 }

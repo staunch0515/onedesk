@@ -40,6 +40,7 @@ export { Markdown, type MarkdownProps } from "./components/markdown";
 export { isOpenableUrl, normalizeLinkHref } from "./components/open-url";
 export { MarkdownText, renderMarkdown, type MarkdownTextProps, type ReferenceState } from "./components/markdown-text";
 export { EmbedBlock, type EmbedBlockProps } from "./components/embed-block";
+export { SequenceView, type SequenceEntry, type SequenceViewProps } from "./components/sequence-view";
 export { ImageDrop, ImageView, type ImageDropProps, type ImageViewProps, type ImageWidth } from "./components/image-view";
 export { SuggestAnchor, SuggestList, type SuggestItem, type SuggestListProps } from "./components/suggest-list";
 export { Chat, ChatInput, ChatTurn, type ChatInputProps, type ChatStep, type ChatTurnProps } from "./components/chat";

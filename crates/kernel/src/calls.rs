@@ -32,6 +32,8 @@ use crate::store;
 use crate::util::*;
 
 pub const MAX_DEPTH: usize = 4;
+/// D487 §13 (K-f): how long an interface action called outside a run may compute.
+pub const PURE_CALL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
 impl Inner {
     pub(crate) async fn host_actions(&self, p: &'static Plugin, info: &CallInfo, op: &str, args: &Value) -> KResult<Value> {
@@ -78,6 +80,60 @@ impl Inner {
             return Err(err_p(ErrorCode::Denied, &[("reason", "callDepth"), ("action", &full)]));
         }
         self.invoke_callee(p, info, run, callee, action, resource, callers, input, "actions.call", full).await
+    }
+
+    /// D487 §13 (K-f): an interface action called outside a run (while a page is drawn, an embed made, a node
+    /// placed): the callee computes only — reads are allowed, writes refused (`pureCall`) — within a short time,
+    /// and its `data` comes back (at most 1 MB).
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) async fn invoke_pure(
+        &self,
+        p: &'static Plugin,
+        info: &CallInfo,
+        callee: &'static Plugin,
+        action: &crate::manifest::ActionDef,
+        resource: Option<crate::store::Row>,
+        callers: Vec<String>,
+        input: Value,
+        full: String,
+    ) -> KResult<Value> {
+        if crate::runs::json_size(&input) > crate::runs::MAX_INPUT_BYTES {
+            return Err(invalid("tooLarge"));
+        }
+        let ctx = json!({
+            "target": "core:none",
+            "resource": match &resource { Some(r) => Some(serde_json::to_value(self.resource(r)?).map_err(internal)?), None => None },
+            "envId": info.env_id, "params": {}, "runId": Value::Null, "caller": p.id,
+        });
+        let sub = CallInfo {
+            client: info.client.clone(),
+            env_id: info.env_id.clone(),
+            pure: true,
+            resource_id: resource.as_ref().map(|r| r.id.clone()),
+            callers,
+            ai: info.ai,
+            ..Default::default()
+        };
+        let res = self.call_version(callee, "actions", &action.id, "", json!([ctx, input]), sub, None, Some(PURE_CALL_TIMEOUT)).await;
+        match res {
+            Ok(v) => {
+                let data = v.get("data").cloned().unwrap_or(Value::Null);
+                if crate::runs::json_size(&data) > crate::round18::ARTIFACT_MAX_BYTES {
+                    let mut e = err_p(ErrorCode::PluginError, &[("reason", "badOutput")]);
+                    e.detail = Some("data is over 1 MB".into());
+                    return Err(e);
+                }
+                Ok(json!({ "data": data }))
+            }
+            Err(SandboxError::Host(e)) => Err(e),
+            Err(SandboxError::Timeout) => Err(err_p(ErrorCode::Invalid, &[("reason", "timeout"), ("action", &full)])),
+            Err(other) => {
+                let first = other.to_string().lines().next().unwrap_or_default().trim_start_matches("Error: ").to_string();
+                let mut e = err_p(ErrorCode::PluginError, &[("reason", "calleeFailed"), ("action", &full)]);
+                e.detail = Some(first);
+                Err(e)
+            }
+        }
     }
 
     /// Runs `action` of `callee` inside the caller's run (shared by `actions.call` and, round 18,

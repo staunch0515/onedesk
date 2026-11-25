@@ -316,6 +316,11 @@ const BOOTSTRAP: &str = r#"
           e.code = "denied";
           throw e;
         }
+        if (kind === "kinds" && h && h.place !== undefined && !declared.kind_place.includes(name)) {
+          const e = new Error("undeclared place of kind: " + name);
+          e.code = "denied";
+          throw e;
+        }
         reg[kind][name] = h;
       },
     });
@@ -476,6 +481,7 @@ const BOOTSTRAP: &str = r#"
         get: c("resources.get"), list: c("resources.list"), create: c("resources.create"),
         update: c("resources.update"), move: c("resources.move"), remove: c("resources.remove"),
         search: c("resources.search"), kinds: c("resources.kinds"), upsertByKey: c("resources.upsertByKey"),
+        tree: c("resources.tree"), embed: c("resources.embed"),
       }),
       files: Object.freeze({
         roots: c("files.roots"), list: c("files.list"), stat: c("files.stat"),
@@ -483,6 +489,7 @@ const BOOTSTRAP: &str = r#"
         mkdir: c("files.mkdir"), copy: c("files.copy"), move: c("files.move"), trash: c("files.trash"),
         remove: c("files.remove"), open: c("files.open"), reveal: c("files.reveal"), find: c("files.find"),
         addRoot: c("files.addRoot"), replaceRoot: c("files.replaceRoot"), removeRoot: c("files.removeRoot"),
+        writeBlob: c("files.writeBlob"),
       }),
       pages: Object.freeze({ fields: c("pages.fields") }),
       tools: Object.freeze({ list: c("tools.list"), call: c("tools.call") }),
@@ -543,8 +550,8 @@ const BOOTSTRAP: &str = r#"
     });
     try {
       // `kinds.migrate` takes (body, fromVersion, ctx), as the manifest documentation writes it;
-      // everything else, `kinds.children` and `kinds.drop` included, takes ctx first.
-      const out = kind === "kinds" && fn !== "children" && fn !== "drop" && fn !== "embed" ? await f.call(h, ...args.slice(1), ctx) : await f.call(h, ctx, ...args.slice(1));
+      // everything else, `kinds.children`, `kinds.drop`, `kinds.embed` and `kinds.place` included, takes ctx first.
+      const out = kind === "kinds" && fn !== "children" && fn !== "drop" && fn !== "embed" && fn !== "place" ? await f.call(h, ...args.slice(1), ctx) : await f.call(h, ctx, ...args.slice(1));
       return JSON.stringify({ ok: out === undefined ? null : out });
     } catch (e) {
       // A host error the handler did not catch keeps its code.
@@ -575,6 +582,8 @@ pub struct Declarations {
     pub kind_drop: Vec<String>,
     /// D481: kinds that declare `embed`.
     pub kind_embed: Vec<String>,
+    /// D487 §13 (K-c): kinds that declare `place`.
+    pub kind_place: Vec<String>,
     pub events: Vec<String>,
 }
 

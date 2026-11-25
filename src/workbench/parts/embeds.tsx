@@ -37,7 +37,7 @@ interface Place {
 }
 
 /** Markdown with its `[[links]]` and `![[embeds]]` resolved against `refs` (the references of the resource it comes from). */
-export function RefMarkdown({ source, ...place }: Place & { source: string }) {
+export function RefMarkdown({ source, headingShift, ...place }: Place & { source: string; headingShift?: number }) {
   const { actions } = useWorkbench();
   const openHere = useOpenHere();
   const { refs } = place;
@@ -50,6 +50,7 @@ export function RefMarkdown({ source, ...place }: Place & { source: string }) {
       source={source}
       blobUrl={imageUrl}
       imageLabels={imageLabels}
+      headingShift={headingShift}
       referenceState={referenceState}
       renderEmbed={renderEmbed}
       onLinkClick={(href) => void actions.openExternal(href)}

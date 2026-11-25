@@ -187,6 +187,11 @@
   --image-medium: 480px;
   --image-large: 720px;
   --image-full-max-height: 75vh;
+  /* D487 §13: a sequence (a book read through) — the list of titles beside it, the room an item takes before it is
+     loaded, and the widest a line of reading gets. */
+  --sequence-toc-width: 240px;
+  --sequence-placeholder-height: 160px;
+  --sequence-reading-width: 760px;
   --env-select-width: 168px;
 
   /* Focus ring */

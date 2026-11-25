@@ -24,6 +24,7 @@ pub mod params;
 mod round2;
 pub(crate) mod round18;
 mod runs;
+mod subtree;
 pub mod network;
 pub mod secrets;
 mod versions;

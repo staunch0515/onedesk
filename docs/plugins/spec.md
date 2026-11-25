@@ -158,6 +158,7 @@
 
 - `implements.<接口>.actions`：非空，每个都必须在自己的 `exports.actions` 里，不得重复。
 - `implements.<接口>.kind`：可选，自己的 kind 短名，作为调用时的“锚点资源”（如服务商连接）。不写则 `interfaces.call` 不需要资源（D445）。
+- `implements.<接口>.kinds`（D487）：可选，更多自己的 kind 短名，这些资源也能把调用带到这个实现者（`interfaces.call(…, { resource })` 按资源的类型找实现者）。不得与 `kind` 重复。
 - `uses`：接口名列表，不得重复；它是一项权限（`uses:<接口>`），允许列出实现者、读取实现者的锚点资源（不含密钥）并调用。
 - 违反：`badImplements`。
 
@@ -196,6 +197,7 @@
 | `children` | bool | 否 | 代码在存储的子节点之后再补子节点（`host.kinds.handle(kind, { children })`）。必须有 `tree`，否则 `childrenWithoutTree` |
 | `drop` | bool | 否 | 拖到它节点上的东西交给代码处理（`host.kinds.handle(kind, { drop })`）。必须有 `tree`，否则 `dropWithoutTree` |
 | `embed` | bool | 否 | D481：别的资源用 `![[名称]]` / `![[名称#标题]]` 嵌入它时，显示什么由代码给出（`host.kinds.handle(kind, { embed })`）。不声明时显示成卡片（图标、名称、说明） |
+| `place` | bool | 否 | D487：用户把节点拖进、移到这种资源下面，或在它下面新建时，落在哪里由代码决定（`host.kinds.handle(kind, { place })`）。必须有 `tree`，否则 `placeWithoutTree` |
 
 声明了 `refs: true` 的文本字段（D482）：内核在页面视图里给它标上 `refs`，外壳在里面输入 `[[`、`![[` 或 `[[=` 时弹出候选列表。引用的写法是 `[=]路径/名称[#节][|参数]`：`路径` 是上级的名字，从后往前匹配，用来区分同名资源；名字里的 `/`、`#`、`|` 写成 `\/`、`\#`、`\|`。插件不用为此做任何事。
 
@@ -420,7 +422,8 @@ export default {
 - `migrate(body, fromVersion, ctx)`：升级接管旧版本资源时调用（§9），返回新 body 或 `null`（不变）。这是纯计算：只能读（`resources.get/list`、`files` 读、`params`、`storage.get/keys/readFrom`、`settings.get`、`process.ready`），写会被拒 `pureCall`。
 - `children(ctx, node, own)`：清单 `children: true` 才可注册，补充子节点；参考 `org.onedesk.collection`。
 - `drop(ctx, event)`：清单 `drop: true` 才可注册；只能 `resources.update`（随 drop 一起写入），其他写被拒 `inDrop`；参考 `org.onedesk.composite`。
-- `embed(ctx, { section })`（D481）：清单 `embed: true` 才可注册。别的资源写了 `![[名称]]`（`section` 为 `null`）或 `![[名称#标题]]` 时调用，返回 `{ view, sectionMissing? }`：`view` 只能有 `text`、`table`、`link` 节点（只读，序列化后最多 512 KB），`ctx.resource` 是被嵌入的资源，`ctx.envId` 是显示它的标签页的环境（`{{名字}}` 照常用 `host.params.get` 取值）；找不到那一节时返回 `{ view: [], sectionMissing: true }`。Markdown 正文的插件按标题取节，参考 `org.onedesk.note` 的 `sectionOf`。
+- `place(ctx, { node, before })`（D487）：清单 `place: true` 才可注册。`ctx.resource` 是父资源，`node` 是 `{ id, kind, name }`（新建时 `id` 为 `null`），`before` 是用户想放在它前面的兄弟（`null` = 最后）。返回 `{ before }`（放在哪个兄弟前面，`null` = 最后）或 `{ refuse: Label }`（拒绝，提示用户）。纯计算（只能读，可以 `resources.tree`、`interfaces.call`），1 秒内不返回或返回不对，就按用户拖的位置放。只对用户的操作生效；插件自己 `resources.create/move` 不经过它。参考 `org.onedesk.book` 的 `book.js`。
+- `embed(ctx, { section, args })`（D481；`args` 是 D487）：清单 `embed: true` 才可注册。`args` 是调用方给的参数（`sequence` 的项、`host.resources.embed`），原样交来，最多 4 KB。别的资源写了 `![[名称]]`（`section` 为 `null`）或 `![[名称#标题]]` 时调用，返回 `{ view, sectionMissing? }`：`view` 只能有 `text`、`table`、`link`、`image`、`sequence` 节点（只读，序列化后最多 512 KB），`ctx.resource` 是被嵌入的资源，`ctx.envId` 是显示它的标签页的环境（`{{名字}}` 照常用 `host.params.get` 取值）；找不到那一节时返回 `{ view: [], sectionMissing: true }`。Markdown 正文的插件按标题取节，参考 `org.onedesk.note` 的 `sectionOf`。
 
 ### 5.8 事件 `host.events.on(name, async (ctx, event) => …)`
 
@@ -490,6 +493,14 @@ export default {
 
 **附件字段**（`fields.<键>.type: "attachment"`）：值是 `{ blob, name?, type, size, width?, height? }` 或 `null`。在 `render` 里把它写成 `kind: "attachment"` 的表单字段，外壳会画成放图片的区域：拖入、粘贴，或者用系统对话框选择文件。插件不能上传文件，也读不到文件内容。声明了 `refs: true` 的文本字段里，`![说明](blob:文件号)` 是正文里的图片，粘贴截图时外壳会自动写进去。参考 `org.onedesk.image`。
 
+### 6.4c `sequence`（D487）
+
+`{ type: "sequence", id, items, toc?, mode?, start?, positionEvent? }`：一串条目一个接一个地读（一本书或其中一章）。
+- `items[]`：`{ key, title, level, resource?, args?, book? }`。`key` 不重复（≤ 1000 字）；`title` ≤ 500 字；`level` 1–9（标题大小、目录栏缩进）；有 `resource` 的项，外壳在标题下面显示它的嵌入视图（`resource.embed`，带 `args`，≤ 4 KB），嵌入里的 Markdown 标题下移到这一项之下；`book: true` 表示这一项是一本子书的开头。资源已不在的项只显示标题。最多 20 000 项。
+- `toc`：左边显示目录栏，点了跳过去，当前位置高亮。`mode`：`scroll`（默认，连续，只加载看得见的部分）或 `pages`（一屏一项，“上一页/下一页”和左右键）。`start`：先显示的项。
+- `positionEvent`：读者在某一项停下 1 秒后，外壳发这个页面事件，`ctx.row` 是那一项的 `key`（不能以 `view.` 开头）。
+- 可以出现在嵌入视图里；嵌套最多 3 层，更深的只列标题。参考 `org.onedesk.book` 的 `toc.js`。
+
 ### 6.4a `conversation`（D479）
 
 `{ type: "conversation", id, turns, input?, targetTab? }`：一段对话，外壳画成一轮一轮的发言，最下面是输入框。
@@ -518,7 +529,8 @@ export default {
 | `"network": { "hosts": ["api.example.com"], "fromResources": true }` | `host.network.request` 和 `transfer.download/upload` 访问这些主机，和/或本插件资源里 `grants: "network"` 字段写的主机。主机写法：`host`、`host:port`、`*.domain`、IPv4；只能小写字母数字 `-` `.`（否则 `badHost`）。本机/链路本地地址默认拒绝，除非资源明确写出该主机和端口（D308）。工作区和环境可以用 `network.allow` 再收窄 | `network:<主机>`、`network:@resources` |
 | `"secrets": { "names": ["token"], "plaintext": false }` | 可用的密钥**名字**，以 `{{secret:名字}}` 占位符写在网址、请求头、请求体和程序环境变量里，由宿主代入，插件拿不到原值。名字 `[A-Za-z0-9._-]{1,128}`（否则 `badSecretName`）。`plaintext: true` 是另一项更强的权限：可以 `host.secrets.get` 读原值（官方插件不应申请） | `secrets:<名字>`、`secrets.plaintext` |
 | `"programs": [{ "name": "psql", "source": "system", "searchPaths": ["/opt/homebrew/bin"] }]` | `host.process.run` / `transfer.capture` 运行这些程序（按名字）。`name` `[A-Za-z0-9._-]{1,64}` 不重复；`source: "system"` 在固定系统目录（`/usr/bin`、`/bin`、`/usr/sbin`、`/sbin`、`/usr/local/bin`、`/opt/homebrew/bin`）加 `searchPaths`（绝对路径或 `~/…`，≤ 8 个，无 `.`/`..`，最多一个 `*`）里找，不能写 `path`；`source: "plugin"` 必须写 `path`（包内相对路径）。违反 `badPrograms`。`process.allow` 可按工作区/环境收窄 | `programs:<名字>` |
-| `"resources": true` | `host.resources.search` 读**所有**资源的基本信息（名字、类型、位置，不含 body） | `resourcesAll` |
+| `"resources": true` | `host.resources.search` 读**所有**资源的基本信息（名字、类型、位置，不含 body）；`host.resources.tree` 读一个资源下面的整棵子树（D487） | `resourcesAll` |
+| `"contents": true` | `host.resources.embed` 读别的资源被嵌入时显示的内容（D487）；`files.writeBlob` 可以写任何资源用到的图片 | `contents` |
 | `"plugins": { "install": true }` | `host.plugins.list`、请用户安装其他插件。只允许 `install` 一个键（否则 `badPlugins`） | `plugins` |
 | `uses: [...]`（顶层） | 调用这些接口 | `uses:<接口>` |
 | 动作 `kinds` 里写别的插件的 kind | 读那种资源、给它加动作（需对方 `exports`） | `resources:<全名>` |
@@ -542,6 +554,8 @@ export default {
 | `move(id, { parent? } \| { before })` | → `null` | |
 | `remove(id)` | → `null` | 进回收站 |
 | `search(opts)` | → 结果 | 需 `requires.resources`；`{ query, kinds?, limit? }` 按相关度返回 `[{ id, kind, name, snippet, score }]`；或基本搜索 `{ text, kinds, tags, … }` |
+| `tree(id, { offset?, limit? })` | → `{ nodes: [{ id, name, kind, icon, depth, parent, rev }], next }` | D487：需 `requires.resources`；按树的顺序（先父后子）列出 `id` 下面的全部节点，`depth` 从 1 开始；每次最多 2000 个，`next` 接着读；不含正文 |
+| `embed(id, { section?, args? })` | → 和外壳的 `resource.embed` 一样（`view`、`name`、`refs`…） | D487：需 `requires.contents`；按调用所在标签页的环境 |
 | `kinds()` | → `[{ kind, label, icon }]` | 需 `requires.resources`；资源树里能有的所有类型（已启用的插件，`kind` 是全名，`label` 是 Label），供“按类型”的条件让用户勾选，不要让用户手写类型全名（D477） |
 
 插件拿到的资源还带 `externalKey` 和 `missing`。
@@ -555,6 +569,7 @@ export default {
 | `writeText(path, text, { basis?, executable?, conflict? })` | 写；返回 `{ basis, path, skipped }` |
 | `mkdir(path, { recursive? })`、`copy(from, to, opts)`、`move(from, to, opts)`、`trash(path)`、`remove(path)` | 改；事件处理函数里不能用 |
 | `open(path)`、`reveal(path)` | 用系统打开/在访达中显示；只限授权文件夹 |
+| `writeBlob(blob, path)` | D487：把工作区里存着的一个文件（图片）写到授权文件夹 → `{ path }`。文件号必须被本插件自己的资源用到（有 `requires.contents` 时任何资源都可以）；不覆盖已有文件（`conflict/exists`）；`path` 没有扩展名时按图片类型补上（`.png`、`.jpg`、`.gif`、`.webp`）；事件处理函数里不能用 |
 | `addRoot()`、`replaceRoot(path)`、`removeRoot(path)` | 请用户选择/替换文件夹（系统对话框，用户的选择即同意）；结果稍后以插件事件和树刷新到达 |
 
 **network**（需 `requires.network`）
@@ -605,7 +620,7 @@ export default {
 |---|---|
 | `list(接口)` | → `[{ plugin, kind, label }]`，已启用的实现者 |
 | `resources(接口)` | → 实现者锚点资源 `[{ id, name, kind, fields }]`（不含密钥） |
-| `call(接口, 动作, input, { resource? })` | 仅运行中。接口有锚点 kind 时必须给资源 id；没有实现者 `invalid/noImplementation`；资源不是该接口的 `invalid/wrongInterface` |
+| `call(接口, 动作, input, { resource?, plugin? })` | 接口有锚点 kind 时给资源 id（按资源的类型找实现者，`kind` 和 `kinds` 都算）；`plugin`（D487）直接指定实现者。没有实现者 `invalid/noImplementation`；资源不是该接口的 `invalid/wrongInterface`。**不在运行中**（页面、嵌入、`place` 里，D487）也能调用：对方以纯计算方式执行（只能读，写被拒 `pureCall`），5 秒内返回，结果是 `{ data }` |
 
 **events**：`on(name, handler)`，只在 `activate` 里注册（§5.8）。
 

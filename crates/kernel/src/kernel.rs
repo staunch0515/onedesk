@@ -1335,6 +1335,11 @@ impl Inner {
             (DropPosition::After, Some(t)) => MoveDest::After(t),
             (_, None) => return Err(invalid_params("before/after need a target")),
         };
+        // D487 §13 (K-c): a parent whose kind places what comes into it.
+        let dest = match self.placed(&row.id, &row.kind, &row.name, dest).await? {
+            Ok(d) => d,
+            Err(message) => return Ok(TreeMoveResult { handled: Some(true), message: Some(message) }),
+        };
         self.execute(Actor::User, Command::Move { id: row.id, dest }).await?;
         Ok(TreeMoveResult::default())
     }
@@ -1489,6 +1494,7 @@ impl Inner {
                 kind_children: plugin.manifest.contributes.kinds.iter().filter(|k| k.children).map(|k| k.id.clone()).collect(),
                 kind_drop: plugin.manifest.contributes.kinds.iter().filter(|k| k.drop).map(|k| k.id.clone()).collect(),
                 kind_embed: plugin.manifest.contributes.kinds.iter().filter(|k| k.embed).map(|k| k.id.clone()).collect(),
+                kind_place: plugin.manifest.contributes.kinds.iter().filter(|k| k.place).map(|k| k.id.clone()).collect(),
                 events: plugin.manifest.contributes.events.iter().chain(&plugin.manifest.activation).cloned().collect(),
             },
             labels: plugin.all_labels(),

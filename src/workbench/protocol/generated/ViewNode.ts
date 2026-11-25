@@ -6,6 +6,8 @@ import type { ImageWidth } from "./ImageWidth";
 import type { Label } from "./Label";
 import type { LineTone } from "./LineTone";
 import type { OutputColumn } from "./OutputColumn";
+import type { SequenceItem } from "./SequenceItem";
+import type { SequenceMode } from "./SequenceMode";
 import type { TableRowAction } from "./TableRowAction";
 import type { TextAppearance } from "./TextAppearance";
 import type { TextFormat } from "./TextFormat";
@@ -55,4 +57,4 @@ selectParam?: string, } | { "type": "link", id: string, label: Label, target: st
  * The tab whose unsaved values and description go along with every run started on this page
  * (as `input["target.draft"]` and `input["target.description"]`); a tab that is not open adds nothing.
  */
-targetTab?: string, };
+targetTab?: string, } | { "type": "sequence", id: string, items: Array<SequenceItem>, toc?: boolean, mode?: SequenceMode, start?: string, positionEvent?: string, };

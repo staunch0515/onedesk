@@ -29,6 +29,11 @@ export interface MarkdownTextProps {
   blobUrl?: (blob: string) => Promise<string | null>;
   /** Words for an image: the button that shows it large, and the one that closes it. */
   imageLabels?: { open: string; close: string };
+  /**
+   * D487 §13: headings go this many levels further down (at most to h6) — text shown under a title of its own, such as
+   * one item of a sequence. Default 0.
+   */
+  headingShift?: number;
   className?: string;
 }
 
@@ -38,6 +43,8 @@ const escapeHtml = (text: string) => text.replace(/&/g, "&amp;").replace(/</g, "
 
 /** The `[[…]]` states for the render in progress (rendering is synchronous, so one slot is enough). */
 let referenceLookup: ((name: string) => ReferenceState) | undefined;
+/** D487 §13: how many more levels headings go down in the render in progress. */
+let headingShiftNow = 0;
 
 function createRenderer(): Marked {
   const md = new Marked({
@@ -90,7 +97,8 @@ function createRenderer(): Marked {
           : `<span class="od-markdown__image-alt">${escapeHtml(text)}</span>`,
       // Inside a page that already has its h1 every heading moves one level down; the class keeps the written level.
       heading(this: Renderer, { tokens, depth }) {
-        return `<h${Math.min(depth + 1, 6)} class="od-markdown__h${depth}">${this.parser.parseInline(tokens)}</h${Math.min(depth + 1, 6)}>\n`;
+        const level = Math.min(depth + 1 + headingShiftNow, 6);
+        return `<h${level} class="od-markdown__h${Math.min(depth + headingShiftNow, 6)}">${this.parser.parseInline(tokens)}</h${level}>\n`;
       },
       table(this: Renderer, token) {
         return `<div class="od-markdown__table-wrap">${Renderer.prototype.table.call(this, token)}</div>\n`;
@@ -103,13 +111,15 @@ function createRenderer(): Marked {
 let shared: Marked | undefined;
 
 /** The HTML for a source. Exported for tests; nothing else should put this into a page. */
-export function renderMarkdown(source: string, referenceState?: (name: string) => ReferenceState): string {
+export function renderMarkdown(source: string, referenceState?: (name: string) => ReferenceState, headingShift = 0): string {
   shared ??= createRenderer();
   referenceLookup = referenceState;
+  headingShiftNow = Math.max(0, Math.min(5, Math.floor(headingShift)));
   try {
     return shared.parse(source) as string;
   } finally {
     referenceLookup = undefined;
+    headingShiftNow = 0;
   }
 }
 
@@ -134,7 +144,7 @@ export function splitEmbeds(source: string): Array<{ markdown: string } | { embe
 }
 
 /** Read-only Markdown for plugin text: no raw HTML, only http/https/mailto links, `[[references]]`, no images. */
-export function MarkdownText({ source, onLinkClick, onReferenceClick, referenceState, renderEmbed, blobUrl, imageLabels, className }: MarkdownTextProps) {
+export function MarkdownText({ source, onLinkClick, onReferenceClick, referenceState, renderEmbed, blobUrl, imageLabels, headingShift, className }: MarkdownTextProps) {
   const parts = useMemo(() => (renderEmbed ? splitEmbeds(source) : null), [source, renderEmbed]);
   if (parts && parts.some((p) => "embed" in p)) {
     return (
@@ -143,17 +153,17 @@ export function MarkdownText({ source, onLinkClick, onReferenceClick, referenceS
           "embed" in p ? (
             <Fragment key={i}>{renderEmbed!(p.embed)}</Fragment>
           ) : (
-            <MarkdownHtml key={i} source={p.markdown} onLinkClick={onLinkClick} onReferenceClick={onReferenceClick} referenceState={referenceState} blobUrl={blobUrl} imageLabels={imageLabels} />
+            <MarkdownHtml key={i} source={p.markdown} onLinkClick={onLinkClick} onReferenceClick={onReferenceClick} referenceState={referenceState} blobUrl={blobUrl} imageLabels={imageLabels} headingShift={headingShift} />
           ),
         )}
       </div>
     );
   }
-  return <MarkdownHtml source={source} onLinkClick={onLinkClick} onReferenceClick={onReferenceClick} referenceState={referenceState} blobUrl={blobUrl} imageLabels={imageLabels} className={className} />;
+  return <MarkdownHtml source={source} onLinkClick={onLinkClick} onReferenceClick={onReferenceClick} referenceState={referenceState} blobUrl={blobUrl} imageLabels={imageLabels} headingShift={headingShift} className={className} />;
 }
 
-function MarkdownHtml({ source, onLinkClick, onReferenceClick, referenceState, blobUrl, imageLabels, className }: Omit<MarkdownTextProps, "renderEmbed">) {
-  const html = useMemo(() => renderMarkdown(source, referenceState), [source, referenceState]);
+function MarkdownHtml({ source, onLinkClick, onReferenceClick, referenceState, blobUrl, imageLabels, headingShift, className }: Omit<MarkdownTextProps, "renderEmbed">) {
+  const html = useMemo(() => renderMarkdown(source, referenceState, headingShift), [source, referenceState, headingShift]);
   const box = useRef<HTMLDivElement>(null);
   const [large, setLarge] = useState<{ src: string; alt: string } | null>(null);
   // D484 §16: fill each stored image's place with the image (an element made here, not markup).

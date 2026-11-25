@@ -227,7 +227,7 @@ impl Inner {
                 continue;
             }
             let section = crate::refs::parse(inner).section;
-            let p = onedesk_protocol::ResourceEmbedParams { id: target, section: section.clone(), env_id: env.clone(), locale: None };
+            let p = onedesk_protocol::ResourceEmbedParams { id: target, section: section.clone(), env_id: env.clone(), locale: None, args: None };
             let Ok(e) = self.resource_embed(p).await else { continue };
             let body: Vec<String> = e
                 .view
@@ -427,7 +427,8 @@ impl Inner {
         if !p.manifest.uses.iter().any(|u| u == interface) {
             return Err(err_p(ErrorCode::Denied, &[("reason", "notUsed"), ("interface", interface)]));
         }
-        let run = info.run_id.clone().ok_or_else(|| denied("notInRun"))?;
+        // D487 §13 (K-f): outside a run (a page, an embed, a placement) the callee computes only: it may read, never write.
+        let run = info.run_id.clone();
         let action_name = args.get(1).and_then(Value::as_str).ok_or_else(|| invalid_params("action must be a string"))?.to_string();
         let input = args.get(2).cloned().unwrap_or(Value::Null);
         let full = format!("{interface}:{action_name}");
@@ -436,8 +437,17 @@ impl Inner {
             return Err(invalid("noImplementation"));
         }
         let given = args.get(3).and_then(|o| o.get("resource"));
+        // D487 §13 (K-f): `{ plugin }` names the implementer.
+        let named = args.get(3).and_then(|o| o.get("plugin")).filter(|v| !v.is_null());
         // D445: an interface without a connection kind needs no resource: its implementer is called as it is.
-        let anchorless = if given.is_none_or(Value::is_null) { impls.iter().copied().find(|i| i.manifest.implements[interface].kind.is_none()) } else { None };
+        let anchorless = match named {
+            Some(v) => {
+                let id = v.as_str().ok_or_else(|| invalid_params("plugin must be a plugin id"))?;
+                Some(impls.iter().copied().find(|i| i.id == id).ok_or_else(|| invalid("noImplementation"))?)
+            }
+            None if given.is_none_or(Value::is_null) => impls.iter().copied().find(|i| i.manifest.implements[interface].kind.is_none()),
+            None => None,
+        };
         let (callee, resource) = match anchorless {
             Some(callee) => (callee, None),
             None => {
@@ -446,7 +456,7 @@ impl Inner {
                 // The resource is handled by the version it is bound to (§7.6), whoever implements.
                 let owner = self.registry.kind_at(&resource.kind, resource.plugin_version.as_deref()).map(|(o, _)| o);
                 let short = crate::manifest::Registry::split(&resource.kind).map(|(_, k)| k.to_string()).unwrap_or_default();
-                let Some(callee) = owner.filter(|o| o.manifest.implements.get(interface).is_some_and(|i| i.kind.as_deref() == Some(short.as_str()))) else {
+                let Some(callee) = owner.filter(|o| o.manifest.implements.get(interface).is_some_and(|i| i.anchors(&short))) else {
                     return Err(invalid("wrongInterface"));
                 };
                 (callee, Some(resource))
@@ -471,7 +481,10 @@ impl Inner {
         }
         // The caller's own budget waits (like a program): the callee has one of its own.
         let _hold = info.hold.enter_wait();
-        self.invoke_callee(p, info, run, callee, action, resource, callers, input, "interfaces.call", full).await
+        match run {
+            Some(run) => self.invoke_callee(p, info, run, callee, action, resource, callers, input, "interfaces.call", full).await,
+            None => self.invoke_pure(p, info, callee, action, resource, callers, input, full).await,
+        }
     }
 
     /// `ViewField.kinds` entries `@implements:<interface>`: the connection kinds of the plugins

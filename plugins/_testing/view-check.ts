@@ -14,7 +14,10 @@ const NODE_KEYS: Record<string, string[]> = {
   image: ["type", "id", "blob", "alt", "width"],
   // D479
   conversation: ["type", "id", "turns", "input", "targetTab"],
+  // D487 §13
+  sequence: ["type", "id", "items", "toc", "mode", "start", "positionEvent"],
 };
+const SEQUENCE_ITEM_KEYS = new Set(["key", "title", "level", "resource", "args", "book"]);
 const TURN_KEYS = new Set(["role", "text", "caption", "actions", "steps"]);
 const INPUT_KEYS = new Set(["name", "send", "placeholder"]);
 
@@ -59,6 +62,18 @@ export function checkView(view: unknown): string[] {
         if (typeof input.name !== "string" || !input.name || String(input.name).startsWith("view.") || typeof input.send !== "string" || !input.send) errs.push("bad conversation input");
       }
     }
+    if (n.type === "sequence") {
+      if (!Array.isArray(n.items)) errs.push("sequence needs items");
+      const keys = new Set<string>();
+      for (const it of (n.items as Record<string, unknown>[]) ?? []) {
+        for (const k of Object.keys(it)) if (!SEQUENCE_ITEM_KEYS.has(k)) errs.push(`unknown sequence item key ${k}`);
+        if (typeof it.key !== "string" || !it.key || keys.has(it.key)) errs.push("sequence item needs a key of its own");
+        keys.add(String(it.key));
+        if (typeof it.title !== "string") errs.push("sequence item needs a title");
+        if (!Number.isInteger(it.level) || (it.level as number) < 1 || (it.level as number) > 9) errs.push("sequence item level must be 1 to 9");
+      }
+      if (n.mode !== undefined && n.mode !== "scroll" && n.mode !== "pages") errs.push("bad sequence mode");
+    }
     if (n.type === "text" && typeof n.text !== "string") errs.push("text node needs a string");
     if (n.type === "text" && n.format !== undefined && !["plain", "markdown"].includes(String(n.format))) errs.push("bad format");
     if (n.type === "text" && n.tone !== undefined && !["default", "muted", "danger"].includes(String(n.tone))) errs.push("bad tone");
@@ -86,14 +101,16 @@ export function registry(plugin: { activate(host: unknown): void }) {
   const commands: Record<string, any> = {};
   const actions: Record<string, any> = {};
   const kinds: Record<string, any> = {};
+  const events: Record<string, any> = {};
   plugin.activate({
+    events: { on: (name: string, h: unknown) => (events[name] = h) },
     kinds: { handle: (id: string, h: unknown) => (kinds[id] = h) },
     actions: { handle: (id: string, h: unknown) => (actions[id] = h) },
     pages: { handle: (id: string, h: unknown) => (pages[id] = h) },
     trees: { handle: (id: string, h: unknown) => (trees[id] = h) },
     commands: { handle: (id: string, h: unknown) => (commands[id] = h) },
   });
-  return { pages, trees, commands, actions, kinds };
+  return { pages, trees, commands, actions, kinds, events };
 }
 
 /** `ctx.t`: returns a localized Label like the kernel does. */

@@ -1,0 +1,341 @@
+{
+  "id": "org.onedesk.book",
+  "version": "0.1.0",
+  "apiVersion": "2",
+  "name": "plugin.name",
+  "description": "plugin.description",
+  "icon": "book-open",
+  "main": "main.js",
+  "author": "OneDesk",
+  "license": "MIT",
+  "requires": {
+    "files": true,
+    "resources": true,
+    "contents": true
+  },
+  "uses": [
+    "onedesk.book/1"
+  ],
+  "implements": {
+    "onedesk.book/1": {
+      "actions": [
+        "roles",
+        "outline",
+        "entries"
+      ],
+      "kind": "page",
+      "kinds": [
+        "book",
+        "cover",
+        "toc",
+        "preface",
+        "afterword",
+        "appendix"
+      ]
+    }
+  },
+  "exports": {
+    "actions": [
+      "roles",
+      "outline",
+      "entries"
+    ]
+  },
+  "contributes": {
+    "kinds": [
+      {
+        "id": "book",
+        "label": "kind.book",
+        "icon": "book-open",
+        "tree": "resources",
+        "page": "book",
+        "newName": "kind.book.new",
+        "defaults": {},
+        "draggable": true,
+        "accepts": [
+          "*"
+        ],
+        "embed": true,
+        "place": true
+      },
+      {
+        "id": "cover",
+        "label": "kind.cover",
+        "icon": "image",
+        "tree": "resources",
+        "page": "cover",
+        "newName": "kind.cover.new",
+        "defaults": {
+          "subtitle": "",
+          "authors": "",
+          "image": null,
+          "blurb": ""
+        },
+        "draggable": true,
+        "accepts": [],
+        "embed": true,
+        "fields": {
+          "image": {
+            "type": "attachment",
+            "accept": [
+              "image"
+            ],
+            "label": "field.image"
+          }
+        }
+      },
+      {
+        "id": "toc",
+        "label": "kind.toc",
+        "icon": "list-tree",
+        "tree": "resources",
+        "page": "toc",
+        "newName": "kind.toc.new",
+        "defaults": {
+          "numbering": "words",
+          "levels": "",
+          "volume": ""
+        },
+        "draggable": true,
+        "accepts": [],
+        "embed": true
+      },
+      {
+        "id": "preface",
+        "label": "kind.preface",
+        "icon": "file-text",
+        "tree": "resources",
+        "page": "text",
+        "newName": "kind.preface.new",
+        "defaults": {
+          "variant": "preface",
+          "text": ""
+        },
+        "draggable": true,
+        "accepts": [],
+        "embed": true,
+        "fields": {
+          "text": {
+            "type": "longtext",
+            "refs": true
+          }
+        }
+      },
+      {
+        "id": "page",
+        "label": "kind.page",
+        "icon": "file-text",
+        "tree": "resources",
+        "page": "text",
+        "newName": "kind.page.new",
+        "defaults": {
+          "text": ""
+        },
+        "draggable": true,
+        "accepts": [],
+        "embed": true,
+        "fields": {
+          "text": {
+            "type": "longtext",
+            "refs": true
+          }
+        }
+      },
+      {
+        "id": "afterword",
+        "label": "kind.afterword",
+        "icon": "file-text",
+        "tree": "resources",
+        "page": "text",
+        "newName": "kind.afterword.new",
+        "defaults": {
+          "text": ""
+        },
+        "draggable": true,
+        "accepts": [],
+        "embed": true,
+        "fields": {
+          "text": {
+            "type": "longtext",
+            "refs": true
+          }
+        }
+      },
+      {
+        "id": "appendix",
+        "label": "kind.appendix",
+        "icon": "folder-open",
+        "tree": "resources",
+        "page": "appendix",
+        "newName": "kind.appendix.new",
+        "defaults": {},
+        "draggable": true,
+        "accepts": [
+          "*"
+        ]
+      }
+    ],
+    "pages": [
+      {
+        "id": "book",
+        "actions": [
+          {
+            "id": "save",
+            "role": "save",
+            "label": "action.save",
+            "icon": "save",
+            "primary": true,
+            "shortcut": [
+              "Mod",
+              "S"
+            ]
+          }
+        ]
+      },
+      {
+        "id": "cover",
+        "actions": [
+          {
+            "id": "save",
+            "role": "save",
+            "label": "action.save",
+            "icon": "save",
+            "primary": true,
+            "shortcut": [
+              "Mod",
+              "S"
+            ]
+          }
+        ]
+      },
+      {
+        "id": "toc",
+        "recompute": true,
+        "actions": [
+          {
+            "id": "toggle",
+            "role": "event",
+            "label": "action.pages",
+            "icon": "book-open"
+          },
+          {
+            "id": "export",
+            "role": "run",
+            "action": "export",
+            "label": "action.export",
+            "icon": "file-down"
+          },
+          {
+            "id": "save",
+            "role": "save",
+            "label": "action.save",
+            "icon": "save",
+            "primary": true,
+            "shortcut": [
+              "Mod",
+              "S"
+            ]
+          }
+        ],
+        "resultTabs": [
+          {
+            "id": "out",
+            "type": "output",
+            "label": "tab.export",
+            "icon": "file-text"
+          }
+        ]
+      },
+      {
+        "id": "text",
+        "recompute": true,
+        "actions": [
+          {
+            "id": "toggle",
+            "role": "event",
+            "label": "action.toggle",
+            "icon": "book-open",
+            "shortcut": [
+              "Mod",
+              "Shift",
+              "R"
+            ]
+          },
+          {
+            "id": "save",
+            "role": "save",
+            "label": "action.save",
+            "icon": "save",
+            "primary": true,
+            "shortcut": [
+              "Mod",
+              "S"
+            ]
+          }
+        ]
+      },
+      {
+        "id": "appendix",
+        "actions": [
+          {
+            "id": "save",
+            "role": "save",
+            "label": "action.save",
+            "icon": "save",
+            "primary": true,
+            "shortcut": [
+              "Mod",
+              "S"
+            ]
+          }
+        ]
+      }
+    ],
+    "actions": [
+      {
+        "id": "export",
+        "label": "action.export",
+        "icon": "file-down",
+        "kinds": [
+          "toc"
+        ],
+        "output": "text",
+        "saveFirst": true
+      },
+      {
+        "id": "roles",
+        "label": "action.roles",
+        "output": "none"
+      },
+      {
+        "id": "outline",
+        "label": "action.outline",
+        "output": "none"
+      },
+      {
+        "id": "entries",
+        "label": "action.entries",
+        "output": "none"
+      }
+    ],
+    "events": [
+      "resource.changed"
+    ],
+    "menus": {
+      "new": [
+        "book",
+        "page",
+        "preface",
+        "afterword",
+        "appendix",
+        "cover",
+        "toc"
+      ]
+    },
+    "locales": {
+      "en-US": "locales/en-US.json",
+      "zh-CN": "locales/zh-CN.json",
+      "ja-JP": "locales/ja-JP.json"
+    }
+  }
+}

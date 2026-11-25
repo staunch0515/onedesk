@@ -862,6 +862,20 @@ impl Inner {
                         body.insert(k.clone(), v.clone());
                     }
                 }
+                // D487 §13 (K-c): a parent whose kind places what is made in it (asked before, moved after).
+                let place = match parent.clone() {
+                    Some(pid) => match self.placed("", &kind, &name, crate::pipeline::MoveDest::Inside(Some(pid))).await? {
+                        Ok(d) => Some(d),
+                        Err(message) => {
+                            let text = match message {
+                                Label::Text(t) => t,
+                                Label::Localized(m) => cx.locale.as_deref().and_then(|l| m.get(l).cloned()).or_else(|| m.get("en-US").cloned()).unwrap_or_default(),
+                            };
+                            return Err(err_p(ErrorCode::Invalid, &[("reason", "refused"), ("message", &text)]));
+                        }
+                    },
+                    None => None,
+                };
                 let out = self
                     .execute(
                         Actor::User,
@@ -878,6 +892,9 @@ impl Inner {
                     )
                     .await?;
                 let id = out.id.ok_or_else(|| internal("no id"))?;
+                if let Some(dest @ crate::pipeline::MoveDest::Before(_)) = place {
+                    self.execute(Actor::User, Command::Move { id: id.clone(), dest }).await?;
+                }
                 // D473: a default environment chosen before the first save.
                 if let Some(env) = changes.default_env.clone().filter(|e| !e.is_empty()) {
                     let set = Changes { default_env: Some(env), ..Default::default() };

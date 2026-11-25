@@ -4,6 +4,7 @@ import { useI18n } from "../i18n";
 import type { OutputCell, RefInfo, ViewNode } from "../protocol";
 import { RefMarkdown, useTabEnv } from "./embeds";
 import { BlobImage } from "./blobs";
+import { SequenceNodeView } from "./sequence";
 import { useQuery, useUi, useWorkbench } from "../state/context";
 import { textLines } from "./terminal-lines";
 import { TOKENIZERS } from "./sql-tokens";
@@ -181,6 +182,8 @@ export function ViewNodes({
               </Chat>
             );
           }
+          case "sequence":
+            return <SequenceNodeView key={node.id} node={node} onEvent={onRowAction} />;
           case "image":
             return (
               <Pane key={node.id} pad="md" align="start">

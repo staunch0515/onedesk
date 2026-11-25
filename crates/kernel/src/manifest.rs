@@ -90,6 +90,15 @@ pub struct Implements {
     /// Short id of its own kind of "connection" resources; none (D445): the interface has no
     /// anchor resource and `interfaces.call` needs none.
     pub kind: Option<String>,
+    /// D487 §13 (K-f): more of its own kinds whose resources reach it through `interfaces.call(…, { resource })`.
+    pub kinds: Vec<String>,
+}
+
+impl Implements {
+    /// Whether resources of its own kind `short` reach it.
+    pub fn anchors(&self, short: &str) -> bool {
+        self.kind.as_deref() == Some(short) || self.kinds.iter().any(|k| k == short)
+    }
 }
 
 /// Round 18 (X5): `contributes.resultActions[]`.
@@ -203,6 +212,9 @@ pub struct Requires {
     pub programs: Vec<ProgramDecl>,
     #[serde(default)]
     pub resources: bool,
+    /// D487 §13 (K-b): `host.resources.embed` — what other resources show where they are embedded.
+    #[serde(default)]
+    pub contents: bool,
     /// Round 7 (D342): `{ "install": true }` — may ask the user to install other plugins.
     /// Checked by hand (`badPlugins`).
     #[serde(default)]
@@ -491,6 +503,10 @@ pub struct KindDecl {
     /// (`kinds.handle(kind, { embed })`).
     #[serde(default)]
     pub embed: bool,
+    /// D487 §13 (K-c): where a node lands when it is moved into (or made in) a resource of the kind is decided
+    /// by the code (`kinds.handle(kind, { place })`).
+    #[serde(default)]
+    pub place: bool,
 }
 
 impl KindDecl {
@@ -601,6 +617,8 @@ pub struct Plugin {
 
 /// Round 12 (D389): the permission id of `requires.resources: true`.
 pub const PERM_RESOURCES_ALL: &str = "resourcesAll";
+/// D487 §13 (K-b): the permission id of `requires.contents: true`.
+pub const PERM_CONTENTS: &str = "contents";
 
 /// One permission atom; a version's permission set is a set of these (D299).
 pub fn permission_atoms(m: &Manifest) -> BTreeSet<String> {
@@ -636,6 +654,10 @@ pub fn permission_atoms(m: &Manifest) -> BTreeSet<String> {
     // D389: the basic information of every resource (`resources.search`); no detail.
     if r.resources {
         a.insert(PERM_RESOURCES_ALL.to_string());
+    }
+    // D487 §13 (K-b): reading what other resources show (their embed views); no detail.
+    if r.contents {
+        a.insert(PERM_CONTENTS.to_string());
     }
     if r.plugins_install() {
         a.insert("plugins".to_string());
@@ -1009,6 +1031,10 @@ pub fn parse_package(dir: &Path, bytes: &[u8], check_folder: bool) -> Result<Plu
         // Round 12: drops arrive on the kind's nodes, so it needs a tree as well.
         if k.drop && k.tree.is_none() {
             return Err(reject(dir, "dropWithoutTree", format!("kind {}", k.id)));
+        }
+        // D487 §13: so does `place`.
+        if k.place && k.tree.is_none() {
+            return Err(reject(dir, "placeWithoutTree", format!("kind {}", k.id)));
         }
         for x in &k.menu {
             if !has_cmd(x) {
@@ -1560,7 +1586,7 @@ fn parse_interfaces(dir: &Path, m: &Manifest, exported_actions: &[String]) -> Re
                 return Err(bad(format!("interface name {name}")));
             }
             let e = v.as_object().ok_or_else(|| bad(format!("{name}: not an object")))?;
-            if let Some(k) = e.keys().find(|k| !matches!(k.as_str(), "actions" | "kind")) {
+            if let Some(k) = e.keys().find(|k| !matches!(k.as_str(), "actions" | "kind" | "kinds")) {
                 return Err(bad(format!("{name}: unknown field {k}")));
             }
             let list = e.get("actions").and_then(serde_json::Value::as_array).ok_or_else(|| bad(format!("{name}: actions is not a list")))?;
@@ -1588,7 +1614,20 @@ fn parse_interfaces(dir: &Path, m: &Manifest, exported_actions: &[String]) -> Re
                     Some(k.to_string())
                 }
             };
-            implements.insert(name.clone(), Implements { actions, kind });
+            let mut kinds: Vec<String> = Vec::new();
+            if let Some(list) = e.get("kinds") {
+                for k in list.as_array().ok_or_else(|| bad(format!("{name}: kinds is not a list")))? {
+                    let k = k.as_str().ok_or_else(|| bad(format!("{name}: kind is not text")))?;
+                    if !m.contributes.kinds.iter().any(|x| x.id == k) {
+                        return Err(bad(format!("{name}: {k} is not its own kind")));
+                    }
+                    if kinds.iter().any(|x| x == k) || kind.as_deref() == Some(k) {
+                        return Err(bad(format!("{name}: kind {k} twice")));
+                    }
+                    kinds.push(k.to_string());
+                }
+            }
+            implements.insert(name.clone(), Implements { actions, kind, kinds });
         }
     }
     let mut uses: Vec<String> = Vec::new();

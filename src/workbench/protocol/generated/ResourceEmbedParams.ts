@@ -4,4 +4,8 @@
  * D481 (docs/redesign/embed-book.md §3): the resource to show embedded, the section (`![[name#section]]`), and the
  * tab it is shown on (its environment fills the templates).
  */
-export type ResourceEmbedParams = { id: string, section?: string, envId?: string, locale?: string, };
+export type ResourceEmbedParams = { id: string, section?: string, envId?: string, locale?: string, 
+/**
+ * D487 §13 (K-e): handed to the kind's `embed(ctx, { section, args })` as they are (at most 4 KB).
+ */
+args: unknown, };

@@ -680,6 +680,44 @@ pub enum ViewNode {
         /// (as `input["target.draft"]` and `input["target.description"]`); a tab that is not open adds nothing.
         target_tab: Option<String>,
     },
+    /// D487 §13 (K-d): a run of items shown one after another — each item's resource embedded (`resource.embed`
+    /// with the item's `args`), under the item's title. The interface loads only what is in view; `toc` adds a
+    /// column listing the titles; `mode` is `scroll` (default) or `pages` (one item at a time); `start` is the key
+    /// shown first; `positionEvent` names the page event sent (with the item's key as `context.row`) once the
+    /// reader has stopped on an item.
+    Sequence {
+        id: String,
+        items: Vec<SequenceItem>,
+        toc: Option<bool>,
+        mode: Option<SequenceMode>,
+        start: Option<String>,
+        position_event: Option<String>,
+    },
+}
+
+/// D487 §13: one item of a `sequence` node. `level` (1–9) sets the size of the title and the indent in the list;
+/// embedded Markdown headings are shown below it. `book`: the item starts a book of its own (shown larger).
+#[skip_serializing_none]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[ts(export, optional_fields)]
+pub struct SequenceItem {
+    pub key: String,
+    pub title: String,
+    pub level: u8,
+    pub resource: Option<String>,
+    #[ts(type = "unknown")]
+    pub args: Option<Value>,
+    pub book: Option<bool>,
+}
+
+/// D487 §13: how a `sequence` is read.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum SequenceMode {
+    Scroll,
+    Pages,
 }
 
 /// D484 §16: how wide an image is drawn — sizes the design system defines; `original` is the image's own size, never
@@ -2270,6 +2308,9 @@ pub struct ResourceEmbedParams {
     pub section: Option<String>,
     pub env_id: Option<String>,
     pub locale: Option<String>,
+    /// D487 §13 (K-e): handed to the kind's `embed(ctx, { section, args })` as they are (at most 4 KB).
+    #[ts(type = "unknown")]
+    pub args: Option<Value>,
 }
 
 /// D481: an embedded resource. `view` is what its plugin's `embed` gives (read only: text, table and link nodes);

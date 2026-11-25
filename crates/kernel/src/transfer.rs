@@ -407,6 +407,8 @@ fn valid_body(decl: Option<&KindDecl>, r: &ExportResource) -> bool {
 
 /// D481: an embed view, serialized, at most this many bytes.
 const MAX_EMBED_BYTES: usize = 512 * 1024;
+/// D487 §13 (K-e): the largest `args` an embed may be asked with (serialized).
+pub const MAX_EMBED_ARGS: usize = 4 * 1024;
 
 /// D481: whether the reference is written `![[…]]`, and its section (none when the target's whole name is the text).
 fn mark_of(src: &Row, r: &crate::refs::RefRow, target_name: Option<&str>) -> (Option<bool>, Option<String>) {
@@ -516,6 +518,10 @@ impl Inner {
             #[serde(default, rename = "sectionMissing")]
             section_missing: bool,
         }
+        // D487 §13 (K-e): the caller's arguments go to the kind as they are.
+        if p.args.as_ref().is_some_and(|a| crate::runs::json_size(a) > MAX_EMBED_ARGS) {
+            return Err(invalid_params("args: at most 4 KB"));
+        }
         let resource = serde_json::to_value(self.resource(&row)?).map_err(internal)?;
         let resource = crate::deps::without_secrets(resource, &self.secret_fields(&row.kind, row.plugin_version.as_deref()));
         let ctx = json!({ "resource": resource, "envId": p.env_id, "locale": p.locale, "params": {} });
@@ -526,15 +532,16 @@ impl Inner {
             e
         };
         let raw = self
-            .call_version(plugin, "kinds", &kind.id, "embed", json!([ctx, { "section": p.section }]), info, None, None)
+            .call_version(plugin, "kinds", &kind.id, "embed", json!([ctx, { "section": p.section, "args": p.args }]), info, None, None)
             .await
             .map_err(|e| e.to_protocol())?;
         if serde_json::to_vec(&raw).map(|v| v.len()).unwrap_or(usize::MAX) > MAX_EMBED_BYTES {
             return Err(bad("too large".into()));
         }
         let mut answer: EmbedOut = serde_json::from_value(raw).map_err(|e| bad(e.to_string()))?;
-        if answer.view.iter().any(|n| !matches!(n, ViewNode::Text { .. } | ViewNode::Table { .. } | ViewNode::Link { .. } | ViewNode::Image { .. })) {
-            return Err(bad("only text, table, link and image nodes".into()));
+        // D487 §13: a sequence too (a part of a book shown where it is embedded).
+        if answer.view.iter().any(|n| !matches!(n, ViewNode::Text { .. } | ViewNode::Table { .. } | ViewNode::Link { .. } | ViewNode::Image { .. } | ViewNode::Sequence { .. })) {
+            return Err(bad("only text, table, link, image and sequence nodes".into()));
         }
         self.check_tables(plugin, Some(&row.id), &mut answer.view)?;
         out.view = Some(answer.view);

@@ -1033,5 +1033,13 @@
   "image.pasted": "画像",
   "kernel.error.invalid.notAnImage": "OneDesk が受け付ける画像（PNG・JPEG・GIF・WebP）ではありません。",
   "kernel.error.invalid.unknownBlob": "その画像はこのワークスペースにありません。",
-  "kernel.error.invalid.tooManyBlobs": "1 つのリソースに入れられる画像は 200 枚までです。"
+  "kernel.error.invalid.tooManyBlobs": "1 つのリソースに入れられる画像は 200 枚までです。",
+  "kernel.error.reason.refused|message": "{message}",
+  "kernel.permission.contents": "ほかの項目が埋め込まれたときに表示する内容（本文）を読む",
+  "sequence.toc": "目次",
+  "sequence.previous": "前へ",
+  "sequence.next": "次へ",
+  "sequence.page": "{n} / {total}",
+  "sequence.open": "開く",
+  "kernel.error.invalid.refused": "ここには置けません。"
 }

@@ -146,6 +146,8 @@ export type * from "./SearchRank";
 export type * from "./SecretInfo";
 export type * from "./SecretNameParams";
 export type * from "./SecretSetParams";
+export type * from "./SequenceItem";
+export type * from "./SequenceMode";
 export type * from "./SetAiVisibleParams";
 export type * from "./SetAiVisibleResult";
 export type * from "./SetFavoriteParams";

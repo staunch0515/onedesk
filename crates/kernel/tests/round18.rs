@@ -801,9 +801,9 @@ async fn every_refusal_of_an_interface_call() {
     // An action the interface does not list.
     let o = ask(None, Some("secret"), json!({ "resource": conn })).await;
     assert_eq!(why(&o), pair("invalid", "noImplementation"), "{o}");
-    // Outside a run.
+    // Outside a run (D487 §13 K-f): allowed, the callee only computes; its answer comes back as `{ data }`.
     let r = c.probe("t.user", "interfaces.call", json!(["t.chat/1", "chat", {}, { "resource": conn }])).await;
-    assert_eq!(why(&r), pair("denied", "notInRun"), "{r}");
+    assert!(r["ok"].get("data").is_some(), "{r}");
     // `list` also needs `uses`.
     let r = c.probe("t.other", "interfaces.list", json!(["t.chat/1"])).await;
     assert_eq!(why(&r), pair("denied", "notUsed"));

@@ -135,8 +135,9 @@ impl Inner {
     pub async fn host_call(&self, plugin: &'static Plugin, info: &CallInfo, method: &str, args: Value) -> KResult<Value> {
         let (cap, op) = method.split_once('.').ok_or_else(|| err_p(ErrorCode::UnknownMethod, &[("method", method)]))?;
         // D301: `migrate` is pure computation — only reads; `storage.readFrom` only there.
+        // D487 §13: also reading the subtree and embeds, and calling interfaces (the callee computes only, too).
         const PURE_OK: &[&str] = &[
-            "resources.get", "resources.list", "files.roots", "files.list", "files.stat", "files.readText",
+            "resources.get", "resources.list", "resources.tree", "resources.embed", "interfaces.list", "interfaces.call", "files.roots", "files.list", "files.stat", "files.readText",
             "params.get", "params.config", "storage.get", "storage.keys", "storage.readFrom", "settings.get", "process.ready",
         ];
         // Review #7: `process.*` answers `notInRun` itself (and audits `run`), in `migrate` too;
@@ -171,7 +172,12 @@ impl Inner {
                     (_, v) => v,
                 })
             }
+            // D487 §13 (K-a, K-b): the subtree below a resource; what another resource shows embedded.
+            "resources" if op == "tree" => self.host_tree(plugin, info, &args),
+            "resources" if op == "embed" => self.host_embed(plugin, info, &args).await,
             "resources" => self.host_resources(plugin, info, op, &args).await,
+            // D487 §13 (K-g): a stored file written to a granted folder.
+            "files" if op == "writeBlob" => self.host_write_blob(plugin, info, &args).await,
             "files" if ROUND17_FILES.contains(&op) => self.host_files17(plugin, info, op, &args).await,
             "files" => self.host_files(plugin, op, &args).await,
             "ui" if op == "openExternal" => self.host_open_external(plugin, info, &args).await,
@@ -635,6 +641,10 @@ impl Inner {
     /// The folders one path of a `files.*` call may be in: the plugin's own folder (relative path,
     /// or absolute inside it) or the granted folders (never anything inside the data folder).
     /// Returns them and the path made absolute.
+    pub(crate) fn files_scope_pub(&self, plugin: &Plugin, raw: &str) -> KResult<(Vec<PathBuf>, String)> {
+        self.files_scope(plugin, raw)
+    }
+
     fn files_scope(&self, plugin: &Plugin, raw: &str) -> KResult<(Vec<PathBuf>, String)> {
         if let Some(own) = self.own_files(plugin, raw)? {
             return Ok(own);
