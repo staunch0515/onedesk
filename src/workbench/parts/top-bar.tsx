@@ -3,7 +3,7 @@ import { Button, DropdownMenu, IconButton, SearchBox, TopBar, useToast, type Men
 import { useI18n } from "../i18n";
 import { AI_SETTINGS_TARGET } from "../pages/ai-settings-page";
 import { SECRETS_TARGET } from "../pages/secrets-page";
-import { startExport, startImport } from "./transfer-dialogs";
+import { startExport, startImport, startPackageImport } from "./transfer-dialogs";
 import type { SearchHit } from "../protocol";
 import { useQuery, useUi, useWorkbench } from "../state/context";
 import { switchWorkspace, WorkspaceDialogs, type WorkspaceDialog } from "./workspace-dialogs";
@@ -121,6 +121,7 @@ export function TopBarPart({ onSettings }: { onSettings: () => void }) {
                 { type: "separator", key: "sep-transfer" } as MenuEntry,
                 { key: "export", label: t("transfer.export"), icon: "folder-output", onSelect: () => void startExport(client, store, actions, (resources, folder) => toast({ tone: "success", title: t("transfer.exportDone", { resources, folder }) })) },
                 { key: "import", label: t("transfer.import"), icon: "folder-input", onSelect: () => void startImport(client, store, actions) },
+                ...(client.workspace.packageImport ? [{ key: "package", label: t("package.import"), icon: "package-open", onSelect: () => void startPackageImport(client, store, actions) }] : []),
               ]}
               trigger={<IconButton icon="settings" label={t("topbar.settings")} tooltipSide="bottom" />}
             />

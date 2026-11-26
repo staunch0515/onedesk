@@ -20,6 +20,7 @@ pub mod workspace_settings;
 pub mod manifest;
 mod pages;
 mod reach;
+pub mod packages;
 pub mod params;
 mod round2;
 pub(crate) mod round18;

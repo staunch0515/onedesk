@@ -2,6 +2,7 @@
 // of a practice or test, attempts.
 
 import { partsOf } from "./question.js";
+import { markEntry } from "./sealed.js";
 
 export const PLUGIN = "org.onedesk.exercise";
 export const IFACE = "onedesk.book/1";
@@ -145,8 +146,8 @@ export async function startAttempt(ctx, { source, sourceKind, name, book, items,
   });
 }
 
-/** Marks every question of an attempt: `{ results, score, total, pending }`. */
-export function markAll(markFn, qs, items, body, partial) {
+/** Marks every question of an attempt: `{ results, score, total, pending }` (`pending` counts those awaiting too). */
+export async function markAll(ctx, qs, items, body, partial) {
   const results = {};
   let score = 0;
   let total = 0;
@@ -157,11 +158,11 @@ export function markAll(markFn, qs, items, body, partial) {
     if (!e) continue;
     const kept = body.results && body.results[it.q];
     // A teacher's mark stays.
-    const r = kept && kept.by === "teacher" ? kept : markFn(e.q, givenOf(body, it.q, e.q.blanks), partial);
+    const r = kept && kept.by === "teacher" ? kept : await markEntry(ctx, e, givenOf(body, it.q, e.q.blanks), partial);
     results[it.q] = r;
     score += r.score;
     total += r.max;
-    if (r.state === "pending") pending++;
+    if (r.state === "pending" || r.state === "awaiting") pending++;
   }
   return { results, score: Math.round(score * 100) / 100, total, pending };
 }

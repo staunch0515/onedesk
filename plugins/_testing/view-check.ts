@@ -74,6 +74,8 @@ export function checkView(view: unknown): string[] {
       }
       if (n.mode !== undefined && n.mode !== "scroll" && n.mode !== "pages") errs.push("bad sequence mode");
     }
+    // The kernel takes a column's label as plain text (translate it first).
+    if (n.type === "table") for (const c of (n.columns as Record<string, unknown>[]) ?? []) if (typeof c.label !== "string") errs.push("table column label must be a string");
     if (n.type === "text" && typeof n.text !== "string") errs.push("text node needs a string");
     if (n.type === "text" && n.format !== undefined && !["plain", "markdown"].includes(String(n.format))) errs.push("bad format");
     if (n.type === "text" && n.tone !== undefined && !["default", "muted", "danger"].includes(String(n.tone))) errs.push("bad tone");

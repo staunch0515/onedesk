@@ -36,7 +36,8 @@
         "references",
         "reference",
         "index",
-        "figures"
+        "figures",
+        "colophon"
       ]
     }
   },
@@ -46,7 +47,8 @@
       "outline",
       "entries",
       "number",
-      "cite"
+      "cite",
+      "print"
     ]
   },
   "contributes": {
@@ -249,6 +251,25 @@
         "draggable": true,
         "accepts": [],
         "embed": true
+      },
+      {
+        "id": "colophon",
+        "label": "kind.colophon",
+        "icon": "stamp",
+        "tree": "resources",
+        "page": "colophon",
+        "newName": "kind.colophon.new",
+        "defaults": {
+          "publisher": "",
+          "isbn": "",
+          "note": "",
+          "split": true,
+          "edition": 0,
+          "history": []
+        },
+        "draggable": true,
+        "accepts": [],
+        "embed": true
       }
     ],
     "pages": [
@@ -431,6 +452,44 @@
             ]
           }
         ]
+      },
+      {
+        "id": "colophon",
+        "actions": [
+          {
+            "id": "publish",
+            "role": "run",
+            "action": "publish",
+            "label": "action.publish",
+            "icon": "book-up"
+          },
+          {
+            "id": "reprint",
+            "role": "run",
+            "action": "reprint",
+            "label": "action.reprint",
+            "icon": "printer"
+          },
+          {
+            "id": "save",
+            "role": "save",
+            "label": "action.save",
+            "icon": "save",
+            "primary": true,
+            "shortcut": [
+              "Mod",
+              "S"
+            ]
+          }
+        ],
+        "resultTabs": [
+          {
+            "id": "out",
+            "type": "output",
+            "label": "tab.publish",
+            "icon": "file-text"
+          }
+        ]
       }
     ],
     "actions": [
@@ -443,6 +502,35 @@
         ],
         "output": "text",
         "saveFirst": true
+      },
+      {
+        "id": "publish",
+        "label": "action.publish",
+        "icon": "book-up",
+        "kinds": [
+          "colophon"
+        ],
+        "output": "text",
+        "saveFirst": true
+      },
+      {
+        "id": "reprint",
+        "label": "action.reprint",
+        "icon": "printer",
+        "kinds": [
+          "colophon"
+        ],
+        "output": "text",
+        "saveFirst": true
+      },
+      {
+        "id": "print",
+        "label": "action.print",
+        "icon": "printer",
+        "kinds": [
+          "colophon"
+        ],
+        "output": "none"
       },
       {
         "id": "roles",
@@ -485,7 +573,8 @@
         "references",
         "reference",
         "index",
-        "figures"
+        "figures",
+        "colophon"
       ]
     },
     "locales": {

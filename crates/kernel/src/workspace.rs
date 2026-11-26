@@ -30,6 +30,7 @@ pub const MIGRATIONS: &[(&str, &str)] = &[
     ("0014_ai_visible_default_off", include_str!("../migrations/0014_ai_visible_default_off.sql")),
     ("0015_default_env", include_str!("../migrations/0015_default_env.sql")),
     ("0016_blobs", include_str!("../migrations/0016_blobs.sql")),
+    ("0017_copies", include_str!("../migrations/0017_copies.sql")),
 ];
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

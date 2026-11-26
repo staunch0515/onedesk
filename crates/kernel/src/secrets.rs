@@ -283,7 +283,7 @@ impl Inner {
 
     pub fn secrets_list(&self) -> KResult<Vec<SecretInfo>> {
         let rows: Vec<(String, i64)> = self.read(|c| {
-            let mut st = c.prepare("SELECT name, updated_at FROM secret_names ORDER BY name")?;
+            let mut st = c.prepare("SELECT name, updated_at FROM secret_names WHERE name NOT LIKE 'sealed.%' ORDER BY name")?;
             let v = st.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?;
             v.collect()
         })?;

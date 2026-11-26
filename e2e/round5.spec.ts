@@ -330,7 +330,7 @@ test("import through the settings menu: the preview dialog lists what is skipped
   for (const r of resources) r.externalKey = null;
   writeFileSync(path.join(folder, "resources.json"), JSON.stringify(resources, null, 2));
   await settingsMenu(page).click();
-  await page.getByRole("menuitem", { name: /Import/ }).click();
+  await page.getByRole("menuitem", { name: "Import…", exact: true }).click();
   const dialog = page.getByRole("dialog");
   await dialog.getByRole("textbox", { name: "Folder path" }).fill(folder);
   await dialog.getByRole("button", { name: "Look inside" }).click();
@@ -364,7 +364,7 @@ test("import of broken folders: wrong format and version 99 are refused with the
 
   // and in the dialog: the Import button stays disabled
   await settingsMenu(page).click();
-  await page.getByRole("menuitem", { name: /Import/ }).click();
+  await page.getByRole("menuitem", { name: "Import…", exact: true }).click();
   const dialog = page.getByRole("dialog");
   await dialog.getByRole("textbox", { name: "Folder path" }).fill(fixture("broken/wrong-format"));
   await dialog.getByRole("button", { name: "Look inside" }).click();
@@ -396,7 +396,7 @@ test("a forged export: wrong trees and forged plugin state are invalid; granted 
 test("import dialog shows the hosts that will be granted and the secret names (round5-review #2)", async ({ page }) => {
   await openKernel(page, host);
   await settingsMenu(page).click();
-  await page.getByRole("menuitem", { name: /Import/ }).click();
+  await page.getByRole("menuitem", { name: "Import…", exact: true }).click();
   const dialog = page.getByRole("dialog");
   await dialog.getByRole("textbox", { name: "Folder path" }).fill(fixture("malicious"));
   await dialog.getByRole("button", { name: "Look inside" }).click();

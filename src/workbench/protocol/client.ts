@@ -1,3 +1,4 @@
+import type { PackageImportResult, PackageInfo } from "./generated";
 import type {
   AssistProvider,
   EmbedActResult,
@@ -99,7 +100,7 @@ export interface ProtocolClient {
     shell(locale: string): Promise<ShellTexts>;
   };
 
-  readonly platform?: { /** Opens an address in the system browser; the main process checks the protocol again (D380). Absent in a plain browser. */ openExternal?: (url: string) => Promise<void>; pickFolder?: () => Promise<string | null>; /** D456: a plugin package file (.odplugin). */ pickPackageFile?: () => Promise<string | null>; /** D484: an image file. */ pickImageFile?: () => Promise<string | null>; pickSaveFile?: (name?: string) => Promise<string | null> };
+  readonly platform?: { /** Opens an address in the system browser; the main process checks the protocol again (D380). Absent in a plain browser. */ openExternal?: (url: string) => Promise<void>; pickFolder?: () => Promise<string | null>; /** D456: a plugin package file (.odplugin). */ pickPackageFile?: () => Promise<string | null>; /** D487 §21: a resource package (.odpack). */ pickResourcePackage?: () => Promise<string | null>; /** D484: an image file. */ pickImageFile?: () => Promise<string | null>; pickSaveFile?: (name?: string) => Promise<string | null> };
 
   readonly demo?: { tree(id: string): boolean; target(target: string): boolean };
 
@@ -127,6 +128,10 @@ export interface ProtocolClient {
     importPreview(folder: string): Promise<ImportPreview>;
     /** `fingerprint` is the one the preview gave; the kernel refuses if the export changed since. */
     import(folder: string, fingerprint: string, parent?: string): Promise<ImportResult>;
+    /** D487 §21: what a resource package (`.odpack`) holds and whether it can be imported; changes nothing. */
+    packageInspect?(path: string): Promise<PackageInfo>;
+    /** D487 §21: imports a package as a read-only copy (or brings the copy up to date). */
+    packageImport?(path: string): Promise<PackageImportResult>;
   };
 
   refs: {

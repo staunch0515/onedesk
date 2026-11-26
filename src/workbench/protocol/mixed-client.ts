@@ -105,6 +105,8 @@ export function createMixedClient(kernel: KernelClient, mock: ProtocolClient): P
       startTargets: async () => [], getConfig: (name) => kernel.workspace.getConfig(name), setConfig: (name, value) => kernel.workspace.setConfig(name, value),
       export: (folder) => kernel.workspace.export(folder),
       importPreview: (folder) => kernel.workspace.importPreview(folder),
+      packageInspect: kernel.workspace.packageInspect ? (path) => kernel.workspace.packageInspect!(path) : undefined,
+      packageImport: kernel.workspace.packageImport ? (path) => kernel.workspace.packageImport!(path) : undefined,
       import: (folder, fingerprint, parent) => kernel.workspace.import(folder, fingerprint, parent),
     },
     refs: {
@@ -240,6 +242,7 @@ export function createMixedClient(kernel: KernelClient, mock: ProtocolClient): P
             pickFolder: kernel.transport.pickFolder ? () => kernel.transport.pickFolder!() : undefined,
             pickPackageFile: kernel.transport.pickPackageFile ? () => kernel.transport.pickPackageFile!() : undefined,
             pickImageFile: kernel.transport.pickImageFile ? () => kernel.transport.pickImageFile!() : undefined,
+            pickResourcePackage: kernel.transport.pickResourcePackage ? () => kernel.transport.pickResourcePackage!() : undefined,
             pickSaveFile: kernel.transport.pickSaveFile ? (name) => kernel.transport.pickSaveFile!(name) : undefined,
           }
         : undefined,

@@ -1,7 +1,7 @@
 // The practice page (练习页, docs/redesign/book.md §19.6): answered right where it is read — in the book — and marked
 // at once; done again as often as wanted. Each check is kept in one attempt, until “again” starts a new one.
 
-import { mark } from "./question.js";
+import { heldBack, openAll } from "./sealed.js";
 import { attemptsOf, bookAbove, ensureLedgers, full, givenOf, itemsOf, markAll, questionsOf, say, startAttempt, str } from "./common.js";
 import { questionNodes } from "./answering.js";
 
@@ -16,7 +16,8 @@ async function current(ctx, practiceId) {
 /** What a practice shows to answer: its questions, the answers so far, the marks of the last check. */
 export async function practiceView(ctx, practice) {
   const items = await itemsOf(ctx, practice);
-  const qs = await questionsOf(ctx, items);
+  // A practice shows its answers once checked: held-back ones are opened (never stored).
+  const qs = await openAll(ctx, await questionsOf(ctx, items));
   const a = await current(ctx, practice.id);
   const values = {};
   if (a) for (const [qid, e] of qs) givenOf(a.body, qid, e.q.blanks).forEach((v, i) => (values[fieldName(qid, i)] = v));
@@ -52,7 +53,7 @@ export async function checkPractice(ctx, practice, values) {
       changes[`body.a.${qid}.${i}`] = v;
       body[`a.${qid}.${i}`] = v;
     }
-  const m = markAll(mark, qs, items, body, false);
+  const m = await markAll(ctx, qs, items, body, false);
   changes["body.results"] = m.results;
   changes["body.score"] = m.score;
   changes["body.total"] = m.total;
@@ -88,7 +89,11 @@ export async function actPractice(ctx, ask) {
 /** What the questions were when answered (kept in the attempt). */
 export function snapshotOf(qs) {
   const out = {};
-  for (const [qid, e] of qs) out[qid] = { name: e.res.name, stem: e.q.stem, answers: e.q.answers.join("\n"), type: e.q.type, options: e.q.options.map((o) => `${o.letter}. ${o.text}`).join("\n"), explanation: e.q.explanation, points: e.q.points, rule: e.q.rule, tags: e.res.tags || [] };
+  for (const [qid, e] of qs) {
+    // D487 §21: answers held back stay so (opened again when shown).
+    const held = heldBack(e.res);
+    out[qid] = { name: e.res.name, stem: e.q.stem, answers: held ? "" : e.q.answers.join("\n"), type: e.q.type, options: e.q.options.map((o) => `${o.letter}. ${o.text}`).join("\n"), explanation: held ? "" : e.q.explanation, points: e.q.points, rule: e.q.rule, tags: e.res.tags || [], ...(held ? { held: true } : {}) };
+  }
   return out;
 }
 

@@ -2,6 +2,7 @@
 // score, “Start”; answered on an attempt page of its own, handed in, marked. On its own page: what the author edits.
 
 import { attemptsOf, bookAbove, full, itemsOf, questionsOf, say, startAttempt, str } from "./common.js";
+import { timingOf } from "./sealed.js";
 import { authorNodes, generate, quickText } from "./authoring.js";
 
 export const TEST = full("test");
@@ -10,7 +11,7 @@ export const TEST = full("test");
 export function settingsOf(body) {
   const b = body || {};
   return {
-    timing: b.timing === "each" ? "each" : "submit",
+    timing: timingOf(b),
     tries: Number(b.tries) > 0 ? Math.floor(Number(b.tries)) : 0,
     keep: b.keep === "last" ? "last" : "best",
     limit: Number(b.limit) > 0 ? Number(b.limit) : 0,
@@ -95,7 +96,7 @@ export async function renderTest(ctx) {
       id: "settings",
       layout: "strip",
       fields: [
-        { name: "timing", label: ctx.t("field.timing"), kind: "enum", bind: "body.timing", options: ["submit", "each"].map((v) => ({ value: v, label: ctx.t(`timing.${v}`) })) },
+        { name: "timing", label: ctx.t("field.timing"), kind: "enum", bind: "body.timing", options: ["release", "submit", "each"].map((v) => ({ value: v, label: ctx.t(`timing.${v}`) })) },
         { name: "tries", label: ctx.t("field.tries"), kind: "number", bind: "body.tries", hint: ctx.t("field.tries.hint") },
         { name: "keep", label: ctx.t("field.keep"), kind: "enum", bind: "body.keep", options: ["best", "last"].map((v) => ({ value: v, label: ctx.t(`keep.${v}`) })) },
         { name: "limit", label: ctx.t("field.limit"), kind: "number", bind: "body.limit", hint: ctx.t("field.limit.hint") },

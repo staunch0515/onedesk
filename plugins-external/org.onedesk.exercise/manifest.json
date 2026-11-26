@@ -26,7 +26,8 @@
       "kinds": [
         "question",
         "test",
-        "lessons"
+        "lessons",
+        "answers"
       ]
     }
   },
@@ -75,11 +76,16 @@
           },
           "explanation": {
             "type": "longtext",
-            "refs": true
+            "refs": true,
+            "withheld": true
           },
           "hint": {
             "type": "longtext",
             "refs": true
+          },
+          "answers": {
+            "type": "longtext",
+            "withheld": true
           }
         }
       },
@@ -105,7 +111,7 @@
         "page": "test",
         "newName": "kind.test.new",
         "defaults": {
-          "timing": "submit",
+          "timing": "release",
           "tries": 0,
           "keep": "best",
           "limit": 0,
@@ -176,6 +182,20 @@
         "defaults": {},
         "draggable": true,
         "accepts": []
+      },
+      {
+        "id": "answers",
+        "label": "kind.answers",
+        "icon": "key-square",
+        "tree": "resources",
+        "page": "answers",
+        "newName": "kind.answers.new",
+        "defaults": {
+          "release": ""
+        },
+        "draggable": true,
+        "accepts": [],
+        "embed": true
       }
     ],
     "pages": [
@@ -313,6 +333,37 @@
             "icon": "book-open"
           }
         ]
+      },
+      {
+        "id": "answers",
+        "actions": [
+          {
+            "id": "release",
+            "role": "run",
+            "action": "release",
+            "label": "action.release",
+            "icon": "megaphone"
+          },
+          {
+            "id": "save",
+            "role": "save",
+            "label": "action.save",
+            "icon": "save",
+            "primary": true,
+            "shortcut": [
+              "Mod",
+              "S"
+            ]
+          }
+        ],
+        "resultTabs": [
+          {
+            "id": "out",
+            "type": "output",
+            "label": "tab.release",
+            "icon": "file-text"
+          }
+        ]
       }
     ],
     "actions": [
@@ -330,6 +381,16 @@
         "id": "entries",
         "label": "action.entries",
         "output": "none"
+      },
+      {
+        "id": "release",
+        "label": "action.release",
+        "icon": "megaphone",
+        "kinds": [
+          "answers"
+        ],
+        "output": "text",
+        "saveFirst": true
       }
     ],
     "menus": {
@@ -339,13 +400,23 @@
         "test",
         "lessons",
         "grades",
-        "mistakes"
+        "mistakes",
+        "answers"
       ]
     },
     "locales": {
       "en-US": "locales/en-US.json",
       "zh-CN": "locales/zh-CN.json",
       "ja-JP": "locales/ja-JP.json"
+    },
+    "events": [
+      "resource.changed"
+    ]
+  },
+  "depends": [
+    {
+      "id": "org.onedesk.book",
+      "version": ">=0.1.0, <1.0.0"
     }
-  }
+  ]
 }

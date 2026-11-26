@@ -4,7 +4,7 @@ import { useI18n } from "./i18n";
 import { loadChildren, type LanguageInfo } from "./protocol";
 import { CommandDialogs } from "./parts/command-dialogs";
 import { InstallDialogs, startInstall } from "./parts/install-dialogs";
-import { startExport, startImport, TransferDialogs } from "./parts/transfer-dialogs";
+import { startExport, startImport, startPackageImport, TransferDialogs } from "./parts/transfer-dialogs";
 import { AI_SETTINGS_TARGET } from "./pages/ai-settings-page";
 import { SECRETS_TARGET } from "./pages/secrets-page";
 import { NoTabs, PageHost } from "./parts/page-host";
@@ -164,6 +164,7 @@ export function Workbench({ settings, languages, onSetting: storeSetting }: Work
           { id: "ai-settings", label: t("ai.title"), icon: "bot", keywords: ["mcp", "claude"], onSelect: () => actions.open(AI_SETTINGS_TARGET) },
           { id: "workspace.export", label: t("transfer.export"), icon: "folder-output", onSelect: () => void startExport(client, store, actions, (resources, folder) => toast({ tone: "success", title: t("transfer.exportDone", { resources, folder }) })) },
           { id: "workspace.import", label: t("transfer.import"), icon: "folder-input", onSelect: () => void startImport(client, store, actions) },
+          ...(client.workspace.packageImport ? [{ id: "package.import", label: t("package.import"), icon: "package-open", onSelect: () => void startPackageImport(client, store, actions) }] : []),
           ...(client.app
             ? [
                 { id: "install", label: t("install.action"), icon: "package-plus", onSelect: () => void startInstall(client, store, actions) },

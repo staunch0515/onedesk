@@ -483,10 +483,12 @@ impl Inner {
             Command::Purge { .. } => Some("purged"),
             // Round 16: created (rev 1) or updated, per row.
             Command::Upsert { .. } => Some("upserted"),
+            // D487 §21: a copy's rows made (rev 1) or brought up to date.
+            Command::ImportPackage(_) => Some("upserted"),
             _ => None,
         };
         let plugin_state = matches!(&cmd, Command::Update { .. } | Command::Create(_) | Command::Grant { .. });
-        let deletion = matches!(&cmd, Command::Delete { .. } | Command::Undelete { .. } | Command::Purge { .. } | Command::Upsert { .. });
+        let deletion = matches!(&cmd, Command::Delete { .. } | Command::Undelete { .. } | Command::Purge { .. } | Command::Upsert { .. } | Command::ImportPackage(_));
         let audited = !matches!(&cmd, Command::Meta { .. } | Command::UiSet { .. });
         // D307: hosts a resource grants before the change, to audit newly granted ones after it.
         // Review #10: every path that can bring an address back (restore, undelete, upgrade, undo)
@@ -521,6 +523,7 @@ impl Inner {
                 )
             }
             Command::Import(plan) => Some(plan.items.iter().filter(|i| i.update).map(|i| i.id.clone()).collect()),
+            Command::ImportPackage(plan) => Some(plan.pkg.resources.iter().map(|r| r.id.clone()).collect()),
             _ => None,
         };
         let granted_before: Option<HashMap<String, BTreeSet<String>>> = ids.map(|ids| {
@@ -671,6 +674,9 @@ impl Inner {
                 }
                 if crate::blobs::METHODS.contains(&m) {
                     return self.handle_blobs(client, m, params).await;
+                }
+                if crate::packages::METHODS.contains(&m) {
+                    return self.handle_packages(m, params).await;
                 }
                 if crate::transfer::METHODS.contains(&m) {
                     return self.handle5(m, params).await.unwrap_or_else(|| Err(err_p(ErrorCode::UnknownMethod, &[("method", m)])));
@@ -888,14 +894,16 @@ impl Inner {
             body: r.body.clone(),
             state,
             state_reason,
-            origin: Origin::Original,
+            // D487 §21 (K9): a read-only copy of a published subtree.
+            origin: if r.origin == crate::packages::ORIGIN_COPY { Origin::Subscribed } else { Origin::Original },
             origin_ref: r.origin_ref.clone(),
             location,
             favorite: self.read(|c| store::is_favorite(c, &r.id))?,
             deleted: r.deleted_at.is_some(),
-            read_only: false,
+            read_only: r.origin == crate::packages::ORIGIN_COPY,
             rev: r.rev,
             plugin_version: r.plugin_version.clone(),
+            copy: if r.origin == crate::packages::ORIGIN_COPY { self.copy_info(r.origin_ref.as_deref())? } else { None },
             created_at: r.created_at,
             created_by: r.created_by.clone(),
             updated_at: r.updated_at,
@@ -1120,6 +1128,9 @@ impl Inner {
         del.danger = Some(true);
         del.separator_before = Some(true);
         menu.push(del);
+        // D487 §21 (K9): a read-only copy takes nothing in; only its root moves; the root is marked with a lock.
+        let copy = r.origin == crate::packages::ORIGIN_COPY;
+        let copy_root = copy && r.origin_ref.as_deref() == Some(r.id.as_str());
         Ok(TreeNode {
             key: r.id.clone(),
             tree: r.tree.clone().unwrap_or_default(),
@@ -1130,12 +1141,12 @@ impl Inner {
             expandable: group || has_children,
             state: shown,
             state_reason: shown_reason,
-            badge: None,
+            badge: copy_root.then(|| "🔒".to_string()),
             target: (!group).then(|| format!("resource:{}", r.id)),
             menu,
-            draggable: meta.draggable,
-            accepts: meta.accepts,
-            drop_any: meta.drop_any.then_some(true),
+            draggable: meta.draggable && (!copy || copy_root),
+            accepts: if copy { vec![] } else { meta.accepts },
+            drop_any: (meta.drop_any && !copy).then_some(true),
         })
     }
 

@@ -137,7 +137,7 @@ impl Inner {
         // D301: `migrate` is pure computation — only reads; `storage.readFrom` only there.
         // D487 §13: also reading the subtree and embeds, and calling interfaces (the callee computes only, too).
         const PURE_OK: &[&str] = &[
-            "resources.get", "resources.list", "resources.tree", "resources.embed", "resources.refs", "util.collate", "interfaces.list", "interfaces.call", "files.roots", "files.list", "files.stat", "files.readText",
+            "resources.get", "resources.list", "resources.tree", "resources.embed", "resources.refs", "util.collate", "sealed.check", "sealed.open", "interfaces.list", "interfaces.call", "files.roots", "files.list", "files.stat", "files.readText",
             "params.get", "params.config", "storage.get", "storage.keys", "storage.readFrom", "settings.get", "process.ready",
         ];
         // Review #7: `process.*` answers `notInRun` itself (and audits `run`), in `migrate` too;
@@ -179,6 +179,9 @@ impl Inner {
             "resources" if op == "refs" => self.host_refs(plugin, info, &args),
             // D487 §15 (K-j): sorting for a language.
             "util" if op == "collate" => self.host_collate(&args),
+            // D487 §21 (K9, K10): a subtree published; withheld fields checked against fingerprints, or opened.
+            "packages" => self.host_packages(plugin, info, op, &args).await,
+            "sealed" => self.host_sealed(plugin, op, &args),
             "resources" => self.host_resources(plugin, info, op, &args).await,
             // D487 §13 (K-g): a stored file written to a granted folder.
             "files" if op == "writeBlob" => self.host_write_blob(plugin, info, &args).await,

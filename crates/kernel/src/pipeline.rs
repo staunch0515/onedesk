@@ -287,6 +287,8 @@ pub enum Command {
     Storage { plugin: String, version: String, key: String, value: Option<String> },
     /// Round 5 (§3.5): everything of one import, in one transaction.
     Import(Box<crate::transfer::ImportPlan>),
+    /// D487 §21 (K9): a read-only copy made or updated, in one transaction.
+    ImportPackage(Box<crate::packages::PackagePlan>),
     /// Recomputes the whole `refs` table (§10: it can be rebuilt at any time).
     RebuildRefs,
     /// Review #7: follows changed reference-field declarations after the plugins were read again.
@@ -513,6 +515,8 @@ impl Writer {
             if blocked_by_readonly(&cmd) {
                 crate::policy::check(&tx, crate::policy::READONLY, None)?;
             }
+            // D487 §21 (K9): a read-only copy is written only by its import.
+            crate::packages::guard_copy(&tx, &cmd)?;
             let out = match cmd {
                 Command::Create(n) => cx.create(n)?,
                 Command::Update { id, changes, basis, overwrite } => cx.update(&id, &changes, basis, &overwrite)?,
@@ -662,6 +666,7 @@ impl Writer {
                     Outcome { changed: true, ..Default::default() }
                 }
                 Command::Import(plan) => cx.import(*plan)?,
+                Command::ImportPackage(plan) => cx.import_package(*plan)?,
                 Command::RebuildRefs => {
                     crate::refs::rebuild(cx.tx, cx.rules).map_err(db_err)?;
                     crate::refs::store_decls(cx.tx, &crate::refs::decls(cx.rules)).map_err(db_err)?;
@@ -751,6 +756,7 @@ fn describe(cmd: &Command) -> (String, String) {
         Command::SecretName { name, present, .. } => ((if *present { "secrets.set" } else { "secrets.delete" }).into(), name.clone()),
         Command::CountedAudit { op, object, .. } => (op.clone(), object.clone()),
         Command::Import(plan) => ("workspace.import".into(), plan.source.clone()),
+        Command::ImportPackage(plan) => ("package.import".into(), plan.pkg.root.clone()),
         Command::RebuildRefs => ("refs.rebuild".into(), String::new()),
         Command::SyncRefDecls => ("refs.sync".into(), String::new()),
         Command::Batch(cmds) => cmds
@@ -776,7 +782,8 @@ fn blocked_by_readonly(cmd: &Command) -> bool {
         | Command::RunInsert(_)
         | Command::Storage { .. }
         | Command::Upsert { .. }
-        | Command::Import(_) => true,
+        | Command::Import(_)
+        | Command::ImportPackage(_) => true,
         Command::Upgrade { items, .. } => !items.is_empty(),
         // Review #9: an empty save writes nothing; an undo that restores nothing is checked in place.
         Command::Update { changes, .. } => !changes.is_empty() && !changes.params_only(),

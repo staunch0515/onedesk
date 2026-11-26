@@ -34,6 +34,8 @@ export const OWN_ROLES = {
   reference: { role: "reference", part: "none", single: false, container: false, numbering: "none" },
   index: { role: "index", part: "back", single: true, container: false, numbering: "none" },
   figures: { role: "figures", part: "front", single: true, container: false, numbering: "none" },
+  // D487 §21
+  colophon: { role: "colophon", part: "front", single: true, container: false, numbering: "none" },
 };
 
 /** A group (篇, 章) and any resource that says nothing: body, numbered by depth, what is below it read too. */
@@ -59,6 +61,8 @@ export function normalize(r) {
     single: r.single === true,
     container: r.container !== false,
     numbering: NUMBERINGS.has(r.numbering) ? r.numbering : "level",
+    // D487 §21: only in the teacher's edition (anything else: in both).
+    ...(r.edition === "teacher" ? { edition: "teacher" } : {}),
     // It said so itself: it can be asked what a page holds (`outline`).
     declared: true,
   };
@@ -110,6 +114,14 @@ export async function allNodes(ctx, id) {
     if (r.next === null || r.next === undefined || out.length >= 20000) break;
     offset = r.next;
   }
+  return out;
+}
+
+/** D487 §21: the pages that go only into the teacher's edition — their role says so (`edition: "teacher"`). */
+export async function teacherOnly(ctx, bookId) {
+  const role = roleFinder(ctx);
+  const out = [];
+  for (const n of await allNodes(ctx, bookId)) if ((await role(n.kind)).edition === "teacher") out.push(n.id);
   return out;
 }
 

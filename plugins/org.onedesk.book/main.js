@@ -12,6 +12,7 @@ import { bookOf, contentsOf, contentsOfBook, embedToc, entriesOf, exportBook, re
 import { citeLabels, embedReference, embedReferences, renderReference, renderReferences } from "./references.js";
 import { embedIndex, renderIndex } from "./index.js";
 import { embedFigures, renderFigures } from "./figures.js";
+import { colophonEvent, embedColophon, printAction, publishAction, renderColophon, reprintAction } from "./colophon.js";
 
 const NONE = { type: "none" };
 
@@ -27,6 +28,8 @@ export default {
     host.kinds.handle("reference", { embed: embedReference });
     host.kinds.handle("index", { embed: embedIndex });
     host.kinds.handle("figures", { embed: embedFigures });
+    // D487 §21
+    host.kinds.handle("colophon", { embed: embedColophon });
 
     host.pages.handle("book", { render: renderBook });
     host.pages.handle("cover", { render: renderCover });
@@ -43,8 +46,12 @@ export default {
     host.pages.handle("reference", { render: renderReference });
     host.pages.handle("index", { render: renderIndex });
     host.pages.handle("figures", { render: renderFigures });
+    host.pages.handle("colophon", { render: renderColophon, onEvent: colophonEvent });
 
     host.actions.handle("export", exportBook);
+    host.actions.handle("publish", publishAction);
+    host.actions.handle("reprint", reprintAction);
+    host.actions.handle("print", printAction);
 
     // `onedesk.book/1` (§13.6): what this plugin's kinds are in a book; what a page holds; a book's numbered items.
     host.actions.handle("roles", async () => ({ output: NONE, data: rolesData() }));

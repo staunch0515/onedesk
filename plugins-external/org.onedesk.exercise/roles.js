@@ -5,5 +5,7 @@ export const ROLES = {
     { kind: "practice", role: "practice", part: "body", single: false, container: false, numbering: "level" },
     { kind: "test", role: "test", part: "body", single: false, container: false, numbering: "level" },
     { kind: "lessons", role: "toc", part: "none", single: true, container: false, numbering: "none" },
+    // D487 §21: at the back, lettered; only in the teacher's edition.
+    { kind: "answers", role: "answers", part: "back", single: true, container: false, numbering: "letter", edition: "teacher" },
   ],
 };

@@ -432,6 +432,10 @@ pub struct Resource {
     pub read_only: bool,
     pub rev: i64,
     pub plugin_version: Option<String>,
+    /// D487 §21 (K9): a read-only copy: where it came from.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub copy: Option<CopyInfo>,
     /// Milliseconds since the epoch.
     pub created_at: i64,
     /// Actor as text: `user`, `core`, `plugin:<id>@<version>` (§4.1).
@@ -2202,6 +2206,10 @@ pub mod method5 {
     pub const RESOURCE_EMBED: &str = "resource.embed";
     /// D487 §19 (K11): `ResourceEmbedActParams` → `EmbedActResult`: a button inside an embedded view was clicked.
     pub const RESOURCE_EMBED_ACT: &str = "resource.embedAct";
+    /// D487 §21 (K9): `PackagePathParams` → `PackageInfo`: what a package file holds and what importing it would do.
+    pub const PACKAGE_INSPECT: &str = "package.inspect";
+    /// D487 §21 (K9): `PackagePathParams` → `PackageImportResult`: imports (or updates) a read-only copy. The user's only.
+    pub const PACKAGE_IMPORT: &str = "package.import";
     /// D484 §16: `BlobPutParams` → `BlobInfo`: stores a file (an image) by its content. The user's only (never a plugin).
     pub const BLOB_PUT: &str = "blob.put";
     /// D484 §16: `BlobReadParams` → `BlobData`: a stored file, for a resource that uses it or one this client just put.
@@ -2354,6 +2362,57 @@ pub struct EmbedResult {
     pub actions: Option<Vec<TableRowAction>>,
     /// D487 §19 (K11): the starting values of the view's form fields (name → text).
     pub values: Option<std::collections::BTreeMap<String, String>>,
+}
+
+/// D487 §21 (K9): a package file chosen by the user.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct PackagePathParams {
+    pub path: String,
+}
+
+/// D487 §21 (K9): what a package holds — its title, who published it, which edition and printing, the variant
+/// (`student`, `teacher`) — and what importing it would do: a new copy, an update of `current`, or nothing (`refused`:
+/// `ownPackage`, `otherPublisher`, `notNewer`, `taken`).
+#[skip_serializing_none]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, optional_fields)]
+pub struct PackageInfo {
+    pub title: String,
+    pub publisher_name: String,
+    pub edition: u32,
+    pub printing: u32,
+    pub variant: String,
+    pub published_at: i64,
+    pub resources: u32,
+    pub update: bool,
+    pub current: Option<CopyInfo>,
+    pub refused: Option<String>,
+}
+
+/// D487 §21 (K9): what an import did.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct PackageImportResult {
+    pub root: String,
+    pub created: u32,
+    pub updated: u32,
+    pub removed: u32,
+}
+
+/// D487 §21 (K9): where a read-only copy came from.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct CopyInfo {
+    pub title: String,
+    pub publisher_name: String,
+    pub edition: u32,
+    pub printing: u32,
+    pub variant: String,
 }
 
 /// D487 §19 (K11): the reader acted inside an embedded view — clicked one of its buttons. `values` are the fields of the

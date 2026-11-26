@@ -271,8 +271,139 @@ describe("grades, mistakes, textbook contents (D487 §19.8, §19.10)", () => {
     const roles = (await actions.roles({}, {})).data.kinds;
     expect(roles.find((r: any) => r.kind === "lessons")).toMatchObject({ role: "toc", part: "none", single: true });
     expect(roles.find((r: any) => r.kind === "practice")).toMatchObject({ role: "practice", part: "body", numbering: "level" });
-    expect(manifest.implements["onedesk.book/1"].kinds).toEqual(["question", "test", "lessons"]);
+    expect(manifest.implements["onedesk.book/1"].kinds).toEqual(["question", "test", "lessons", "answers"]);
+    expect(roles.find((r: any) => r.kind === "answers")).toMatchObject({ part: "back", numbering: "letter", edition: "teacher" });
     expect(manifest.contributes.trees[0]).toMatchObject({ id: "records", source: "stored" });
     for (const f of ["en-US", "ja-JP"]) expect(Object.keys(locale(f)).sort(), f).toEqual(Object.keys(ZH).sort());
+  });
+});
+
+// @ts-ignore
+import { acceptedWritings, markEntry, sealQuestion, writing } from "./sealed.js";
+
+describe("answers held back, released by the teacher (D487 §21)", () => {
+  /** A student's copy: questions without answers; fingerprints for some (`sealed`), keychain texts (`opened`). */
+  function copyWorld(sealed: Record<string, string[]>, opened: Record<string, Record<string, string>> = {}) {
+    const w = world([
+      ["bk", "x.book:book", "数学", null],
+      ["p1", k("practice"), "练一练", "bk", {}],
+      ["q1", k("question"), "3+5", "p1", { type: "fill", stem: "3 + 5 = {{?}}", rule: "number", points: 1 }],
+      ["t1", k("test"), "单元测验", "bk", { timing: "release", items: [{ q: "q2" }] }],
+      ["q2", k("question"), "7×8", "t1", { type: "fill", stem: "7 × 8 = {{?}}", rule: "number", points: 2 }],
+      ["ans", k("answers"), "习题答案", "bk", { release: "t1" }],
+    ]);
+    for (const id of ["q1", "q2"]) (w.res.get(id) as any).copy = { edition: 1, printing: 1, variant: "student" };
+    const host = (w.ctx(null) as any).host;
+    const calls: any[] = [];
+    host.sealed = {
+      async check(id: string, field: string, text: string) {
+        const list = sealed[`${id}.${field}`];
+        return list ? list.includes(text) : null;
+      },
+      async open(id: string, field: string) {
+        return opened[id]?.[field] ?? null;
+      },
+    };
+    host.actions = {
+      async call(action: string, input: any, o: any) {
+        calls.push([action, input, o]);
+        return { output: { type: "none" }, data: { edition: 1, printing: 2, paths: ["/out/数学-1.2-学生版.odpack"] } };
+      },
+    };
+    host.resources.tree = async (id: string) => {
+      const out: any[] = [];
+      const walk = (p: string, depth: number) => {
+        for (const x of w.order.filter((y) => w.res.get(y)!.parentId === p)) {
+          const r = w.res.get(x)!;
+          out.push({ id: r.id, kind: r.kind, name: r.name, depth, parent: p });
+          walk(x, depth + 1);
+        }
+      };
+      walk(id, 1);
+      return { nodes: out, next: null };
+    };
+    return { ...w, calls };
+  }
+
+  it("the same writing on both sides: values, signs, letters, true or false", () => {
+    const q = partsOf({ type: "fill", stem: "{{?}} {{?}}", answers: "1/2 | 0.25\n>", rule: "number" });
+    expect(writing(q, 0, "0.5")).toBe(writing(q, 0, "½"));
+    expect(acceptedWritings(q)).toEqual(["0|n:0.5", "0|n:0.25", "1|t:>"]);
+    const s = partsOf({ type: "fill", stem: "{{?}}", answers: ">", rule: "symbol" });
+    expect(writing(s, 0, "＞")).toBe(acceptedWritings(s)[0]);
+    expect(acceptedWritings(partsOf({ type: "multi", options: "a\nb\nc", answers: "c, a" }))).toEqual(["0|l:AC"]);
+    expect(writing(partsOf({ type: "judge", answers: "对" }), 0, "√")).toBe("0|j:T");
+    expect(acceptedWritings(partsOf({ type: "free", answers: "x" }))).toEqual([]);
+  });
+
+  it("seal: on the spot in a practice or a test answered after handing in; nothing for one the teacher releases", async () => {
+    const w = world([
+      ["p1", k("practice"), "练", null],
+      ["q1", k("question"), "a", "p1", { type: "fill", stem: "{{?}}", answers: "8", rule: "number" }],
+      ["t1", k("test"), "测", null, { timing: "release" }],
+      ["q2", k("question"), "b", "t1", { type: "fill", stem: "{{?}}", answers: "8", rule: "number" }],
+      ["t2", k("test"), "测2", null, { timing: "submit" }],
+      ["q3", k("question"), "c", "t2", { type: "fill", stem: "{{?}}", answers: "8", rule: "number" }],
+    ]);
+    expect(await sealQuestion(w.ctx("q1"))).toEqual({ checks: { answers: ["0|n:8"], explanation: [] } });
+    expect(await sealQuestion(w.ctx("q2"))).toEqual({ checks: {} });
+    expect((await sealQuestion(w.ctx("q3"))).checks.answers).toEqual(["0|n:8"]);
+    // A test's answers wait for the teacher unless it says otherwise.
+    expect(manifest.contributes.kinds.find((x: any) => x.id === "test").defaults.timing).toBe("release");
+    const q = manifest.contributes.kinds.find((x: any) => x.id === "question");
+    expect([q.fields.answers.withheld, q.fields.explanation.withheld]).toEqual([true, true]);
+  });
+
+  it("held back: marked by fingerprint, or waiting; a practice opens its answers to show them", async () => {
+    const w = copyWorld({ "q1.answers": ["0|n:8"] }, { q1: { answers: "8", explanation: "三加五" } });
+    const e = { res: w.res.get("q1"), q: partsOf(w.res.get("q1")!.body) };
+    expect((await markEntry(w.ctx(null), e, ["8"], false)).state).toBe("right");
+    expect((await markEntry(w.ctx(null), e, ["9"], false)).state).toBe("wrong");
+    const e2 = { res: w.res.get("q2"), q: partsOf(w.res.get("q2")!.body) };
+    expect(await markEntry(w.ctx(null), e2, ["56"], false)).toEqual({ state: "awaiting", score: 0, max: 2 });
+    // In the book: checked, then the answer shown (opened, not stored).
+    const { kinds } = registry(plugin);
+    const r = await kinds.practice.embedAct(w.ctx("p1"), { action: "check", values: { "q.q1.0": "9" } });
+    expect(JSON.stringify(r.view)).toContain("8");
+    expect(JSON.stringify(r.view)).toContain("三加五");
+    const attempt = [...w.res.values()].find((x) => x.kind === k("attempt"))!;
+    expect(attempt.body.snapshot.q1).toMatchObject({ answers: "", explanation: "", held: true });
+  });
+
+  it("a test the teacher releases: handed in, waiting; the new printing marks it; the appendix asks the colophon", async () => {
+    const w = copyWorld({});
+    const { pages, actions } = registry(plugin);
+    const st = await pages.test.onEvent(w.ctx("t1"), "start");
+    expect(st).toBeUndefined();
+    const a = [...w.res.values()].find((x) => x.kind === k("attempt"))!;
+    a.body["a.q2.0"] = "56";
+    const out = await pages.attempt.onEvent(w.ctx(a.id), "submit");
+    expect(out.message).toBeTruthy();
+    expect(a.body.results.q2.state).toBe("awaiting");
+    const view = JSON.stringify((await pages.attempt.render(w.ctx(a.id))).view);
+    expect(view).toContain("等老师公布答案");
+    // The new printing: the question now has its answer.
+    w.res.get("q2")!.body.answers = "56";
+    delete (w.res.get("q2") as any).copy;
+    // @ts-ignore
+    const { remarkAwaiting } = await import("./answers.js");
+    await remarkAwaiting(w.ctx(null), { change: "updated", kind: k("question"), id: "q2" });
+    expect(a.body.results.q2).toMatchObject({ state: "right", score: 2 });
+    expect(a.body.score).toBe(2);
+    // The teacher's appendix: answers in book order, the ticked test released through the colophon.
+    const t = copyWorld({});
+    t.res.get("q1")!.body.answers = "8";
+    t.res.get("q2")!.body.answers = "56";
+    t.res.set("cp", { id: "cp", kind: "org.onedesk.book:colophon", name: "版权页", parentId: "bk", body: {}, tags: [] });
+    t.order.splice(1, 0, "cp");
+    const page = await pages.answers.render(t.ctx("ans"));
+    expect(checkView(page.view)).toEqual([]);
+    expect(JSON.stringify(page.view)).toContain("1\\\\. （1）8");
+    expect(JSON.stringify(page.view)).toContain("· 已公布");
+    const r = await actions.release(t.ctx("ans"), {});
+    expect(r.failed).toBeUndefined();
+    expect(t.calls[0][0]).toBe("org.onedesk.book:print");
+    expect(t.calls[0][1].reveal).toEqual({ q2: ["answers", "explanation"] });
+    expect(t.calls[0][2]).toEqual({ resource: "cp" });
   });
 });

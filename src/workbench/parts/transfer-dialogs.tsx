@@ -33,6 +33,24 @@ export async function startImport(client: ProtocolClient, store: Store, actions:
   }
 }
 
+/** D487 §21: importing a resource package — choose the file, then show what it is before anything changes. */
+export async function startPackageImport(client: ProtocolClient, store: Store, actions: Fail): Promise<void> {
+  try {
+    const pick = client.platform?.pickResourcePackage;
+    if (!pick) return void store.set({ transfer: { stage: "package-path" } });
+    const path = await pick();
+    if (path) await inspectPackage(client, store, path);
+  } catch (error) {
+    actions.fail(error);
+  }
+}
+
+export async function inspectPackage(client: ProtocolClient, store: Store, path: string): Promise<void> {
+  if (!client.workspace.packageInspect) return;
+  const info = await client.workspace.packageInspect(path);
+  store.set({ transfer: { stage: "package-preview", path, info } });
+}
+
 export async function previewFolder(client: ProtocolClient, store: Store, folder: string): Promise<void> {
   const preview = await client.workspace.importPreview(folder);
   store.set({ transfer: { stage: "import-preview", folder, preview } });
@@ -142,6 +160,7 @@ export function TransferDialogs() {
         close();
       });
     else if (transfer?.stage === "import-path") void run(() => previewFolder(client, store, folder));
+    else if (transfer?.stage === "package-path") void run(() => inspectPackage(client, store, folder));
     else if (exportCsv)
       void run(async () => {
         const result = await client.run.export(exportCsv.run, folder);
@@ -151,8 +170,16 @@ export function TransferDialogs() {
       });
   };
 
-  const asksForPath = transfer?.stage === "export-path" || transfer?.stage === "import-path" || exportCsv !== null;
-  const titles = transfer?.stage === "export-path" ? [t("transfer.exportTitle"), t("transfer.exportBody"), t("transfer.exportGo")] : exportCsv ? [t("result.exportTitle"), t("result.exportBody"), t("result.exportGo")] : [t("transfer.importTitle"), t("transfer.importPathBody"), t("transfer.look")];
+  const asksForPath = transfer?.stage === "export-path" || transfer?.stage === "import-path" || transfer?.stage === "package-path" || exportCsv !== null;
+  const titles =
+    transfer?.stage === "export-path"
+      ? [t("transfer.exportTitle"), t("transfer.exportBody"), t("transfer.exportGo")]
+      : exportCsv
+        ? [t("result.exportTitle"), t("result.exportBody"), t("result.exportGo")]
+        : transfer?.stage === "package-path"
+          ? [t("package.importTitle"), t("package.pathBody"), t("transfer.look")]
+          : [t("transfer.importTitle"), t("transfer.importPathBody"), t("transfer.look")];
+  const pkg = transfer?.stage === "package-preview" ? transfer.info : null;
 
   return (
     <>
@@ -171,8 +198,8 @@ export function TransferDialogs() {
           </>
         }
       >
-        <FormField label={exportCsv ? t("result.exportPath") : t("transfer.folder")}>
-          <Input mono value={path} placeholder={exportCsv ? "/Users/…/result.csv" : "/Users/…"} onChange={(e) => setPath(e.target.value)} onKeyDown={(e) => e.key === "Enter" && submitPath()} autoFocus />
+        <FormField label={exportCsv ? t("result.exportPath") : transfer?.stage === "package-path" ? t("package.file") : t("transfer.folder")}>
+          <Input mono value={path} placeholder={exportCsv ? "/Users/…/result.csv" : transfer?.stage === "package-path" ? "/Users/…/book.odpack" : "/Users/…"} onChange={(e) => setPath(e.target.value)} onKeyDown={(e) => e.key === "Enter" && submitPath()} autoFocus />
         </FormField>
       </Dialog>
 
@@ -253,8 +280,59 @@ export function TransferDialogs() {
           </Pane>
         )}
       </Dialog>
+
+      <Dialog
+        open={pkg !== null}
+        onOpenChange={(open) => !open && close()}
+        size="md"
+        title={pkg ? t(pkg.refused ? "package.refusedTitle" : pkg.update ? "package.updateTitle" : "package.previewTitle", { title: pkg.title }) : ""}
+        footer={
+          <>
+            <Button onClick={close}>{t("common.cancel")}</Button>
+            <Button
+              variant="primary"
+              loading={busy}
+              disabled={!pkg || !!pkg.refused}
+              onClick={() =>
+                void run(async () => {
+                  if (transfer?.stage !== "package-preview" || !client.workspace.packageImport) return;
+                  const result = await client.workspace.packageImport(transfer.path);
+                  toast({ tone: "success", title: t("package.importDone", { title: transfer.info.title, created: result.created, updated: result.updated, removed: result.removed }) });
+                  close();
+                  const res = await client.resource.get(result.root);
+                  if (res) void actions.reveal(res.tree, res.id);
+                })
+              }
+            >
+              {pkg?.update ? t("package.updateGo") : t("transfer.importGo")}
+            </Button>
+          </>
+        }
+      >
+        {pkg && (
+          <Pane gap="md">
+            {pkg.refused && <Banner tone="danger">{refusedText(t, pkg.refused)}</Banner>}
+            <Pane direction="row" gap="xs" align="center" wrap>
+              <Badge tone="neutral" icon="book-open">{t("package.edition", { edition: pkg.edition, printing: pkg.printing })}</Badge>
+              <Badge tone="neutral">{t(pkg.variant === "teacher" ? "package.variant.teacher" : "package.variant.student")}</Badge>
+              <Text size="sm" tone="muted">{t("package.from", { publisher: pkg.publisherName, at: dateTime(pkg.publishedAt) })}</Text>
+            </Pane>
+            <Text size="sm">{t("package.count", { resources: pkg.resources })}</Text>
+            {pkg.current && <Text size="sm">{t("package.current", { edition: pkg.current.edition, printing: pkg.current.printing })}</Text>}
+            <Text size="sm" tone="muted">{t(pkg.update ? "package.updateNote" : "package.readOnlyNote")}</Text>
+          </Pane>
+        )}
+      </Dialog>
     </>
   );
+}
+
+function refusedText(t: ReturnType<typeof useI18n>["t"], reason: string): string {
+  if (reason === "ownPackage") return t("package.refused.ownPackage");
+  if (reason === "otherPublisher") return t("package.refused.otherPublisher");
+  if (reason === "notNewer") return t("package.refused.notNewer");
+  if (reason === "taken") return t("package.refused.taken");
+  return reason;
 }
 
 function skipText(t: ReturnType<typeof useI18n>["t"], reason: string): string {

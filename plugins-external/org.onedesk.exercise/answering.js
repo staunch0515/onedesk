@@ -3,7 +3,7 @@
 import { answerShown, fieldsOf, stemShown } from "./question.js";
 import { say } from "./common.js";
 
-const MARK = { right: "✓", wrong: "✗", partial: "◐", pending: "…", empty: "·" };
+const MARK = { right: "✓", wrong: "✗", partial: "◐", pending: "…", empty: "·", awaiting: "⏳" };
 
 /**
  * View nodes for items: a heading, or a question (its stem, its fields named by `name(qid, i)`, and — when `marks`
@@ -28,8 +28,11 @@ export function questionNodes(ctx, items, qs, { name, marks, reveal, lock, bind 
     view.push({ type: "form", id: `f-${it.q}`, layout: q.type === "free" ? "stack" : "strip", fields });
     const m = marks && marks[it.q];
     if (m) {
-      const lines = [`${MARK[m.state] || ""} ${say(ctx, `state.${m.state}`)}${m.state === "pending" || m.state === "empty" ? "" : `　${say(ctx, "score", { score: m.score, max: m.max })}`}`];
-      if (reveal && m.state !== "right") lines.push(say(ctx, "answer.is", { answer: answerShown(q) }));
+      const scored = !["pending", "empty", "awaiting"].includes(m.state);
+      const lines = [`${MARK[m.state] || ""} ${say(ctx, `state.${m.state}`)}${scored ? `　${say(ctx, "score", { score: m.score, max: m.max })}` : ""}`];
+      // An answer held back and not opened is not shown.
+      const known = q.answers.some((a) => a.trim());
+      if (reveal && m.state !== "right" && known) lines.push(say(ctx, "answer.is", { answer: answerShown(q) }));
       if (reveal && q.explanation.trim()) lines.push(q.explanation.trim());
       view.push({ type: "text", id: `m-${it.q}`, text: lines.join("\n\n"), format: "markdown", ...(m.state === "wrong" ? { tone: "danger" } : {}) });
     }

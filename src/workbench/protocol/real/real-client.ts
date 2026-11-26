@@ -1,4 +1,4 @@
-import type { AssistProvider, BlobInfo, ConnectionState, EmbedActResult, EmbedResult, RefSuggestion, EventMessage, HelloResult, TreePage } from "../generated";
+import type { AssistProvider, PackageImportResult, PackageInfo, BlobInfo, ConnectionState, EmbedActResult, EmbedResult, RefSuggestion, EventMessage, HelloResult, TreePage } from "../generated";
 import type { ProtocolClient } from "../client";
 import type { ExportResult, ImportPreview, ImportResult, KnownParam, RefInfo, RunExportResult, InstallPreview, InstallRequest, PluginVersionParams, SecretInfo, UndoUpgradeResult, UpgradeResult, PageEventResult, PaletteCommand, PluginDetail, Run, ViewNode, TreeMoveResult, AuditFacets, AuditFilter, McpInfo, McpStatus, AuditRow, EnvOption, EnvView, HistoryEntry, ResolvedParam, ResultAction, SearchHit, CommandContext, CommandEffect, NewItem, PageContext, PageDescriptor, PageSaveResult, PluginGrants, Resource, TreeInfo, TreeNode, WorkspaceEntry, WorkspacesResult, WorkspaceInfo, LanguageInfo, ShellTexts } from "../types";
 import { EventBus } from "./event-bus";
@@ -12,7 +12,7 @@ export const PROTOCOL_VERSION = "1";
 export interface KernelClient {
   readonly hello: HelloResult;
   readonly transport: Transport;
-  workspace: Pick<ProtocolClient["workspace"], "info" | "list" | "create" | "switchTo" | "rename" | "remove" | "openWindow" | "getConfig" | "setConfig" | "export" | "importPreview" | "import">;
+  workspace: Pick<ProtocolClient["workspace"], "info" | "list" | "create" | "switchTo" | "rename" | "remove" | "openWindow" | "getConfig" | "setConfig" | "export" | "importPreview" | "import" | "packageInspect" | "packageImport">;
   params: ProtocolClient["params"];
   refs: ProtocolClient["refs"];
   search: ProtocolClient["search"];
@@ -87,6 +87,8 @@ export async function createKernelClient(transport: Transport, locale?: () => st
       export: (folder) => call<ExportResult>("workspace.export", { folder }),
       importPreview: (folder) => call<ImportPreview>("workspace.importPreview", { folder }),
       import: (folder, fingerprint, parent) => call<ImportResult>("workspace.import", compact({ folder, fingerprint, parent })),
+      packageInspect: (path) => call<PackageInfo>("package.inspect", { path }),
+      packageImport: (path) => call<PackageImportResult>("package.import", { path }),
     },
     refs: {
       outgoing: (id) => call<RefInfo[]>("refs.outgoing", { id }),

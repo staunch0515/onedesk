@@ -311,6 +311,10 @@ pub struct FieldDecl {
     /// D484 §16: for an `attachment` field, what it takes (only `image` so far).
     #[serde(default)]
     pub accept: Vec<String>,
+    /// D487 §21 (K10): a withheld field — a published copy's `student` variant carries it only when revealed (or as
+    /// fingerprints, when the kind's `seal` gives some).
+    #[serde(default)]
+    pub withheld: bool,
 }
 
 /// Type of a declared body field: the view field kinds plus `ref` (a single reference stored as

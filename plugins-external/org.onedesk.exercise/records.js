@@ -1,7 +1,8 @@
 // Learning records (学习记录, docs/redesign/book.md §19.4, §19.8): an attempt (answered, handed in, marked), the
 // grades sheet and the mistake book — all worked out from the attempts.
 
-import { mark, partsOf, shortStem } from "./question.js";
+import { partsOf, shortStem } from "./question.js";
+import { markEntry, openAll } from "./sealed.js";
 import { ensureLedgers, full, givenOf, markAll, now, questionsOf, say, startAttempt, str } from "./common.js";
 import { questionNodes } from "./answering.js";
 import { snapshotOf } from "./practice.js";
@@ -13,7 +14,12 @@ async function attemptQuestions(ctx, body) {
   const items = Array.isArray(body.items) ? body.items : [];
   if (body.status === "submitted" && body.snapshot) {
     const qs = new Map();
-    for (const [qid, s] of Object.entries(body.snapshot)) qs.set(qid, { res: { id: qid, name: s.name, tags: s.tags || [] }, q: partsOf(s) });
+    for (const [qid, s] of Object.entries(body.snapshot)) {
+      // Held back: no answers in the snapshot either (opened when shown).
+      const b = { ...s };
+      if (s.held) delete b.answers;
+      qs.set(qid, { res: { id: qid, name: s.name, tags: s.tags || [], body: b, ...(s.held ? { copy: { held: true } } : {}) }, q: partsOf(s) });
+    }
     return { items, qs };
   }
   return { items, qs: await questionsOf(ctx, items) };
@@ -39,8 +45,11 @@ export async function renderAttempt(ctx) {
   const { items, qs } = await attemptQuestions(ctx, body);
   const done = body.status === "submitted";
   const head = [`**${say(ctx, "attempt.of", { name: str(body.sourceName), n: body.number })}**`];
-  if (done) head.push(say(ctx, "attempt.handedIn", { score: body.score, total: body.total }) + (body.overtime ? `　${say(ctx, "attempt.overtime")}` : ""));
-  else {
+  if (done) {
+    head.push(say(ctx, "attempt.handedIn", { score: body.score, total: body.total }) + (body.overtime ? `　${say(ctx, "attempt.overtime")}` : ""));
+    // D487 §21: the teacher has not released the answers yet.
+    if (Object.values(body.results || {}).some((r) => r && r.state === "awaiting")) head.push(say(ctx, "attempt.awaiting"));
+  } else {
     const left = minutesLeft(body);
     head.push(left === null ? say(ctx, "attempt.noLimit") : left > 0 ? say(ctx, "attempt.left", { m: left }) : say(ctx, "attempt.timeUp"));
   }
@@ -51,13 +60,15 @@ export async function renderAttempt(ctx) {
   else if (s.timing === "each") {
     marks = {};
     for (const [qid, e] of qs) {
-      const m = mark(e.q, givenOf(body, qid, e.q.blanks), s.partial);
+      const m = await markEntry(ctx, e, givenOf(body, qid, e.q.blanks), s.partial);
       if (m.state !== "empty") marks[qid] = m;
     }
   }
   const saved = (ctx.resource && ctx.resource.body) || {};
   const lock = (qid) => done || (s.editable === false && givenOf(saved, qid, (qs.get(qid) || { q: { blanks: 1 } }).q.blanks).some((x) => x.trim()));
-  const { view: nodes } = questionNodes(ctx, items, qs, { name: bound, marks, reveal: done || s.timing === "each", lock, bind: true });
+  const reveal = done || s.timing === "each";
+  if (reveal) await openAll(ctx, qs);
+  const { view: nodes } = questionNodes(ctx, items, qs, { name: bound, marks, reveal, lock, bind: true });
   view.push(...nodes);
   // Questions a teacher marks: “right” and “wrong” beside each one waiting.
   if (done) {
@@ -87,7 +98,7 @@ export async function submitAttempt(ctx) {
   const s = body.settings || {};
   const items = Array.isArray(body.items) ? body.items : [];
   const qs = await questionsOf(ctx, items);
-  const m = markAll(mark, qs, items, body, s.partial);
+  const m = await markAll(ctx, qs, items, body, s.partial);
   const changes = {};
   for (const [k, v] of Object.entries(body)) if (k.startsWith("a.")) changes[`body.${k}`] = v;
   const over = body.limit ? now() > body.started + body.limit * 60000 : false;
@@ -164,7 +175,7 @@ export async function renderGrades(ctx) {
   const tags = new Map();
   for (const a of all)
     for (const [qid, r] of Object.entries(a.body.results || {})) {
-      if (r.state === "pending" || r.state === "empty") continue;
+      if (r.state === "pending" || r.state === "empty" || r.state === "awaiting") continue;
       for (const t of (a.body.snapshot && a.body.snapshot[qid] && a.body.snapshot[qid].tags) || []) {
         const c = tags.get(t) || { n: 0, right: 0 };
         c.n += 1;
@@ -191,7 +202,7 @@ export async function mistakesOf(ctx) {
   const per = new Map();
   for (const a of all)
     for (const [qid, r] of Object.entries(a.body.results || {})) {
-      if (r.state === "empty" || r.state === "pending") continue;
+      if (r.state === "empty" || r.state === "pending" || r.state === "awaiting") continue;
       const p = per.get(qid) || { wrong: 0, last: null, source: "", when: 0, snap: null };
       if (r.state !== "right") p.wrong += 1;
       p.last = r.state;

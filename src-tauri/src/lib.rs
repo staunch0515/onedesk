@@ -77,6 +77,17 @@ async fn pick_package_file(app: tauri::AppHandle) -> Option<String> {
     rx.await.ok().flatten().and_then(|p| p.into_path().ok()).map(|p| p.to_string_lossy().into_owned())
 }
 
+/// D487 §21: the system open-file dialog for a resource package (`.odpack`). Choosing the file is the user's consent to
+/// look inside it; nothing is imported before the confirmation dialog.
+#[tauri::command]
+async fn pick_resource_package(app: tauri::AppHandle) -> Option<String> {
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    app.dialog().file().add_filter("OneDesk package", &["odpack"]).pick_file(move |p| {
+        let _ = tx.send(p);
+    });
+    rx.await.ok().flatten().and_then(|p| p.into_path().ok()).map(|p| p.to_string_lossy().into_owned())
+}
+
 /// D484 §16: the system "open" dialog for an image (png, jpeg, gif, webp). Choosing the file is the user's consent to
 /// store it; the kernel reads it and checks what it is.
 #[tauri::command]
@@ -156,7 +167,8 @@ pub fn run() {
             }
         }))
         .plugin(tauri_plugin_dialog::init())
-        .invoke_handler(tauri::generate_handler![protocol_request, pick_folder, pick_package_file, pick_image_file, pick_save_file, open_external, open_window])
+        .invoke_handler(tauri::generate_handler![protocol_request, pick_folder, pick_package_file,
+            pick_resource_package, pick_image_file, pick_save_file, open_external, open_window])
         .on_window_event(|window, event| {
             let Some(state) = window.try_state::<HostState>() else { return };
             let Some(host) = state.host.clone() else { return };

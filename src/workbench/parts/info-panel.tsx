@@ -320,7 +320,13 @@ export function InfoPanelPart({ resourceId, side }: { resourceId: string; side?:
       {res.kind !== "core:env" && res.kind !== "core:config" && <AiVisibleSection id={resourceId} visible={Boolean(res.aiVisible)} group={res.kind === "core:group" || res.kind === "core:tree"} disabled={res.readOnly || res.deleted} />}
       {res.origin !== "original" && (
         <InfoField label={t("info.origin")}>
-          <Text size="sm">{res.origin === "subscribed" ? t("info.subscribedFrom", { source: res.originRef ?? "" }) : t("info.copied")}</Text>
+          <Text size="sm">
+            {res.copy
+              ? t(res.copy.variant === "teacher" ? "info.copyFromTeacher" : "info.copyFrom", { publisher: res.copy.publisherName, edition: res.copy.edition, printing: res.copy.printing })
+              : res.origin === "subscribed"
+                ? t("info.subscribedFrom", { source: res.originRef ?? "" })
+                : t("info.copied")}
+          </Text>
         </InfoField>
       )}
       <InfoField label={t("info.modified")}>

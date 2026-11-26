@@ -211,6 +211,7 @@
 | `refs` | 只用于 `text`/`longtext`/`code`，不能与 `grants` 同时用：文字里的 `[[名字]]` 是对其他资源的引用。`type: "ref"` 的字段不能再带 `refs`/`grants`。违反 `badRefsField` |
 | `label` | 字段名（语言键），显示在引用面板等处 |
 | `accept` | 只用于 `type: "attachment"`，必填，目前只能是 `["image"]`。附件字段不能带 `refs`/`secrets`/`grants`。违反 `badAttachmentField` |
+| `withheld` | `true`：保留字段（D487 §21）。资源发布成学生版时不带它，除非这次 `reveal` 了它，或类型的 `seal` 给出了它的写法（那时带指纹和原文，原文导入后只进钥匙串，见 §5.7、§7 `sealed`） |
 
 - `type: "secret"` 的字段由框架直接写进钥匙串；资源里只存 `{ "secret": "<名字>" }`，插件永远拿不到值，也不能写它。
 - 带 `grants`、`secrets` 或 `type: "secret"` 的字段是**受保护字段**：插件不能改（只有用户能改），升级迁移也不能改（§9）。
@@ -426,6 +427,8 @@ export default {
 - `embed(ctx, { section, args, inline })`（D481；`args`、`inline` 是 D487）：清单 `embed: true` 才可注册。`args` 是调用方给的参数（`sequence` 的项、`host.resources.embed`），最多 4 KB；**带参数的引用**（D487 §17）`![[名称 | C=37]]`、`[[=名称 | C=37]]` 的参数由内核读好（`名字=值`，逗号分开，双引号里可以有逗号，`{{环境参数}}` 按标签页的环境填好）放进 `args`（名字 → 文字）。`inline: true` 表示行内调用：返回 `{ text, error? }`（一行，最多 200 字；`error: true` 时 `text` 是出错的说明），不返回 `view`。参数写错时内核不调用插件。参考 `org.onedesk.formula`。
 - **可交互的嵌入**（D487 §19，K11）：`embed` 的回答还可以有 `form` 节点（字段**不能**写 `bind`，值属于这一处嵌入）、`values`（表单字段的初始值，名字 → 文字）和 `actions: [{ id, label, icon? }]`（最多 4 个按钮，画在嵌入下面）。读者点了按钮，外壳发 `resource.embedAct`，内核调用 `embedAct(ctx, { section, args, action, values })`（同样只能为声明了 `embed: true` 的类型注册），回答 `{ view?, actions?, values?, message? }`：新的样子（同样检查）、按钮、表单的值、提示。`embedAct` 是用户的操作：插件可以写**自己的**资源、打开目标（`ui.open`），和页面事件一样；不能写别的插件的资源。参考 `org.onedesk.exercise` 的练习页、`org.onedesk.formula` 的试算。别的资源写了 `![[名称]]`（`section` 为 `null`）或 `![[名称#标题]]` 时调用，返回 `{ view, sectionMissing? }`：`view` 只能有 `text`、`table`、`link`、`image`、`sequence` 节点（只读，序列化后最多 512 KB），`ctx.resource` 是被嵌入的资源，`ctx.envId` 是显示它的标签页的环境（`{{名字}}` 照常用 `host.params.get` 取值）；找不到那一节时返回 `{ view: [], sectionMissing: true }`。Markdown 正文的插件按标题取节，参考 `org.onedesk.note` 的 `sectionOf`。
 
+- `seal(ctx)`（D487 §21，K10）：有保留字段（`fields.<键>.withheld: true`）的类型可以注册。发布学生版时，内核对每个这种资源调用它（纯计算，5 秒内），`ctx.resource` 是那一版存档里的资源（带 `parentId`）。返回 `{ checks: { 字段: [可接受的写法…] } }`：列出的字段带上指纹（每个写法加盐取哈希）和原文（导入后原文只进学生的钥匙串）；列表为空的只带原文；没列出的保留字段学生版里没有。写法由插件自己先规范化，判的时候用同样的规范化再调用 `host.sealed.check`。参考 `org.onedesk.exercise` 的 `sealed.js`。
+
 ### 5.8 事件 `host.events.on(name, async (ctx, event) => …)`
 
 只能订阅 `contributes.events` 里的。事件处理函数不能联网、不能运行程序、不能改文件（`notInRun`）；它写的资源不会再触发本插件的事件。
@@ -637,6 +640,10 @@ export default {
 | `notify(message, tone?)` | 提示，`message` 是 `Label` |
 | `copy(text)` | 复制到剪贴板 |
 | `openExternal(url)` | 用系统打开 http/https/mailto（≤ 2048 字）；只在运行中或页面事件里（`notInteractive`），每次调用最多 5 次（`tooMany`） |
+
+**packages**（D487 §21，K9；要 `requires.files`，只能在运行里，根必须是本插件的类型）：`publish(root, { edition, printing, variant, exclude?, reveal?, path })` 把 `root` 和下面的整棵子树（加上用到的图片）存成第 `edition` 版的存档（每版只存一次，再存是 `conflict/exists`），再印成一个资源包文件（`.odpack`）写到授权文件夹的 `path` → `{ path, resources }`；`reprint(root, 同样的选项)` 从那一版的存档印（没存过是 `notFound/edition`）。`variant` 是 `teacher`（整棵）或 `student`（不带 `exclude` 里的资源和它们下面的；保留字段按类型的 `seal` 处理，`reveal: { 资源: [字段] }` 的原样带上）。用户用“导入资源包”导入，得到只读副本（`Resource.copy` 说明来源和版次；改、往里加、删一部分、拖出都是 `denied/readOnlyCopy`）。参考 `org.onedesk.book` 的 `colophon.js`。
+
+**sealed**（D487 §21，K10；只对本插件类型的资源）：`check(resource, field, writing)` → `true`/`false`，没有指纹时 `null`；`open(resource, field)` → 钥匙串里的原文，没有时 `null`。页面、嵌入里也能用（只读）。
 
 **util**：`sleep(ms)`（≤ 10 000；沙箱里没有计时器，等待用它）；`collate(texts, locale)`（D487 §15）→ 按这种语言排序后的下标数组（中文按拼音，日文按读音，其他按各自的字母顺序），最多 20 000 条，同样的保持原来的顺序。
 

@@ -2,7 +2,7 @@
 // items it has and in what order, how they are numbered, reading through (one after another or page by page), where
 // the reader stopped, sub-books, a chapter shown elsewhere, and printing the book to a file.
 
-import { allNodes, childrenMap, full, GROUP, IFACE, PART_RANK, PLUGIN, roleFinder, split } from "./roles.js";
+import { allNodes, childrenMap, full, GROUP, IFACE, PART_RANK, PLUGIN, roleFinder, split, teacherOnly } from "./roles.js";
 import { outlineOf, TEXT_KINDS } from "./text-page.js";
 import { chineseNumber, letter, say, usesChineseNumerals } from "./words.js";
 import { citeLabels, REFERENCES } from "./references.js";
@@ -394,6 +394,8 @@ export async function renderToc(ctx) {
       },
       { name: "levels", label: ctx.t("field.levels"), kind: "text", bind: "body.levels", placeholder: say(ctx, "default.levels") },
       { name: "volume", label: ctx.t("field.volume"), kind: "text", bind: "body.volume", placeholder: say(ctx, "default.volume") },
+      // D487 §21: whose edition the export is (the student's leaves out the teacher's pages).
+      { name: "exportFor", label: ctx.t("field.exportFor"), kind: "enum", param: true, options: ["teacher", "student"].map((v) => ({ value: v, label: ctx.t(`exportFor.${v}`) })) },
     ],
   };
   const book = await bookOf(ctx, ctx.resource);
@@ -431,7 +433,7 @@ export async function embedToc(ctx) {
 
 const BAD_NAME = /[/\\:*?"<>|]/g;
 
-function safeName(name) {
+export function safeName(name) {
   const s = String(name || "").replace(BAD_NAME, "-").trim();
   return s || "book";
 }
@@ -446,7 +448,7 @@ async function exists(ctx, path) {
 }
 
 /** `<folder>/<name><ext>`, or with " 2", " 3"… when that is taken. */
-async function freePath(ctx, folder, name, ext) {
+export async function freePath(ctx, folder, name, ext) {
   for (let i = 1; i <= 1000; i++) {
     const p = `${folder}/${name}${i === 1 ? "" : ` ${i}`}${ext}`;
     if (!(await exists(ctx, p))) return p;
@@ -502,7 +504,7 @@ async function withCalls(ctx, resource, text) {
 }
 
 /** Prints the book (in contents order, numbered) to `<granted folder>/<book>.md`, its images beside it (§13.4.7). */
-export async function exportBook(ctx) {
+export async function exportBook(ctx, input) {
   const book = await bookOf(ctx, ctx.resource);
   if (!book) return { output: { type: "text", text: say(ctx, "toc.alone") }, failed: { message: say(ctx, "toc.alone") } };
   const roots = await ctx.host.files.roots();
@@ -515,7 +517,17 @@ export async function exportBook(ctx) {
     return { output: { type: "text", text: say(ctx, "export.pickFolder") }, failed: { message: say(ctx, "export.pickFolder") } };
   }
   const folder = roots[0].path;
-  const { items } = await entriesOf(ctx, book.id, settingsOf(ctx, ctx.resource.body, null));
+  let { items } = await entriesOf(ctx, book.id, settingsOf(ctx, ctx.resource.body, null));
+  if (input && input.exportFor === "student") {
+    const out = new Set(await teacherOnly(ctx, book.id));
+    // Those pages and what is read under them.
+    let under = 0;
+    items = items.filter((x) => {
+      if (under && x.level > under) return false;
+      under = x.resource && out.has(x.resource) ? x.level : 0;
+      return !under;
+    });
+  }
   const md = await freePath(ctx, folder, safeName(book.name), ".md");
   const stem = md.slice(folder.length + 1, -".md".length);
   const imageDir = `${folder}/${stem}-${say(ctx, "export.images")}`;

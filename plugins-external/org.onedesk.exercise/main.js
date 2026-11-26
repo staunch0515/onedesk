@@ -3,7 +3,8 @@
 // contents. Its kinds play roles in books through the interface `onedesk.book/1`.
 // Runs in the sandbox: no console, timers or fetch; everything goes through ctx.host.
 
-import { mark, partsOf, TYPES } from "./question.js";
+import { partsOf, TYPES } from "./question.js";
+import { markEntry, openEntry, sealQuestion } from "./sealed.js";
 import { itemsOf, NONE, questionsOf, say } from "./common.js";
 import { questionNodes } from "./answering.js";
 import { actPractice, againPractice, checkPractice, embedPractice } from "./practice.js";
@@ -12,6 +13,7 @@ import { renderAttempt, renderGrades, renderMistakes, retryMistakes, submitAttem
 import { embedLessons, lessonsEntries, lessonsEvent, renderLessons } from "./lessons.js";
 import { authorNodes, generate, quickText } from "./authoring.js";
 import { ROLES } from "./roles.js";
+import { embedAnswers, releaseAction, remarkAwaiting, renderAnswers } from "./answers.js";
 
 /** Form fields of the page itself, not saved: the tab keeps them. */
 const asParams = (view) => view.map((n) => (n.type === "form" ? { ...n, fields: n.fields.map((f) => ({ ...f, param: true })) } : n));
@@ -51,7 +53,8 @@ async function renderQuestion(ctx) {
   const id = (ctx.resource && ctx.resource.id) || "new";
   const qs = new Map([[id, { res: ctx.resource || {}, q }]]);
   const given = Array.from({ length: q.blanks }, (_, i) => String((ctx.params && ctx.params[`try.${i}`]) || ""));
-  const m = mark(q, given, true);
+  const m = await markEntry(ctx, qs.get(id), given, true);
+  qs.set(id, await openEntry(ctx, qs.get(id)));
   const { view } = questionNodes(ctx, [{ q: id }], qs, { name: (_, i) => `try.${i}`, marks: m.state === "empty" ? null : { [id]: m }, reveal: true });
   return { view: [questionForm(ctx), { type: "text", id: "previewTitle", text: `**${say(ctx, "question.preview")}**`, format: "markdown" }, ...asParams(view)] };
 }
@@ -68,7 +71,8 @@ async function actQuestion(ctx, ask) {
   const q = partsOf(ctx.resource.body);
   const qs = new Map([[ctx.resource.id, { res: ctx.resource, q }]]);
   const given = Array.from({ length: q.blanks }, (_, i) => String((ask.values && ask.values[`a.${i}`]) || ""));
-  const m = mark(q, given, true);
+  const m = await markEntry(ctx, qs.get(ctx.resource.id), given, true);
+  qs.set(ctx.resource.id, await openEntry(ctx, qs.get(ctx.resource.id)));
   const { view } = questionNodes(ctx, [{ q: ctx.resource.id }], qs, { name: (_, i) => `a.${i}`, marks: { [ctx.resource.id]: m }, reveal: true });
   return { view, values: ask.values || {}, actions: [{ id: "check", label: ctx.t("action.check"), icon: "check" }] };
 }
@@ -109,10 +113,11 @@ async function practiceEvent(ctx, event) {
 
 export default {
   activate(host) {
-    host.kinds.handle("question", { embed: embedQuestion, embedAct: actQuestion });
+    host.kinds.handle("question", { embed: embedQuestion, embedAct: actQuestion, seal: sealQuestion });
     host.kinds.handle("practice", { embed: embedPractice, embedAct: actPractice });
     host.kinds.handle("test", { embed: embedTest, embedAct: actTest });
     host.kinds.handle("lessons", { embed: embedLessons });
+    host.kinds.handle("answers", { embed: embedAnswers });
 
     host.pages.handle("question", { render: renderQuestion });
     host.pages.handle("practice", { render: renderPracticePage, onEvent: practiceEvent });
@@ -134,6 +139,10 @@ export default {
       },
     });
     host.pages.handle("lessons", { render: renderLessons, onEvent: lessonsEvent });
+    host.pages.handle("answers", { render: renderAnswers });
+    host.actions.handle("release", releaseAction);
+    // D487 §21: a new printing brought answers: attempts waiting for them are marked.
+    host.events.on("resource.changed", remarkAwaiting);
 
     // `onedesk.book/1`.
     host.actions.handle("roles", async () => ({ output: NONE, data: ROLES }));

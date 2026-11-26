@@ -7,6 +7,7 @@ import { useSyncExternalStore } from "react";
 import type { MergeState, Values } from "./merge";
 import type { Notice } from "./notices";
 import type { CommandContext, ConfirmChoice, ImportPreview, InstallPreview, Label } from "../protocol/types";
+import type { PackageInfo } from "../protocol/generated";
 
 export interface TabState {
   id: string;
@@ -68,7 +69,12 @@ export interface InstallRequester {
 export type InstallState = { stage: "path" } | { stage: "preview"; folder: string; preview: InstallPreview; request?: InstallRequester };
 
 /** Exporting and importing a workspace: asking for a folder (browser mode), then what an import would do. */
-export type TransferState = { stage: "export-path" } | { stage: "import-path" } | { stage: "import-preview"; folder: string; preview: ImportPreview };
+export type TransferState =
+  | { stage: "export-path" }
+  | { stage: "import-path" }
+  | { stage: "import-preview"; folder: string; preview: ImportPreview }
+  | { stage: "package-path" }
+  | { stage: "package-preview"; path: string; info: PackageInfo };
 
 /**
  * A command that asked to be confirmed before it runs again with `confirmed: true` (D428). With `choices` the user picks one

@@ -408,9 +408,9 @@ describe("the interface and the manifest (D487 §13.6, §13.7)", () => {
     expect(page.view[0]).toMatchObject({ type: "link", target: "resource:ls" });
   });
 
-  it("eleven kinds; the book binds and places; the contents exports; every key in every language", () => {
+  it("twelve kinds; the book binds and places; the contents exports; every key in every language", () => {
     const kinds = manifest.contributes.kinds.map((x: any) => x.id);
-    expect(kinds).toEqual(["book", "cover", "toc", "preface", "page", "afterword", "appendix", "references", "reference", "index", "figures"]);
+    expect(kinds).toEqual(["book", "cover", "toc", "preface", "page", "afterword", "appendix", "references", "reference", "index", "figures", "colophon"]);
     expect(manifest.implements["onedesk.book/1"].kinds).toEqual(expect.arrayContaining(["references", "reference", "index", "figures"]));
     expect(manifest.contributes.kinds[0]).toMatchObject({ accepts: ["*"], place: true, embed: true });
     expect(manifest.requires).toEqual({ files: true, resources: true, contents: true });
@@ -585,5 +585,130 @@ describe("step ④: equations and inline results in a book (D487 §17)", () => {
     await actions.export(w.ctx("tc"), {});
     const md = w.files.get("/out/书.md")!;
     expect(md).toContain("体温约 98.6 °F。");
+  });
+});
+
+describe("the colophon (D487 §21)", () => {
+  /** A book with a cover, a colophon, a chapter and another plugin's teacher-only page (with a page below it). */
+  function published() {
+    const w = world(
+      [
+        ["bk", k("book"), "数学", null],
+        ["cv", k("cover"), "封面", "bk", { authors: "张三" }],
+        ["cp", k("colophon"), "版权页", "bk", { publisher: "数学组", split: true, edition: 0, history: [] }],
+        ["c1", k("page"), "第一课", "bk", { text: "x" }],
+        ["ans", "test.x:answers", "答案", "bk", {}],
+        ["ans1", k("page"), "答案里", "ans", {}],
+      ],
+      { implementers: { "test.x": { roles: () => ({ kinds: [{ kind: "answers", role: "answers", part: "back", single: true, container: false, numbering: "letter", edition: "teacher" }] }) } } },
+    );
+    const calls: any[] = [];
+    const host = w.host as any;
+    host.packages = {
+      async publish(root: string, o: any) {
+        calls.push(["publish", root, o]);
+        w.files.set(o.path, "pkg");
+        return { path: o.path, resources: 3 };
+      },
+      async reprint(root: string, o: any) {
+        calls.push(["reprint", root, o]);
+        w.files.set(o.path, "pkg");
+        return { path: o.path, resources: 3 };
+      },
+    };
+    host.resources.update = async (id: string, changes: Record<string, any>) => {
+      const r = w.res.get(id)!;
+      for (const [key, v] of Object.entries(changes)) if (key.startsWith("body.")) r.body[key.slice(5)] = v;
+      return r;
+    };
+    return { ...w, calls };
+  }
+
+  it("the role is front matter, one per book; a teacher-only role keeps its edition", () => {
+    expect(rolesData().kinds.find((r: any) => r.kind === "colophon")).toMatchObject({ part: "front", single: true });
+    expect(normalize({ role: "answers", edition: "teacher" }).edition).toBe("teacher");
+    expect(normalize({ role: "x", edition: "other" }).edition).toBeUndefined();
+    expect(manifest.contributes.menus.new).toContain("colophon");
+    expect(manifest.exports.actions).toContain("print");
+  });
+
+  it("publishing a new edition keeps it and prints both editions; the teacher's pages only in the teacher's", async () => {
+    const w = published();
+    const { actions, pages } = registry(plugin);
+    const out = await actions.publish(w.ctx("cp"), {});
+    expect(out.failed).toBeUndefined();
+    expect(w.calls.map((c) => [c[0], c[2].edition, c[2].printing, c[2].variant])).toEqual([
+      ["publish", 1, 1, "student"],
+      ["reprint", 1, 1, "teacher"],
+    ]);
+    expect(w.calls[0][1]).toBe("bk");
+    expect(w.calls[0][2].exclude).toEqual(["ans"]);
+    expect(w.calls[1][2].exclude).toEqual([]);
+    expect(w.calls[0][2].path).toBe("/out/数学-1.1-学生版.odpack");
+    const cp = w.res.get("cp")!;
+    expect(cp.body.edition).toBe(1);
+    expect(cp.body.history.map((h: any) => [h.edition, h.printing, h.variant])).toEqual([[1, 1, "student"], [1, 1, "teacher"]]);
+    // Reprint: from what was kept, the next printing.
+    await actions.reprint(w.ctx("cp"), {});
+    expect(w.calls.slice(2).map((c) => [c[0], c[2].edition, c[2].printing])).toEqual([["reprint", 1, 2], ["reprint", 1, 2]]);
+    // A second edition; reprinting the first one asked for.
+    await actions.publish(w.ctx("cp"), {});
+    await actions.reprint(w.ctx("cp"), { reprintEdition: "1" });
+    expect(w.calls.slice(-2).map((c) => [c[2].edition, c[2].printing])).toEqual([[1, 3], [1, 3]]);
+    // The page: the record, newest first; its rows show the file in Finder.
+    const view = (await pages.colophon.render(w.ctx("cp"))).view;
+    expect(checkView(view)).toEqual([]);
+    const text = JSON.stringify(view);
+    expect(text).toContain("当前：第 2 版第 1 次印刷");
+    expect(text).toContain("著者：张三");
+    const table = view.find((n: any) => n.id === "history");
+    expect(table.rows[0].slice(0, 3)).toEqual(["1", "3", "教师版"]);
+    expect(view.find((n: any) => n.id === "colophon").fields.find((f: any) => f.name === "reprintEdition").options.map((o: any) => o.value)).toEqual(["2", "1"]);
+  });
+
+  it("not split: only one edition, with every page", async () => {
+    const w = published();
+    w.res.get("cp")!.body.split = false;
+    await registry(plugin).actions.publish(w.ctx("cp"), {});
+    expect(w.calls.map((c) => [c[0], c[2].variant, c[2].exclude])).toEqual([["publish", "student", []]]);
+  });
+
+  it("print (for another role): a student's printing with what is revealed, noted in the record", async () => {
+    const w = published();
+    const { actions } = registry(plugin);
+    expect((await actions.print(w.ctx("cp"), {})).failed).toBeTruthy();
+    await actions.publish(w.ctx("cp"), {});
+    const r = await actions.print(w.ctx("cp"), { reveal: { q1: ["answers"] }, note: "单元测验" });
+    expect(r.data).toMatchObject({ edition: 1, printing: 2 });
+    const last = w.calls[w.calls.length - 1];
+    expect([last[0], last[2].variant, last[2].reveal]).toEqual(["reprint", "student", { q1: ["answers"] }]);
+    expect(w.res.get("cp")!.body.history.at(-1).note).toBe("单元测验");
+  });
+
+  it("a read-only copy shows its printing", async () => {
+    const w = published();
+    const view = (await registry(plugin).pages.colophon.render(w.ctx("cp", { resource: { ...w.res.get("cp")!, copy: { edition: 2, printing: 3, variant: "student", title: "数学", publisherName: "老师" } } }))).view;
+    expect(JSON.stringify(view)).toContain("第 2 版第 3 次印刷（学生版）");
+    const e = (await registry(plugin).kinds.colophon.embed(w.ctx("cp"))).view;
+    expect(checkView(e)).toEqual([]);
+  });
+});
+
+describe("export by edition (D487 §21)", () => {
+  it("the student's export leaves out the teacher's pages", async () => {
+    const w = world(
+      [
+        ["bk", k("book"), "书", null],
+        ["tc", k("toc"), "目录", "bk", { numbering: "words" }],
+        ["c1", k("page"), "第一课", "bk", { text: "一" }],
+        ["ans", "test.x:answers", "答案", "bk", {}],
+      ],
+      { implementers: { "test.x": { roles: () => ({ kinds: [{ kind: "answers", role: "answers", part: "back", single: true, container: false, numbering: "letter", edition: "teacher" }] }) } } },
+    );
+    const { actions } = registry(plugin);
+    await actions.export(w.ctx("tc"), { exportFor: "student" });
+    expect(w.files.get("/out/书.md")!).not.toContain("答案");
+    await actions.export(w.ctx("tc"), {});
+    expect(w.files.get("/out/书 2.md")!).toContain("答案");
   });
 });

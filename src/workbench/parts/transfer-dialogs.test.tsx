@@ -6,7 +6,8 @@ import type { ImportPreview } from "../protocol";
 import { createMockClient } from "../protocol/mock";
 import { KernelError } from "../protocol/errors";
 import { kernelLikeClient, renderInShell } from "../testing/harness";
-import { previewFolder, startImport, startRunExport, TransferDialogs } from "./transfer-dialogs";
+import { inspectPackage, previewFolder, startImport, startPackageImport, startRunExport, TransferDialogs } from "./transfer-dialogs";
+import type { PackageInfo } from "../protocol/generated";
 
 const preview = (over: Partial<ImportPreview> = {}): ImportPreview => ({
   valid: true,
@@ -122,5 +123,49 @@ describe("result export", () => {
     const fail = vi.fn();
     await act(async () => startRunExport(client, store, { fail }, "run1", "r.csv", vi.fn()));
     expect(fail).toHaveBeenCalled();
+  });
+});
+
+describe("resource packages (D487 §21)", () => {
+  const info = (over: Partial<PackageInfo> = {}): PackageInfo => ({ title: "Science", publisherName: "Teacher", edition: 1, printing: 2, variant: "student", publishedAt: 1_700_000_000_000, resources: 10, update: false, ...over });
+  function pkgSetup(i: PackageInfo, pick?: () => Promise<string | null>) {
+    const importFn = vi.fn(async () => ({ root: "r1", created: 10, updated: 0, removed: 0 }));
+    const base = createMockClient({ fresh: true, quiet: true });
+    const client = kernelLikeClient(base, {
+      workspace: { ...base.workspace, packageInspect: vi.fn(async () => i), packageImport: importFn },
+      platform: pick ? { pickResourcePackage: pick } : undefined,
+    });
+    const { store } = renderInShell(client, <TransferDialogs />);
+    return { importFn, store, client };
+  }
+
+  it("shows the edition and imports a read-only copy", async () => {
+    const { importFn, store, client } = pkgSetup(info(), async () => "/p/science.odpack");
+    await act(async () => startPackageImport(client, store, { fail: () => undefined }));
+    expect(await screen.findByText("Import “Science”?")).toBeTruthy();
+    expect(screen.getByText("Edition 1, printing 2")).toBeTruthy();
+    expect(screen.getByText("Student's edition")).toBeTruthy();
+    expect(screen.getByText("It comes in as a read-only copy: you can read and use it, not change it.")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Import" }));
+    await waitFor(() => expect(importFn).toHaveBeenCalledWith("/p/science.odpack"));
+  });
+
+  it("an update says what is there now; a refusal says why and imports nothing", async () => {
+    const a = pkgSetup(info({ update: true, current: { title: "Science", publisherName: "Teacher", edition: 1, printing: 1, variant: "student" } }));
+    await act(async () => inspectPackage(a.client, a.store, "/p/2.odpack"));
+    expect(await screen.findByText("Update “Science”?")).toBeTruthy();
+    expect(screen.getByText("Here now: edition 1, printing 1")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Update" })).toBeTruthy();
+  });
+
+  it("refuses one's own package", async () => {
+    const { store, client, importFn } = pkgSetup(info({ refused: "ownPackage" }));
+    await act(async () => startPackageImport(client, store, { fail: () => undefined }));
+    // In the browser: a path box first.
+    fireEvent.change(await screen.findByRole("textbox"), { target: { value: "/p/own.odpack" } });
+    fireEvent.click(screen.getByRole("button", { name: "Look inside" }));
+    expect(await screen.findByText("It was published from this workspace.")).toBeTruthy();
+    expect((screen.getByRole("button", { name: "Import" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(importFn).not.toHaveBeenCalled();
   });
 });
