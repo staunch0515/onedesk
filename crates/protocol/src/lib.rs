@@ -3120,6 +3120,10 @@ pub struct InstallRequest {
     pub folder: String,
     /// Milliseconds since the epoch.
     pub at: i64,
+    /// D487 §37: where the files come from, in the requester's words (e.g. the program book's name); shown as is.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub source: Option<String>,
 }
 
 /// How the user's side ended an install request.

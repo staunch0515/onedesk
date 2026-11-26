@@ -2,6 +2,8 @@
 //! knowledge of any particular plugin: it knows resources, plugins and views.
 
 pub mod blobs;
+pub mod coderun;
+pub mod pluginbuild;
 mod calls;
 mod carry;
 pub mod datafile;

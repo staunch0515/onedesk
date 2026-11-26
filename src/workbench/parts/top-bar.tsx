@@ -15,7 +15,8 @@ export function TopBarPart({ onSettings }: { onSettings: () => void }) {
   const { toast } = useToast();
   const workspaces = useQuery((c) => c.workspace.list(), [], ["app.workspacesChanged"]);
   const [workspaceDialog, setWorkspaceDialog] = useState<WorkspaceDialog>(null);
-  const newItems = useQuery((c) => c.command.newItems(), []);
+  // D487 §37: a plugin installed, enabled or removed changes what can be made.
+  const newItems = useQuery((c) => c.command.newItems(), [], ["plugins"]);
   const [query, setQuery] = useState("");
   const [hits, setHits] = useState<SearchHit[]>([]);
   const inputRef = useRef<HTMLInputElement>(null);

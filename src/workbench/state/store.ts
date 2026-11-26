@@ -66,6 +66,8 @@ export interface InstallRequester {
   id: string;
   plugin: string;
   name: Label;
+  /** D487 §37: where the files come from, in the requester's words (a program book's name). */
+  source?: string;
 }
 export type InstallState = { stage: "path" } | { stage: "preview"; folder: string; preview: InstallPreview; request?: InstallRequester };
 

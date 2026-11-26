@@ -218,6 +218,9 @@ pub struct Requires {
     /// D487 §25 (K14): `host.runs.call` — run other resources (as the user would, from their pages).
     #[serde(default)]
     pub runs: bool,
+    /// D487 §37 (K21): `host.code.run` — run a set of files in an empty sandbox (pure computation).
+    #[serde(default)]
+    pub code: bool,
     /// Round 7 (D342): `{ "install": true }` — may ask the user to install other plugins.
     /// Checked by hand (`badPlugins`).
     #[serde(default)]
@@ -632,6 +635,8 @@ pub const PERM_CONTENTS: &str = "contents";
 
 /// D487 §25 (K14): the permission id of `requires.runs: true`.
 pub const PERM_RUNS: &str = "runs";
+/// D487 §37 (K21): the permission id of `requires.code: true`.
+pub const PERM_CODE: &str = "code";
 
 /// One permission atom; a version's permission set is a set of these (D299).
 pub fn permission_atoms(m: &Manifest) -> BTreeSet<String> {
@@ -674,6 +679,9 @@ pub fn permission_atoms(m: &Manifest) -> BTreeSet<String> {
     }
     if r.runs {
         a.insert(PERM_RUNS.to_string());
+    }
+    if r.code {
+        a.insert(PERM_CODE.to_string());
     }
     if r.plugins_install() {
         a.insert("plugins".to_string());

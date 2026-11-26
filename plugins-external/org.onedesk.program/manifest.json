@@ -1,0 +1,362 @@
+{
+  "id": "org.onedesk.program",
+  "version": "0.1.0",
+  "apiVersion": "2",
+  "name": "plugin.name",
+  "description": "plugin.description",
+  "icon": "square-code",
+  "main": "main.js",
+  "author": "OneDesk",
+  "license": "MIT",
+  "requires": {
+    "resources": true,
+    "files": true,
+    "code": true,
+    "plugins": {
+      "install": true
+    }
+  },
+  "uses": [
+    "onedesk.book/1"
+  ],
+  "implements": {
+    "onedesk.book/1": {
+      "actions": [
+        "roles",
+        "outline",
+        "conventions"
+      ],
+      "kind": "manifest",
+      "kinds": [
+        "code",
+        "locale",
+        "test",
+        "build"
+      ]
+    }
+  },
+  "exports": {
+    "actions": [
+      "roles",
+      "outline",
+      "conventions"
+    ]
+  },
+  "contributes": {
+    "kinds": [
+      {
+        "id": "manifest",
+        "label": "kind.manifest",
+        "icon": "file-json",
+        "tree": "resources",
+        "page": "manifest",
+        "newName": "kind.manifest.new",
+        "defaults": {
+          "text": "{\n  \"id\": \"org.example.plugin\",\n  \"version\": \"0.1.0\",\n  \"apiVersion\": \"2\",\n  \"name\": \"plugin.name\",\n  \"icon\": \"puzzle\",\n  \"main\": \"main.js\",\n  \"contributes\": {\n    \"locales\": {\n      \"en-US\": \"locales/en-US.json\",\n      \"zh-CN\": \"locales/zh-CN.json\"\n    }\n  }\n}\n"
+        },
+        "draggable": true,
+        "accepts": [],
+        "embed": true
+      },
+      {
+        "id": "code",
+        "label": "kind.code",
+        "icon": "file-code",
+        "tree": "resources",
+        "page": "code",
+        "newName": "kind.code.new",
+        "defaults": {
+          "path": "",
+          "explain": "",
+          "code": ""
+        },
+        "draggable": true,
+        "accepts": [],
+        "embed": true
+      },
+      {
+        "id": "locale",
+        "label": "kind.locale",
+        "icon": "languages",
+        "tree": "resources",
+        "page": "locale",
+        "newName": "kind.locale.new",
+        "defaults": {
+          "language": "",
+          "texts": []
+        },
+        "draggable": true,
+        "accepts": [],
+        "embed": true
+      },
+      {
+        "id": "test",
+        "label": "kind.test",
+        "icon": "flask-conical",
+        "tree": "resources",
+        "page": "test",
+        "newName": "kind.test.new",
+        "defaults": {
+          "explain": "",
+          "code": ""
+        },
+        "draggable": true,
+        "accepts": [],
+        "embed": true
+      },
+      {
+        "id": "build",
+        "label": "kind.build",
+        "icon": "package",
+        "tree": "resources",
+        "page": "build",
+        "newName": "kind.build.new",
+        "defaults": {
+          "out": "",
+          "notes": "",
+          "history": [],
+          "devCount": 0
+        },
+        "draggable": true,
+        "accepts": []
+      }
+    ],
+    "pages": [
+      {
+        "id": "manifest",
+        "recompute": true,
+        "actions": [
+          {
+            "id": "save",
+            "role": "save",
+            "label": "action.save",
+            "icon": "save",
+            "primary": true,
+            "shortcut": [
+              "Mod",
+              "S"
+            ]
+          }
+        ]
+      },
+      {
+        "id": "code",
+        "recompute": true,
+        "actions": [
+          {
+            "id": "save",
+            "role": "save",
+            "label": "action.save",
+            "icon": "save",
+            "primary": true,
+            "shortcut": [
+              "Mod",
+              "S"
+            ]
+          }
+        ]
+      },
+      {
+        "id": "locale",
+        "recompute": true,
+        "actions": [
+          {
+            "id": "save",
+            "role": "save",
+            "label": "action.save",
+            "icon": "save",
+            "primary": true,
+            "shortcut": [
+              "Mod",
+              "S"
+            ]
+          }
+        ]
+      },
+      {
+        "id": "test",
+        "actions": [
+          {
+            "id": "test",
+            "role": "run",
+            "action": "test",
+            "label": "action.test",
+            "icon": "play",
+            "shortcut": [
+              "Mod",
+              "Enter"
+            ]
+          },
+          {
+            "id": "save",
+            "role": "save",
+            "label": "action.save",
+            "icon": "save",
+            "primary": true,
+            "shortcut": [
+              "Mod",
+              "S"
+            ]
+          }
+        ],
+        "resultTabs": [
+          {
+            "id": "out",
+            "type": "output",
+            "label": "tab.tests",
+            "icon": "list-checks"
+          }
+        ]
+      },
+      {
+        "id": "build",
+        "recompute": true,
+        "actions": [
+          {
+            "id": "check",
+            "role": "run",
+            "action": "check",
+            "label": "action.check",
+            "icon": "list-checks"
+          },
+          {
+            "id": "try",
+            "role": "run",
+            "action": "try",
+            "label": "action.try",
+            "icon": "download"
+          },
+          {
+            "id": "build",
+            "role": "run",
+            "action": "build",
+            "label": "action.build",
+            "icon": "package"
+          },
+          {
+            "id": "save",
+            "role": "save",
+            "label": "action.save",
+            "icon": "save",
+            "primary": true,
+            "shortcut": [
+              "Mod",
+              "S"
+            ]
+          }
+        ],
+        "resultTabs": [
+          {
+            "id": "out",
+            "type": "output",
+            "label": "tab.result",
+            "icon": "file-text"
+          }
+        ]
+      }
+    ],
+    "actions": [
+      {
+        "id": "test",
+        "label": "action.test",
+        "icon": "play",
+        "kinds": [
+          "test"
+        ],
+        "output": "table",
+        "saveFirst": true
+      },
+      {
+        "id": "check",
+        "label": "action.check",
+        "icon": "list-checks",
+        "kinds": [
+          "build"
+        ],
+        "output": "text",
+        "saveFirst": true
+      },
+      {
+        "id": "try",
+        "label": "action.try",
+        "icon": "download",
+        "kinds": [
+          "build"
+        ],
+        "output": "text",
+        "saveFirst": true
+      },
+      {
+        "id": "build",
+        "label": "action.build",
+        "icon": "package",
+        "kinds": [
+          "build"
+        ],
+        "output": "text",
+        "saveFirst": true
+      },
+      {
+        "id": "aiTest",
+        "label": "action.ai.test",
+        "icon": "bot",
+        "output": "text",
+        "saveFirst": false,
+        "ai": {
+          "readOnly": true,
+          "description": "ai.tool.test"
+        }
+      },
+      {
+        "id": "roles",
+        "label": "action.roles",
+        "output": "none"
+      },
+      {
+        "id": "outline",
+        "label": "action.outline",
+        "output": "none"
+      },
+      {
+        "id": "conventions",
+        "label": "action.conventions",
+        "output": "none"
+      }
+    ],
+    "menus": {
+      "new": [
+        "manifest",
+        "code",
+        "locale",
+        "test",
+        "build"
+      ]
+    },
+    "aiTools": [
+      {
+        "name": "program_test",
+        "description": "ai.tool.test",
+        "action": "aiTest",
+        "freeQuery": false,
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "book": {
+              "type": "string",
+              "description": "The program book's id (or any page in it)"
+            }
+          },
+          "required": [
+            "book"
+          ],
+          "additionalProperties": false
+        }
+      }
+    ],
+    "locales": {
+      "en-US": "locales/en-US.json",
+      "zh-CN": "locales/zh-CN.json",
+      "ja-JP": "locales/ja-JP.json"
+    }
+  }
+}

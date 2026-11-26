@@ -68,7 +68,7 @@ function useInstallRequests() {
       try {
         const preview = await client.app.inspectPlugin(next.folder);
         if (active.current !== next.id) return;
-        store.set({ install: { stage: "preview", folder: next.folder, preview, request: { id: next.id, plugin: next.plugin, name: next.pluginName } } });
+        store.set({ install: { stage: "preview", folder: next.folder, preview, request: { id: next.id, plugin: next.plugin, name: next.pluginName, source: next.source } } });
       } catch (e) {
         await answer({ id: next.id, outcome: "failed", reason: failureReason(e) });
       }
@@ -230,6 +230,7 @@ export function InstallDialogs() {
               {preview.author && <Text size="sm" tone="muted">{preview.author}</Text>}
               {preview.installed.length > 0 && <Badge>{t("install.installedVersions", { versions: preview.installed.join(", ") })}</Badge>}
             </Pane>
+            {request?.source && <Text size="sm">{t("install.fromSource", { source: request.source })}</Text>}
             {preview.installed.includes(preview.version) && <Banner tone="warning" title={t("install.already")} />}
             <Text weight="semibold">{t("install.permissions")}</Text>
             {preview.permissions.length === 0 ? (

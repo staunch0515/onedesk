@@ -17,4 +17,8 @@ folder: string,
 /**
  * Milliseconds since the epoch.
  */
-at: number, };
+at: number, 
+/**
+ * D487 §37: where the files come from, in the requester's words (e.g. the program book's name); shown as is.
+ */
+source?: string, };

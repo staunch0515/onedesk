@@ -251,7 +251,7 @@ unsafe impl<'js> JsLifetime<'js> for Settle<'js> {
 }
 
 /// Resolves only `./x.js` imports among the package's own files.
-struct PackageFiles(Arc<HashMap<String, String>>);
+pub(crate) struct PackageFiles(pub(crate) Arc<HashMap<String, String>>);
 
 impl Resolver for PackageFiles {
     fn resolve<'js>(
@@ -517,7 +517,8 @@ const BOOTSTRAP: &str = r#"
       letters: Object.freeze({ write: c("letters.write"), info: c("letters.info"), contacts: c("letters.contacts") }),
       network: Object.freeze({ request: (opts) => runNetwork(callId, opts) }),
       secrets: Object.freeze({ get: c("secrets.get") }),
-      plugins: Object.freeze({ requestInstall: c("plugins.requestInstall"), list: c("plugins.list") }),
+      plugins: Object.freeze({ requestInstall: c("plugins.requestInstall"), list: c("plugins.list"), check: c("plugins.check"), build: c("plugins.build") }),
+      code: Object.freeze({ run: c("code.run") }),
       process: Object.freeze({ run: (opts) => runProcess(callId, opts), ready: c("process.ready") }),
       transfer: Object.freeze({
         download: (opts) => runTransfer(callId, "transfer.download", opts),

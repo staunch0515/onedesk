@@ -544,6 +544,7 @@ export default {
 | `"resources": true` | `host.resources.search` 读**所有**资源的基本信息（名字、类型、位置，不含 body）；`host.resources.tree` 读一个资源下面的整棵子树（D487） | `resourcesAll` |
 | `"contents": true` | `host.resources.embed` 读别的资源被嵌入时显示的内容（D487）；`files.writeBlob` 可以写任何资源用到的图片 | `contents` |
 | `"runs": true` | `host.runs.call` 运行别的资源（D487 §25，K14） | `runs` |
+| `"code": true` | `host.code.run` 在一个空沙箱里运行一组文件（D487 §37，K21）：纯计算，那里没有任何宿主接口 | `code` |
 | `"plugins": { "install": true }` | `host.plugins.list`、请用户安装其他插件。只允许 `install` 一个键（否则 `badPlugins`） | `plugins` |
 | `uses: [...]`（顶层） | 调用这些接口 | `uses:<接口>` |
 | 动作 `kinds` 里写别的插件的 kind | 读那种资源、给它加动作（需对方 `exports`） | `resources:<全名>` |
@@ -650,7 +651,11 @@ export default {
 
 **events**：`on(name, handler)`，只在 `activate` 里注册（§5.8）。
 
-**plugins**（需 `requires.plugins.install`）：`list()`；`requestInstall({ folder })` 只在页面事件或运行中（`notInteractive`），文件夹必须在本插件可读的范围内；被拒后 30 秒内再请求 `conflict/cooldown`。
+**plugins**（需 `requires.plugins.install`）：`list()`；`requestInstall({ folder, source? })` 只在页面事件或运行中（`notInteractive`），文件夹必须在本插件可读的范围内；被拒后 30 秒内再请求 `conflict/cooldown`；`source`（≤ 200 字）是文件从哪里来，原样显示在确认对话框上（如“程序书《单位换算》”，D487 §37）。
+
+**plugins.check / plugins.build**（D487 §37，K20）：`check(files)`（不需要权限，只计算）——`files` 是 `{ 路径: 文字 }`（最多 200 个、共 4 MB；路径相对、只用字母数字和 `. _ -`）→ `{ ok, id?, version?, problems: [{ file, field, code }] }`：清单用安装时同一套检查（原因码相同，如 `badVersion`），再查 `main` 在不在（`mainMissing`）、语言文件是不是“键 → 文字”（`localeMissing`、`badLocale`）、键齐不齐（`missingKey`），还有 `noManifest`、`badJson`、`badPath`、`tooLarge`。`build(files, { path })`（要 `requires.files`，写到授权的文件夹；不能在事件处理函数里）→ `{ path, id, version, bytes }`：检查通过（否则 `invalid/badPlugin`）后写出 `.odplugin`（条目排序、没有时间，同样的文件得到同样的字节），用工作区身份签名，包里多一个 `signature.json`（写法见书的规范 §13.6）；没有身份 `invalid/noIdentity`；审计 `plugin.build`。参考 `org.onedesk.program`。
+
+**code**（需 `requires.code`）：`run({ files, entry, call, input })`——新开一个一次性的沙箱（和插件同一个引擎、同样的语言内置对象，**没有** `host`、`console`、定时器、`fetch`），只装 `files`（只能是 `.js`，最多 200 个、共 4 MB），文件之间 `import "./路径"`（从根算起）；调用 `entry` 导出的 `call` 函数（可以是 async），参数是 `input`（JSON）→ `{ ok: true, value }`（返回值按 JSON）或 `{ ok: false, error: { message, file?, line? } }`；内存 32 MB、10 秒，超了中断。可以在 AI 的运行和纯计算里用。程序书的测试就是这样跑的（D487 §37，K21）。
 
 **ui**
 

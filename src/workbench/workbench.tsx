@@ -38,7 +38,8 @@ export function Workbench({ settings, languages, onSetting: storeSetting }: Work
   // D473: the resource trees are the user's: the list follows their changes.
   const trees = useQuery((c) => c.tree.list(), [], ["tree:resources", "plugins"]);
   const palette = useQuery((c) => c.command.palette(), []);
-  const newItems = useQuery((c) => c.command.newItems(), []);
+  // D487 §37: a plugin installed, enabled or removed changes what can be made.
+  const newItems = useQuery((c) => c.command.newItems(), [], ["plugins"]);
   const activity = useUi((s) => s.activity);
   const sideOpen = useUi((s) => s.sideOpen);
   const sideWidth = useUi((s) => s.sideWidth);

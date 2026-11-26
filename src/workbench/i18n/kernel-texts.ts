@@ -270,6 +270,7 @@ export const KERNEL_ERRORS: Table = {
   "invalid.noCard": "kernel.error.invalid.noCard",
   // D487 §35
   "invalid.noInbox": "kernel.error.invalid.noInbox",
+  "invalid.badPlugin": "kernel.error.invalid.badPlugin",
   "invalid.notForYou": "kernel.error.invalid.notForYou",
   "invalid.alreadyReceived": "kernel.error.invalid.alreadyReceived",
   "invalid.noLetter": "kernel.error.invalid.noLetter",
@@ -445,6 +446,7 @@ export const PERMISSIONS: Table = {
   "resourcesAll": "kernel.permission.resourcesAll",
   "contents": "kernel.permission.contents",
   "runs": "kernel.permission.runs",
+  "code": "kernel.permission.code",
   "network": "kernel.permission.network",
   "secrets": "kernel.permission.secrets",
   "secrets.plaintext": "kernel.permission.secrets.plaintext",

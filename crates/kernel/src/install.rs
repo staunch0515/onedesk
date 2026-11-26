@@ -259,6 +259,7 @@ impl Inner {
             plugin_name: plugin.label(&plugin.manifest.name),
             folder: folder.clone(),
             at: now_ms(),
+            source: args.get(0).and_then(|o| o.get("source")).and_then(Value::as_str).map(|s| s.chars().take(200).collect()),
         };
         {
             let mut l = self.install_requests.list.lock().unwrap();

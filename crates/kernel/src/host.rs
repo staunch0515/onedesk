@@ -104,7 +104,7 @@ fn ai_allows(method: &str, args: &Value) -> bool {
     match method {
         "resources.get" | "resources.list" | "resources.search" | "resources.kinds" | "resources.tree" | "resources.embed" | "resources.refs" => true,
         "files.roots" | "files.list" | "files.stat" | "files.readText" | "files.find" => true,
-        "settings.get" | "runs.partial" | "runs.progress" => true,
+        "settings.get" | "runs.partial" | "runs.progress" | "code.run" | "plugins.check" => true,
         "network.output" | "network.stop" => true,
         // D451: capturing the output of a program the plugin may run (what its `process.run` wrapper
         // does for a query) into a file of its own data folder: a relative path, never a granted
@@ -138,7 +138,7 @@ impl Inner {
         // D487 §13: also reading the subtree and embeds, and calling interfaces (the callee computes only, too).
         const PURE_OK: &[&str] = &[
             "resources.get", "resources.list", "resources.tree", "resources.embed", "resources.refs", "util.collate", "sealed.check", "sealed.open", "interfaces.list", "interfaces.call", "files.roots", "files.list", "files.stat", "files.readText",
-            "params.get", "params.config", "storage.get", "storage.keys", "storage.readFrom", "settings.get", "process.ready",
+            "code.run", "plugins.check", "params.get", "params.config", "storage.get", "storage.keys", "storage.readFrom", "settings.get", "process.ready",
         ];
         // Review #7: `process.*` answers `notInRun` itself (and audits `run`), in `migrate` too;
         // so does `transfer.*` (round 8).
@@ -224,6 +224,10 @@ impl Inner {
             "actions" => self.host_actions(plugin, info, op, &args).await,
             "storage" => self.host_storage(plugin, op, &args).await,
             "settings" => self.host_settings(plugin, op, &args),
+            // D487 §37 (K20): a set of files checked as a plugin, built into a signed package.
+            "plugins" if op == "check" || op == "build" => self.host_plugin_files(plugin, info, op, &args).await,
+            // D487 §37 (K21): a set of files run in an empty sandbox.
+            "code" => self.host_code(plugin, info, op, &args).await,
             "plugins" => self.host_plugins(plugin, info, op, &args).await,
             "util" if op == "sleep" => {
                 // D287: the engine has no timers. Cancellation ends the wait (host_call_inner).
