@@ -40,5 +40,10 @@
   "field.url.placeholderPath": "/items/:item_id",
   "error.connectionMissing": "找不到连接“{connection}”。",
   "error.connectionAnswer": "连接返回的内容无法读取。",
-  "action.fetch": "向这条连接发送 GET"
+  "action.fetch": "向这条连接发送 GET",
+  "data.status": "状态码",
+  "data.ms": "耗时",
+  "data.body": "正文",
+  "data.headers": "响应头",
+  "data.json": "JSON"
 }

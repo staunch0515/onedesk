@@ -40,5 +40,10 @@
   "field.url.placeholderPath": "/items/:item_id",
   "error.connectionMissing": "The connection \"{connection}\" was not found.",
   "error.connectionAnswer": "The connection returned an answer that could not be read.",
-  "action.fetch": "Send GET to this connection"
+  "action.fetch": "Send GET to this connection",
+  "data.status": "status",
+  "data.ms": "time",
+  "data.body": "body",
+  "data.headers": "headers",
+  "data.json": "json"
 }

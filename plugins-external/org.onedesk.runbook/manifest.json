@@ -1,0 +1,280 @@
+{
+  "id": "org.onedesk.runbook",
+  "version": "0.1.0",
+  "apiVersion": "2",
+  "name": "plugin.name",
+  "description": "plugin.description",
+  "icon": "list-checks",
+  "main": "main.js",
+  "author": "OneDesk",
+  "license": "MIT",
+  "requires": {
+    "resources": true,
+    "runs": true,
+    "files": true
+  },
+  "uses": [
+    "onedesk.book/1"
+  ],
+  "implements": {
+    "onedesk.book/1": {
+      "actions": [
+        "roles",
+        "outline",
+        "entries"
+      ],
+      "kind": "step",
+      "kinds": [
+        "flow"
+      ]
+    }
+  },
+  "exports": {
+    "actions": [
+      "roles",
+      "outline",
+      "entries"
+    ]
+  },
+  "contributes": {
+    "trees": [
+      {
+        "id": "records",
+        "label": "tree.records",
+        "icon": "clipboard-list",
+        "source": "stored"
+      }
+    ],
+    "kinds": [
+      {
+        "id": "step",
+        "label": "kind.step",
+        "icon": "square-check",
+        "tree": "resources",
+        "page": "step",
+        "newName": "kind.step.new",
+        "defaults": {
+          "text": "",
+          "target": null,
+          "inputs": "",
+          "expect": "",
+          "when": "",
+          "confirm": ""
+        },
+        "draggable": true,
+        "accepts": [],
+        "embed": true,
+        "fields": {
+          "text": {
+            "type": "longtext",
+            "refs": true
+          },
+          "target": {
+            "type": "ref",
+            "label": "field.target"
+          }
+        }
+      },
+      {
+        "id": "flow",
+        "label": "kind.flow",
+        "icon": "list-checks",
+        "tree": "resources",
+        "page": "flow",
+        "newName": "kind.flow.new",
+        "defaults": {},
+        "draggable": true,
+        "accepts": []
+      },
+      {
+        "id": "logs",
+        "label": "kind.logs",
+        "icon": "folder-clock",
+        "tree": "records",
+        "page": "logs",
+        "newName": "kind.logs.new",
+        "defaults": {},
+        "draggable": true,
+        "accepts": [
+          "log"
+        ]
+      },
+      {
+        "id": "log",
+        "label": "kind.log",
+        "icon": "clipboard-list",
+        "tree": "records",
+        "page": "log",
+        "newName": "kind.log.new",
+        "defaults": {},
+        "draggable": true,
+        "accepts": []
+      }
+    ],
+    "pages": [
+      {
+        "id": "step",
+        "recompute": true,
+        "actions": [
+          {
+            "id": "runOne",
+            "role": "run",
+            "action": "runOne",
+            "label": "action.runOne",
+            "icon": "play"
+          },
+          {
+            "id": "save",
+            "role": "save",
+            "label": "action.save",
+            "icon": "save",
+            "primary": true,
+            "shortcut": [
+              "Mod",
+              "S"
+            ]
+          }
+        ],
+        "resultTabs": [
+          {
+            "id": "out",
+            "type": "output",
+            "label": "tab.run",
+            "icon": "file-text"
+          }
+        ]
+      },
+      {
+        "id": "flow",
+        "recompute": true,
+        "actions": [
+          {
+            "id": "run",
+            "role": "run",
+            "action": "run",
+            "label": "action.run",
+            "icon": "play",
+            "primary": true
+          },
+          {
+            "id": "continue",
+            "role": "run",
+            "action": "continue",
+            "label": "action.continue",
+            "icon": "step-forward"
+          },
+          {
+            "id": "fresh",
+            "role": "event",
+            "label": "action.fresh",
+            "icon": "rotate-ccw"
+          },
+          {
+            "id": "toggle",
+            "role": "event",
+            "label": "action.toggle",
+            "icon": "book-open"
+          }
+        ],
+        "resultTabs": [
+          {
+            "id": "out",
+            "type": "output",
+            "label": "tab.run",
+            "icon": "file-text"
+          }
+        ]
+      },
+      {
+        "id": "log",
+        "recompute": true,
+        "actions": [
+          {
+            "id": "export",
+            "role": "run",
+            "action": "export",
+            "label": "action.export",
+            "icon": "file-down"
+          }
+        ],
+        "resultTabs": [
+          {
+            "id": "out",
+            "type": "output",
+            "label": "tab.export",
+            "icon": "file-text"
+          }
+        ]
+      },
+      {
+        "id": "logs",
+        "actions": []
+      }
+    ],
+    "actions": [
+      {
+        "id": "run",
+        "label": "action.run",
+        "icon": "play",
+        "kinds": [
+          "flow"
+        ],
+        "output": "text"
+      },
+      {
+        "id": "continue",
+        "label": "action.continue",
+        "icon": "step-forward",
+        "kinds": [
+          "flow"
+        ],
+        "output": "text"
+      },
+      {
+        "id": "runOne",
+        "label": "action.runOne",
+        "icon": "play",
+        "kinds": [
+          "step"
+        ],
+        "output": "text",
+        "saveFirst": true
+      },
+      {
+        "id": "export",
+        "label": "action.export",
+        "icon": "file-down",
+        "kinds": [
+          "log"
+        ],
+        "output": "text"
+      },
+      {
+        "id": "roles",
+        "label": "action.roles",
+        "output": "none"
+      },
+      {
+        "id": "outline",
+        "label": "action.outline",
+        "output": "none"
+      },
+      {
+        "id": "entries",
+        "label": "action.entries",
+        "output": "none"
+      }
+    ],
+    "menus": {
+      "new": [
+        "step",
+        "flow"
+      ]
+    },
+    "locales": {
+      "en-US": "locales/en-US.json",
+      "zh-CN": "locales/zh-CN.json",
+      "ja-JP": "locales/ja-JP.json"
+    }
+  }
+}

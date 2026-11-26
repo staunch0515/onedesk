@@ -1087,5 +1087,9 @@
   "info.stampedNote": "署名済み：変更できません。変更するには修正してください。",
   "history.stamped": "署名時（{label}）",
   "kernel.audit.resource.stamp": "署名",
-  "kernel.audit.resource.unstamp": "署名の取り消し"
+  "kernel.audit.resource.unstamp": "署名の取り消し",
+  "kernel.permission.runs": "ほかのリソースを実行する（そのページで「実行」を押すのと同じ）",
+  "kernel.error.reason.loop": "自分自身は実行できません。または入れ子が深すぎます。",
+  "kernel.error.invalid.notRunnable": "そのリソースには実行するものがありません。",
+  "kernel.audit.run.call": "ほかのリソースを実行"
 }

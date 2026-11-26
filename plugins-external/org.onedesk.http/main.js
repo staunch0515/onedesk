@@ -371,10 +371,30 @@ export default {
       const bytes = byteLength(text);
       const status = statusText(res.status, res.statusText);
       await ctx.host.storage.set(`${INFO_KEY}:${id}`, JSON.stringify({ status: res.status, statusText: status, ms, bytes }));
+      let json;
+      try {
+        json = /json/i.test(String((res.headers || {})["content-type"] || "")) ? JSON.parse(text) : undefined;
+      } catch {
+        json = undefined;
+      }
       return {
+        // D487 §25: for a step in a book.
+        data: named(ctx, { status: res.status, ms, body: text.length > 65536 ? text.slice(0, 65536) : text, headers: res.headers || {}, ...(json !== undefined ? { json } : {}) }),
         output: { type: "text", text: raw.method === "HEAD" ? "" : formatBody(text, res.headers) },
         summary: { message: tr(ctx, "summary.sent", { status: `${res.status}${status ? ` ${status}` : ""}`, ms, bytes }) + (res.truncated ? tr(ctx, "summary.truncated") : "") },
       };
     });
   },
 };
+
+// D487 §25: what a run gives another run (a step in a book) besides its output: values by name, each also under its
+// name in every language of this plugin (`data.<name>`), so a step can write `@检查.退出码` or `@check.exitCode`.
+export function named(ctx, values) {
+  const out = {};
+  for (const [k, v] of Object.entries(values)) {
+    out[k] = v;
+    const l = ctx.t(`data.${k}`);
+    for (const w of typeof l === "string" ? [l] : Object.values(l || {})) if (w && w !== `data.${k}` && !(w in out)) out[w] = v;
+  }
+  return out;
+}

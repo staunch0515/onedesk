@@ -77,5 +77,7 @@
   "ai.format.date": "Format YYYY-MM-DD.",
   "ai.format.datetime": "Format YYYY-MM-DDTHH:MM (UTC).",
   "ai.format.time": "Format HH:MM or HH:MM:SS.",
-  "ai.format.max": "At most {max} characters."
+  "ai.format.max": "At most {max} characters.",
+  "data.rows": "rowCount",
+  "data.columns": "columnNames"
 }

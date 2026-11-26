@@ -548,7 +548,21 @@ export default {
       const res = await ctx.host.actions.call(`${DATASOURCE}:query`, { sql: rendered }, { resource: sourceId });
       if (res && typeof res.error === "string") throw new Error(res.error); // the data source's own message
       if (!res || !res.output || (res.output.type !== "table")) throw new Error(tr(ctx, "error.noResult"));
-      return { output: res.output, summary: res.summary };
+      // D487 §25: for a step in a book (the first row's columns are looked up by the step itself).
+      const data = named(ctx, { rows: Array.isArray(res.output.rows) ? res.output.rows.length : (res.output.total ?? null), columns: (res.output.columns || []).map((c) => c.key) });
+      return { output: res.output, summary: res.summary, data };
     });
   },
 };
+
+// D487 §25: what a run gives another run (a step in a book) besides its output: values by name, each also under its
+// name in every language of this plugin (`data.<name>`), so a step can write `@检查.退出码` or `@check.exitCode`.
+export function named(ctx, values) {
+  const out = {};
+  for (const [k, v] of Object.entries(values)) {
+    out[k] = v;
+    const l = ctx.t(`data.${k}`);
+    for (const w of typeof l === "string" ? [l] : Object.values(l || {})) if (w && w !== `data.${k}` && !(w in out)) out[w] = v;
+  }
+  return out;
+}

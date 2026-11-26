@@ -195,7 +195,7 @@ describe("command: running", () => {
     expect(spec.timeoutMs).toBe(60000);
     // X17: the kernel splits the lines and ends the program at the limit or the timeout
     expect(spec).toMatchObject({ lines: true, maxLines: 5000 });
-    expect(onlyKeys(res, ["output", "summary"])).toEqual([]);
+    expect(onlyKeys(res, ["output", "summary", "data"])).toEqual([]);
     expect(onlyKeys(res.output, ["type", "columns", "rows", "total", "appearance", "toneColumn", "lineColumn"])).toEqual([]);
     expect(res.output).toMatchObject({ type: "table", appearance: "terminal", toneColumn: "stream", lineColumn: "line", total: 3 });
     expect(res.output.columns.map((c: any) => c.key)).toEqual(["stream", "line"]);
@@ -350,8 +350,8 @@ describe("command: running", () => {
     expect(killed.failed).toEqual({ message: "The program was ended by SIGTERM." });
     const fine = await actions.run(ctxOf(fakeHost()), input());
     expect(fine.failed).toBeUndefined();
-    expect(onlyKeys(fine, ["output", "summary"])).toEqual([]);
-    expect(onlyKeys(r2, ["output", "summary", "failed"])).toEqual([]);
+    expect(onlyKeys(fine, ["output", "summary", "data"])).toEqual([]);
+    expect(onlyKeys(r2, ["output", "summary", "failed", "data"])).toEqual([]);
   });
 
   it("ssh's own failure (255, nothing on stdout) fails the run with what ssh said", async () => {
@@ -438,5 +438,15 @@ describe("command: manifest", () => {
   it("every label key the manifest uses exists in English", () => {
     const keys = JSON.stringify(m.contributes).match(/"(?:kind|action|tab)\.[A-Za-z.]+"/g) ?? [];
     for (const k of keys) expect(EN[JSON.parse(k)], k).toBeDefined();
+  });
+});
+
+describe("command: data for a step in a book (D487 §25)", () => {
+  it("gives the exit code, the output and the errors, also by their words", async () => {
+    // @ts-ignore plain JS module
+    const { runResult } = await import("./main.js");
+    const ctx = { t: (k: string) => ({ "en-US": { "data.exitCode": "exitCode", "data.stdout": "output", "data.stderr": "errors" }[k] ?? k, "zh-CN": { "data.exitCode": "退出码", "data.stdout": "输出", "data.stderr": "错误输出" }[k] ?? k }), locale: "zh-CN" };
+    const r = runResult(ctx, { code: 0, rows: [["stdout", "2.3.1"], ["stderr", "warn"]], truncated: false, timedOut: false }, 30);
+    expect(r.data).toMatchObject({ exitCode: 0, 退出码: 0, stdout: "2.3.1", 输出: "2.3.1", stderr: "warn", 错误输出: "warn" });
   });
 });

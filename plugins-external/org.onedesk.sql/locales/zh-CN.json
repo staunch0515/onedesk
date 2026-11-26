@@ -77,5 +77,7 @@
   "ai.format.date": "格式 YYYY-MM-DD。",
   "ai.format.datetime": "格式 YYYY-MM-DDTHH:MM（UTC）。",
   "ai.format.time": "格式 HH:MM 或 HH:MM:SS。",
-  "ai.format.max": "最多 {max} 个字符。"
+  "ai.format.max": "最多 {max} 个字符。",
+  "data.rows": "行数",
+  "data.columns": "列"
 }

@@ -540,6 +540,7 @@ export default {
 | `"programs": [{ "name": "psql", "source": "system", "searchPaths": ["/opt/homebrew/bin"] }]` | `host.process.run` / `transfer.capture` 运行这些程序（按名字）。`name` `[A-Za-z0-9._-]{1,64}` 不重复；`source: "system"` 在固定系统目录（`/usr/bin`、`/bin`、`/usr/sbin`、`/sbin`、`/usr/local/bin`、`/opt/homebrew/bin`）加 `searchPaths`（绝对路径或 `~/…`，≤ 8 个，无 `.`/`..`，最多一个 `*`）里找，不能写 `path`；`source: "plugin"` 必须写 `path`（包内相对路径）。违反 `badPrograms`。`process.allow` 可按工作区/环境收窄 | `programs:<名字>` |
 | `"resources": true` | `host.resources.search` 读**所有**资源的基本信息（名字、类型、位置，不含 body）；`host.resources.tree` 读一个资源下面的整棵子树（D487） | `resourcesAll` |
 | `"contents": true` | `host.resources.embed` 读别的资源被嵌入时显示的内容（D487）；`files.writeBlob` 可以写任何资源用到的图片 | `contents` |
+| `"runs": true` | `host.runs.call` 运行别的资源（D487 §25，K14） | `runs` |
 | `"plugins": { "install": true }` | `host.plugins.list`、请用户安装其他插件。只允许 `install` 一个键（否则 `badPlugins`） | `plugins` |
 | `uses: [...]`（顶层） | 调用这些接口 | `uses:<接口>` |
 | 动作 `kinds` 里写别的插件的 kind | 读那种资源、给它加动作（需对方 `exports`） | `resources:<全名>` |
@@ -619,6 +620,7 @@ export default {
 | 方法 | 说明 |
 |---|---|
 | `partial(output)` | 仅运行中：推送部分输出（与最终输出同形） |
+| `call(resourceId, { params })` | D487 §25（K14），要 `requires.runs`，仅运行中（AI 的运行不行）：运行那个资源**自己的运行**（它页面上第一个“运行”按钮），就像用户在它的页面上点了“运行”——输入是它保存的值，页面参数按标签页的环境取，`params` 里给的优先 → `{ status: "ok" \| "failed", output, data?, error?, ms, truncated? }`。等待的时间不算调用方的时间；调用方被停止，被运行的一方一起停；不能运行自己正在跑的资源，嵌套最多 4 层（`denied/loop`）；没有运行的资源 `invalid/notRunnable`；审计 `run.call`。运行动作的结果里的 `data`（D441）原样交回：HTTP、SQL、命令、脚本插件给出可供后续步骤取用的值（各语言的值名都有）。参考 `org.onedesk.runbook` |
 | `read(runId)` | 仅结果区动作里、只能读被点的那次运行 → `{ output, meta }` |
 | `saveArtifact(runId, { name, kind, data })` | 在运行旁保存东西（≤ 1 MB，密钥被替换）；只在结果区动作里，或页面事件里给已有自己附件的运行 |
 | `listArtifacts(runId)`、`getArtifact(id)`、`deleteArtifact(id)` | 只看得到自己的 |

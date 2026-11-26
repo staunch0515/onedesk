@@ -215,6 +215,9 @@ pub struct Requires {
     /// D487 §13 (K-b): `host.resources.embed` — what other resources show where they are embedded.
     #[serde(default)]
     pub contents: bool,
+    /// D487 §25 (K14): `host.runs.call` — run other resources (as the user would, from their pages).
+    #[serde(default)]
+    pub runs: bool,
     /// Round 7 (D342): `{ "install": true }` — may ask the user to install other plugins.
     /// Checked by hand (`badPlugins`).
     #[serde(default)]
@@ -624,6 +627,9 @@ pub const PERM_RESOURCES_ALL: &str = "resourcesAll";
 /// D487 §13 (K-b): the permission id of `requires.contents: true`.
 pub const PERM_CONTENTS: &str = "contents";
 
+/// D487 §25 (K14): the permission id of `requires.runs: true`.
+pub const PERM_RUNS: &str = "runs";
+
 /// One permission atom; a version's permission set is a set of these (D299).
 pub fn permission_atoms(m: &Manifest) -> BTreeSet<String> {
     let mut a = BTreeSet::new();
@@ -662,6 +668,9 @@ pub fn permission_atoms(m: &Manifest) -> BTreeSet<String> {
     // D487 §13 (K-b): reading what other resources show (their embed views); no detail.
     if r.contents {
         a.insert(PERM_CONTENTS.to_string());
+    }
+    if r.runs {
+        a.insert(PERM_RUNS.to_string());
     }
     if r.plugins_install() {
         a.insert("plugins".to_string());

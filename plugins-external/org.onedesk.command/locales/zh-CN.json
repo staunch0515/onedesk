@@ -59,5 +59,8 @@
   "failed.exit": "程序以退出码 {code} 结束。",
   "failed.signal": "程序被 {signal} 结束。",
   "failed.timeout": "{s} 秒后停止：到达超时。",
-  "failed.limit": "到达行数上限（{n} 行）后停止。"
+  "failed.limit": "到达行数上限（{n} 行）后停止。",
+  "data.exitCode": "退出码",
+  "data.stdout": "输出",
+  "data.stderr": "错误输出"
 }

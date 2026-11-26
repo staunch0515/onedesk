@@ -40,5 +40,10 @@
   "field.url.placeholderPath": "/items/:item_id",
   "error.connectionMissing": "接続「{connection}」が見つかりません。",
   "error.connectionAnswer": "接続の応答を読み取れませんでした。",
-  "action.fetch": "この接続に GET を送信"
+  "action.fetch": "この接続に GET を送信",
+  "data.status": "ステータス",
+  "data.ms": "所要時間",
+  "data.body": "本文",
+  "data.headers": "ヘッダー",
+  "data.json": "JSON"
 }

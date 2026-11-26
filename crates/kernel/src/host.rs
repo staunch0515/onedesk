@@ -212,6 +212,8 @@ impl Inner {
                 tokio::time::sleep(std::time::Duration::from_millis(ms)).await;
                 Ok(Value::Null)
             }
+            // D487 §25 (K14): run another resource.
+            "runs" if op == "call" => self.host_runs_call(plugin, info, &args).await,
             "runs" if op == "partial" => {
                 let run = info.run_id.as_deref().ok_or_else(|| denied("notInRun"))?;
                 self.run_partial(run, arg(&args, 0))?;

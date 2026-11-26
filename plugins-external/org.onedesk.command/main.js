@@ -549,6 +549,8 @@ export function failureOf(ctx, r, timeoutS) {
 // The action's result: the lines, the summary, and `failed` when the program did not end well.
 export function runResult(ctx, r, timeoutS, failure) {
   const out = { output: linesOutput(ctx, r.rows, r.truncated || r.timedOut), summary: { rows: r.rows.length, message: endMessage(ctx, r, timeoutS) } };
+  const lines = (stream) => r.rows.filter((row) => row[0] === stream).map((row) => row[1]).join("\n");
+  out.data = named(ctx, { exitCode: r.code ?? null, stdout: lines("stdout"), stderr: lines("stderr") });
   const why = failure || failureOf(ctx, r, timeoutS);
   if (why) out.failed = { message: why };
   return out;
@@ -558,6 +560,18 @@ export function programError(ctx, err) {
   const reason = err && err.params && err.params.reason ? `/${err.params.reason}` : "";
   const program = err && err.params && err.params.program ? ` ${err.params.program}` : "";
   return Object.assign(new Error(`${tr(ctx, "error.cannotRun")}${program} (${(err && err.code) || "error"}${reason})`), { code: err && err.code, params: err && err.params });
+}
+
+// D487 §25: what a run gives another run (a step in a book) besides its output: values by name, each also under its
+// name in every language of this plugin (`data.<name>`), so a step can write `@检查.退出码` or `@check.exitCode`.
+export function named(ctx, values) {
+  const out = {};
+  for (const [k, v] of Object.entries(values)) {
+    out[k] = v;
+    const l = ctx.t(`data.${k}`);
+    for (const w of typeof l === "string" ? [l] : Object.values(l || {})) if (w && w !== `data.${k}` && !(w in out)) out[w] = v;
+  }
+  return out;
 }
 
 /* ---- end of shell helpers ---- */

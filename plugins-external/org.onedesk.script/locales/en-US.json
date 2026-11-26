@@ -71,5 +71,8 @@
   "failed.exit": "The program exited with code {code}.",
   "failed.signal": "The program was ended by {signal}.",
   "failed.timeout": "Stopped after {s} s: the timeout was reached.",
-  "failed.limit": "Stopped at the line limit ({n} lines)."
+  "failed.limit": "Stopped at the line limit ({n} lines).",
+  "data.exitCode": "exitCode",
+  "data.stdout": "output",
+  "data.stderr": "errors"
 }

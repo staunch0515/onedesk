@@ -499,7 +499,7 @@ const BOOTSTRAP: &str = r#"
       }),
       pages: Object.freeze({ fields: c("pages.fields") }),
       tools: Object.freeze({ list: c("tools.list"), call: c("tools.call") }),
-      runs: Object.freeze({ partial: c("runs.partial"), read: c("runs.read"), latest: c("runs.latest"),
+      runs: Object.freeze({ partial: c("runs.partial"), call: c("runs.call"), read: c("runs.read"), latest: c("runs.latest"),
         saveArtifact: c("runs.saveArtifact"), listArtifacts: c("runs.listArtifacts"),
         getArtifact: c("runs.getArtifact"), deleteArtifact: c("runs.deleteArtifact") }),
       interfaces: Object.freeze({ call: c("interfaces.call"), list: c("interfaces.list"), resources: c("interfaces.resources") }),

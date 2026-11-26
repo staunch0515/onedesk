@@ -1087,5 +1087,9 @@
   "info.stampedNote": "已签名，不能修改；要改请修订。",
   "history.stamped": "签名时（{label}）",
   "kernel.audit.resource.stamp": "签名",
-  "kernel.audit.resource.unstamp": "撤下签名"
+  "kernel.audit.resource.unstamp": "撤下签名",
+  "kernel.permission.runs": "运行其他资源（和你在它的页面上点“运行”一样）",
+  "kernel.error.reason.loop": "不能运行自己，或者一层套一层太深了。",
+  "kernel.error.invalid.notRunnable": "那个资源没有可以运行的。",
+  "kernel.audit.run.call": "运行其他资源"
 }
