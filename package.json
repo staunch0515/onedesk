@@ -16,6 +16,7 @@
     "prototype": "vite --port 1431 --strictPort --open /workbench.html",
     "prototype:build": "node scripts/build-prototype.mjs",
     "tauri": "tauri",
+    "demo": "node scripts/demo.mjs",
     "devhost": "cargo build -p onedesk-worker -p onedesk-host && target/debug/onedesk-devhost",
     "typecheck": "tsc -p .",
     "lint": "node scripts/check-arch.mjs && node scripts/check-ui.mjs",

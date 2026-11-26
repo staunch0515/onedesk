@@ -14,6 +14,7 @@ OneDesk 是一个桌面工作台：左边是一棵树，放你的笔记、网址
 | [6. AI 设置（Anthropic 与 Ollama）](06-ai.md) | 要让 AI 帮你分析结果或写 SQL |
 | [7. MCP：让 Claude Desktop 用 OneDesk](07-mcp.md) | 要让外部 AI 客户端只读地用你的查询 |
 | [8. 常见问题](08-faq.md) | 出了问题 |
+| [9. 演示工作区](09-demo.md) | 想把书、账本、收件箱、程序书这些新功能都摸一遍 |
 | [English summary](en-summary.md) | One page in English |
 
 ## 界面一览
