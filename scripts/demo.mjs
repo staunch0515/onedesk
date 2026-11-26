@@ -79,7 +79,7 @@ async function startHost(bin, dataDir, port, token, plugins) {
   return { proc, port, token };
 }
 
-const stop = (h) => new Promise((r) => (h.proc.once("exit", r), h.proc.kill("SIGTERM")));
+const stop = (h) => new Promise((r) => (h.proc.exitCode !== null ? r() : (h.proc.once("exit", r), h.proc.kill("SIGTERM"))));
 
 /** One protocol call (as the e2e helpers do: hello, then the call). */
 function rpc(h, method, params = null) {
@@ -431,7 +431,43 @@ async function webUp() {
   }
 }
 
+/** A demo started before and not stopped (its main process is still running): stop it, it holds the port and the workspace. */
+async function stopLeftover() {
+  const pidFile = path.join(DIR, ".pid");
+  if (!existsSync(pidFile)) return;
+  const pid = Number(readFileSync(pidFile, "utf8"));
+  rmSync(pidFile, { force: true });
+  try {
+    process.kill(pid, 0);
+  } catch {
+    return;
+  }
+  say("上次打开的演示还在运行，先关掉它…");
+  process.kill(pid, "SIGTERM");
+  await until(() => {
+    try {
+      process.kill(pid, 0);
+      return false;
+    } catch {
+      return true;
+    }
+  }, "上次的演示退出", 15_000);
+}
+
+async function portFree(port) {
+  return new Promise((resolve) => {
+    const s = net.createServer();
+    s.once("error", () => resolve(false));
+    s.listen(port, "127.0.0.1", () => s.close(() => resolve(true)));
+  });
+}
+
 async function main() {
+  await stopLeftover();
+  if (!(await portFree(KERNEL_PORT))) {
+    console.error(`端口 ${KERNEL_PORT} 被别的程序占着（可能是另一个终端里开着的演示）。关掉它再运行。`);
+    process.exit(1);
+  }
   if (FRESH) rmSync(DIR, { recursive: true, force: true });
   mkdirSync(DIR, { recursive: true });
   const bin = build();
@@ -447,6 +483,7 @@ async function main() {
   const token = existsSync(tokenFile) ? readFileSync(tokenFile, "utf8").trim() : randomBytes(16).toString("hex");
   writeFileSync(tokenFile, token);
   const h = await startHost(bin, DATA, KERNEL_PORT, token, plugins);
+  writeFileSync(path.join(DIR, ".pid"), String(h.proc.pid));
   let web = null;
   if (!(await webUp())) {
     say("启动界面（vite）…");
@@ -457,9 +494,16 @@ async function main() {
   console.log(`\n  演示工作区已经开好。在浏览器里打开：\n\n  ${url}\n\n  先看《OneDesk 导览》。按 Ctrl+C 结束。\n`);
   const end = async () => {
     await stop(h).catch(() => {});
+    rmSync(path.join(DIR, ".pid"), { force: true });
     web?.kill("SIGTERM");
     process.exit(0);
   };
+  // Stopped from outside (another `pnpm demo` took over): this one ends too.
+  h.proc.once("exit", () => {
+    say("演示的主进程已经停了。");
+    web?.kill("SIGTERM");
+    process.exit(0);
+  });
   process.on("SIGINT", end);
   process.on("SIGTERM", end);
 }
