@@ -1,4 +1,4 @@
-import type { PackageImportResult, PackageInfo, ProposalCount, ProposalCreateParams, ProposalCreateResult, ProposalReviewParams, ProposalView, ResourceAt } from "./generated";
+import type { ContactImportResult, IdentityInfo, IdentityParams, PackageImportResult, PackageInfo, ProposalCount, ProposalCreateParams, ProposalCreateResult, ProposalReviewParams, ProposalView, ResourceAt } from "./generated";
 import type {
   AssistProvider,
   EmbedActResult,
@@ -100,7 +100,7 @@ export interface ProtocolClient {
     shell(locale: string): Promise<ShellTexts>;
   };
 
-  readonly platform?: { /** Opens an address in the system browser; the main process checks the protocol again (D380). Absent in a plain browser. */ openExternal?: (url: string) => Promise<void>; pickFolder?: () => Promise<string | null>; /** D456: a plugin package file (.odplugin). */ pickPackageFile?: () => Promise<string | null>; /** D487 §21: a resource package (.odpack). */ pickResourcePackage?: () => Promise<string | null>; /** D484: an image file. */ pickImageFile?: () => Promise<string | null>; pickSaveFile?: (name?: string) => Promise<string | null> };
+  readonly platform?: { /** Opens an address in the system browser; the main process checks the protocol again (D380). Absent in a plain browser. */ openExternal?: (url: string) => Promise<void>; pickFolder?: () => Promise<string | null>; /** D456: a plugin package file (.odplugin). */ pickPackageFile?: () => Promise<string | null>; /** D487 §21: a resource package (.odpack). */ pickResourcePackage?: () => Promise<string | null>; /** D487 §33: an identity card (.odid). */ pickIdentityCard?: () => Promise<string | null>; /** D484: an image file. */ pickImageFile?: () => Promise<string | null>; pickSaveFile?: (name?: string) => Promise<string | null> };
 
   readonly demo?: { tree(id: string): boolean; target(target: string): boolean };
 
@@ -285,6 +285,23 @@ export interface ProtocolClient {
   /** Round 19: the workspace's `mcp.policy` as the kernel reads it (the settings are `workspace.getConfig` / `setConfig`). */
   mcp: {
     status(): Promise<McpStatus>;
+  };
+
+  /** D487 §33 (K18): this workspace's identity (the private key stays in the keychain); absent in the demo. */
+  identity?: {
+    get(): Promise<IdentityInfo | null>;
+    create(params: IdentityParams): Promise<IdentityInfo>;
+    update(params: IdentityParams): Promise<IdentityInfo>;
+    delete(): Promise<void>;
+    /** Writes the identity card (`.odid`) to `path`. */
+    exportCard(path: string): Promise<void>;
+  };
+
+  /** D487 §33 (K18): the contacts — others' identity cards; absent in the demo. */
+  contact?: {
+    importCard(path: string): Promise<ContactImportResult>;
+    setChecked(id: string, checked: boolean): Promise<void>;
+    exportCard(id: string, path: string): Promise<void>;
   };
 
   /** D487 §29 (K16): proposals of changes (from AI clients, plugins, the user); absent in the demo. */

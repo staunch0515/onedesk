@@ -31,6 +31,9 @@ pub const KIND_RUN: &str = "core:run";
 /// D487 §29 (K16): a proposal of changes, in the kernel's tree of proposals.
 pub const KIND_PROPOSAL: &str = "core:proposal";
 pub const TREE_PROPOSALS: &str = "proposals";
+/// D487 §33 (K18): an identity card of someone else, in the kernel's tree of contacts.
+pub const KIND_CONTACT: &str = "core:contact";
+pub const TREE_CONTACTS: &str = "contacts";
 
 /// Round 16 (§3.3 `state`): the source of the resource is gone (an indexed file was deleted).
 pub const STATE_MISSING: &str = "missing";

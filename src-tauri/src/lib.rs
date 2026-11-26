@@ -88,6 +88,17 @@ async fn pick_resource_package(app: tauri::AppHandle) -> Option<String> {
     rx.await.ok().flatten().and_then(|p| p.into_path().ok()).map(|p| p.to_string_lossy().into_owned())
 }
 
+/// D487 §33: the system open-file dialog for an identity card (`.odid`). Choosing the file is the user's consent to
+/// read it; the kernel checks the card's own signature before it goes into the contacts.
+#[tauri::command]
+async fn pick_identity_card(app: tauri::AppHandle) -> Option<String> {
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    app.dialog().file().add_filter("OneDesk identity card", &["odid"]).pick_file(move |p| {
+        let _ = tx.send(p);
+    });
+    rx.await.ok().flatten().and_then(|p| p.into_path().ok()).map(|p| p.to_string_lossy().into_owned())
+}
+
 /// D484 §16: the system "open" dialog for an image (png, jpeg, gif, webp). Choosing the file is the user's consent to
 /// store it; the kernel reads it and checks what it is.
 #[tauri::command]
@@ -168,7 +179,7 @@ pub fn run() {
         }))
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![protocol_request, pick_folder, pick_package_file,
-            pick_resource_package, pick_image_file, pick_save_file, open_external, open_window])
+            pick_resource_package, pick_identity_card, pick_image_file, pick_save_file, open_external, open_window])
         .on_window_event(|window, event| {
             let Some(state) = window.try_state::<HostState>() else { return };
             let Some(host) = state.host.clone() else { return };

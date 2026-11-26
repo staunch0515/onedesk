@@ -693,6 +693,9 @@ impl Inner {
                 if crate::proposals::METHODS.contains(&m) {
                     return self.handle_proposals(m, params).await;
                 }
+                if crate::identity::METHODS.contains(&m) {
+                    return self.handle_identity(m, params).await;
+                }
                 if crate::transfer::METHODS.contains(&m) {
                     return self.handle5(m, params).await.unwrap_or_else(|| Err(err_p(ErrorCode::UnknownMethod, &[("method", m)])));
                 }
@@ -747,10 +750,10 @@ impl Inner {
                 plugin: None,
             };
         }
-        if kind == store::KIND_PROPOSAL {
+        if kind == store::KIND_PROPOSAL || kind == store::KIND_CONTACT {
             return KindMeta {
                 label: Label::Text(kind.into()),
-                icon: "git-pull-request".into(),
+                icon: if kind == store::KIND_CONTACT { "id-card" } else { "git-pull-request" }.into(),
                 page: None,
                 draggable: false,
                 accepts: vec![],
@@ -983,7 +986,7 @@ impl Inner {
 
     /// A stored tree id the protocol may touch: `resources` or a plugin's stored tree.
     pub fn stored_tree(&self, tree: &str) -> KResult<()> {
-        if tree == store::TREE_ENV || tree == store::TREE_CONFIG || tree == store::TREE_PROPOSALS || self.resource_view(tree).is_some() {
+        if tree == store::TREE_ENV || tree == store::TREE_CONFIG || tree == store::TREE_PROPOSALS || tree == store::TREE_CONTACTS || self.resource_view(tree).is_some() {
             return Ok(());
         }
         match self.registry.tree(tree) {
@@ -1042,6 +1045,16 @@ impl Inner {
                 id: store::TREE_PROPOSALS.into(),
                 title: Label::Text(store::TREE_PROPOSALS.into()),
                 icon: "git-pull-request".into(),
+                source: TreeSource::Stored,
+                groups: false,
+                toolbar: vec![],
+                menu: vec![],
+            },
+            // D487 §33 (K18): identity cards of others.
+            TreeInfo {
+                id: store::TREE_CONTACTS.into(),
+                title: Label::Text(store::TREE_CONTACTS.into()),
+                icon: "book-user".into(),
                 source: TreeSource::Stored,
                 groups: false,
                 toolbar: vec![],
@@ -1453,7 +1466,7 @@ impl Inner {
             Some(root) => (TREE_RESOURCES, parent.or(root)),
             None => (tree, parent),
         };
-        if tree == store::TREE_ENV || tree == store::TREE_CONFIG || tree == store::TREE_PROPOSALS {
+        if tree == store::TREE_ENV || tree == store::TREE_CONFIG || tree == store::TREE_PROPOSALS || tree == store::TREE_CONTACTS {
             return Err(invalid("noGroups"));
         }
         let name = if name.trim().is_empty() {

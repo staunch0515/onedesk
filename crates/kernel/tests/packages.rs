@@ -100,6 +100,8 @@ async fn side(tmp: tempfile::TempDir, root: &Path) -> Side {
         json!({ "plugin": "test.pub", "path": out.display().to_string() }),
     )
     .await;
+    // D487 §33: what is published is signed.
+    c.ok("identity.create", json!({ "name": "Side" })).await;
     Side { env, c, out }
 }
 
@@ -502,4 +504,92 @@ fn a_zip_from_elsewhere_with_compressed_entries_is_refused() {
         .unwrap();
     z[at + 10] = 8;
     assert!(onedesk_kernel::packages::zip_read(&z).is_err());
+}
+
+/* ------------------------------------------------------------------ D487 §33 (K18): signed packages */
+
+/// A package file rewritten: `edit` changes its `package.json`; `key` signs it again with another key.
+fn rewrite(path: &str, out: &str, edit: impl Fn(&mut onedesk_kernel::packages::PackageFile), key: Option<&ed25519_dalek::SigningKey>) {
+    use ed25519_dalek::Signer;
+    let entries = onedesk_kernel::packages::zip_read(&std::fs::read(path).unwrap()).unwrap();
+    let (mut pkg, blobs) = onedesk_kernel::packages::read_package(&std::fs::read(path).unwrap()).unwrap();
+    edit(&mut pkg);
+    if let Some(k) = key {
+        pkg.publisher_key = Some(onedesk_kernel::identity::hex(k.verifying_key().as_bytes()));
+        pkg.signature = None;
+        let names: Vec<String> = blobs.iter().map(|(h, _)| h.clone()).collect();
+        let msg = onedesk_kernel::packages::package_message(&pkg, &names);
+        pkg.signature = Some(onedesk_kernel::identity::hex(&k.sign(msg.as_bytes()).to_bytes()));
+    }
+    let out_entries: Vec<(String, Vec<u8>)> = entries
+        .into_iter()
+        .map(|(n, b)| if n == "package.json" { (n, serde_json::to_vec(&pkg).unwrap()) } else { (n, b) })
+        .collect();
+    std::fs::write(out, onedesk_kernel::packages::zip_write(&out_entries)).unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn packages_are_signed_by_their_publisher_and_a_copy_follows_that_key() {
+    let (t, s, _p) = two().await;
+    let (root, _q1, _q2, x, _blob) = book(&t).await;
+    publish(&t, "publish", &root, json!({ "edition": 1, "printing": 1, "variant": "student", "exclude": [x], "path": file(&t, "s1.odpack") })).await;
+    let path = file(&t, "s1.odpack");
+    let me = t.c.ok("identity.get", json!({})).await;
+    // Signed: who published it.
+    let info = s.c.ok("package.inspect", json!({ "path": path })).await;
+    assert_eq!(info["signature"], "valid", "{info}");
+    assert_eq!(info["publisherIdentity"]["fingerprint"], me["fingerprint"]);
+    assert_eq!(info["publisherIdentity"]["known"], "unknown");
+    assert_eq!(info["publisherName"], me["name"]);
+    // Changed on the way: refused.
+    let bad = file(&t, "bad.odpack");
+    rewrite(&path, &bad, |p| p.title = "Math (pirated)".into(), None);
+    let e = s.c.call("package.import", json!({ "path": bad })).await.unwrap_err();
+    assert_eq!(e.params.get("reason").map(String::as_str), Some("badSignature"));
+    assert_eq!(s.c.ok("package.inspect", json!({ "path": bad })).await["refused"], "badSignature");
+    // Imported: the publisher is in the contacts, not checked.
+    s.c.ok("package.import", json!({ "path": path })).await;
+    let contacts = s.c.ok("tree.children", json!({ "tree": "contacts" })).await;
+    let cid = contacts["nodes"][0]["key"].as_str().unwrap().to_string();
+    let c = s.c.ok("resource.get", json!({ "id": cid })).await;
+    assert_eq!((c["body"]["fingerprint"].clone(), c["body"]["checked"].clone(), c["body"]["source"].as_str()), (me["fingerprint"].clone(), json!(false), Some("package")));
+    s.c.ok("contact.setChecked", json!({ "id": cid, "checked": true })).await;
+    // An update signed by someone else (same book, a newer printing): refused; so is one without a signature.
+    let other = ed25519_dalek::SigningKey::from_bytes(&[9u8; 32]);
+    let forged = file(&t, "forged.odpack");
+    rewrite(&path, &forged, |p| p.printing = 9, Some(&other));
+    let i = s.c.ok("package.inspect", json!({ "path": forged })).await;
+    assert_eq!((i["signature"].as_str(), i["refused"].as_str()), (Some("valid"), Some("otherPublisher")));
+    let unsigned = file(&t, "unsigned.odpack");
+    rewrite(&path, &unsigned, |p| {
+        p.printing = 9;
+        p.publisher_key = None;
+        p.signature = None;
+    }, None);
+    let i = s.c.ok("package.inspect", json!({ "path": unsigned })).await;
+    assert_eq!((i["signature"].as_str(), i["refused"].as_str()), (Some("unsigned"), Some("otherPublisher")));
+    // The real publisher's next printing: accepted, and now known as checked.
+    publish(&t, "reprint", &root, json!({ "edition": 1, "printing": 2, "variant": "student", "exclude": [x], "path": file(&t, "s2.odpack") })).await;
+    let i = s.c.ok("package.inspect", json!({ "path": file(&t, "s2.odpack") })).await;
+    assert!(i["refused"].is_null(), "{i}");
+    assert_eq!(i["publisherIdentity"]["known"], "checked");
+    // A package from before signatures may still be imported where there is no copy yet (shown unsigned).
+    let (_t2, s2, _p2) = two().await;
+    let old = file(&t, "old.odpack");
+    rewrite(&path, &old, |p| {
+        p.publisher_key = None;
+        p.signature = None;
+    }, None);
+    let i = s2.c.ok("package.inspect", json!({ "path": old })).await;
+    assert_eq!((i["signature"].as_str(), i["refused"].clone()), (Some("unsigned"), Value::Null));
+    assert!(i.get("publisherIdentity").is_none());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn publishing_needs_an_identity() {
+    let (t, _s, _p) = two().await;
+    let (root, _q1, _q2, _x, _blob) = book(&t).await;
+    t.c.ok("identity.delete", json!({})).await;
+    let e = publish(&t, "publish", &root, json!({ "edition": 1, "printing": 1, "variant": "teacher", "path": file(&t, "x.odpack") })).await;
+    assert_eq!(e["params"]["reason"], "noIdentity", "{e}");
 }

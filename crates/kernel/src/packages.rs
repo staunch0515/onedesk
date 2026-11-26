@@ -79,6 +79,31 @@ pub struct PackageFile {
     pub resources: Vec<PackRow>,
     #[serde(default)]
     pub sealed: Vec<SealedEntry>,
+    /// D487 §33 (K18): the publisher's public key and its signature of the package (`package_message`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub publisher_key: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signature: Option<String>,
+}
+
+/// What a package's signature covers: its root, edition, printing and variant, the SHA-256 of `package.json` without the
+/// signature, and the names (hashes) of its images in order.
+pub fn package_message(pkg: &PackageFile, blobs: &[String]) -> String {
+    let mut unsigned = pkg.clone();
+    unsigned.signature = None;
+    let json = serde_json::to_vec(&unsigned).unwrap_or_default();
+    let mut names: Vec<&String> = blobs.iter().collect();
+    names.sort();
+    let names: Vec<&str> = names.into_iter().map(String::as_str).collect();
+    format!(
+        "onedesk-package/1\n{}\n{}\n{}\n{}\n{}\n{}",
+        pkg.root,
+        pkg.edition,
+        pkg.printing,
+        pkg.variant,
+        crate::identity::sha256_hex(&json),
+        names.join(",")
+    )
 }
 
 /// Everything of one import, written in one transaction.
@@ -328,6 +353,10 @@ impl Inner {
         if !plugin.manifest.requires.files {
             return Err(denied("notRequested"));
         }
+        // D487 §33 (K18): what is published says who published it.
+        if self.identity()?.is_none() {
+            return Err(invalid("noIdentity"));
+        }
         let root_id = args
             .get(0)
             .and_then(Value::as_str)
@@ -390,6 +419,8 @@ impl Inner {
                 published_at: now_ms(),
                 resources,
                 sealed: vec![],
+                publisher_key: None,
+                signature: None,
             };
             let mut entries = vec![(
                 "package.json".to_string(),
@@ -467,16 +498,20 @@ impl Inner {
             let v = st.query_map([serde_json::to_string(&keep.iter().collect::<Vec<_>>()).unwrap_or_default()], |r| r.get(0))?;
             v.collect()
         })?;
+        let blobs: Vec<(String, Vec<u8>)> = blobs.into_iter().filter(|(h, _)| used.contains(h) || variant == "teacher").collect();
+        // D487 §33 (K18): signed by the publisher's identity.
+        let who = self.identity()?.ok_or_else(|| invalid("noIdentity"))?;
+        pkg.publisher_key = Some(who.public_key.clone());
+        pkg.publisher_name = who.name.clone();
+        pkg.signature = None;
+        let names: Vec<String> = blobs.iter().map(|(h, _)| h.clone()).collect();
+        let (_, sig) = self.sign(package_message(&pkg, &names).as_bytes())?.ok_or_else(|| invalid("noIdentity"))?;
+        pkg.signature = Some(sig);
         let mut entries = vec![(
             "package.json".to_string(),
             serde_json::to_vec(&pkg).map_err(internal)?,
         )];
-        entries.extend(
-            blobs
-                .into_iter()
-                .filter(|(h, _)| used.contains(h) || variant == "teacher")
-                .map(|(h, b)| (format!("blobs/{h}"), b)),
-        );
+        entries.extend(blobs.into_iter().map(|(h, b)| (format!("blobs/{h}"), b)));
         let data = zip_write(&entries);
         let (grants, raw) = self.files_scope_pub(plugin, &raw_path)?;
         let me = self
@@ -547,7 +582,7 @@ impl Inner {
     }
 
     /// What importing `pkg` would do, or why not.
-    fn package_info(&self, pkg: &PackageFile) -> KResult<PackageInfo> {
+    fn package_info(&self, pkg: &PackageFile, blobs: &[String]) -> KResult<PackageInfo> {
         // A copy deleted (in the trash, or gone) counts as none: it may be imported again, any printing.
         let live = self
             .read(|c| store::get(c, &pkg.root))?
@@ -566,9 +601,23 @@ impl Inner {
             )
             .optional()
         })?;
-        let refused = if pkg.publisher == self.ws.id {
+        // D487 §33 (K18): signed, or published before there were signatures; a copy follows its publisher's key.
+        let known_key: Option<String> = self.read(|c| c.query_row("SELECT publisher_key FROM copies WHERE root_id = ?1", [&pkg.root], |r| r.get(0)).optional().map(Option::flatten))?;
+        let signature = match (&pkg.publisher_key, &pkg.signature) {
+            (Some(k), Some(s)) => crate::identity::verify(k, package_message(pkg, blobs).as_bytes(), s),
+            (None, None) => true,
+            _ => false,
+        };
+        let mine = self.identity()?.map(|i| i.public_key);
+        let refused = if !signature {
+            Some("badSignature")
+        } else if pkg.publisher == self.ws.id || (pkg.publisher_key.is_some() && pkg.publisher_key == mine) {
             Some("ownPackage")
-        } else if publisher.as_ref().is_some_and(|p| p != &pkg.publisher) {
+        } else if match (&known_key, &pkg.publisher_key) {
+            (Some(k), Some(p)) => k != p,
+            (Some(_), None) => true,
+            _ => publisher.as_ref().is_some_and(|p| p != &pkg.publisher),
+        } {
             Some("otherPublisher")
         } else if current
             .as_ref()
@@ -595,6 +644,8 @@ impl Inner {
             update: current.is_some(),
             current,
             refused: refused.map(String::from),
+            signature: Some(if pkg.signature.is_none() { "unsigned" } else if signature { "valid" } else { "invalid" }.into()),
+            publisher_identity: pkg.publisher_key.as_ref().filter(|_| signature).map(|k| self.signed_by(k, &pkg.publisher_name)),
         })
     }
 
@@ -614,7 +665,8 @@ impl Inner {
         if pkg.variant == "archive" {
             return Err(invalid("badPackage"));
         }
-        let info = self.package_info(&pkg)?;
+        let names: Vec<String> = blobs.iter().map(|(h, _)| h.clone()).collect();
+        let info = self.package_info(&pkg, &names)?;
         if m == method5::PACKAGE_INSPECT {
             return serde_json::to_value(info).map_err(internal);
         }
@@ -636,6 +688,7 @@ impl Inner {
         }
         let sealed = pkg.sealed.clone();
         let root = pkg.root.clone();
+        let publisher = (pkg.publisher_key.clone(), pkg.publisher_name.clone());
         let out = self
             .execute(
                 Actor::User,
@@ -650,6 +703,10 @@ impl Inner {
         for s in &sealed {
             self.secret_set(&sealed_secret(&s.resource, &s.field), &s.value, false)
                 .await?;
+        }
+        // D487 §33 (K18): the publisher goes into the contacts (not checked yet).
+        if let (Some(key), name) = &publisher {
+            self.contact_put(key, name, "", "package", None).await?;
         }
         let r = &out.report;
         serde_json::to_value(PackageImportResult {
@@ -959,10 +1016,11 @@ impl Tx<'_> {
         }
         self.tx
             .execute(
-                "INSERT INTO copies (root_id, publisher, publisher_name, title, edition, printing, variant, published_at, imported_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)
+                "INSERT INTO copies (root_id, publisher, publisher_name, title, edition, printing, variant, published_at, imported_at, publisher_key) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)
                  ON CONFLICT(root_id) DO UPDATE SET publisher_name = excluded.publisher_name, title = excluded.title, edition = excluded.edition,
-                 printing = excluded.printing, variant = excluded.variant, published_at = excluded.published_at, imported_at = excluded.imported_at",
-                params![pkg.root, pkg.publisher, pkg.publisher_name, pkg.title, pkg.edition, pkg.printing, pkg.variant, pkg.published_at, self.at],
+                 printing = excluded.printing, variant = excluded.variant, published_at = excluded.published_at, imported_at = excluded.imported_at,
+                 publisher_key = COALESCE(excluded.publisher_key, copies.publisher_key)",
+                params![pkg.root, pkg.publisher, pkg.publisher_name, pkg.title, pkg.edition, pkg.printing, pkg.variant, pkg.published_at, self.at, pkg.publisher_key],
             )
             .map_err(crate::pipeline::db_err)?;
         self.audit("package.import", &pkg.root, &json!({ "title": pkg.title, "edition": pkg.edition, "printing": pkg.printing, "variant": pkg.variant, "created": created, "updated": updated, "removed": removed }))?;

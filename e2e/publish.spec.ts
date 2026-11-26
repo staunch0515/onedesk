@@ -68,6 +68,8 @@ let answers = "";
 
 test("the teacher writes a textbook and publishes it from its colophon", async ({ page }) => {
   await openKernel(page, teacher);
+  // D487 §33: what is published is signed by the publisher's identity.
+  await rpc(page, teacher, "identity.create", { name: "Teacher" });
   await rpc(page, teacher, "plugin.grantFolder", { plugin: B, path: out });
   book = await make(page, teacher, `${B}:book`, null, { name: "Science" });
   await expect.poll(async () => (await kids(page, teacher, book)).length).toBe(2);

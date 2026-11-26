@@ -569,7 +569,7 @@ export default {
 | `search(opts)` | → 结果 | 需 `requires.resources`；`{ query, kinds?, limit? }` 按相关度返回 `[{ id, kind, name, snippet, score }]`；或基本搜索 `{ text, kinds, tags, … }` |
 | `tree(id, { offset?, limit? })` | → `{ nodes: [{ id, name, kind, icon, depth, parent, rev }], next }` | D487：需 `requires.resources`；按树的顺序（先父后子）列出 `id` 下面的全部节点，`depth` 从 1 开始；每次最多 2000 个，`next` 接着读；不含正文 |
 | `embed(id, { section?, args?, params?, inline?, within? })` | → 和外壳的 `resource.embed` 一样（`view`、`name`、`refs`…；行内调用是 `text`、`error`；参数写错是 `badParams`） | D487：需 `requires.contents`；按调用所在标签页的环境；`params` 是引用里 `\|` 后面的原文；`within`（D487 §23）：这个引用写在哪个资源里——有签章的资源给的是签章时的样子 |
-| `stamp(id, { label, signer })` / `unstamp(id, { reason })` | → `{ stamps }` | D487 §23（K6）：只对自己的类型；页面事件、命令或运行里（不能在事件处理函数、纯计算、AI 里）。第一个签章落下时资源变成只读（改、恢复、删除都是 `denied/stamped`，可以移动），它的嵌入和带参数引用取快照；`unstamp` 撤下全部签章，理由必填（`invalid/noReason`）。签章的名称、签名人只存不解释；`ctx.resource.stamps`、`stampLog` 能读到。参考 `org.onedesk.document` |
+| `stamp(id, { label, signer })` / `unstamp(id, { reason })` | → `{ stamps }` | D487 §23（K6）：只对自己的类型；页面事件、命令或运行里（不能在事件处理函数、纯计算、AI 里）。第一个签章落下时资源变成只读（改、恢复、删除都是 `denied/stamped`，可以移动），它的嵌入和带参数引用取快照；`unstamp` 撤下全部签章，理由必填（`invalid/noReason`）。签章的名称、签名人只存不解释；`ctx.resource.stamps`、`stampLog` 能读到。工作区有身份时内核自动给签章签名（D487 §33，K18），`stamps[]` 多了 `verified`（`valid`、`invalid`、`unsigned`）和 `signedBy`（`{ name, fingerprint, known }`）。参考 `org.onedesk.document` |
 | `refs(id)` | → `[{ text, target: { id, name, kind } \| null, section, embed }]` | D487 §15：需 `requires.resources`；这个资源正文里每个 `[[…]]`、`![[…]]` 现在指向谁（`text` 是写下的样子；读者看到的是目标现在的名字） |
 | `kinds()` | → `[{ kind, label, icon }]` | 需 `requires.resources`；资源树里能有的所有类型（已启用的插件，`kind` 是全名，`label` 是 Label），供“按类型”的条件让用户勾选，不要让用户手写类型全名（D477） |
 

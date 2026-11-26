@@ -12,6 +12,8 @@ export interface Transport {
   pickPackageFile?(): Promise<string | null>;
   /** D487 §21: a resource package file, `.odpack` (system dialog). */
   pickResourcePackage?(): Promise<string | null>;
+  /** D487 §33: the open dialog for an identity card (`.odid`). */
+  pickIdentityCard?(): Promise<string | null>;
   /** D484 §16: an image file (system dialog). */
   pickImageFile?(): Promise<string | null>;
   /** Opens the system "save as" dialog with a suggested file name (desktop only). */

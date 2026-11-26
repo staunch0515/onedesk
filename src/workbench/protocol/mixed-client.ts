@@ -128,6 +128,8 @@ export function createMixedClient(kernel: KernelClient, mock: ProtocolClient): P
     audit: kernel.audit,
     mcp: kernel.mcp,
     proposal: kernel.proposal,
+    identity: kernel.identity,
+    contact: kernel.contact,
     tree: {
       list: listTrees,
       children: (tree, parent, offset, locale) => (isDemoTree(tree) ? mock.tree.children(toMock({ tree }).tree, parent, offset, locale).then(fromMock) : kernel.tree.children(tree, parent, offset, locale)),
@@ -245,6 +247,7 @@ export function createMixedClient(kernel: KernelClient, mock: ProtocolClient): P
             pickPackageFile: kernel.transport.pickPackageFile ? () => kernel.transport.pickPackageFile!() : undefined,
             pickImageFile: kernel.transport.pickImageFile ? () => kernel.transport.pickImageFile!() : undefined,
             pickResourcePackage: kernel.transport.pickResourcePackage ? () => kernel.transport.pickResourcePackage!() : undefined,
+            pickIdentityCard: kernel.transport.pickIdentityCard ? () => kernel.transport.pickIdentityCard!() : undefined,
             pickSaveFile: kernel.transport.pickSaveFile ? (name) => kernel.transport.pickSaveFile!(name) : undefined,
           }
         : undefined,

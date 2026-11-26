@@ -891,7 +891,7 @@ impl Inner {
         Ok(self.result(
             json!({ "id": row.id, "kind": row.kind, "kindLabel": label_en(&meta.label), "name": row.name, "description": row.description,
                     "tags": row.tags, "rev": row.rev, "parent": row.parent_id, "location": location, "fields": fields, "refs": refs,
-                    "stamped": self.stamped(&row.id).unwrap_or(false), "readOnlyCopy": row.origin == crate::packages::ORIGIN_COPY }),
+                    "stamped": self.stamped(&row.id).unwrap_or(false), "stamps": self.stamps_of(&row.id).ok().flatten(), "readOnlyCopy": row.origin == crate::packages::ORIGIN_COPY }),
             cut,
             None,
         ))

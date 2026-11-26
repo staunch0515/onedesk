@@ -47,3 +47,24 @@ fn a_database_at_every_published_version_opens_and_reaches_the_latest() {
         assert_eq!(ok, "ok", "from version {k}");
     }
 }
+
+/// D487 §33: a workspace of 0018 with a stamp and a read-only copy keeps them; they are unsigned (no key) afterwards.
+#[test]
+fn stamps_and_copies_before_signatures_are_kept_unsigned() {
+    let tmp = tempfile::tempdir().unwrap();
+    let at = MIGRATIONS.iter().position(|(n, _)| *n == "0018_stamps").unwrap() + 1;
+    database_at(tmp.path(), at);
+    {
+        let conn = Connection::open(tmp.path().join(DB_FILE)).unwrap();
+        conn.execute("INSERT INTO stamps (resource_id, seq, label, signer, at, actor) VALUES ('r1', 1, 'Signed', 'A', 1, 'user')", []).unwrap();
+        conn.execute("INSERT INTO copies (root_id, publisher, publisher_name, title, edition, printing, variant, published_at, imported_at) VALUES ('b1', 'ws', 'P', 'T', 1, 1, 'student', 1, 1)", []).unwrap();
+    }
+    let (_ws, conn) = Workspace::open(tmp.path()).unwrap();
+    let (label, key): (String, Option<String>) = conn.query_row("SELECT label, signature FROM stamps WHERE resource_id = 'r1'", [], |r| Ok((r.get(0)?, r.get(1)?))).unwrap();
+    assert_eq!((label.as_str(), key), ("Signed", None));
+    let pk: Option<String> = conn.query_row("SELECT publisher_key FROM copies WHERE root_id = 'b1'", [], |r| r.get(0)).unwrap();
+    assert_eq!(pk, None);
+    let n: i64 = conn.query_row("SELECT COUNT(*) FROM identity", [], |r| r.get(0)).unwrap();
+    assert_eq!(n, 0);
+}
+

@@ -3,6 +3,7 @@ import { Badge, Banner, Button, Dialog, FormField, Input, Pane, Text, useToast }
 import { useI18n } from "../i18n";
 import type { ProtocolClient } from "../protocol";
 import { kernelErrorCode } from "../protocol/errors";
+import { signedByText } from "../pages/identity-page";
 import type { Actions } from "../state/context";
 import { useQuery, useUi, useWorkbench } from "../state/context";
 import type { Store } from "../state/store";
@@ -317,6 +318,18 @@ export function TransferDialogs() {
               <Badge tone="neutral">{t(pkg.variant === "teacher" ? "package.variant.teacher" : "package.variant.student")}</Badge>
               <Text size="sm" tone="muted">{t("package.from", { publisher: pkg.publisherName, at: dateTime(pkg.publishedAt) })}</Text>
             </Pane>
+            {/* D487 §33: who signed it, and whether that identity was checked. */}
+            {pkg.signature === "valid" && pkg.publisherIdentity ? (
+              <Pane gap="xs">
+                <Pane direction="row" gap="xs" align="center" wrap>
+                  <Badge tone="success" icon="shield-check">{t("package.signed")}</Badge>
+                  <Text size="sm">{signedByText(t, pkg.publisherIdentity)}</Text>
+                </Pane>
+                <Text size="xs" tone="muted" mono>{pkg.publisherIdentity.fingerprint}</Text>
+              </Pane>
+            ) : pkg.signature === "unsigned" ? (
+              <Badge tone="warning" icon="shield">{t("package.unsigned")}</Badge>
+            ) : null}
             <Text size="sm">{t("package.count", { resources: pkg.resources })}</Text>
             {pkg.current && <Text size="sm">{t("package.current", { edition: pkg.current.edition, printing: pkg.current.printing })}</Text>}
             <Text size="sm" tone="muted">{t(pkg.update ? "package.updateNote" : "package.readOnlyNote")}</Text>
@@ -332,6 +345,7 @@ function refusedText(t: ReturnType<typeof useI18n>["t"], reason: string): string
   if (reason === "otherPublisher") return t("package.refused.otherPublisher");
   if (reason === "notNewer") return t("package.refused.notNewer");
   if (reason === "taken") return t("package.refused.taken");
+  if (reason === "badSignature") return t("package.refused.badSignature");
   return reason;
 }
 

@@ -6,6 +6,7 @@ import { CommandDialogs } from "./parts/command-dialogs";
 import { InstallDialogs, startInstall } from "./parts/install-dialogs";
 import { startExport, startImport, startPackageImport, TransferDialogs } from "./parts/transfer-dialogs";
 import { AI_SETTINGS_TARGET } from "./pages/ai-settings-page";
+import { IDENTITY_TARGET } from "./pages/identity-page";
 import { SECRETS_TARGET } from "./pages/secrets-page";
 import { NoTabs, PageHost } from "./parts/page-host";
 import { TreePanel } from "./parts/side-panel";
@@ -76,7 +77,7 @@ export function Workbench({ settings, languages, onSetting: storeSetting }: Work
   // Restored tabs get their name and icon without having to be activated first.
   useEffect(() => {
     for (const tab of store.get().tabs) {
-      if (tab.title || tab.target === SECRETS_TARGET || tab.target === AI_SETTINGS_TARGET) continue;
+      if (tab.title || tab.target === SECRETS_TARGET || tab.target === AI_SETTINGS_TARGET || tab.target === IDENTITY_TARGET) continue;
       // A tab without a name yet takes the page's own (the plugin page replaces it with the plugin's name once it is shown).
       client.page.resolve(tab.target, { envId: tab.envId, locale }).then((d) => actions.updateTab(tab.id, { ...tabFieldsFromPage(d), title: d.title }), () => undefined);
     }
@@ -92,6 +93,7 @@ export function Workbench({ settings, languages, onSetting: storeSetting }: Work
       // The secrets page names itself; the plugin page too (it shows the plugin's name): they are not asked.
       if (tab.target === SECRETS_TARGET) actions.updateTab(tab.id, { title: t("secrets.title") });
       else if (tab.target === AI_SETTINGS_TARGET) actions.updateTab(tab.id, { title: t("ai.title") });
+      else if (tab.target === IDENTITY_TARGET) actions.updateTab(tab.id, { title: t("identity.title") });
       else if (!isSelfNamed(tab.target)) client.page.resolve(tab.target, { envId: tab.envId, locale }).then((d) => actions.updateTab(tab.id, tabFieldsFromPage(d)), () => undefined);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -164,6 +166,7 @@ export function Workbench({ settings, languages, onSetting: storeSetting }: Work
         items: [
           ...(client.secrets ? [{ id: "secrets", label: t("secrets.title"), icon: "key-round", onSelect: () => actions.open(SECRETS_TARGET) }] : []),
           { id: "ai-settings", label: t("ai.title"), icon: "bot", keywords: ["mcp", "claude"], onSelect: () => actions.open(AI_SETTINGS_TARGET) },
+          ...(client.identity ? [{ id: "identity", label: t("identity.title"), icon: "fingerprint", keywords: ["key", "signature"], onSelect: () => actions.open(IDENTITY_TARGET) }] : []),
           { id: "workspace.export", label: t("transfer.export"), icon: "folder-output", onSelect: () => void startExport(client, store, actions, (resources, folder) => toast({ tone: "success", title: t("transfer.exportDone", { resources, folder }) })) },
           { id: "workspace.import", label: t("transfer.import"), icon: "folder-input", onSelect: () => void startImport(client, store, actions) },
           ...(client.workspace.packageImport ? [{ id: "package.import", label: t("package.import"), icon: "package-open", onSelect: () => void startPackageImport(client, store, actions) }] : []),

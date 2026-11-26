@@ -33,6 +33,9 @@ export async function createTauriTransport(): Promise<Transport> {
     async pickResourcePackage() {
       return (await invoke<string | null>("pick_resource_package")) ?? null;
     },
+    async pickIdentityCard() {
+      return (await invoke<string | null>("pick_identity_card")) ?? null;
+    },
     async pickImageFile() {
       return (await invoke<string | null>("pick_image_file")) ?? null;
     },

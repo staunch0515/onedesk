@@ -32,6 +32,7 @@ pub mod network;
 pub mod secrets;
 mod versions;
 pub mod pipeline;
+pub mod identity;
 pub mod policy;
 pub mod proposals;
 pub mod refs;

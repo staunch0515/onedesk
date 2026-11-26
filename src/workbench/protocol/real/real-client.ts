@@ -1,4 +1,4 @@
-import type { AssistProvider, PackageImportResult, PackageInfo, ProposalCount, ProposalCreateResult, ProposalView, ResourceAt, BlobInfo, ConnectionState, EmbedActResult, EmbedResult, RefSuggestion, EventMessage, HelloResult, TreePage } from "../generated";
+import type { AssistProvider, ContactImportResult, IdentityInfo, PackageImportResult, PackageInfo, ProposalCount, ProposalCreateResult, ProposalView, ResourceAt, BlobInfo, ConnectionState, EmbedActResult, EmbedResult, RefSuggestion, EventMessage, HelloResult, TreePage } from "../generated";
 import type { ProtocolClient } from "../client";
 import type { ExportResult, ImportPreview, ImportResult, KnownParam, RefInfo, RunExportResult, InstallPreview, InstallRequest, PluginVersionParams, SecretInfo, UndoUpgradeResult, UpgradeResult, PageEventResult, PaletteCommand, PluginDetail, Run, ViewNode, TreeMoveResult, AuditFacets, AuditFilter, McpInfo, McpStatus, AuditRow, EnvOption, EnvView, HistoryEntry, ResolvedParam, ResultAction, SearchHit, CommandContext, CommandEffect, NewItem, PageContext, PageDescriptor, PageSaveResult, PluginGrants, Resource, TreeInfo, TreeNode, WorkspaceEntry, WorkspacesResult, WorkspaceInfo, LanguageInfo, ShellTexts } from "../types";
 import { EventBus } from "./event-bus";
@@ -19,6 +19,8 @@ export interface KernelClient {
   audit: ProtocolClient["audit"];
   mcp: ProtocolClient["mcp"];
   proposal: NonNullable<ProtocolClient["proposal"]>;
+  identity: NonNullable<ProtocolClient["identity"]>;
+  contact: NonNullable<ProtocolClient["contact"]>;
   tree: Pick<ProtocolClient["tree"], "list" | "children" | "path" | "move" | "createGroup" | "rename">;
   resource: Pick<ProtocolClient["resource"], "get" | "delete" | "history" | "restore" | "listDeleted" | "undelete" | "purge" | "setFavorite" | "setAiVisible"> & { at: NonNullable<ProtocolClient["resource"]["at"]> };
   page: Pick<ProtocolClient["page"], "resolve" | "save" | "event">;
@@ -122,6 +124,18 @@ export async function createKernelClient(transport: Transport, locale?: () => st
     },
     search: { query: (text, limit) => call<SearchHit[]>("search.query", compact({ text, limit })) },
     mcp: { status: () => call<McpStatus>("mcp.status", {}) },
+    identity: {
+      get: () => call<IdentityInfo | null>("identity.get", {}),
+      create: (params) => call<IdentityInfo>("identity.create", params),
+      update: (params) => call<IdentityInfo>("identity.update", params),
+      delete: async () => void (await call("identity.delete", {})),
+      exportCard: async (path) => void (await call("identity.exportCard", { path })),
+    },
+    contact: {
+      importCard: (path) => call<ContactImportResult>("contact.importCard", { path }),
+      setChecked: async (id, checked) => void (await call("contact.setChecked", { id, checked })),
+      exportCard: async (id, path) => void (await call("contact.exportCard", { id, path })),
+    },
     proposal: {
       get: (id) => call<ProposalView>("proposal.get", { id }),
       review: (params) => call<ProposalView>("proposal.review", params),

@@ -479,6 +479,12 @@ impl Inner {
             d.uses_env = true;
             return Ok(d);
         }
+        if r.kind == store::KIND_CONTACT {
+            // D487 §33: drawn by the shell from the resource (the key never changes; the name is edited in the info panel).
+            d.page = PageKind::Contact;
+            d.read_only = true;
+            return Ok(d);
+        }
         if r.kind == store::KIND_PROPOSAL {
             // D487 §29: drawn by the shell from `proposal.get`.
             d.page = PageKind::Proposal;

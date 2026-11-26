@@ -30,6 +30,36 @@ pub fn frozen_key(target: &str, section: Option<&str>, params: Option<&str>, inl
     json!([target, section.unwrap_or(""), params.map(str::trim).unwrap_or(""), inline]).to_string()
 }
 
+/// D487 §33 (K18): a stamp's signature: when, by which key (and the name it had), over which content.
+#[derive(Debug, Clone)]
+pub struct StampSig {
+    pub at: i64,
+    pub key: String,
+    pub name: String,
+    pub hash: String,
+    pub signature: String,
+}
+
+/// What a stamp's signature covers of the resource: its kind, name, description, tags and content (body keys in order;
+/// a secret field only by its name), and what its references showed when the first stamp went on. Not where it is.
+pub fn content_hash(r: &store::Row, frozen: &[(String, String)]) -> String {
+    let mut f: Vec<&(String, String)> = frozen.iter().collect();
+    f.sort();
+    let v = json!({ "kind": r.kind, "name": r.name, "description": r.description, "tags": r.tags, "body": r.body, "frozen": f });
+    crate::identity::sha256_hex(v.to_string().as_bytes())
+}
+
+/// The text a stamp's signature is of.
+pub fn stamp_message(id: &str, hash: &str, label: &str, signer: &str, at: i64) -> String {
+    format!("onedesk-stamp/1\n{id}\n{hash}\n{label}\n{signer}\n{at}")
+}
+
+fn frozen_of(c: &Connection, id: &str) -> rusqlite::Result<Vec<(String, String)>> {
+    let mut st = c.prepare_cached("SELECT key, result FROM frozen WHERE resource_id = ?1")?;
+    let v = st.query_map([id], |r| Ok((r.get(0)?, r.get(1)?)))?;
+    v.collect()
+}
+
 fn is_stamped(c: &Connection, id: &str) -> rusqlite::Result<bool> {
     c.query_row("SELECT EXISTS(SELECT 1 FROM stamps WHERE resource_id = ?1)", [id], |r| r.get(0))
 }
@@ -52,12 +82,34 @@ impl Inner {
     }
 
     pub(crate) fn stamps_of(&self, id: &str) -> KResult<Option<Vec<StampInfo>>> {
-        let v: Vec<StampInfo> = self.read(|c| {
-            let mut st = c.prepare_cached("SELECT label, signer, at FROM stamps WHERE resource_id = ?1 ORDER BY seq")?;
-            let v = st.query_map([id], |r| Ok(StampInfo { label: r.get(0)?, signer: r.get(1)?, at: r.get(2)? }))?;
+        type Raw = (String, String, i64, Option<String>, Option<String>, Option<String>, Option<String>);
+        let raw: Vec<Raw> = self.read(|c| {
+            let mut st = c.prepare_cached("SELECT label, signer, at, signer_key, signer_name, content_hash, signature FROM stamps WHERE resource_id = ?1 ORDER BY seq")?;
+            let v = st.query_map([id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?)))?;
             v.collect()
         })?;
-        Ok((!v.is_empty()).then_some(v))
+        if raw.is_empty() {
+            return Ok(None);
+        }
+        // D487 §33: each signature checked against the content as it is now.
+        let now = match self.read(|c| store::get_any(c, id))? {
+            Some(row) => Some(content_hash(&row, &self.read(|c| frozen_of(c, id))?)),
+            None => None,
+        };
+        let v = raw
+            .into_iter()
+            .map(|(label, signer, at, key, name, hash, sig)| {
+                let (verified, signed_by) = match (key, hash, sig) {
+                    (Some(key), Some(hash), Some(sig)) => {
+                        let ok = now.as_deref() == Some(hash.as_str()) && crate::identity::verify(&key, stamp_message(id, &hash, &label, &signer, at).as_bytes(), &sig);
+                        (if ok { "valid" } else { "invalid" }, Some(self.signed_by(&key, name.as_deref().unwrap_or(""))))
+                    }
+                    _ => ("unsigned", None),
+                };
+                StampInfo { label, signer, at, verified: Some(verified.into()), signed_by }
+            })
+            .collect();
+        Ok(Some(v))
     }
 
     pub(crate) fn stamp_log_of(&self, id: &str) -> KResult<Option<Vec<StampLogEntry>>> {
@@ -143,8 +195,14 @@ impl Inner {
                 }
                 let signer = text("signer")?;
                 // The first stamp keeps what the references show now.
-                let frozen = if self.stamped(id)? { vec![] } else { self.freeze(id, info.env_id.clone()).await? };
-                me.execute(actor, Command::Stamp { id: id.to_string(), label, signer, frozen }).await?;
+                let first = !self.stamped(id)?;
+                let frozen = if first { self.freeze(id, info.env_id.clone()).await? } else { vec![] };
+                // D487 §33 (K18): signed with the workspace's identity, when it has one.
+                let kept = if first { frozen.clone() } else { self.read(|c| frozen_of(c, id))? };
+                let hash = content_hash(&row, &kept);
+                let at = now_ms();
+                let sig = self.sign(stamp_message(id, &hash, &label, &signer, at).as_bytes())?.map(|(who, signature)| StampSig { at, key: who.public_key, name: who.name, hash, signature });
+                me.execute(actor, Command::Stamp { id: id.to_string(), label, signer, frozen, sig }).await?;
             }
             "unstamp" => {
                 let reason = text("reason")?;
@@ -160,7 +218,7 @@ impl Inner {
 }
 
 impl Tx<'_> {
-    pub(crate) fn stamp(&mut self, id: &str, label: &str, signer: &str, frozen: &[(String, String)]) -> KResult<Outcome> {
+    pub(crate) fn stamp(&mut self, id: &str, label: &str, signer: &str, frozen: &[(String, String)], sig: Option<&StampSig>) -> KResult<Outcome> {
         let row = store::get(self.tx, id).map_err(crate::pipeline::db_err)?.ok_or_else(|| not_found("resource"))?;
         let count: i64 = self.tx.query_row("SELECT COUNT(*) FROM stamps WHERE resource_id = ?1", [id], |r| r.get(0)).map_err(crate::pipeline::db_err)?;
         if count as usize >= MAX_STAMPS {
@@ -173,8 +231,19 @@ impl Tx<'_> {
                 self.tx.execute("INSERT OR REPLACE INTO frozen (resource_id, key, result) VALUES (?1, ?2, ?3)", params![id, k, v]).map_err(crate::pipeline::db_err)?;
             }
         }
+        // A signature is of the content as it is now: it must not have changed since it was signed.
+        if let Some(s) = sig {
+            let kept = frozen_of(self.tx, id).map_err(crate::pipeline::db_err)?;
+            if content_hash(&row, &kept) != s.hash {
+                return Err(err_p(ErrorCode::Conflict, &[("reason", "changedOnDisk")]));
+            }
+        }
+        let at = sig.map(|s| s.at).unwrap_or(self.at);
         self.tx
-            .execute("INSERT INTO stamps (resource_id, seq, label, signer, at, actor) VALUES (?1, ?2, ?3, ?4, ?5, ?6)", params![id, count + 1, label, signer, self.at, actor])
+            .execute(
+                "INSERT INTO stamps (resource_id, seq, label, signer, at, actor, signer_key, signer_name, content_hash, signature) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                params![id, count + 1, label, signer, at, actor, sig.map(|s| &s.key), sig.map(|s| &s.name), sig.map(|s| &s.hash), sig.map(|s| &s.signature)],
+            )
             .map_err(crate::pipeline::db_err)?;
         self.tx
             .execute("INSERT INTO stamp_log (resource_id, action, label, signer, rev, at, actor) VALUES (?1, 'stamp', ?2, ?3, ?4, ?5, ?6)", params![id, label, signer, row.rev, self.at, actor])

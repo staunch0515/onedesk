@@ -7,6 +7,7 @@ import { EnvPage } from "../pages/env-page";
 import { ProposalPage } from "../pages/proposal-page";
 import { PluginPage } from "../pages/plugin-page";
 import { AI_SETTINGS_TARGET, AiSettingsPage } from "../pages/ai-settings-page";
+import { ContactPage, IDENTITY_TARGET, IdentityPage } from "../pages/identity-page";
 import { SECRETS_TARGET, SecretsPage } from "../pages/secrets-page";
 import { ViewPage } from "../pages/view-page";
 import type { PageDescriptor } from "../protocol";
@@ -62,6 +63,7 @@ function usePluginTopics(tab: TabState, d: PageDescriptor | undefined, reload: (
 export function PageHost({ tab }: { tab: TabState }) {
   if (tab.target === SECRETS_TARGET) return <ShellSecrets tab={tab} />;
   if (tab.target === AI_SETTINGS_TARGET) return <ShellAi tab={tab} />;
+  if (tab.target === IDENTITY_TARGET) return <ShellIdentity tab={tab} />;
   return <ResolvedPage tab={tab} />;
 }
 
@@ -79,6 +81,14 @@ function ShellAi({ tab }: { tab: TabState }) {
   const { t } = useI18n();
   useEffect(() => actions.updateTab(tab.id, { title: t("ai.title"), icon: "bot" }), [tab.id, actions, t]);
   return <AiSettingsPage tab={tab} />;
+}
+
+/** D487 §33: this workspace's identity belongs to the shell's settings. */
+function ShellIdentity({ tab }: { tab: TabState }) {
+  const { actions } = useWorkbench();
+  const { t } = useI18n();
+  useEffect(() => actions.updateTab(tab.id, { title: t("identity.title"), icon: "fingerprint" }), [tab.id, actions, t]);
+  return <IdentityPage tab={tab} />;
 }
 
 function ResolvedPage({ tab }: { tab: TabState }) {
@@ -128,6 +138,8 @@ function ResolvedPage({ tab }: { tab: TabState }) {
       return <DeletedPage tab={tab} descriptor={d} />;
     case "proposal":
       return <ProposalPage tab={tab} descriptor={d} />;
+    case "contact":
+      return <ContactPage tab={tab} descriptor={d} />;
     case "missing":
       return (
         <Frame tab={tab} descriptor={d}>

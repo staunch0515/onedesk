@@ -917,6 +917,8 @@ pub enum PageKind {
     Deleted,
     /// D487 §29 (K16): a proposal, drawn by the shell from `proposal.get`.
     Proposal,
+    /// D487 §33 (K18): a contact (an identity card), drawn by the shell from the resource.
+    Contact,
     /// The target does not resolve; `found` is false.
     Missing,
 }
@@ -2276,6 +2278,22 @@ pub mod method5 {
     pub const PROPOSAL_COUNT: &str = "proposal.count";
     /// D487 §29 (K17): `ResourceAtParams` → `ResourceAt`: a resource as it was at one revision.
     pub const RESOURCE_AT: &str = "resource.at";
+    /// D487 §33 (K18): `{}` → `IdentityInfo | null`: this workspace's identity.
+    pub const IDENTITY_GET: &str = "identity.get";
+    /// D487 §33 (K18): `IdentityParams` (name required) → `IdentityInfo`: makes the identity (a new key pair).
+    pub const IDENTITY_CREATE: &str = "identity.create";
+    /// D487 §33 (K18): `IdentityParams` → `IdentityInfo`: a new name or organisation (the key stays).
+    pub const IDENTITY_UPDATE: &str = "identity.update";
+    /// D487 §33 (K18): `{}` → `null`: the identity and its private key are deleted.
+    pub const IDENTITY_DELETE: &str = "identity.delete";
+    /// D487 §33 (K18): `CardPathParams` → `null`: writes this workspace's identity card (`.odid`).
+    pub const IDENTITY_EXPORT_CARD: &str = "identity.exportCard";
+    /// D487 §33 (K18): `CardPathParams` → `ContactImportResult`: an identity card into the contacts.
+    pub const CONTACT_IMPORT_CARD: &str = "contact.importCard";
+    /// D487 §33 (K18): `ContactCheckedParams` → `null`: the user checked (or no longer vouches for) a fingerprint.
+    pub const CONTACT_SET_CHECKED: &str = "contact.setChecked";
+    /// D487 §33 (K18): `ContactCardParams` → `null`: writes a contact's identity card.
+    pub const CONTACT_EXPORT_CARD: &str = "contact.exportCard";
     /// D484 §16: `BlobPutParams` → `BlobInfo`: stores a file (an image) by its content. The user's only (never a plugin).
     pub const BLOB_PUT: &str = "blob.put";
     /// D484 §16: `BlobReadParams` → `BlobData`: a stored file, for a resource that uses it or one this client just put.
@@ -2459,6 +2477,10 @@ pub struct PackageInfo {
     pub update: bool,
     pub current: Option<CopyInfo>,
     pub refused: Option<String>,
+    /// D487 §33 (K18): `valid`, or `unsigned` (a package published before signatures); an invalid one is refused.
+    pub signature: Option<String>,
+    /// The publisher's identity, when signed.
+    pub publisher_identity: Option<SignedBy>,
 }
 
 /// D487 §21 (K9): what an import did.
@@ -2473,13 +2495,81 @@ pub struct PackageImportResult {
 }
 
 /// D487 §23 (K6): a stamp on a resource: its name and signer as the plugin gave them.
+#[skip_serializing_none]
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
-#[ts(export)]
+#[ts(export, optional_fields)]
 pub struct StampInfo {
     pub label: String,
     pub signer: String,
     pub at: i64,
+    /// D487 §33 (K18): `valid` (signed, and the content is what was signed), `invalid`, `unsigned`.
+    pub verified: Option<String>,
+    pub signed_by: Option<SignedBy>,
+}
+
+/// D487 §33 (K18): who signed: the name the identity had then, its fingerprint, and whether it is this workspace's own
+/// (`self`), a contact whose fingerprint was checked (`checked`), one not checked (`unchecked`), or not known (`unknown`).
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct SignedBy {
+    pub name: String,
+    pub fingerprint: String,
+    pub known: String,
+}
+
+/// D487 §33 (K18): this workspace's identity (the private key is only in the keychain).
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct IdentityInfo {
+    pub name: String,
+    pub org: String,
+    pub public_key: String,
+    pub fingerprint: String,
+    pub created_at: i64,
+}
+
+#[skip_serializing_none]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, optional_fields)]
+pub struct IdentityParams {
+    pub name: Option<String>,
+    pub org: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct CardPathParams {
+    pub path: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ContactCardParams {
+    pub id: String,
+    pub path: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ContactCheckedParams {
+    pub id: String,
+    pub checked: bool,
+}
+
+/// What importing an identity card did: the contact, whether it is new.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ContactImportResult {
+    pub id: String,
+    pub created: bool,
 }
 
 /// D487 §23 (K6): a stamp put on (`stamp`) or all taken off (`unstamp`, with the reason); `rev` is the resource's

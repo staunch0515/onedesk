@@ -3,6 +3,7 @@ import { Badge, Button, Dialog, DiffView, IconButton, InfoField, InfoPanel, Inpu
 import type { HistoryEntry, InheritedEnv, PageDescriptor, RefInfo } from "../protocol";
 import type { ResourceAt, StampLogEntry } from "../protocol/generated";
 import { proposerText } from "../pages/proposal-page";
+import { signedByText } from "../pages/identity-page";
 import { useI18n } from "../i18n";
 import { useQuery, useUi, useWorkbench } from "../state/context";
 
@@ -387,7 +388,7 @@ export function InfoPanelPart({ resourceId, side }: { resourceId: string; side?:
       </InfoField>
       {res.kind === "core:tree" && <TreeIconField icon={res.icon} disabled={res.readOnly} onPick={(icon) => void update({ "body.icon": icon })} />}
       {inResourceTree(res.tree) && <DefaultEnvField value={res.defaultEnv} inherited={res.inheritedEnv} disabled={res.readOnly || res.deleted} onChange={(env) => void update({ defaultEnv: env })} />}
-      {res.kind !== "core:env" && res.kind !== "core:config" && res.kind !== "core:proposal" && <AiVisibleSection id={resourceId} visible={Boolean(res.aiVisible)} group={res.kind === "core:group" || res.kind === "core:tree"} disabled={res.readOnly || res.deleted} />}
+      {res.kind !== "core:env" && res.kind !== "core:config" && res.kind !== "core:proposal" && res.kind !== "core:contact" && <AiVisibleSection id={resourceId} visible={Boolean(res.aiVisible)} group={res.kind === "core:group" || res.kind === "core:tree"} disabled={res.readOnly || res.deleted} />}
       {res.origin !== "original" && (
         <InfoField label={t("info.origin")}>
           <Text size="sm">
@@ -408,6 +409,26 @@ export function InfoPanelPart({ resourceId, side }: { resourceId: string; side?:
                   ? t("info.unstamped", { reason: s.reason ?? "", at: dateTime(s.at) })
                   : t("info.stamped", { label: s.label ?? "", signer: s.signer ?? "", at: dateTime(s.at) })}
               </Text>
+            ))}
+            {/* D487 §33: whether each stamp in force is signed, and by whom. */}
+            {(res.stamps ?? []).map((s, i) => (
+              <Pane key={`sig${i}`} gap="xs">
+                <Pane direction="row" gap="xs" align="center" wrap>
+                  <Text size="sm">{s.label}</Text>
+                  {s.verified === "valid" ? (
+                    <Badge tone="success" icon="shield-check">{t("stamp.valid")}</Badge>
+                  ) : s.verified === "invalid" ? (
+                    <Badge tone="danger" icon="shield-x">{t("stamp.invalid")}</Badge>
+                  ) : (
+                    <Badge tone="neutral" icon="shield">{t("stamp.unsigned")}</Badge>
+                  )}
+                </Pane>
+                {s.signedBy && (
+                  <Text size="xs" tone="muted">
+                    {`${signedByText(t, s.signedBy)} · ${s.signedBy.fingerprint}`}
+                  </Text>
+                )}
+              </Pane>
             ))}
             {res.stamps && <Text size="xs" tone="muted">{t("info.stampedNote")}</Text>}
           </Pane>

@@ -290,7 +290,7 @@ pub enum Command {
     /// D487 §21 (K9): a read-only copy made or updated, in one transaction.
     ImportPackage(Box<crate::packages::PackagePlan>),
     /// D487 §23 (K6): a stamp put on (`frozen`: what its references show, kept with the first one).
-    Stamp { id: String, label: String, signer: String, frozen: Vec<(String, String)> },
+    Stamp { id: String, label: String, signer: String, frozen: Vec<(String, String)>, sig: Option<crate::stamps::StampSig> },
     /// D487 §23 (K6): every stamp taken off, for a reason.
     Unstamp { id: String, reason: String },
     /// Recomputes the whole `refs` table (§10: it can be rebuilt at any time).
@@ -304,6 +304,8 @@ pub enum Command {
     /// D487 §29 (K16): the accepted items of a proposal written as the user, each revision marked with the
     /// proposal, and the proposal's new body — all in one transaction.
     Review { proposal: String, steps: Vec<ReviewStep>, body: JsonMap, summary: Value },
+    /// D487 §33 (K18): the workspace's identity written (`None`: removed); audited as `op`.
+    Identity { info: Option<onedesk_protocol::IdentityInfo>, op: String },
     /// Round 16: resources of one kind by external key, in one transaction; `others_missing`
     /// marks the kind's keyed resources not in `items` as missing (§3.3 `state`).
     Upsert { kind: String, items: Vec<UpsertItem>, others_missing: bool },
@@ -539,6 +541,8 @@ impl Writer {
             crate::stamps::guard(&tx, &cmd)?;
             // D487 §29 (K16): a proposal is written only as one, and changed only by its review.
             crate::proposals::guard(&tx, &cmd)?;
+            // D487 §33 (K18): a contact's key never changes.
+            crate::identity::guard(&tx, &cmd)?;
             let out = match cmd {
                 Command::Create(n) => cx.create(n)?,
                 Command::Update { id, changes, basis, overwrite } => cx.update(&id, &changes, basis, &overwrite)?,
@@ -689,7 +693,7 @@ impl Writer {
                 }
                 Command::Import(plan) => cx.import(*plan)?,
                 Command::ImportPackage(plan) => cx.import_package(*plan)?,
-                Command::Stamp { id, label, signer, frozen } => cx.stamp(&id, &label, &signer, &frozen)?,
+                Command::Stamp { id, label, signer, frozen, sig } => cx.stamp(&id, &label, &signer, &frozen, sig.as_ref())?,
                 Command::Unstamp { id, reason } => cx.unstamp(&id, &reason)?,
                 Command::RebuildRefs => {
                     crate::refs::rebuild(cx.tx, cx.rules).map_err(db_err)?;
@@ -725,6 +729,11 @@ impl Writer {
                 Command::Upsert { kind, items, others_missing } => cx.upsert(&kind, items, others_missing)?,
                 Command::Propose(n) => cx.propose(n)?,
                 Command::Review { proposal, steps, body, summary } => cx.review(&proposal, steps, body, &summary)?,
+                Command::Identity { info, op } => {
+                    crate::identity::write_identity(cx.tx, info.as_ref()).map_err(db_err)?;
+                    cx.audit(&op, "identity", &json!({ "fingerprint": info.as_ref().map(|i| i.fingerprint.clone()) }))?;
+                    Outcome { changed: true, ..Default::default() }
+                }
                 Command::UiSet { .. } => unreachable!("handled above"),
             };
             let touched = std::mem::take(&mut *cx.touched.borrow_mut());
@@ -787,6 +796,7 @@ fn describe(cmd: &Command) -> (String, String) {
         Command::Unstamp { id, .. } => ("resource.unstamp".into(), id.clone()),
         Command::Propose(_) => ("proposal.create".into(), String::new()),
         Command::Review { proposal, .. } => ("proposal.review".into(), proposal.clone()),
+        Command::Identity { op, .. } => (op.clone(), "identity".into()),
         Command::RebuildRefs => ("refs.rebuild".into(), String::new()),
         Command::SyncRefDecls => ("refs.sync".into(), String::new()),
         Command::Batch(cmds) => cmds
@@ -2224,6 +2234,8 @@ pub fn core_rules() -> HashMap<String, KindRule> {
     m.insert(KIND_ENV.to_string(), KindRule { tree: Some(store::TREE_ENV.into()), accepts: vec![KIND_ENV.into()], protected: vec![], ..Default::default() });
     m.insert(KIND_CONFIG.to_string(), KindRule { tree: Some(store::TREE_CONFIG.into()), accepts: vec![KIND_CONFIG.into()], protected: vec![], ..Default::default() });
     // D487 §29 (K16): proposals, one level, nothing below them.
+    // D487 §33 (K18): contacts, one level.
+    m.insert(store::KIND_CONTACT.to_string(), KindRule { tree: Some(store::TREE_CONTACTS.into()), accepts: vec![], protected: vec![], ..Default::default() });
     m.insert(store::KIND_PROPOSAL.to_string(), KindRule { tree: Some(store::TREE_PROPOSALS.into()), accepts: vec![], protected: vec![], ..Default::default() });
     m
 }

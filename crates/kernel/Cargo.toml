@@ -14,6 +14,10 @@ tokio.workspace = true
 rusqlite.workspace = true
 semver.workspace = true
 sha2.workspace = true
+# D487 §33 (K18): a workspace's identity — Ed25519 signatures on stamps and packages (BSD-3-Clause); the seed comes from the
+# system's random source through getrandom (MIT/Apache-2.0, already in Cargo.lock).
+ed25519-dalek = { version = "2", default-features = false, features = ["std", "zeroize"] }
+getrandom = "0.3"
 # openat/renameat for writes pinned to an already-resolved folder (review #7)
 libc = "0.2"
 # host.network (D307): system TLS only (native-tls → Security.framework), no rustls/ring.

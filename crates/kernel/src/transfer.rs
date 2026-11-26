@@ -1176,7 +1176,7 @@ impl Inner {
         match r.kind.as_str() {
             KIND_GROUP => {
                 let t = r.tree.clone().unwrap_or_else(|| TREE_RESOURCES.into());
-                let kernel_only = [store::TREE_ENV, store::TREE_CONFIG, store::TREE_PROPOSALS, TREE_PLUGIN_STATE].contains(&t.as_str());
+                let kernel_only = [store::TREE_ENV, store::TREE_CONFIG, store::TREE_PROPOSALS, store::TREE_CONTACTS, TREE_PLUGIN_STATE].contains(&t.as_str());
                 (!kernel_only && self.stored_tree(&t).is_ok()).then_some(t)
             }
             KIND_ENV => Some(store::TREE_ENV.into()),
