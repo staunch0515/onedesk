@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 // @ts-ignore plain JS modules, no types
 import plugin from "./main.js";
 // @ts-ignore
@@ -12,6 +12,8 @@ import { outlineOf, readable } from "./text-page.js";
 import { chapterOf, entriesOf, numberText, settingsOf } from "./toc.js";
 // @ts-ignore
 import { chineseNumber, letter } from "./words.js";
+// @ts-ignore
+import { arrangementOf, findTerms, replaceTerms } from "./conventions.js";
 import { checkView, onlyKeys, registry, RENDER_KEYS } from "../_testing/view-check";
 
 const manifest = JSON.parse(readFileSync(new URL("./manifest.json", import.meta.url), "utf8"));
@@ -408,9 +410,9 @@ describe("the interface and the manifest (D487 §13.6, §13.7)", () => {
     expect(page.view[0]).toMatchObject({ type: "link", target: "resource:ls" });
   });
 
-  it("twelve kinds; the book binds and places; the contents exports; every key in every language", () => {
+  it("thirteen kinds; the book binds and places; the contents exports; every key in every language", () => {
     const kinds = manifest.contributes.kinds.map((x: any) => x.id);
-    expect(kinds).toEqual(["book", "cover", "toc", "preface", "page", "afterword", "appendix", "references", "reference", "index", "figures", "colophon"]);
+    expect(kinds).toEqual(["book", "cover", "toc", "preface", "page", "afterword", "appendix", "references", "reference", "index", "figures", "colophon", "conventions"]);
     expect(manifest.implements["onedesk.book/1"].kinds).toEqual(expect.arrayContaining(["references", "reference", "index", "figures"]));
     expect(manifest.contributes.kinds[0]).toMatchObject({ accepts: ["*"], place: true, embed: true });
     expect(manifest.requires).toEqual({ files: true, resources: true, contents: true });
@@ -777,11 +779,140 @@ describe("what an AI reads of a book (D487 §29.4)", () => {
 
   it("the tools are declared read only, in every language", () => {
     const names = manifest.contributes.aiTools.map((x: any) => x.name);
-    expect(names).toEqual(["book_contents", "book_page", "book_refs"]);
+    expect(names).toEqual(["book_contents", "book_page", "book_refs", "book_check"]);
     for (const tool of manifest.contributes.aiTools) {
       const a = manifest.contributes.actions.find((x: any) => x.id === tool.action);
       expect(a.ai.readOnly).toBe(true);
       for (const f of ["en-US", "zh-CN", "ja-JP"]) expect(locale(f)[tool.description]).toBeTruthy();
     }
+  });
+});
+
+describe("conventions (D487 §31)", () => {
+  const data = (r: any) => JSON.parse(r.output.text);
+  const TERMS = [
+    { avoid: "资料库", use: "数据库", note: "" },
+    { avoid: "资料", use: "数据", note: "" },
+    { avoid: "login", use: "sign in", note: "" },
+  ];
+  /** A book with a preface, conventions, two chapters, references and contents; one implementer of another role. */
+  function shelf(extra: { system?: string; implementers?: Record<string, any> } = {}) {
+    return world(
+      [
+        ["bk", k("book"), "书", null],
+        ["tc", k("toc"), "目录", "bk", { numbering: "words", levels: "", volume: "" }],
+        ["pf", k("preface"), "前言", "bk", { text: "本书的资料库" }],
+        ["cv", k("conventions"), "凡例", "bk", { text: "一、不用“资料库”。", terms: TERMS, symbols: [{ symbol: "〔〕", meaning: "补字" }] }],
+        ["c1", k("page"), "一", "bk", { text: "资料库和资料。\n```\n资料库 in code\n```\n`资料库` [[资料库]] {{资料}} [@资料库]\nPlease Login, not logins." }],
+        ["c2", k("page"), "二", "bk", { text: "没有问题。" }],
+        ["x.ex/1", "x.ex:setup", "启用表", "bk"],
+        ["x.ex/2", "x.ex:sheet", "账页", "bk"],
+        ["y.no/1", "y.no:page", "别的", "bk"],
+        ["rf", k("references"), "参考文献", "bk", { system: extra.system ?? "numeric" }],
+      ],
+      {
+        implementers: extra.implementers ?? {
+          "x.ex": {
+            roles: () => ({ kinds: [{ kind: "setup", role: "setup", part: "front", single: true, container: false, numbering: "none" }, { kind: "sheet", role: "sheet", part: "body", container: false }] }),
+            conventions: () => ({ lines: ["计价：移动加权平均。", "计价：移动加权平均。"] }),
+          },
+          "y.no": { roles: () => ({ kinds: [{ kind: "page", role: "body", part: "body" }] }) },
+        },
+      },
+    );
+  }
+
+  it("plays the conventions: in front, one in a book, not numbered", () => {
+    expect(rolesData().kinds.find((x: any) => x.kind === "conventions")).toMatchObject({ role: "conventions", part: "front", single: true, container: false, numbering: "none" });
+    const kind = manifest.contributes.kinds.find((x: any) => x.id === "conventions");
+    expect(kind.page).toBe("conventions");
+    expect(manifest.implements["onedesk.book/1"].kinds).toContain("conventions");
+  });
+
+  it("finds the words not to use: Chinese as written, English as whole words in any case; never in code, references, fields or citation keys; longest first", () => {
+    const text = "资料库和资料。\n```\n资料库 in code\n```\n`资料库` [[资料库]] {{资料}} [@资料库]\nPlease Login, not logins.";
+    const hits = findTerms(text, TERMS);
+    expect(hits.map((h: any) => [h.line, h.found])).toEqual([
+      [1, "资料库"],
+      [1, "资料"],
+      [6, "Login"],
+    ]);
+    expect(replaceTerms(text, hits).split("\n")[0]).toBe("数据库和数据。");
+    expect(replaceTerms(text, hits).split("\n")[5]).toBe("Please sign in, not logins.");
+    expect(replaceTerms(text, hits).split("\n").slice(1, 5).join("\n")).toBe(text.split("\n").slice(1, 5).join("\n"));
+  });
+
+  it("says how the book is arranged: parts, numbering by the contents, citations by the references, what other roles say (once, no repeats)", async () => {
+    const w = shelf({ system: "authorYear" });
+    const lines = await arrangementOf(w.ctx(null), "bk");
+    expect(lines[0]).toContain("前言");
+    expect(lines[0]).toContain("凡例");
+    expect(lines.some((l: string) => l.includes("第一章") && l.includes("附录 A"))).toBe(true);
+    expect(lines).toContain(ZH["conv.cite.authorYear"]);
+    expect(lines.filter((l: string) => l === "计价：移动加权平均。")).toHaveLength(1);
+    // Without contents and references: no such lines.
+    const bare = world([["bk", k("book"), "书", null], ["p", k("page"), "一", "bk", { text: "" }]]);
+    const l2 = await arrangementOf(bare.ctx(null), "bk");
+    expect(l2).toHaveLength(1);
+  });
+
+  it("the page: text, the two tables to fill in, the arrangement; reading shows the tables as tables", async () => {
+    const w = shelf();
+    const { pages } = registry(plugin);
+    const edit = await pages.conventions.render({ ...w.ctx("cv"), params: { "view.mode": "edit" } });
+    checkView(edit.view);
+    const tables = edit.view.find((n: any) => n.id === "tables");
+    expect(tables.fields.map((f: any) => [f.bind, f.kind])).toEqual([["body.terms", "rows"], ["body.symbols", "rows"]]);
+    expect(edit.view.find((n: any) => n.id === "arrangement").text).toContain(ZH["conv.arrangement"]);
+    const read = await pages.conventions.render({ ...w.ctx("cv"), params: { "view.mode": "read" } });
+    expect(read.view.find((n: any) => n.id === "termsTable").rows[0]).toEqual(["资料库", "数据库", ""]);
+    const embed = await registry(plugin).kinds.conventions.embed(w.ctx("cv"), {});
+    expect(embed.view.map((n: any) => n.id)).toEqual(["embed", "termsTitle", "termsTable", "symbolsTitle", "symbolsTable", "arrangement"]);
+  });
+
+  it("checks the book against it and proposes one change per page", async () => {
+    const w = shelf();
+    const { actions } = registry(plugin);
+    const r = await actions.checkConventions(w.ctx("cv"), {});
+    expect(r.output.rows.map((x: any[]) => [x[0], x[1], x[3], x[4]])).toEqual([
+      ["前言", 1, "资料库", "数据库"],
+      ["第一章 一", 1, "资料库", "数据库"],
+      ["第一章 一", 1, "资料", "数据"],
+      ["第一章 一", 6, "Login", "sign in"],
+    ]);
+    expect(r.output.rows[0][2]).toBe("本书的【资料库】");
+    expect(r.summary.message).toBe(ZH["conv.found"].replace("{count}", "4").replace("{pages}", "2"));
+    const create = vi.fn(async () => ({ id: "prop1" }));
+    const out = await actions.proposeConventions({ ...w.ctx("cv"), host: { ...w.host, proposals: { create } } }, {});
+    expect(out.output).toMatchObject({ type: "link", target: "resource:prop1" });
+    const p = (create.mock.calls[0] as any[])[0];
+    expect(p.title).toBe(ZH["conv.fixTitle"]);
+    expect(p.items.map((i: any) => i.id)).toEqual(["pf", "c1"]);
+    expect(p.items[0]).toMatchObject({ op: "update", changes: { "body.text": "本书的数据库" } });
+    expect(p.comment).toContain("资料库 → 数据库");
+    // No table of words: nothing to check.
+    w.res.get("cv")!.body.terms = [];
+    expect((await actions.checkConventions(w.ctx("cv"), {})).summary.message).toBe(ZH["conv.noTerms"]);
+  });
+
+  it("AI gets the conventions with the contents, and the places with book_check", async () => {
+    const w = shelf();
+    const { actions } = registry(plugin);
+    const en = { ...w.ctx(null), locale: "en-US" };
+    const d = data(await actions.aiContents(en, { book: "bk" }));
+    expect(d.conventions).toMatchObject({ id: "cv", text: "一、不用“资料库”。", symbols: [{ symbol: "〔〕", meaning: "补字" }] });
+    expect(d.conventions.terms).toHaveLength(3);
+    expect(d.roles.conventions).toBe(EN["ai.role.conventions"]);
+    const c = data(await actions.aiCheck(en, { book: "c1" }));
+    expect(c.places.map((p: any) => p.found)).toEqual(["资料库", "资料库", "资料", "Login"]);
+    expect(manifest.contributes.aiTools.map((x: any) => x.name)).toContain("book_check");
+  });
+
+  it("a new conventions page starts from a skeleton", async () => {
+    const w = world([["bk", k("book"), "书", null], ["cv", k("conventions"), "凡例", "bk", {}]]);
+    const update = vi.fn(async () => ({ rev: 2 }));
+    const { events } = registry(plugin);
+    await events["resource.changed"]({ ...w.ctx(null), host: { ...w.host, resources: { ...w.host.resources, update } } }, { id: "cv", kind: k("conventions"), change: "created" });
+    expect(update).toHaveBeenCalledWith("cv", { "body.text": ZH["conv.skeleton"] });
   });
 });

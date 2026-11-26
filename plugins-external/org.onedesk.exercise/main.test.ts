@@ -407,3 +407,14 @@ describe("answers held back, released by the teacher (D487 §21)", () => {
     expect(t.calls[0][2]).toEqual({ resource: "cp" });
   });
 });
+
+describe("what the book's conventions say of exercises (D487 §31.6)", () => {
+  it("practice, tests and answers each say one thing; questions nothing", async () => {
+    const { actions } = registry(plugin);
+    const say = async (kind: string) => (await actions.conventions({ t, locale: "zh-CN", resource: { id: "x", kind: `org.onedesk.exercise:${kind}`, body: {} } }, {})).data.lines;
+    expect(await say("practice")).toEqual([ZH["conv.practice"]]);
+    expect(await say("test")).toEqual([ZH["conv.test"]]);
+    expect(await say("answers")).toEqual([ZH["conv.answers"]]);
+    expect(await say("question")).toEqual([]);
+  });
+});

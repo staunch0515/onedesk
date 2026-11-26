@@ -67,5 +67,7 @@
   "col.document": "文書",
   "col.state": "状態",
   "item.required": "（必須）",
-  "sign.saveFirst": "先に保存してください（⌘S）。署名するのは保存した内容です。"
+  "sign.saveFirst": "先に保存してください（⌘S）。署名するのは保存した内容です。",
+  "conv.document": "文書はテンプレートに従って書きます。署名後は変更できません。改訂には理由が必要です。無効にしたものはそのまま残します。",
+  "action.conventions": "凡例"
 }

@@ -36,6 +36,8 @@ export const OWN_ROLES = {
   figures: { role: "figures", part: "front", single: true, container: false, numbering: "none" },
   // D487 §21
   colophon: { role: "colophon", part: "front", single: true, container: false, numbering: "none" },
+  // D487 §31
+  conventions: { role: "conventions", part: "front", single: true, container: false, numbering: "none" },
 };
 
 /** A group (篇, 章) and any resource that says nothing: body, numbered by depth, what is below it read too. */

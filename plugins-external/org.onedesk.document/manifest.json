@@ -15,7 +15,8 @@
     "onedesk.book/1": {
       "actions": [
         "roles",
-        "outline"
+        "outline",
+        "conventions"
       ],
       "kind": "document",
       "kinds": [
@@ -27,7 +28,8 @@
   "exports": {
     "actions": [
       "roles",
-      "outline"
+      "outline",
+      "conventions"
     ]
   },
   "contributes": {
@@ -197,6 +199,11 @@
       {
         "id": "outline",
         "label": "action.outline",
+        "output": "none"
+      },
+      {
+        "id": "conventions",
+        "label": "action.conventions",
         "output": "none"
       }
     ],

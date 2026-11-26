@@ -189,5 +189,11 @@
   "reopen.later": "Something later is posted already.",
   "reopen.done": "{month} is open again.",
   "export.pickFolder": "Choose a folder to export to, then export again.",
-  "export.done": "Exported to {path}"
+  "export.done": "Exported to {path}",
+  "conv.method.moving": "Stock is costed by moving average.",
+  "conv.method.fifo": "Stock is costed first in, first out.",
+  "conv.decimals": "Quantities keep {qty} decimals, amounts {amount}.",
+  "conv.numbers": "Vouchers are numbered RK (receipt), CK (issue), PD (stocktake), then year and month and a running number, e.g. RK-202611-001.",
+  "conv.closed": "A closed month takes no more vouchers; a voucher posted by mistake is reversed in red, never erased.",
+  "action.conventions": "Conventions"
 }

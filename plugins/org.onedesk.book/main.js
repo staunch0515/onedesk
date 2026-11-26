@@ -12,7 +12,8 @@ import { bookOf, contentsOf, contentsOfBook, embedToc, entriesOf, exportBook, re
 import { citeLabels, embedReference, embedReferences, renderReference, renderReferences } from "./references.js";
 import { embedIndex, renderIndex } from "./index.js";
 import { embedFigures, renderFigures } from "./figures.js";
-import { aiContents, aiPage, aiRefs } from "./ai.js";
+import { aiCheck, aiContents, aiPage, aiRefs } from "./ai.js";
+import { checkAction, embedConventions, onConventionsCreated, proposeAction, renderConventions } from "./conventions.js";
 import { colophonEvent, embedColophon, printAction, publishAction, renderColophon, reprintAction } from "./colophon.js";
 
 const NONE = { type: "none" };
@@ -31,6 +32,8 @@ export default {
     host.kinds.handle("figures", { embed: embedFigures });
     // D487 §21
     host.kinds.handle("colophon", { embed: embedColophon });
+    // D487 §31
+    host.kinds.handle("conventions", { embed: embedConventions });
 
     host.pages.handle("book", { render: renderBook });
     host.pages.handle("cover", { render: renderCover });
@@ -48,6 +51,13 @@ export default {
     host.pages.handle("index", { render: renderIndex });
     host.pages.handle("figures", { render: renderFigures });
     host.pages.handle("colophon", { render: renderColophon, onEvent: colophonEvent });
+    host.pages.handle("conventions", {
+      render: (ctx) => renderConventions(ctx, renderText),
+      onEvent(ctx, event) {
+        if (event !== "toggle") throw new Error(`unknown event ${event}`);
+        return toggleText(ctx);
+      },
+    });
 
     host.actions.handle("export", exportBook);
     host.actions.handle("publish", publishAction);
@@ -99,7 +109,14 @@ export default {
     host.actions.handle("aiContents", aiContents);
     host.actions.handle("aiPage", aiPage);
     host.actions.handle("aiRefs", aiRefs);
+    host.actions.handle("aiCheck", aiCheck);
+    // D487 §31
+    host.actions.handle("checkConventions", checkAction);
+    host.actions.handle("proposeConventions", proposeAction);
 
-    host.events.on("resource.changed", onBookCreated);
+    host.events.on("resource.changed", async (ctx, event) => {
+      await onBookCreated(ctx, event);
+      await onConventionsCreated(ctx, event);
+    });
   },
 };

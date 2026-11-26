@@ -37,7 +37,8 @@
         "reference",
         "index",
         "figures",
-        "colophon"
+        "colophon",
+        "conventions"
       ]
     }
   },
@@ -270,6 +271,28 @@
         "draggable": true,
         "accepts": [],
         "embed": true
+      },
+      {
+        "id": "conventions",
+        "label": "kind.conventions",
+        "icon": "list-checks",
+        "tree": "resources",
+        "page": "conventions",
+        "newName": "kind.conventions.new",
+        "defaults": {
+          "text": "",
+          "terms": [],
+          "symbols": []
+        },
+        "draggable": true,
+        "accepts": [],
+        "embed": true,
+        "fields": {
+          "text": {
+            "type": "longtext",
+            "refs": true
+          }
+        }
       }
     ],
     "pages": [
@@ -490,6 +513,56 @@
             "icon": "file-text"
           }
         ]
+      },
+      {
+        "id": "conventions",
+        "recompute": true,
+        "actions": [
+          {
+            "id": "toggle",
+            "role": "event",
+            "label": "action.toggle",
+            "icon": "book-open",
+            "shortcut": [
+              "Mod",
+              "Shift",
+              "R"
+            ]
+          },
+          {
+            "id": "check",
+            "role": "run",
+            "action": "checkConventions",
+            "label": "action.conventions.check",
+            "icon": "spell-check"
+          },
+          {
+            "id": "propose",
+            "role": "run",
+            "action": "proposeConventions",
+            "label": "action.conventions.propose",
+            "icon": "git-pull-request"
+          },
+          {
+            "id": "save",
+            "role": "save",
+            "label": "action.save",
+            "icon": "save",
+            "primary": true,
+            "shortcut": [
+              "Mod",
+              "S"
+            ]
+          }
+        ],
+        "resultTabs": [
+          {
+            "id": "out",
+            "type": "output",
+            "label": "tab.conventions",
+            "icon": "list-checks"
+          }
+        ]
       }
     ],
     "actions": [
@@ -589,6 +662,37 @@
           "readOnly": true,
           "description": "ai.tool.refs"
         }
+      },
+      {
+        "id": "checkConventions",
+        "label": "action.conventions.check",
+        "icon": "spell-check",
+        "kinds": [
+          "conventions"
+        ],
+        "output": "table",
+        "saveFirst": true
+      },
+      {
+        "id": "proposeConventions",
+        "label": "action.conventions.propose",
+        "icon": "git-pull-request",
+        "kinds": [
+          "conventions"
+        ],
+        "output": "link",
+        "saveFirst": true
+      },
+      {
+        "id": "aiCheck",
+        "label": "action.ai.check",
+        "icon": "bot",
+        "output": "text",
+        "saveFirst": false,
+        "ai": {
+          "readOnly": true,
+          "description": "ai.tool.check"
+        }
       }
     ],
     "events": [
@@ -662,6 +766,25 @@
         "name": "book_refs",
         "description": "ai.tool.refs",
         "action": "aiRefs",
+        "freeQuery": false,
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "book": {
+              "type": "string",
+              "description": "The book's id (or any resource in it)"
+            }
+          },
+          "required": [
+            "book"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "book_check",
+        "description": "ai.tool.check",
+        "action": "aiCheck",
         "freeQuery": false,
         "inputSchema": {
           "type": "object",

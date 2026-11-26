@@ -20,7 +20,8 @@
       "actions": [
         "roles",
         "outline",
-        "entries"
+        "entries",
+        "conventions"
       ],
       "kind": "item",
       "kinds": [
@@ -39,7 +40,8 @@
     "actions": [
       "roles",
       "outline",
-      "entries"
+      "entries",
+      "conventions"
     ]
   },
   "contributes": {
@@ -381,6 +383,11 @@
       {
         "id": "entries",
         "label": "action.entries",
+        "output": "none"
+      },
+      {
+        "id": "conventions",
+        "label": "action.conventions",
         "output": "none"
       }
     ],

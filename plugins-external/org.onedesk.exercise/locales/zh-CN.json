@@ -169,5 +169,9 @@
   "answers.released": "已公布 {names} 的答案：第 {edition} 版第 {printing} 次印刷 — {path}",
   "state.awaiting": "等公布",
   "attempt.awaiting": "已交卷，等老师公布答案。",
-  "timing.release": "老师公布"
+  "timing.release": "老师公布",
+  "conv.practice": "练习在书上直接作答，当场判。",
+  "conv.test": "测验在自己的作答页上作答，交卷后判分。",
+  "conv.answers": "答案和讲解只在教师版。",
+  "action.conventions": "凡例"
 }

@@ -3,7 +3,7 @@
 // book). Its kinds play roles in books through the interface `onedesk.book/1`.
 // Runs in the sandbox: no console, timers or fetch; everything goes through ctx.host.
 
-import { NONE } from "./common.js";
+import { NONE, say } from "./common.js";
 import { copyTemplate, documentEvent, embedDocument, renderDocument } from "./doc.js";
 import { renderTemplate } from "./template-page.js";
 import { keepInOrder, placeInSeries, renderSeries, seriesEvent } from "./series.js";
@@ -20,6 +20,11 @@ export default {
 
     // `onedesk.book/1`.
     host.actions.handle("roles", async () => ({ output: NONE, data: ROLES }));
+    // D487 §31.6: what the book's conventions say of documents.
+    host.actions.handle("conventions", async (ctx) => {
+      const short = String((ctx.resource && ctx.resource.kind) || "").split(":").pop();
+      return { output: NONE, data: { lines: short === "document" || short === "series" ? [say(ctx, "conv.document")] : [] } };
+    });
     host.actions.handle("outline", async () => ({ output: NONE, data: { headings: [], figures: [], cites: [], terms: [] } }));
 
     host.events.on("resource.changed", async (ctx, event) => {

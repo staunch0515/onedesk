@@ -146,6 +146,12 @@ export default {
 
     // `onedesk.book/1`.
     host.actions.handle("roles", async () => ({ output: NONE, data: ROLES }));
+    // D487 §31.6: what the book's conventions say of practice, tests and answers.
+    host.actions.handle("conventions", async (ctx) => {
+      const short = String((ctx.resource && ctx.resource.kind) || "").split(":").pop();
+      const key = { practice: "conv.practice", test: "conv.test", answers: "conv.answers" }[short];
+      return { output: NONE, data: { lines: key ? [say(ctx, key)] : [] } };
+    });
     host.actions.handle("outline", async () => ({ output: NONE, data: { headings: [], figures: [], cites: [], terms: [] } }));
     host.actions.handle("entries", async (ctx, input) => ({ output: NONE, data: await lessonsEntries(ctx, input) }));
   },

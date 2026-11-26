@@ -67,5 +67,7 @@
   "col.document": "文书",
   "col.state": "状态",
   "item.required": "（必填）",
-  "sign.saveFirst": "先保存（⌘S）：签名签的是保存了的内容。"
+  "sign.saveFirst": "先保存（⌘S）：签名签的是保存了的内容。",
+  "conv.document": "文书照模板写；签名定稿后不能改；修订要写理由；作废的照原样保留。",
+  "action.conventions": "凡例"
 }

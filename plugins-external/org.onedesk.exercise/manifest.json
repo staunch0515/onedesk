@@ -20,7 +20,8 @@
       "actions": [
         "roles",
         "outline",
-        "entries"
+        "entries",
+        "conventions"
       ],
       "kind": "practice",
       "kinds": [
@@ -35,7 +36,8 @@
     "actions": [
       "roles",
       "outline",
-      "entries"
+      "entries",
+      "conventions"
     ]
   },
   "contributes": {
@@ -391,6 +393,11 @@
         ],
         "output": "text",
         "saveFirst": true
+      },
+      {
+        "id": "conventions",
+        "label": "action.conventions",
+        "output": "none"
       }
     ],
     "menus": {

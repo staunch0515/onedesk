@@ -261,3 +261,13 @@ describe("series and the book (D487 §23.6)", () => {
     for (const f of ["en-US", "ja-JP"]) expect(Object.keys(locale(f)).sort(), f).toEqual(Object.keys(ZH).sort());
   });
 });
+
+describe("what the book's conventions say of documents (D487 §31.6)", () => {
+  it("documents and series say how signing works; templates nothing", async () => {
+    const { actions } = registry(plugin);
+    const say = async (kind: string) => (await actions.conventions({ t, locale: "zh-CN", resource: { id: "x", kind: `org.onedesk.document:${kind}`, body: {} } }, {})).data.lines;
+    expect(await say("document")).toEqual([ZH["conv.document"]]);
+    expect(await say("series")).toEqual([ZH["conv.document"]]);
+    expect(await say("template")).toEqual([]);
+  });
+});

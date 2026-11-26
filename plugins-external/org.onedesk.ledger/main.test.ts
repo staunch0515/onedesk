@@ -229,3 +229,12 @@ describe("a stock ledger (D487 §27)", () => {
     for (const f of ["en-US", "ja-JP"]) expect(Object.keys(locale(f)).sort(), f).toEqual(Object.keys(ZH).sort());
   });
 });
+
+describe("what the book's conventions say of a ledger (D487 §31.6)", () => {
+  it("the setup page says the costing method, the decimals, the voucher numbers, closed months; other pages say nothing", async () => {
+    const ctx = (kind: string, body: Record<string, unknown>) => ({ t, locale: "zh-CN", resource: { id: "s", kind: `org.onedesk.ledger:${kind}`, body } });
+    const r = await P.actions.conventions(ctx("setup", { method: "fifo", qtyDecimals: 0, amountDecimals: 2 }), {});
+    expect(r.data.lines).toEqual([ZH["conv.method.fifo"], ZH["conv.decimals"].replace("{qty}", "0").replace("{amount}", "2"), ZH["conv.numbers"], ZH["conv.closed"]]);
+    expect((await P.actions.conventions(ctx("sheet", {}), {})).data.lines).toEqual([]);
+  });
+});

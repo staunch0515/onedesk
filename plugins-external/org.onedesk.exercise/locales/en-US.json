@@ -169,5 +169,9 @@
   "answers.released": "Released the answers of {names}: edition {edition}, printing {printing} — {path}",
   "state.awaiting": "Waiting for the answers",
   "attempt.awaiting": "Handed in; waiting for the teacher to release the answers.",
-  "timing.release": "When the teacher releases them"
+  "timing.release": "When the teacher releases them",
+  "conv.practice": "Practice pages are answered in the book and marked at once.",
+  "conv.test": "Tests are answered on their own answer sheet and marked when handed in.",
+  "conv.answers": "Answers and explanations are only in the teacher's edition.",
+  "action.conventions": "Conventions"
 }

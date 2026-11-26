@@ -67,5 +67,7 @@
   "col.document": "Document",
   "col.state": "State",
   "item.required": "(required)",
-  "sign.saveFirst": "Save it first (⌘S): a document is signed as it is saved."
+  "sign.saveFirst": "Save it first (⌘S): a document is signed as it is saved.",
+  "conv.document": "A document is written from its template; once signed it cannot be changed; revising it needs a reason; a void one is kept as it was.",
+  "action.conventions": "Conventions"
 }

@@ -189,5 +189,11 @@
   "reopen.later": "後の月が記帳済みです。",
   "reopen.done": "{month} の締めを解除しました。",
   "export.pickFolder": "書き出し先のフォルダを選んでから、もう一度書き出してください。",
-  "export.done": "{path} に書き出しました"
+  "export.done": "{path} に書き出しました",
+  "conv.method.moving": "在庫は移動平均法で評価します。",
+  "conv.method.fifo": "在庫は先入先出法で評価します。",
+  "conv.decimals": "数量は小数 {qty} 桁、金額は小数 {amount} 桁です。",
+  "conv.numbers": "伝票番号：入庫 RK、出庫 CK、棚卸 PD に年月と連番、例 RK-202611-001。",
+  "conv.closed": "締めた月は伝票を受け付けません。誤って記帳した伝票は赤伝で取り消し、削除しません。",
+  "action.conventions": "凡例"
 }

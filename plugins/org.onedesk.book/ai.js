@@ -7,6 +7,7 @@ import { outlineOf, TEXT_KINDS } from "./text-page.js";
 import { BOOK, contentsOfBook } from "./toc.js";
 import { entriesUnder, REFERENCES } from "./references.js";
 import { say } from "./words.js";
+import { checkForAi, conventionsForAi } from "./conventions.js";
 
 /** Longest text of one answer (the kernel cuts what is longer and says so). */
 const MAX_TEXT = 60000;
@@ -14,7 +15,7 @@ const MAX_TEXT = 60000;
 const out = (data) => ({ output: { type: "text", text: JSON.stringify(data, null, 1).slice(0, MAX_TEXT) } });
 
 /** The roles this book knows, each in a sentence: what the page is for and whether one edits it. */
-const ROLES = ["book", "cover", "toc", "preface", "body", "group", "afterword", "appendix", "references", "reference", "index", "figures", "colophon"];
+const ROLES = ["book", "cover", "toc", "preface", "body", "group", "afterword", "appendix", "references", "reference", "index", "figures", "colophon", "conventions"];
 
 function roleWords(ctx, used) {
   const words = {};
@@ -79,6 +80,8 @@ export async function aiContents(ctx, input) {
     others,
     roles: roleWords(ctx, used),
     figures: e.figures.map((f) => ({ type: f.type, number: f.number, caption: f.caption, page: f.item })),
+    // D487 §31: read and kept to before anything is written.
+    conventions: await conventionsForAi(ctx, book.id),
     how: say(ctx, "ai.how"),
   });
 }
@@ -156,4 +159,12 @@ export async function aiRefs(ctx, input) {
     broken: { links: links.filter((l) => l.broken).length, cites: cites.filter((c) => c.missing.length > 0).length },
     references: refsPage ? refsPage.id : null,
   });
+}
+
+/** `book_check` (D487 §31.5): the places that use a word the conventions say not to use. */
+export async function aiCheck(ctx, input) {
+  const id = input && typeof input.book === "string" ? input.book : "";
+  const book = id ? await bookFor(ctx, id) : null;
+  if (!book) return notABook(ctx);
+  return out({ book: { id: book.id, name: book.name }, ...(await checkForAi(ctx, book.id)) });
 }

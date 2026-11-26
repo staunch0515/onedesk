@@ -189,5 +189,11 @@
   "reopen.later": "后面的月份已经记了账。",
   "reopen.done": "{month} 已反结账。",
   "export.pickFolder": "先选一个导出的文件夹，再导出一次。",
-  "export.done": "已导出到 {path}"
+  "export.done": "已导出到 {path}",
+  "conv.method.moving": "存货按移动加权平均法计价。",
+  "conv.method.fifo": "存货按先进先出法计价。",
+  "conv.decimals": "数量保留 {qty} 位小数，金额保留 {amount} 位小数。",
+  "conv.numbers": "单号：入库 RK、出库 CK、盘点 PD，加年月和序号，如 RK-202611-001。",
+  "conv.closed": "结账的月份不再收单据；记错的单据用红字冲销，不删除。",
+  "action.conventions": "凡例"
 }
