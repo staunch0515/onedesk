@@ -306,6 +306,12 @@ pub enum Command {
     Review { proposal: String, steps: Vec<ReviewStep>, body: JsonMap, summary: Value },
     /// D487 §33 (K18): the workspace's identity written (`None`: removed); audited as `op`.
     Identity { info: Option<onedesk_protocol::IdentityInfo>, op: String },
+    /// D487 §35 (K19): a letter received (its root, its pages as copies, its row), in one transaction.
+    ReceiveLetter(Box<crate::letters::LetterPlan>),
+    /// D487 §35 (K19): a letter sent (its row); audited as `op` with the file written.
+    Letter { row: Box<crate::letters::LetterRow>, op: String, path: String },
+    /// D487 §35 (K19): a reply taken (the last one of each recipient).
+    Reply { letter: String, from_key: String, from_name: String, payload: Value },
     /// Round 16: resources of one kind by external key, in one transaction; `others_missing`
     /// marks the kind's keyed resources not in `items` as missing (§3.3 `state`).
     Upsert { kind: String, items: Vec<UpsertItem>, others_missing: bool },
@@ -729,6 +735,17 @@ impl Writer {
                 Command::Upsert { kind, items, others_missing } => cx.upsert(&kind, items, others_missing)?,
                 Command::Propose(n) => cx.propose(n)?,
                 Command::Review { proposal, steps, body, summary } => cx.review(&proposal, steps, body, &summary)?,
+                Command::ReceiveLetter(plan) => cx.receive_letter(*plan)?,
+                Command::Letter { row, op, path } => {
+                    crate::letters::write_letter(cx.tx, &row).map_err(db_err)?;
+                    cx.audit(&op, &row.resource_id, &json!({ "letter": row.id, "to": row.to.len(), "pages": row.pages.len(), "path": path }))?;
+                    Outcome { changed: true, ..Default::default() }
+                }
+                Command::Reply { letter, from_key, from_name, payload } => {
+                    crate::letters::write_reply(cx.tx, &letter, &from_key, &from_name, &payload, cx.at).map_err(db_err)?;
+                    cx.audit("letter.replied", &letter, &json!({ "from": crate::identity::fingerprint(&from_key) }))?;
+                    Outcome { changed: true, ..Default::default() }
+                }
                 Command::Identity { info, op } => {
                     crate::identity::write_identity(cx.tx, info.as_ref()).map_err(db_err)?;
                     cx.audit(&op, "identity", &json!({ "fingerprint": info.as_ref().map(|i| i.fingerprint.clone()) }))?;
@@ -797,6 +814,9 @@ fn describe(cmd: &Command) -> (String, String) {
         Command::Propose(_) => ("proposal.create".into(), String::new()),
         Command::Review { proposal, .. } => ("proposal.review".into(), proposal.clone()),
         Command::Identity { op, .. } => (op.clone(), "identity".into()),
+        Command::ReceiveLetter(plan) => ("letter.receive".into(), plan.root.clone()),
+        Command::Letter { op, row, .. } => (op.clone(), row.resource_id.clone()),
+        Command::Reply { letter, .. } => ("letter.replied".into(), letter.clone()),
         Command::RebuildRefs => ("refs.rebuild".into(), String::new()),
         Command::SyncRefDecls => ("refs.sync".into(), String::new()),
         Command::Batch(cmds) => cmds

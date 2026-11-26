@@ -130,6 +130,7 @@ export function createMixedClient(kernel: KernelClient, mock: ProtocolClient): P
     proposal: kernel.proposal,
     identity: kernel.identity,
     contact: kernel.contact,
+    letter: kernel.letter,
     tree: {
       list: listTrees,
       children: (tree, parent, offset, locale) => (isDemoTree(tree) ? mock.tree.children(toMock({ tree }).tree, parent, offset, locale).then(fromMock) : kernel.tree.children(tree, parent, offset, locale)),

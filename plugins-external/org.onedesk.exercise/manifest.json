@@ -30,6 +30,14 @@
         "lessons",
         "answers"
       ]
+    },
+    "onedesk.letter/1": {
+      "actions": [
+        "tasks",
+        "todo",
+        "reply"
+      ],
+      "kind": "test"
     }
   },
   "exports": {
@@ -37,7 +45,10 @@
       "roles",
       "outline",
       "entries",
-      "conventions"
+      "conventions",
+      "tasks",
+      "todo",
+      "reply"
     ]
   },
   "contributes": {
@@ -398,6 +409,21 @@
         "id": "conventions",
         "label": "action.conventions",
         "output": "none"
+      },
+      {
+        "id": "tasks",
+        "label": "action.letter.tasks",
+        "output": "none"
+      },
+      {
+        "id": "todo",
+        "label": "action.letter.todo",
+        "output": "none"
+      },
+      {
+        "id": "reply",
+        "label": "action.letter.reply",
+        "output": "none"
       }
     ],
     "menus": {
@@ -417,7 +443,8 @@
       "ja-JP": "locales/ja-JP.json"
     },
     "events": [
-      "resource.changed"
+      "resource.changed",
+      "letter.reply"
     ]
   },
   "depends": [

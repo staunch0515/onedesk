@@ -71,7 +71,8 @@ export function timingOf(body) {
 
 /** Whether a question entry has its answers held back (a read-only copy without them). */
 export function heldBack(res) {
-  return Boolean(res && res.copy && typeof (res.body || {}).answers !== "string");
+  // A read-only copy: a published edition (`copy`), or a page that came in a letter (D487 §35; `origin`).
+  return Boolean(res && (res.copy || res.origin === "subscribed") && typeof (res.body || {}).answers !== "string");
 }
 
 /**

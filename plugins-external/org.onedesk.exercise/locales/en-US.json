@@ -173,5 +173,12 @@
   "conv.practice": "Practice pages are answered in the book and marked at once.",
   "conv.test": "Tests are answered on their own answer sheet and marked when handed in.",
   "conv.answers": "Answers and explanations are only in the teacher's edition.",
-  "action.conventions": "Conventions"
+  "action.conventions": "Conventions",
+  "action.letter.tasks": "What can be asked",
+  "action.letter.todo": "Whether it is done",
+  "action.letter.reply": "What goes back",
+  "letter.task.answer": "Answer",
+  "letter.score": "Handed in, {score}/{total}",
+  "letter.folder": "Answers by letter",
+  "letter.attemptName": "{who} · {name}"
 }

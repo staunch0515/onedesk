@@ -118,7 +118,7 @@ test("A publishes; B sees who signed it; a changed package is refused", async ({
   await expect.poll(() => readdirSync(out).filter((f) => f.endsWith(".odpack")).length, { timeout: 30_000 }).toBe(2);
 
   await openKernel(page, b);
-  await settings(page, "Import resource package…");
+  await settings(page, "Import file…");
   await page.getByRole("textbox", { name: "Package file" }).fill(student);
   await page.getByRole("button", { name: "Look inside" }).click();
   await expect(page.getByText("Signed by Teacher Zhang (checked)")).toBeVisible({ timeout: 15_000 });
@@ -134,7 +134,7 @@ test("A publishes; B sees who signed it; a changed package is refused", async ({
   const changed = Buffer.from(s.slice(0, i) + "Birds run." + s.slice(i + "Birds fly.".length), "latin1");
   const forged = path.join(out, "forged.odpack");
   writeFileSync(forged, fixCrc(changed));
-  await settings(page, "Import resource package…");
+  await settings(page, "Import file…");
   await page.getByRole("textbox", { name: "Package file" }).fill(forged);
   await page.getByRole("button", { name: "Look inside" }).click();
   await expect(page.getByText("The package was changed after it was signed. It cannot be imported.")).toBeVisible({ timeout: 15_000 });

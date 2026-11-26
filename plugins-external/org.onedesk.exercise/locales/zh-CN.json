@@ -173,5 +173,12 @@
   "conv.practice": "练习在书上直接作答，当场判。",
   "conv.test": "测验在自己的作答页上作答，交卷后判分。",
   "conv.answers": "答案和讲解只在教师版。",
-  "action.conventions": "凡例"
+  "action.conventions": "凡例",
+  "action.letter.tasks": "能要人做什么",
+  "action.letter.todo": "做了没有",
+  "action.letter.reply": "交回什么",
+  "letter.task.answer": "作答",
+  "letter.score": "已交卷，{score}/{total}",
+  "letter.folder": "收到的作答",
+  "letter.attemptName": "{who} · {name}"
 }

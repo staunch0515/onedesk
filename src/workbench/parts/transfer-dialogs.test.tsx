@@ -169,3 +169,54 @@ describe("resource packages (D487 §21)", () => {
     expect(importFn).not.toHaveBeenCalled();
   });
 });
+
+describe("letters (D487 §35)", () => {
+  const letterInfo = (over: Record<string, unknown> = {}) => ({
+    kind: "letter",
+    subject: "Homework 1",
+    comment: "By Friday.",
+    due: "2099-12-01",
+    tasks: 1,
+    pages: 1,
+    from: { name: "Teacher Zhang", fingerprint: "AAAA BBBB CCCC DDDD EEEE FFFF 0000 1111", known: "checked" },
+    fromName: "Teacher Zhang",
+    sentAt: 1_700_000_000_000,
+    inReplyTo: null,
+    refused: null,
+    places: [{ id: "in1", name: "Letters received" }, { id: "in2", name: "Class inbox" }],
+    ...over,
+  });
+  function letterSetup(i: Record<string, unknown>) {
+    const receive = vi.fn(async () => ({ resource: "L1" }));
+    const base = createMockClient({ fresh: true, quiet: true });
+    const client = kernelLikeClient(base, { letter: { inspect: vi.fn(async () => i as never), receive } });
+    const { store } = renderInShell(client, <TransferDialogs />);
+    return { receive, store, client };
+  }
+
+  it("a letter file: who signed it, what is asked, by when; it goes where the user chooses", async () => {
+    const { receive, store, client } = letterSetup(letterInfo());
+    await act(async () => inspectPackage(client, store, "/p/Homework 1.odletter"));
+    expect(await screen.findByText("Letter: Homework 1")).toBeTruthy();
+    expect(screen.getByText("Signed by Teacher Zhang (checked)")).toBeTruthy();
+    expect(screen.getByText("Due: 2099-12-01")).toBeTruthy();
+    expect(screen.getByText("By Friday.")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Take it" }));
+    await waitFor(() => expect(receive).toHaveBeenCalledWith("/p/Homework 1.odletter", "in1"));
+  });
+
+  it("a reply names the letter it answers; one not for you says so and takes nothing", async () => {
+    const r = letterSetup(letterInfo({ kind: "reply", inReplyTo: "Homework 1", subject: "Homework 1" }));
+    await act(async () => inspectPackage(r.client, r.store, "/p/r.odletter"));
+    expect(await screen.findByText("Reply to “Homework 1”")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Take the reply" }));
+    await waitFor(() => expect(r.receive).toHaveBeenCalledWith("/p/r.odletter", undefined));
+  });
+
+  it("refused: why, and nothing taken", async () => {
+    const r = letterSetup(letterInfo({ refused: "notForYou" }));
+    await act(async () => inspectPackage(r.client, r.store, "/p/x.odletter"));
+    expect(await screen.findByText("This letter is not addressed to you.")).toBeTruthy();
+    expect((screen.getByRole("button", { name: "Take it" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+});

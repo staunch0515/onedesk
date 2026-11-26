@@ -33,6 +33,7 @@ pub const MIGRATIONS: &[(&str, &str)] = &[
     ("0017_copies", include_str!("../migrations/0017_copies.sql")),
     ("0018_stamps", include_str!("../migrations/0018_stamps.sql")),
     ("0019_identity", include_str!("../migrations/0019_identity.sql")),
+    ("0020_letters", include_str!("../migrations/0020_letters.sql")),
 ];
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

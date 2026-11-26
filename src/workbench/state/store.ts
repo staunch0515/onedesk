@@ -8,6 +8,7 @@ import type { MergeState, Values } from "./merge";
 import type { Notice } from "./notices";
 import type { CommandContext, ConfirmChoice, ImportPreview, InstallPreview, Label } from "../protocol/types";
 import type { PackageInfo } from "../protocol/generated";
+import type { LetterInfo } from "../protocol/client";
 
 export interface TabState {
   id: string;
@@ -74,7 +75,8 @@ export type TransferState =
   | { stage: "import-path" }
   | { stage: "import-preview"; folder: string; preview: ImportPreview }
   | { stage: "package-path" }
-  | { stage: "package-preview"; path: string; info: PackageInfo };
+  | { stage: "package-preview"; path: string; info: PackageInfo }
+  | { stage: "letter-preview"; path: string; info: LetterInfo };
 
 /**
  * A command that asked to be confirmed before it runs again with `confirmed: true` (D428). With `choices` the user picks one

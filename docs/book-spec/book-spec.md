@@ -427,6 +427,13 @@ AI 读一本书的顺序：先读凡例（如果有）和目录（每项的编�
 
 ---
 
+### 12.3 寄出和回件（OneDesk 的做法，可选）
+
+- **来件**（`.odletter`）和资源包同一种 zip 格式（§9），`variant` 是 `letter`，多一项 `letter`：`id`、`subject`（事由）、`comment`（附言）、`due`（期限）、`to`（收件人的指纹，空 = 谁都可以收）、`tasks`（`[{ page, task, label }]`：要哪一页做什么）、`pages`（来件里每页的编号 → 寄出处的编号）。来件里的编号是来件自己的（由来件编号和原编号算出），寄出处的编号只在 `pages` 里；保留字段按学生版的规矩（§11），指纹用来件里的编号算。
+- **回件**：`variant` 是 `reply`，没有资源，`letter` 里是 `inReplyTo`（回的哪份来件的 `id`）和 `reply`：`{ pages: [{ page（寄出处的编号）, task, data, summary }], response }`。
+- 来件和回件都**必须**按 §9.4 签名；读的程序**必须**拒绝签名不对的、收件人不是自己的来件，以及发件人没寄过、或者不是收件人回的回件。
+- 能对一页要求什么、回件里交回什么，由担当那一页的角色决定（接口 `onedesk.letter/1`：`tasks`、`todo`、`reply`）；回件到了，由那一页的插件处理（事件 `letter.reply`）。
+
 ## 13. 可执行的书（可选部分）
 
 实现这一部分的程序称“支持可执行的书”。
@@ -507,4 +514,5 @@ AI 读一本书的顺序：先读凡例（如果有）和目录（每项的编�
 | 运行一个资源 | 内核 `runcall.rs`（K14） |
 | 修订提案、某个版本 | 内核 `proposals.rs`（K16、K17）；对照在外壳的 `DiffView`；AI 读书的工具在书插件 `ai.js` |
 | 身份、身份卡、签名 | 内核 `identity.rs`（K18）；签章的签名在 `stamps.rs`，资源包的签名在 `packages.rs` |
+| 寄出和回件 | 内核 `letters.rs`（K19）；收文簿、发文簿、发件、来件在插件 `org.onedesk.inbox` |
 | 设计和决定 | `docs/redesign/book.md`、`docs/decisions.md` D487 |

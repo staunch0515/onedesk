@@ -19,6 +19,7 @@ function fakeKernel(): KernelClient {
     search: { query: async () => [{ target: "resource:k1", title: "kernel hit", icon: "file", subtitle: "", state: "ok" }] },
     mcp: { status: async () => ({ enabled: false, ratePerMinute: 30, maxRows: 200, allowFreeQuery: false, allowProposals: false, tools: 4 }) },
     identity: { get: async () => null, create: async () => ({}) as never, update: async () => ({}) as never, delete: async () => undefined, exportCard: async () => undefined },
+    letter: { inspect: async () => ({}) as never, receive: async () => ({ resource: "r" }) },
     contact: { importCard: async () => ({ id: "c", created: true }), setChecked: async () => undefined, exportCard: async () => undefined },
     proposal: { get: async () => ({}) as never, review: async () => ({}) as never, withdraw: async () => ({}) as never, count: async () => ({ pending: 0, ids: [] }), create: async () => ({ id: "p" }) },
     audit: { list: async () => [], facets: async () => ({ actors: [], operations: [] }) },

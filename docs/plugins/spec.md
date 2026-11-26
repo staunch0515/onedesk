@@ -315,7 +315,7 @@
 |---|---|
 | `locales` | `{ "en-US": "locales/en-US.json", "zh-CN": "locales/zh-CN.json" }`。写了就必须有 `en-US`（`localeMissing`）；每个文件必须存在于包内且是 `{ "键": "文字" }` 的平面 JSON（`badLocale`）。见 §8 |
 | `languages` | 语言包插件专用：`[{ "locale", "name", "shell": "shell/<locale>.json" }]`，翻译外壳自己的文字。最多 64 个；`locale` 是 BCP 47（字母数字和 `-`，≤ 35）；`name` 非空 ≤ 100 字；`shell` 是包内 `.json` 文件；不得重复。违反 `badLanguages`。参考 `org.onedesk.lang.zh-cn` |
-| `events` | 订阅的事件，只能是 `resource.changed`、`run.ended`，不得重复（`badEvents`）。用 `host.events.on` 注册处理函数 |
+| `events` | 订阅的事件，只能是 `resource.changed`、`run.ended`、`letter.received`、`letter.replied`、`letter.reply`（D487 §35），不得重复（`badEvents`）。用 `host.events.on` 注册处理函数 |
 | `resultActions` | 加到别的运行结果区的按钮：`{ id, label, icon?, outputTypes, action }`；`outputTypes` 非空不重复（`table`/`text`/`link`/`none`）；`action` 必须是自己的**不带 `kinds`** 的动作。违反 `badResultActions`。被点时动作的 `input.runId` 是那次运行，只有这次点击期间能 `runs.read` 它（D439） |
 
 ### 4.9 给外部 AI 客户端（MCP）的动作：`actions[].ai` 与 `aiTools`
@@ -574,6 +574,14 @@ export default {
 | `kinds()` | → `[{ kind, label, icon }]` | 需 `requires.resources`；资源树里能有的所有类型（已启用的插件，`kind` 是全名，`label` 是 Label），供“按类型”的条件让用户勾选，不要让用户手写类型全名（D477） |
 
 插件拿到的资源还带 `externalKey` 和 `missing`。
+
+**`host.letters`**（D487 §35，K19；要 `requires.resources`）：
+- `write(root, { pages, to, subject, comment, due, tasks, rootKind, path })` → `{ path, letter }`：把自己类型的 `root` 和附上的 `pages`（各带它下面的子树）写成签了名的来件（`.odletter`）到授权的文件夹（要 `requires.files`），收件人 `to` 是联系人的编号或指纹（空 = 谁都可以收）；`root` 若是收到的来件，则 `{ reply: { pages: [{ page, task, data, summary }], response }, path }` 写回件。只在用户的操作里；工作区没有身份时 `invalid/noIdentity`。
+- `info(id)` → 一份来件或发件（按它的资源或它下面的任何资源找）：方向、对方（签名者）、收件人、事由、附言、期限、要做的事、页的对照；发件还有收到的回件。
+- `contacts()` → 通讯录：`[{ id, name, fingerprint, checked }]`。
+- 类型的清单字段 `letters: true`：这种资源收信（收下的来件放在它下面）。
+- 事件：`letter.received` `{ letter, parent }`（给收信那种类型的插件）、`letter.replied` `{ letter, from, response }`（给发件那种类型的插件）、`letter.reply` `{ letter, page, task, data, summary, from }`（给那一页的插件：回件里交回给它的东西）。
+- 接口 `onedesk.letter/1`（`org.onedesk.inbox` 用，各角色实现）：`tasks` → `{ tasks: [{ task, label }] }`、`todo`（输入 `{ task }`）→ `{ state: "todo" | "done", summary }`、`reply`（输入 `{ task }`）→ `{ data, summary }`。参考 `org.onedesk.exercise` 的 `letters.js`、`org.onedesk.document` 的 `signoff.js`。
 
 **`host.proposals.create({ title, comment?, items })`** → `{ id }`（D487 §29，K16）：提出一份修订提案，交给用户在“待审的修改”里逐项接受或拒绝；不写任何别的资源。`items` 每项是 `{ op: "update", id, rev?, changes }`、`{ op: "create", kind, parent?, before?, name, values? }` 或 `{ op: "delete", id, rev? }`；只能改名字、说明、标签和页面上可编辑的文字字段（不能碰密钥、保留字段，不能改签了章的、只读副本里的）；最多 50 项。需 `requires.resources`；只在用户的操作里（页面事件、命令、运行），不能在事件处理函数、纯计算、AI 的运行里。比如 AI 工作台把一次回答里的多页修改变成一份提案。
 

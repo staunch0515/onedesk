@@ -6,6 +6,7 @@
 import { allWords, bodyNow, enteredOf, full, levelsOf, say, str } from "./common.js";
 import { checkValues, fieldKind, itemsOf, outOfRange, replaceItems, shown, valuesOf, withValues } from "./items.js";
 import { filled, holeValues } from "./template.js";
+import { signoff, signoffNodes } from "./signoff.js";
 
 export const DOCUMENT = full("document");
 export const TEMPLATE = full("template");
@@ -71,7 +72,7 @@ function statusLine(ctx, st) {
   return `${parts.join("　")}　${say(ctx, "status.waiting", { level: st.next })}`;
 }
 
-async function signerField(ctx) {
+export async function signerField(ctx) {
   const f = { name: "signer", label: ctx.t("field.signer"), kind: "text", param: true };
   try {
     const found = await ctx.host.params.get(say(ctx, "env.signer"));
@@ -85,7 +86,7 @@ async function signerField(ctx) {
   return f;
 }
 
-export async function renderDocument(ctx) {
+async function renderDocumentCore(ctx) {
   const res = ctx.resource || {};
   const body = bodyNow(ctx);
   const templateField = { name: "template", label: ctx.t("field.template"), kind: "ref", kinds: ["template"], bind: "body.template" };
@@ -137,7 +138,7 @@ export async function renderDocument(ctx) {
   return { view };
 }
 
-async function signerOf(ctx) {
+export async function signerOf(ctx) {
   const typed = str(ctx.params && ctx.params.signer).trim();
   if (typed) return typed;
   const { values } = await holeValues(ctx, [say(ctx, "env.signer")]);
@@ -208,7 +209,15 @@ async function voidIt(ctx) {
   return { message: ctx.t("void.done") };
 }
 
+/** The document's page; D487 §35: with the reviews that came back, and, in a letter that asks for one, the review. */
+export async function renderDocument(ctx) {
+  const out = await renderDocumentCore(ctx);
+  out.view.push(...(await signoffNodes(ctx, signerField)));
+  return out;
+}
+
 export async function documentEvent(ctx, event) {
+  if (event === "signoff") return signoff(ctx, signerOf);
   if (event === "toggle") {
     if (stateOf(ctx, ctx.resource).stamps.length > 0) return { message: ctx.t("sign.locked") };
     const next = ctx.params && ctx.params["view.mode"] === "source" ? "fill" : "source";

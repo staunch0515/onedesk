@@ -271,3 +271,74 @@ describe("what the book's conventions say of documents (D487 §31.6)", () => {
     expect(await say("template")).toEqual([]);
   });
 });
+
+describe("review by letter (D487 §35.6)", () => {
+  // @ts-ignore
+  const sign = () => import("./signoff.js");
+  function rw(opts: { signoffs?: any[]; letter?: any; origin?: string } = {}) {
+    const made: any[] = [];
+    const stamps: any[] = [];
+    const host = {
+      resources: {
+        async list(o: { kind: string; parent?: string }) {
+          return (opts.signoffs ?? []).filter((s) => o.parent === undefined || s.parentId === o.parent);
+        },
+        async get(id: string) {
+          return id === "d1" ? { id: "d1", kind: k("document"), name: "出院小结", body: {} } : null;
+        },
+        async create(spec: any) {
+          const r = { id: `n${made.length + 1}`, createdAt: 7, ...spec };
+          made.push(r);
+          return r;
+        },
+        async stamp(id: string, s: any) {
+          stamps.push({ id, ...s });
+          return {};
+        },
+      },
+      letters: {
+        async info() {
+          return opts.letter ?? null;
+        },
+      },
+      params: { async get() { return { found: true, value: "王主任", sourceName: "Default" }; } },
+    };
+    const ctx = (params: any = {}) => ({ t, locale: "zh-CN", host, params, resource: { id: "d1", kind: k("document"), name: "出院小结", origin: opts.origin ?? "subscribed", body: {} } });
+    return { ctx, made, stamps };
+  }
+  const letter = { dir: "in", resource: "L", tasks: [{ page: "d1", task: "sign", label: "审签" }] };
+
+  it("in a letter asking for it: the review form; reviewing makes a stamped record under the letter", async () => {
+    const s = await sign();
+    const w = rw({ letter });
+    const nodes = await s.signoffNodes(w.ctx(), async () => ({ name: "signer", label: "签名人", kind: "text", param: true }));
+    expect(nodes.find((n: any) => n.id === "review").fields.map((f: any) => f.name)).toEqual(["agree", "opinion", "signer"]);
+    const r = await s.signoff(w.ctx({ agree: "disagree", opinion: "剂量要改" }), async () => "王主任");
+    expect(r.message).toBe(ZH["signoff.signed"].replace("{how}", "不同意"));
+    expect(w.made[0]).toMatchObject({ kind: "signoff", parent: "L", body: { document: "d1", agree: "disagree", comment: "剂量要改", signer: "王主任" } });
+    expect(w.stamps[0]).toMatchObject({ id: "n1", label: ZH["stamp.signoff"], signer: "王主任" });
+    // Not in a letter: nothing to review.
+    const alone = rw({ origin: "original" });
+    expect((await s.signoff(alone.ctx(), async () => "X")).message).toBe(ZH["signoff.notLetter"]);
+  });
+
+  it("what can be asked, whether it is done, what goes back; the sender's document lists the reviews", async () => {
+    const s = await sign();
+    const { actions, events } = registry(plugin);
+    const own = { id: "so", kind: k("signoff"), parentId: "L", createdAt: 9, body: { document: "d1", agree: "agree", comment: "同意出院", signer: "王主任" } };
+    const w = rw({ signoffs: [own], letter });
+    expect((await actions.tasks(w.ctx(), {})).data.tasks.map((x: any) => x.task)).toEqual(["sign", "read"]);
+    expect((await actions.todo(w.ctx(), { task: "sign" })).data).toEqual({ state: "done", summary: "同意" });
+    expect((await actions.reply(w.ctx(), { task: "sign" })).data).toEqual({ data: { agree: "agree", comment: "同意出院", signer: "王主任", at: 9 }, summary: "同意：同意出院" });
+    const empty = rw({ letter });
+    expect((await actions.todo(empty.ctx(), { task: "sign" })).data.state).toBe("todo");
+    expect((await actions.todo(empty.ctx(), { task: "read" })).data.state).toBe("done");
+    // The sender's side: a review came back.
+    const back = rw({ origin: "original" });
+    await events["letter.reply"](back.ctx(), { page: "d1", task: "sign", data: { agree: "agree", comment: "同意出院", signer: "王主任" }, from: { name: "王主任", fingerprint: "F", known: "checked" } });
+    expect(back.made[0]).toMatchObject({ kind: "signoff", parent: "d1", body: { agree: "agree", comment: "同意出院", from: { name: "王主任" } } });
+    const listed = rw({ origin: "original", signoffs: [{ ...back.made[0], parentId: "d1" }] });
+    const nodes = await s.signoffNodes(listed.ctx(), async () => ({}));
+    expect(nodes[0].text).toContain("王主任：同意——同意出院（签名有效，已核对）");
+  });
+});

@@ -2278,6 +2278,11 @@ pub mod method5 {
     pub const PROPOSAL_COUNT: &str = "proposal.count";
     /// D487 §29 (K17): `ResourceAtParams` → `ResourceAt`: a resource as it was at one revision.
     pub const RESOURCE_AT: &str = "resource.at";
+    /// D487 §35 (K19): `{ path }` → what a letter or reply file is, whether it may be taken, where a letter may go.
+    pub const LETTER_INSPECT: &str = "letter.inspect";
+    /// D487 §35 (K19): `{ path, parent? }` → `{ resource }`: a letter put under `parent` (a kind that takes letters), or
+    /// a reply taken by the letter it answers. The user's only.
+    pub const LETTER_RECEIVE: &str = "letter.receive";
     /// D487 §33 (K18): `{}` → `IdentityInfo | null`: this workspace's identity.
     pub const IDENTITY_GET: &str = "identity.get";
     /// D487 §33 (K18): `IdentityParams` (name required) → `IdentityInfo`: makes the identity (a new key pair).

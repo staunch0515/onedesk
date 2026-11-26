@@ -21,6 +21,7 @@ export interface KernelClient {
   proposal: NonNullable<ProtocolClient["proposal"]>;
   identity: NonNullable<ProtocolClient["identity"]>;
   contact: NonNullable<ProtocolClient["contact"]>;
+  letter: NonNullable<ProtocolClient["letter"]>;
   tree: Pick<ProtocolClient["tree"], "list" | "children" | "path" | "move" | "createGroup" | "rename">;
   resource: Pick<ProtocolClient["resource"], "get" | "delete" | "history" | "restore" | "listDeleted" | "undelete" | "purge" | "setFavorite" | "setAiVisible"> & { at: NonNullable<ProtocolClient["resource"]["at"]> };
   page: Pick<ProtocolClient["page"], "resolve" | "save" | "event">;
@@ -130,6 +131,10 @@ export async function createKernelClient(transport: Transport, locale?: () => st
       update: (params) => call<IdentityInfo>("identity.update", params),
       delete: async () => void (await call("identity.delete", {})),
       exportCard: async (path) => void (await call("identity.exportCard", { path })),
+    },
+    letter: {
+      inspect: (path) => call("letter.inspect", { path }),
+      receive: (path, parent) => call<{ resource: string }>("letter.receive", compact({ path, parent })),
     },
     contact: {
       importCard: (path) => call<ContactImportResult>("contact.importCard", { path }),

@@ -1,7 +1,8 @@
 import { useState } from "react";
-import { Badge, Banner, Button, Dialog, FormField, Input, Pane, Text, useToast } from "../../design";
+import { Badge, Banner, Button, Dialog, FormField, Input, Pane, Select, Text, useToast } from "../../design";
 import { useI18n } from "../i18n";
 import type { ProtocolClient } from "../protocol";
+import type { LetterInfo } from "../protocol/client";
 import { kernelErrorCode } from "../protocol/errors";
 import { signedByText } from "../pages/identity-page";
 import type { Actions } from "../state/context";
@@ -47,6 +48,11 @@ export async function startPackageImport(client: ProtocolClient, store: Store, a
 }
 
 export async function inspectPackage(client: ProtocolClient, store: Store, path: string): Promise<void> {
+  // D487 §35: a letter or a reply.
+  if (path.toLowerCase().endsWith(".odletter") && client.letter) {
+    const info = await client.letter.inspect(path);
+    return void store.set({ transfer: { stage: "letter-preview", path, info } });
+  }
   if (!client.workspace.packageInspect) return;
   const info = await client.workspace.packageInspect(path);
   store.set({ transfer: { stage: "package-preview", path, info } });
@@ -181,6 +187,7 @@ export function TransferDialogs() {
           ? [t("package.importTitle"), t("package.pathBody"), t("transfer.look")]
           : [t("transfer.importTitle"), t("transfer.importPathBody"), t("transfer.look")];
   const pkg = transfer?.stage === "package-preview" ? transfer.info : null;
+  const letter = transfer?.stage === "letter-preview" ? transfer.info : null;
 
   return (
     <>
@@ -336,8 +343,81 @@ export function TransferDialogs() {
           </Pane>
         )}
       </Dialog>
+
+      <LetterDialog letter={letter} path={transfer?.stage === "letter-preview" ? transfer.path : ""} busy={busy} run={run} close={close} />
     </>
   );
+}
+
+/** D487 §35: a letter (who, what about, by when, where it goes) or a reply (to which letter, from whom). */
+function LetterDialog({ letter, path, busy, run, close }: { letter: LetterInfo | null; path: string; busy: boolean; run: (work: () => Promise<void>) => Promise<void>; close: () => void }) {
+  const { client, actions } = useWorkbench();
+  const { t, dateTime } = useI18n();
+  const { toast } = useToast();
+  const [place, setPlace] = useState("");
+  const places = letter?.places ?? [];
+  const chosen = place || places[0]?.id || "";
+  const reply = letter?.kind === "reply";
+  return (
+    <Dialog
+      open={letter !== null}
+      onOpenChange={(open) => !open && close()}
+      size="md"
+      title={letter ? t(reply ? "letter.replyTitle" : "letter.title", { subject: letter.subject, letter: letter.inReplyTo ?? letter.subject }) : ""}
+      footer={
+        <>
+          <Button onClick={close}>{t("common.cancel")}</Button>
+          <Button
+            variant="primary"
+            loading={busy}
+            disabled={!letter || !!letter.refused}
+            onClick={() =>
+              void run(async () => {
+                if (!letter || !client.letter) return;
+                const r = await client.letter.receive(path, reply ? undefined : chosen);
+                toast({ tone: "success", title: t(reply ? "letter.replyDone" : "letter.done", { subject: letter.subject }) });
+                close();
+                actions.open(`resource:${r.resource}`);
+              })
+            }
+          >
+            {t(reply ? "letter.takeReply" : "letter.take")}
+          </Button>
+        </>
+      }
+    >
+      {letter && (
+        <Pane gap="md">
+          {letter.refused && <Banner tone="danger">{letterRefused(t, letter.refused)}</Banner>}
+          {letter.from ? (
+            <Pane gap="xs">
+              <Pane direction="row" gap="xs" align="center" wrap>
+                <Badge tone="success" icon="shield-check">{t("package.signed")}</Badge>
+                <Text size="sm">{signedByText(t, letter.from)}</Text>
+              </Pane>
+              <Text size="xs" tone="muted" mono>{letter.from.fingerprint}</Text>
+            </Pane>
+          ) : null}
+          <Text size="sm" tone="muted">{t("letter.sentAt", { at: dateTime(letter.sentAt) })}</Text>
+          {letter.comment && <Text as="p">{letter.comment}</Text>}
+          {!reply && <Text size="sm">{t("letter.what", { pages: letter.pages, tasks: letter.tasks })}</Text>}
+          {!reply && letter.due && <Text size="sm">{t("letter.due", { due: letter.due })}</Text>}
+          {!reply && places.length > 1 && (
+            <FormField label={t("letter.place")}>
+              <Select aria-label={t("letter.place")} value={chosen} onValueChange={setPlace} options={places.map((p) => ({ value: p.id, label: p.name }))} />
+            </FormField>
+          )}
+          {!reply && places.length === 1 && <Text size="sm" tone="muted">{t("letter.goesTo", { name: places[0]!.name })}</Text>}
+          <Text size="xs" tone="muted">{t("letter.plain")}</Text>
+        </Pane>
+      )}
+    </Dialog>
+  );
+}
+
+function letterRefused(t: ReturnType<typeof useI18n>["t"], reason: string): string {
+  const known = ["badSignature", "noIdentity", "ownPackage", "notForYou", "alreadyReceived", "noInbox", "noLetter", "notRecipient", "badPackage"];
+  return known.includes(reason) ? t(`letter.refused.${reason}` as "letter.refused.badSignature") : reason;
 }
 
 function refusedText(t: ReturnType<typeof useI18n>["t"], reason: string): string {

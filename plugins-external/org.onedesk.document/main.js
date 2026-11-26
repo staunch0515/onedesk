@@ -8,6 +8,7 @@ import { copyTemplate, documentEvent, embedDocument, renderDocument } from "./do
 import { renderTemplate } from "./template-page.js";
 import { keepInOrder, placeInSeries, renderSeries, seriesEvent } from "./series.js";
 import { ROLES } from "./roles.js";
+import { letterReply, letterTasks, letterTodo, onLetterReply, renderSignoff } from "./signoff.js";
 
 export default {
   activate(host) {
@@ -17,6 +18,13 @@ export default {
     host.pages.handle("template", { render: renderTemplate });
     host.pages.handle("document", { render: renderDocument, onEvent: documentEvent });
     host.pages.handle("series", { render: renderSeries, onEvent: seriesEvent });
+    host.pages.handle("signoff", { render: renderSignoff });
+
+    // D487 §35: `onedesk.letter/1` — a document sent for review or reading.
+    host.actions.handle("tasks", letterTasks);
+    host.actions.handle("todo", letterTodo);
+    host.actions.handle("reply", letterReply);
+    host.events.on("letter.reply", onLetterReply);
 
     // `onedesk.book/1`.
     host.actions.handle("roles", async () => ({ output: NONE, data: ROLES }));

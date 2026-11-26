@@ -514,6 +514,7 @@ const BOOTSTRAP: &str = r#"
       packages: Object.freeze({ publish: c("packages.publish"), reprint: c("packages.reprint") }),
       sealed: Object.freeze({ check: c("sealed.check"), open: c("sealed.open") }),
       proposals: Object.freeze({ create: c("proposals.create") }),
+      letters: Object.freeze({ write: c("letters.write"), info: c("letters.info"), contacts: c("letters.contacts") }),
       network: Object.freeze({ request: (opts) => runNetwork(callId, opts) }),
       secrets: Object.freeze({ get: c("secrets.get") }),
       plugins: Object.freeze({ requestInstall: c("plugins.requestInstall"), list: c("plugins.list") }),

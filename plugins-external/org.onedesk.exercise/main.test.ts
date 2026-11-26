@@ -418,3 +418,56 @@ describe("what the book's conventions say of exercises (D487 §31.6)", () => {
     expect(await say("question")).toEqual([]);
   });
 });
+
+describe("homework by letter (D487 §35.6)", () => {
+  /** Attempts and subjects in the records; a test. */
+  function lw(attempts: any[]) {
+    const made: any[] = [];
+    const host = {
+      resources: {
+        async list(o: { kind: string }) {
+          if (o.kind === "attempt") return attempts;
+          if (o.kind === "subject") return made.filter((m) => m.kind === "subject");
+          return [];
+        },
+        async get(id: string) {
+          return id === "t1" ? { id: "t1", kind: "org.onedesk.exercise:test", name: "第一单元测验", body: {} } : null;
+        },
+        async create(spec: any) {
+          const r = { id: `n${made.length + 1}`, ...spec };
+          made.push(r);
+          return r;
+        },
+      },
+    };
+    const ctx = { t, locale: "zh-CN", host, params: {}, resource: { id: "t1", kind: "org.onedesk.exercise:test", name: "第一单元测验", body: {} } };
+    return { ctx, made };
+  }
+  const handed = { id: "a1", body: { source: "t1", number: 1, status: "submitted", score: 8, total: 10, items: ["q1"], "a.q1.0": "Neon", results: { q1: { state: "right" } }, snapshot: {}, submitted: 5 } };
+
+  it("a test can be asked to be answered; done once handed in; what goes back is that attempt", async () => {
+    const { actions } = registry(plugin);
+    const { ctx } = lw([handed]);
+    expect((await actions.tasks(ctx, {})).data.tasks).toEqual([{ task: "answer", label: ZH["letter.task.answer"] }]);
+    expect((await actions.tasks({ ...ctx, resource: { id: "p", kind: "org.onedesk.exercise:practice" } }, {})).data.tasks).toEqual([]);
+    expect((await actions.todo(ctx, {})).data).toEqual({ state: "done", summary: "已交卷，8/10" });
+    const r = (await actions.reply(ctx, {})).data;
+    expect(r.summary).toBe("已交卷，8/10");
+    expect(r.data).toMatchObject({ "a.q1.0": "Neon", score: 8, total: 10, items: ["q1"] });
+    expect(r.data.source).toBeUndefined();
+    const none = lw([{ ...handed, body: { ...handed.body, status: "doing" } }]);
+    expect((await actions.todo(none.ctx, {})).data.state).toBe("todo");
+    expect((await actions.reply(none.ctx, {})).data).toEqual({});
+  });
+
+  it("an answer that came back is filed in its own folder, as an attempt of the sender's own test, with who sent it", async () => {
+    const { events } = registry(plugin);
+    const { ctx, made } = lw([]);
+    await events["letter.reply"](ctx, { page: "t1", task: "answer", data: { score: 8, total: 10, items: ["q1"] }, from: { name: "李明", fingerprint: "F", known: "checked" } });
+    expect(made[0]).toMatchObject({ kind: "subject", name: ZH["letter.folder"], body: { book: "letters" } });
+    expect(made[1]).toMatchObject({ kind: "attempt", parent: "n1", name: "李明 · 第一单元测验", body: { source: "t1", status: "submitted", score: 8, book: "letters", from: { name: "李明" } } });
+    // Something else is not taken.
+    await events["letter.reply"](ctx, { page: "t1", task: "sign", data: {} });
+    expect(made.length).toBe(2);
+  });
+});

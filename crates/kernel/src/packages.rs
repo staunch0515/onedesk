@@ -84,6 +84,9 @@ pub struct PackageFile {
     pub publisher_key: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub signature: Option<String>,
+    /// D487 §35 (K19): a letter's or a reply's own part.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub letter: Option<crate::letters::LetterMeta>,
 }
 
 /// What a package's signature covers: its root, edition, printing and variant, the SHA-256 of `package.json` without the
@@ -256,7 +259,7 @@ pub fn read_package(bytes: &[u8]) -> KResult<(PackageFile, Entries)> {
     let pkg: PackageFile = serde_json::from_slice(&json.1).map_err(|_| invalid("badPackage"))?;
     if pkg.format != FORMAT
         || pkg.resources.len() > MAX_PACKAGE_RESOURCES
-        || pkg.resources.first().map(|r| r.id.as_str()) != Some(pkg.root.as_str())
+        || (pkg.variant != "reply" && pkg.resources.first().map(|r| r.id.as_str()) != Some(pkg.root.as_str()))
     {
         return Err(invalid("badPackage"));
     }
@@ -421,6 +424,7 @@ impl Inner {
                 sealed: vec![],
                 publisher_key: None,
                 signature: None,
+                letter: None,
             };
             let mut entries = vec![(
                 "package.json".to_string(),
@@ -445,52 +449,7 @@ impl Inner {
                 }
             }
             pkg.resources.retain(|r| !gone.contains(&r.id));
-            // Withheld fields: revealed ones stay; sealed ones go as fingerprints with their text; the rest go.
-            let mut sealed = Vec::new();
-            for r in pkg.resources.iter_mut() {
-                let Some((owner, decl)) = self.registry.kind(&r.kind) else {
-                    continue;
-                };
-                let withheld: Vec<String> = decl
-                    .fields
-                    .iter()
-                    .filter(|(_, f)| f.withheld)
-                    .map(|(k, _)| k.clone())
-                    .collect();
-                if withheld.is_empty() {
-                    continue;
-                }
-                let open = reveal.get(&r.id).cloned().unwrap_or_default();
-                let checks = self.seal_checks(owner, &decl.id, r).await;
-                for field in withheld {
-                    if open.contains(&field) {
-                        continue;
-                    }
-                    let Some(v) = r.body.remove(&field) else {
-                        continue;
-                    };
-                    // A field the kind names goes as fingerprints of its writings (none: only to be opened).
-                    if let Some(list) = checks.get(&field) {
-                        let salt = new_id();
-                        let hashes = list
-                            .iter()
-                            .map(|t| fingerprint(&salt, &r.id, &field, t))
-                            .collect();
-                        let value = match v {
-                            Value::String(s) => s,
-                            other => other.to_string(),
-                        };
-                        sealed.push(SealedEntry {
-                            resource: r.id.clone(),
-                            field,
-                            salt,
-                            hashes,
-                            value,
-                        });
-                    }
-                }
-            }
-            pkg.sealed = sealed;
+            self.withhold(&mut pkg, &reveal).await;
         }
         let keep: HashSet<String> = pkg.resources.iter().map(|r| r.id.clone()).collect();
         let used: HashSet<String> = self.read(|c| {
@@ -535,6 +494,50 @@ impl Inner {
         me.execute(actor, Command::Audit { op: "package.publish".into(), object: path.clone(), summary: json!({ "root": root.id, "edition": edition, "printing": printing, "variant": variant, "bytes": len }) })
             .await?;
         Ok(json!({ "path": path, "resources": count }))
+    }
+
+    /// Withheld fields as a student's edition (or a letter) carries them: revealed ones stay; sealed ones go as
+    /// fingerprints with their text; the rest go.
+    pub(crate) async fn withhold(&self, pkg: &mut PackageFile, reveal: &HashMap<String, Vec<String>>) {
+        self.withhold_as(pkg, reveal, &|id: &str| id.to_string()).await
+    }
+
+    /// `withhold`, the fingerprints made for the id each resource will have where it goes (`as_id`; a letter gives its
+    /// pages ids of their own): a kind's `seal` still sees the resources as they are here.
+    pub(crate) async fn withhold_as(&self, pkg: &mut PackageFile, reveal: &HashMap<String, Vec<String>>, as_id: &(dyn Fn(&str) -> String + Sync)) {
+        let mut sealed = Vec::new();
+        for r in pkg.resources.iter_mut() {
+            let Some((owner, decl)) = self.registry.kind(&r.kind) else { continue };
+            let withheld: Vec<String> = decl.fields.iter().filter(|(_, f)| f.withheld).map(|(k, _)| k.clone()).collect();
+            if withheld.is_empty() {
+                continue;
+            }
+            let open = reveal.get(&r.id).cloned().unwrap_or_default();
+            let checks = self.seal_checks(owner, &decl.id, r).await;
+            for field in withheld {
+                if open.contains(&field) {
+                    continue;
+                }
+                let Some(v) = r.body.remove(&field) else { continue };
+                // A field the kind names goes as fingerprints of its writings (none: only to be opened).
+                if let Some(list) = checks.get(&field) {
+                    let salt = new_id();
+                    let target = as_id(&r.id);
+                    let hashes = list.iter().map(|t| fingerprint(&salt, &target, &field, t)).collect();
+                    let value = match v {
+                        Value::String(s) => s,
+                        other => other.to_string(),
+                    };
+                    sealed.push(SealedEntry { resource: target, field, salt, hashes, value });
+                }
+            }
+        }
+        pkg.sealed = sealed;
+    }
+
+    /// The rows and images of `root` and what is below it, as a package holds them.
+    pub(crate) fn snapshot_pub(&self, root: &Row) -> KResult<(Vec<PackRow>, Entries)> {
+        self.snapshot(root)
     }
 
     /// What a kind's `seal` gives: the accepted writings of each withheld field (none when it has no `seal`).

@@ -188,6 +188,8 @@ impl Inner {
             // D487 §21 (K9, K10): a subtree published; withheld fields checked against fingerprints, or opened.
             "packages" => self.host_packages(plugin, info, op, &args).await,
             "sealed" => self.host_sealed(plugin, op, &args),
+            // D487 §35 (K19): letters sent and replied.
+            "letters" => self.host_letters(plugin, info, op, &args).await,
             // D487 §29 (K16): a proposal of changes, in the user's act — a run, a command, a page event; never an
             // event handler or a pure call (the user looks at it before anything is written).
             "proposals" if op == "create" => {

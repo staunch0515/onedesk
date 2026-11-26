@@ -82,7 +82,7 @@ async fn pick_package_file(app: tauri::AppHandle) -> Option<String> {
 #[tauri::command]
 async fn pick_resource_package(app: tauri::AppHandle) -> Option<String> {
     let (tx, rx) = tokio::sync::oneshot::channel();
-    app.dialog().file().add_filter("OneDesk package", &["odpack"]).pick_file(move |p| {
+    app.dialog().file().add_filter("OneDesk package or letter", &["odpack", "odletter"]).pick_file(move |p| {
         let _ = tx.send(p);
     });
     rx.await.ok().flatten().and_then(|p| p.into_path().ok()).map(|p| p.to_string_lossy().into_owned())

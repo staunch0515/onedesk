@@ -173,5 +173,12 @@
   "conv.practice": "練習は本の上で答え、その場で採点します。",
   "conv.test": "テストは自分の解答ページで答え、提出後に採点します。",
   "conv.answers": "答えと解説は教師用だけにあります。",
-  "action.conventions": "凡例"
+  "action.conventions": "凡例",
+  "action.letter.tasks": "依頼できること",
+  "action.letter.todo": "済んだか",
+  "action.letter.reply": "返すもの",
+  "letter.task.answer": "解答",
+  "letter.score": "提出済み、{score}/{total}",
+  "letter.folder": "受け取った解答",
+  "letter.attemptName": "{who} · {name}"
 }

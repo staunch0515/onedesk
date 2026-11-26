@@ -470,7 +470,7 @@ impl Inner {
     pub async fn execute_quiet(&self, actor: Actor, cmd: Command, quiet: Option<&str>) -> KResult<Outcome> {
         // Round 6 (D335): what the command does to the resources it touches.
         let change: Option<&'static str> = match &cmd {
-            Command::Create(_) | Command::Import(_) | Command::Propose(_) => Some("created"),
+            Command::Create(_) | Command::Import(_) | Command::Propose(_) | Command::ReceiveLetter(_) => Some("created"),
             // D487 §29: created, updated or deleted, per row.
             Command::Review { .. } => Some("upserted"),
             Command::Update { .. }
@@ -692,6 +692,9 @@ impl Inner {
                 }
                 if crate::proposals::METHODS.contains(&m) {
                     return self.handle_proposals(m, params).await;
+                }
+                if crate::letters::METHODS.contains(&m) {
+                    return self.handle_letters(m, params).await;
                 }
                 if crate::identity::METHODS.contains(&m) {
                     return self.handle_identity(m, params).await;

@@ -266,7 +266,7 @@ pub const PROGRAM_SYSTEM: &str = "system";
 pub const PROGRAM_PLUGIN: &str = "plugin";
 
 /// Round 6 (D335): the events a plugin can subscribe to.
-pub const EVENTS: &[&str] = &["resource.changed", "run.ended"];
+pub const EVENTS: &[&str] = &["resource.changed", "run.ended", "letter.received", "letter.replied", "letter.reply"];
 
 /// Round 16 (X13): what the manifest's `activation` may name; each is also an event its handler
 /// registers for with `host.events.on`.
@@ -514,6 +514,9 @@ pub struct KindDecl {
     /// by the code (`kinds.handle(kind, { place })`).
     #[serde(default)]
     pub place: bool,
+    /// D487 §35 (K19): resources of this kind take letters (a received letter is put under one).
+    #[serde(default)]
+    pub letters: bool,
 }
 
 impl KindDecl {

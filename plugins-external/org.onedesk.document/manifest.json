@@ -23,13 +23,24 @@
         "template",
         "series"
       ]
+    },
+    "onedesk.letter/1": {
+      "actions": [
+        "tasks",
+        "todo",
+        "reply"
+      ],
+      "kind": "document"
     }
   },
   "exports": {
     "actions": [
       "roles",
       "outline",
-      "conventions"
+      "conventions",
+      "tasks",
+      "todo",
+      "reply"
     ]
   },
   "contributes": {
@@ -67,7 +78,9 @@
           "levels": ""
         },
         "draggable": true,
-        "accepts": [],
+        "accepts": [
+          "signoff"
+        ],
         "embed": true,
         "fields": {
           "template": {
@@ -106,6 +119,22 @@
             "label": "field.template"
           }
         }
+      },
+      {
+        "id": "signoff",
+        "label": "kind.signoff",
+        "icon": "stamp",
+        "tree": "resources",
+        "page": "signoff",
+        "newName": "kind.signoff.new",
+        "defaults": {
+          "document": "",
+          "agree": "agree",
+          "comment": "",
+          "signer": ""
+        },
+        "draggable": true,
+        "accepts": []
       }
     ],
     "pages": [
@@ -141,6 +170,12 @@
             "role": "event",
             "label": "action.sign",
             "icon": "pen-line"
+          },
+          {
+            "id": "signoff",
+            "role": "event",
+            "label": "action.signoff",
+            "icon": "stamp"
           },
           {
             "id": "revise",
@@ -188,6 +223,10 @@
             ]
           }
         ]
+      },
+      {
+        "id": "signoff",
+        "actions": []
       }
     ],
     "actions": [
@@ -205,10 +244,26 @@
         "id": "conventions",
         "label": "action.conventions",
         "output": "none"
+      },
+      {
+        "id": "tasks",
+        "label": "action.letter.tasks",
+        "output": "none"
+      },
+      {
+        "id": "todo",
+        "label": "action.letter.todo",
+        "output": "none"
+      },
+      {
+        "id": "reply",
+        "label": "action.letter.reply",
+        "output": "none"
       }
     ],
     "events": [
-      "resource.changed"
+      "resource.changed",
+      "letter.reply"
     ],
     "menus": {
       "new": [

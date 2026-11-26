@@ -100,7 +100,7 @@ test("the teacher writes a textbook and publishes it from its colophon", async (
 
   // One's own package is refused.
   await page.getByRole("button", { name: "Settings" }).first().click();
-  await page.getByRole("menuitem", { name: "Import resource package…" }).click();
+  await page.getByRole("menuitem", { name: "Import file…" }).click();
   await page.getByRole("textbox", { name: "Package file" }).fill(path.join(out, "Science-1.1-student.odpack"));
   await page.getByRole("button", { name: "Look inside" }).click();
   await expect(page.getByText("It was published from this workspace.")).toBeVisible({ timeout: 15_000 });
@@ -110,7 +110,7 @@ test("the teacher writes a textbook and publishes it from its colophon", async (
 test("the student imports a read-only copy; a practice is marked on the spot; the quiz waits; no answer on disk", async ({ page }) => {
   await openKernel(page, student);
   await page.getByRole("button", { name: "Settings" }).first().click();
-  await page.getByRole("menuitem", { name: "Import resource package…" }).click();
+  await page.getByRole("menuitem", { name: "Import file…" }).click();
   await page.getByRole("textbox", { name: "Package file" }).fill(path.join(out, "Science-1.1-student.odpack"));
   await page.getByRole("button", { name: "Look inside" }).click();
   await expect(page.getByText("Edition 1, printing 1")).toBeVisible({ timeout: 15_000 });
@@ -163,7 +163,7 @@ test("the teacher releases the quiz's answers; the student's update marks the wa
 
   await openKernel(page, student);
   await page.getByRole("button", { name: "Settings" }).first().click();
-  await page.getByRole("menuitem", { name: "Import resource package…" }).click();
+  await page.getByRole("menuitem", { name: "Import file…" }).click();
   await page.getByRole("textbox", { name: "Package file" }).fill(path.join(out, "Science-1.2-student.odpack"));
   await page.getByRole("button", { name: "Look inside" }).click();
   await expect(page.getByText("Here now: edition 1, printing 1")).toBeVisible({ timeout: 15_000 });

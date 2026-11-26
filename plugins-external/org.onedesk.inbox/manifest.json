@@ -1,0 +1,204 @@
+{
+  "id": "org.onedesk.inbox",
+  "version": "0.1.0",
+  "apiVersion": "2",
+  "name": "plugin.name",
+  "description": "plugin.description",
+  "icon": "inbox",
+  "main": "main.js",
+  "author": "OneDesk",
+  "license": "MIT",
+  "requires": {
+    "resources": true,
+    "files": true
+  },
+  "uses": [
+    "onedesk.letter/1"
+  ],
+  "contributes": {
+    "kinds": [
+      {
+        "id": "inbox",
+        "label": "kind.inbox",
+        "icon": "inbox",
+        "tree": "resources",
+        "page": "inbox",
+        "newName": "kind.inbox.new",
+        "defaults": {},
+        "draggable": true,
+        "accepts": [
+          "letter"
+        ],
+        "letters": true
+      },
+      {
+        "id": "letter",
+        "label": "kind.letter",
+        "icon": "mail-open",
+        "tree": "resources",
+        "page": "letter",
+        "newName": "kind.letter.new",
+        "defaults": {},
+        "draggable": true,
+        "accepts": [
+          "*"
+        ]
+      },
+      {
+        "id": "outbox",
+        "label": "kind.outbox",
+        "icon": "send",
+        "tree": "resources",
+        "page": "outbox",
+        "newName": "kind.outbox.new",
+        "defaults": {},
+        "draggable": true,
+        "accepts": [
+          "sent"
+        ]
+      },
+      {
+        "id": "sent",
+        "label": "kind.sent",
+        "icon": "mail",
+        "tree": "resources",
+        "page": "sent",
+        "newName": "kind.sent.new",
+        "defaults": {
+          "subject": "",
+          "comment": "",
+          "due": "",
+          "to": [],
+          "pages": []
+        },
+        "draggable": true,
+        "accepts": []
+      }
+    ],
+    "pages": [
+      {
+        "id": "inbox",
+        "actions": [
+          {
+            "id": "save",
+            "role": "save",
+            "label": "action.save",
+            "icon": "save",
+            "primary": true,
+            "shortcut": [
+              "Mod",
+              "S"
+            ]
+          }
+        ]
+      },
+      {
+        "id": "outbox",
+        "actions": [
+          {
+            "id": "save",
+            "role": "save",
+            "label": "action.save",
+            "icon": "save",
+            "primary": true,
+            "shortcut": [
+              "Mod",
+              "S"
+            ]
+          }
+        ]
+      },
+      {
+        "id": "sent",
+        "recompute": true,
+        "actions": [
+          {
+            "id": "send",
+            "role": "run",
+            "action": "send",
+            "label": "action.send",
+            "icon": "send"
+          },
+          {
+            "id": "save",
+            "role": "save",
+            "label": "action.save",
+            "icon": "save",
+            "primary": true,
+            "shortcut": [
+              "Mod",
+              "S"
+            ]
+          }
+        ],
+        "resultTabs": [
+          {
+            "id": "out",
+            "type": "output",
+            "label": "tab.result",
+            "icon": "file-text"
+          }
+        ]
+      },
+      {
+        "id": "letter",
+        "recompute": true,
+        "actions": [
+          {
+            "id": "reply",
+            "role": "run",
+            "action": "reply",
+            "label": "action.reply",
+            "icon": "reply"
+          },
+          {
+            "id": "save",
+            "role": "save",
+            "label": "action.save",
+            "icon": "save",
+            "primary": true,
+            "shortcut": [
+              "Mod",
+              "S"
+            ]
+          }
+        ],
+        "resultTabs": [
+          {
+            "id": "out",
+            "type": "output",
+            "label": "tab.result",
+            "icon": "file-text"
+          }
+        ]
+      }
+    ],
+    "actions": [
+      {
+        "id": "send",
+        "label": "action.send",
+        "icon": "send",
+        "kinds": [
+          "sent"
+        ],
+        "output": "text",
+        "saveFirst": true
+      },
+      {
+        "id": "reply",
+        "label": "action.reply",
+        "icon": "reply",
+        "kinds": [
+          "letter"
+        ],
+        "output": "text",
+        "saveFirst": true
+      }
+    ],
+    "locales": {
+      "en-US": "locales/en-US.json",
+      "zh-CN": "locales/zh-CN.json",
+      "ja-JP": "locales/ja-JP.json"
+    }
+  }
+}

@@ -146,7 +146,8 @@ const day = (ms) => {
 export async function renderGrades(ctx) {
   // A book's record folder shows that book's grades.
   const only = ctx.resource && ctx.resource.kind === full("subject") ? ctx.resource.body && ctx.resource.body.book : null;
-  const all = (await submitted(ctx)).filter((a) => !only || a.body.book === only);
+  // D487 §35: answers that came by letter are shown in their own folder, not among one's own.
+  const all = (await submitted(ctx)).filter((a) => (only ? a.body.book === only : !a.body.from));
   if (all.length === 0) return { view: [{ type: "text", id: "empty", text: say(ctx, "grades.empty"), tone: "muted" }] };
   const bySource = new Map();
   for (const a of all) {
@@ -198,7 +199,7 @@ export async function renderGrades(ctx) {
 
 /** The questions got wrong and not right since, newest mistake first. */
 export async function mistakesOf(ctx) {
-  const all = await submitted(ctx);
+  const all = (await submitted(ctx)).filter((a) => !a.body.from);
   const per = new Map();
   for (const a of all)
     for (const [qid, r] of Object.entries(a.body.results || {})) {

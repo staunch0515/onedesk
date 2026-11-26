@@ -14,6 +14,7 @@ import { embedLessons, lessonsEntries, lessonsEvent, renderLessons } from "./les
 import { authorNodes, generate, quickText } from "./authoring.js";
 import { ROLES } from "./roles.js";
 import { embedAnswers, releaseAction, remarkAwaiting, renderAnswers } from "./answers.js";
+import { letterReply, letterTasks, letterTodo, onLetterReply } from "./letters.js";
 
 /** Form fields of the page itself, not saved: the tab keeps them. */
 const asParams = (view) => view.map((n) => (n.type === "form" ? { ...n, fields: n.fields.map((f) => ({ ...f, param: true })) } : n));
@@ -146,6 +147,11 @@ export default {
 
     // `onedesk.book/1`.
     host.actions.handle("roles", async () => ({ output: NONE, data: ROLES }));
+    // D487 §35: `onedesk.letter/1` — a test sent as homework.
+    host.actions.handle("tasks", letterTasks);
+    host.actions.handle("todo", letterTodo);
+    host.actions.handle("reply", letterReply);
+    host.events.on("letter.reply", onLetterReply);
     // D487 §31.6: what the book's conventions say of practice, tests and answers.
     host.actions.handle("conventions", async (ctx) => {
       const short = String((ctx.resource && ctx.resource.kind) || "").split(":").pop();

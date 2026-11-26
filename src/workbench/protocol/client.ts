@@ -1,4 +1,4 @@
-import type { ContactImportResult, IdentityInfo, IdentityParams, PackageImportResult, PackageInfo, ProposalCount, ProposalCreateParams, ProposalCreateResult, ProposalReviewParams, ProposalView, ResourceAt } from "./generated";
+import type { ContactImportResult, IdentityInfo, SignedBy, IdentityParams, PackageImportResult, PackageInfo, ProposalCount, ProposalCreateParams, ProposalCreateResult, ProposalReviewParams, ProposalView, ResourceAt } from "./generated";
 import type {
   AssistProvider,
   EmbedActResult,
@@ -67,6 +67,23 @@ import type {
  * UI code receives a ProtocolClient through React context and must not import an implementation.
  * Stage 0 ships `createMockClient()`; the real one will forward to the worker process.
  */
+/** D487 §35 (K19): what a letter or reply file is, and whether (and where) it can be taken. */
+export interface LetterInfo {
+  kind: "letter" | "reply";
+  subject: string;
+  comment: string;
+  due?: string | null;
+  tasks: number;
+  pages: number;
+  from?: SignedBy | null;
+  fromName: string;
+  sentAt: number;
+  /** A reply: the subject of the letter it answers. */
+  inReplyTo?: string | null;
+  refused?: string | null;
+  places: Array<{ id: string; name: string }>;
+}
+
 export interface ProtocolClient {
   /** Protocol version; both ends compare it when connecting (§12). */
   readonly version: string;
@@ -295,6 +312,13 @@ export interface ProtocolClient {
     delete(): Promise<void>;
     /** Writes the identity card (`.odid`) to `path`. */
     exportCard(path: string): Promise<void>;
+  };
+
+  /** D487 §35 (K19): letter and reply files; absent in the demo. */
+  letter?: {
+    inspect(path: string): Promise<LetterInfo>;
+    /** A letter goes under `parent` (a resource that takes letters; the only one when absent); a reply to its letter. */
+    receive(path: string, parent?: string): Promise<{ resource: string }>;
   };
 
   /** D487 §33 (K18): the contacts — others' identity cards; absent in the demo. */
