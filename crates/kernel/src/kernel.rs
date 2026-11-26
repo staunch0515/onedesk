@@ -470,7 +470,9 @@ impl Inner {
     pub async fn execute_quiet(&self, actor: Actor, cmd: Command, quiet: Option<&str>) -> KResult<Outcome> {
         // Round 6 (D335): what the command does to the resources it touches.
         let change: Option<&'static str> = match &cmd {
-            Command::Create(_) | Command::Import(_) => Some("created"),
+            Command::Create(_) | Command::Import(_) | Command::Propose(_) => Some("created"),
+            // D487 §29: created, updated or deleted, per row.
+            Command::Review { .. } => Some("upserted"),
             Command::Update { .. }
             | Command::Params { .. }
             | Command::Move { .. }
@@ -505,6 +507,15 @@ impl Inner {
                 .unwrap_or_default(),
             ),
             Command::Create(_) | Command::Undelete { .. } => Some(vec![]),
+            Command::Review { steps, .. } => Some(
+                steps
+                    .iter()
+                    .filter_map(|s| match &s.cmd {
+                        Command::Update { id, .. } => Some(id.clone()),
+                        _ => None,
+                    })
+                    .collect(),
+            ),
             // Round 16 review #3: the resources these keys already name (live ones; created and
             // restored ones count as granting nothing before).
             Command::Upsert { kind, items, .. } => {
@@ -576,6 +587,7 @@ impl Inner {
                 // A created row is new (rev 1); other rows a creation touched were updated.
                 let c = match change {
                     "created" if r.rev > 1 => "updated",
+                    "upserted" if r.deleted_at.is_some() => "deleted",
                     "upserted" if r.rev == 1 => "created",
                     "upserted" => "updated",
                     c => c,
@@ -678,6 +690,9 @@ impl Inner {
                 if crate::packages::METHODS.contains(&m) {
                     return self.handle_packages(m, params).await;
                 }
+                if crate::proposals::METHODS.contains(&m) {
+                    return self.handle_proposals(m, params).await;
+                }
                 if crate::transfer::METHODS.contains(&m) {
                     return self.handle5(m, params).await.unwrap_or_else(|| Err(err_p(ErrorCode::UnknownMethod, &[("method", m)])));
                 }
@@ -725,6 +740,20 @@ impl Inner {
                 page: None,
                 draggable: true,
                 accepts: vec![kind.into()],
+                commands: vec![],
+                drop_any: false,
+                state: NodeState::Ok,
+                reason: None,
+                plugin: None,
+            };
+        }
+        if kind == store::KIND_PROPOSAL {
+            return KindMeta {
+                label: Label::Text(kind.into()),
+                icon: "git-pull-request".into(),
+                page: None,
+                draggable: false,
+                accepts: vec![],
                 commands: vec![],
                 drop_any: false,
                 state: NodeState::Ok,
@@ -954,7 +983,7 @@ impl Inner {
 
     /// A stored tree id the protocol may touch: `resources` or a plugin's stored tree.
     pub fn stored_tree(&self, tree: &str) -> KResult<()> {
-        if tree == store::TREE_ENV || tree == store::TREE_CONFIG || self.resource_view(tree).is_some() {
+        if tree == store::TREE_ENV || tree == store::TREE_CONFIG || tree == store::TREE_PROPOSALS || self.resource_view(tree).is_some() {
             return Ok(());
         }
         match self.registry.tree(tree) {
@@ -1003,6 +1032,16 @@ impl Inner {
                 id: store::TREE_CONFIG.into(),
                 title: Label::Text(store::TREE_CONFIG.into()),
                 icon: "settings".into(),
+                source: TreeSource::Stored,
+                groups: false,
+                toolbar: vec![],
+                menu: vec![],
+            },
+            // D487 §29 (K16): proposals of changes, newest last as made.
+            TreeInfo {
+                id: store::TREE_PROPOSALS.into(),
+                title: Label::Text(store::TREE_PROPOSALS.into()),
+                icon: "git-pull-request".into(),
                 source: TreeSource::Stored,
                 groups: false,
                 toolbar: vec![],
@@ -1414,7 +1453,7 @@ impl Inner {
             Some(root) => (TREE_RESOURCES, parent.or(root)),
             None => (tree, parent),
         };
-        if tree == store::TREE_ENV || tree == store::TREE_CONFIG {
+        if tree == store::TREE_ENV || tree == store::TREE_CONFIG || tree == store::TREE_PROPOSALS {
             return Err(invalid("noGroups"));
         }
         let name = if name.trim().is_empty() {

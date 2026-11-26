@@ -1,4 +1,4 @@
-import type { PackageImportResult, PackageInfo } from "./generated";
+import type { PackageImportResult, PackageInfo, ProposalCount, ProposalCreateParams, ProposalCreateResult, ProposalReviewParams, ProposalView, ResourceAt } from "./generated";
 import type {
   AssistProvider,
   EmbedActResult,
@@ -171,6 +171,8 @@ export interface ProtocolClient {
     /** Marks the resource (a group with its descendants) deleted (§3.4). */
     delete(id: string): Promise<void>;
     history(id: string): Promise<HistoryEntry[]>;
+    /** D487 §29 (K17): the resource as one revision holds it (absent in the demo). */
+    at?(id: string, rev: number): Promise<ResourceAt>;
     /** Puts the field back to the value before this entry; recorded as a new entry (I.4). */
     restore(id: string, entryId: string): Promise<void>;
     listDeleted(): Promise<Resource[]>;
@@ -283,6 +285,17 @@ export interface ProtocolClient {
   /** Round 19: the workspace's `mcp.policy` as the kernel reads it (the settings are `workspace.getConfig` / `setConfig`). */
   mcp: {
     status(): Promise<McpStatus>;
+  };
+
+  /** D487 §29 (K16): proposals of changes (from AI clients, plugins, the user); absent in the demo. */
+  proposal?: {
+    get(id: string): Promise<ProposalView>;
+    /** The user's: items accepted (written in one transaction as the user) or rejected. */
+    review(params: ProposalReviewParams): Promise<ProposalView>;
+    withdraw(id: string): Promise<ProposalView>;
+    /** Proposals still to be decided: all, or those about one resource. */
+    count(resourceId?: string): Promise<ProposalCount>;
+    create(params: ProposalCreateParams): Promise<ProposalCreateResult>;
   };
 
   audit: {

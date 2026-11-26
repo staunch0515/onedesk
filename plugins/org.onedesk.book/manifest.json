@@ -556,6 +556,39 @@
         "id": "cite",
         "label": "action.cite",
         "output": "none"
+      },
+      {
+        "id": "aiContents",
+        "label": "action.ai.contents",
+        "icon": "bot",
+        "output": "text",
+        "saveFirst": false,
+        "ai": {
+          "readOnly": true,
+          "description": "ai.tool.contents"
+        }
+      },
+      {
+        "id": "aiPage",
+        "label": "action.ai.page",
+        "icon": "bot",
+        "output": "text",
+        "saveFirst": false,
+        "ai": {
+          "readOnly": true,
+          "description": "ai.tool.page"
+        }
+      },
+      {
+        "id": "aiRefs",
+        "label": "action.ai.refs",
+        "icon": "bot",
+        "output": "text",
+        "saveFirst": false,
+        "ai": {
+          "readOnly": true,
+          "description": "ai.tool.refs"
+        }
       }
     ],
     "events": [
@@ -581,6 +614,69 @@
       "en-US": "locales/en-US.json",
       "zh-CN": "locales/zh-CN.json",
       "ja-JP": "locales/ja-JP.json"
-    }
+    },
+    "aiTools": [
+      {
+        "name": "book_contents",
+        "description": "ai.tool.contents",
+        "action": "aiContents",
+        "freeQuery": false,
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "book": {
+              "type": "string",
+              "description": "The book's id (or any resource in it)"
+            }
+          },
+          "required": [
+            "book"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "book_page",
+        "description": "ai.tool.page",
+        "action": "aiPage",
+        "freeQuery": false,
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "description": "The page's id"
+            },
+            "book": {
+              "type": "string",
+              "description": "The book it is in (from book_contents)"
+            }
+          },
+          "required": [
+            "id"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "book_refs",
+        "description": "ai.tool.refs",
+        "action": "aiRefs",
+        "freeQuery": false,
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "book": {
+              "type": "string",
+              "description": "The book's id (or any resource in it)"
+            }
+          },
+          "required": [
+            "book"
+          ],
+          "additionalProperties": false
+        }
+      }
+    ]
   }
 }

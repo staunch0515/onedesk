@@ -382,19 +382,20 @@ async fn tools_are_the_four_general_ones_and_the_plugins_with_a_prefix() {
     let (_env, c) = world(&[ON]).await;
     let t = c.call_ai(CLIENT, "mcp.tools", json!({})).await.unwrap();
     let names: Vec<&str> = t.as_array().unwrap().iter().map(|x| x["name"].as_str().unwrap()).collect();
-    assert_eq!(names, ["search", "describe", "run", "get_run", "t_ai__lookup"], "the free-query tool is not offered while it is off");
-    let lookup = &t[4];
+    // D487 §29: and the three that read a structure and propose.
+    assert_eq!(names, ["search", "describe", "run", "get_run", "tree", "read", "propose", "t_ai__lookup"], "the free-query tool is not offered while it is off");
+    let lookup = &t[7];
     assert_eq!(lookup["description"], "Looks things up");
     assert_eq!(lookup["inputSchema"]["required"], json!(["text"]));
-    for g in &t.as_array().unwrap()[..4] {
+    for g in &t.as_array().unwrap()[..7] {
         assert_eq!(g["inputSchema"]["type"], "object");
         assert!(g["description"].as_str().unwrap().len() > 10);
     }
     c.ok("workspace.setConfig", json!({ "name": "mcp.allow_free_query", "value": "true" })).await;
     let t = c.call_ai(CLIENT, "mcp.tools", json!({})).await.unwrap();
-    assert_eq!(t.as_array().unwrap().len(), 6);
-    assert_eq!(t[5]["name"], "t_ai__free");
-    assert_eq!(c.ok("mcp.status", json!({})).await["tools"], 6);
+    assert_eq!(t.as_array().unwrap().len(), 9);
+    assert_eq!(t[8]["name"], "t_ai__free");
+    assert_eq!(c.ok("mcp.status", json!({})).await["tools"], 9);
 }
 
 /* ------------------------------------------------------------------ search */
@@ -822,7 +823,7 @@ async fn a_disabled_plugin_offers_no_tools_and_runs_nothing() {
     let (_env, c, q) = table_world(&[]).await;
     c.ok("plugin.setEnabled", json!({ "plugin": "t.ai", "enabled": false })).await;
     let t = c.call_ai(CLIENT, "mcp.tools", json!({})).await.unwrap();
-    assert_eq!(t.as_array().unwrap().len(), 4);
+    assert_eq!(t.as_array().unwrap().len(), 7);
     assert_eq!(call_err(&c, "t_ai__lookup", json!({ "text": "x" })).await, "notFound/");
     let d = call_ok(&c, "describe", json!({ "id": q })).await;
     assert_eq!(d["actions"], json!([]));
@@ -929,7 +930,7 @@ async fn the_policy_keys_are_known_parameters() {
     let (_env, c) = world(&[]).await;
     let known = c.ok("params.known", json!({})).await;
     let names: Vec<&str> = known.as_array().unwrap().iter().map(|k| k["name"].as_str().unwrap()).collect();
-    for k in ["mcp.enabled", "mcp.rate_per_minute", "mcp.max_rows", "mcp.allow_free_query", "mcp.env"] {
+    for k in ["mcp.enabled", "mcp.rate_per_minute", "mcp.max_rows", "mcp.allow_free_query", "mcp.env", "mcp.allow_proposals"] {
         assert!(names.contains(&k), "{k} in {names:?}");
     }
 }

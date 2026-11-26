@@ -679,6 +679,7 @@ async fn known_parameters_are_listed() {
             ("mcp.max_rows".into(), "number".into(), "plain".into(), json!(["config"])),
             ("mcp.allow_free_query".into(), "boolean".into(), "plain".into(), json!(["config"])),
             ("mcp.env".into(), "ref".into(), "plain".into(), json!(["config"])),
+            ("mcp.allow_proposals".into(), "boolean".into(), "plain".into(), json!(["config"])),
         ]
     );
 }

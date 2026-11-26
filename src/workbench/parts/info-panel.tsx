@@ -1,12 +1,65 @@
-import { useState } from "react";
-import { Badge, Button, IconButton, InfoField, InfoPanel, Input, LoadingState, Pane, Popover, Select, Switch, Text, Textarea, Tooltip, useToast } from "../../design";
+import { useEffect, useState } from "react";
+import { Badge, Button, Dialog, DiffView, IconButton, InfoField, InfoPanel, Input, LoadingState, Pane, Popover, Select, Switch, Text, Textarea, Tooltip, useToast } from "../../design";
 import type { HistoryEntry, InheritedEnv, PageDescriptor, RefInfo } from "../protocol";
-import type { StampLogEntry } from "../protocol/generated";
+import type { ResourceAt, StampLogEntry } from "../protocol/generated";
+import { proposerText } from "../pages/proposal-page";
 import { useI18n } from "../i18n";
 import { useQuery, useUi, useWorkbench } from "../state/context";
 
 const CLIP = 40;
 const clip = (text: string) => (text.length > CLIP ? `${text.slice(0, CLIP)}…` : text);
+
+/** A field of a resource (or of one revision of it) by path: `name`, `description`, `tags`, `body.<key>`. */
+function fieldOf(r: { name: string; description: string; tags: string[]; body: Record<string, unknown> }, path: string): unknown {
+  if (path === "name") return r.name;
+  if (path === "description") return r.description;
+  if (path === "tags") return r.tags;
+  if (path.startsWith("body.")) return r.body[path.slice(5)];
+  return undefined;
+}
+
+/** D487 §29.3: one field as one revision left it, against what it is now. */
+function CompareDialog({ resourceId, entry, onClose }: { resourceId: string; entry: HistoryEntry | null; onClose: () => void }) {
+  const { client } = useWorkbench();
+  const { t } = useI18n();
+  const [then, setThen] = useState<ResourceAt | null>(null);
+  const now = useQuery((c) => c.resource.get(resourceId), [resourceId], [`resource:${resourceId}`]);
+  useEffect(() => {
+    setThen(null);
+    if (!entry?.rev || !client.resource.at) return;
+    let live = true;
+    client.resource.at(resourceId, entry.rev).then((r) => live && setThen(r), () => undefined);
+    return () => {
+      live = false;
+    };
+  }, [client, resourceId, entry]);
+  const labels = { before: t("history.thatVersion"), after: t("history.now"), split: t("diff.split"), stacked: t("diff.stacked"), empty: t("diff.empty"), added: t("diff.added"), removed: t("diff.removed"), same: t("diff.same") };
+  const kind = entry?.field === "name" || entry?.field === "tags" ? "value" : "text";
+  return (
+    <Dialog open={entry !== null} onOpenChange={(o) => !o && onClose()} size="lg" title={t("history.compareTitle", { field: entry?.field ?? "" })} footer={<Button onClick={onClose}>{t("common.close")}</Button>}>
+      {!then || !now.data || !entry ? (
+        <LoadingState layout="inline" label={t("common.loading")} />
+      ) : (
+        <DiffView label={entry.field} kind={kind} before={fieldOf(then, entry.field)} after={fieldOf(now.data, entry.field)} labels={labels} />
+      )}
+    </Dialog>
+  );
+}
+
+/** D487 §29.5: proposals still to be decided that are about this resource. */
+function ProposalsField({ resourceId }: { resourceId: string }) {
+  const { actions } = useWorkbench();
+  const { t } = useI18n();
+  const q = useQuery((c) => (c.proposal ? c.proposal.count(resourceId) : Promise.resolve({ pending: 0, ids: [] as string[] })), [resourceId], ["tree:proposals", `resource:${resourceId}`]);
+  if (!q.data || q.data.pending === 0) return null;
+  return (
+    <InfoField label={t("info.proposals")}>
+      <Button size="sm" variant="ghost" icon="git-pull-request" onClick={() => actions.open(`resource:${q.data!.ids[0]}`)}>
+        {t("info.proposalsPending", { count: q.data.pending })}
+      </Button>
+    </InfoField>
+  );
+}
 
 /** Collapsible change history of a resource, newest first, with restore per entry (§4.2). Read only while open. */
 function HistorySection({ resourceId, readOnly, stampLog }: { resourceId: string; readOnly: boolean; stampLog?: StampLogEntry[] }) {
@@ -14,6 +67,7 @@ function HistorySection({ resourceId, readOnly, stampLog }: { resourceId: string
   const { t, dateTime } = useI18n();
   const { toast } = useToast();
   const [open, setOpen] = useState(false);
+  const [compare, setCompare] = useState<HistoryEntry | null>(null);
   const history = useQuery((c) => (open ? c.resource.history(resourceId) : Promise.resolve([] as HistoryEntry[])), [resourceId, open], [`resource:${resourceId}`]);
   const entries = history.data ?? [];
   // D487 §23: the change each stamp was put on after (what was signed) is marked.
@@ -44,10 +98,16 @@ function HistorySection({ resourceId, readOnly, stampLog }: { resourceId: string
                   <Text size="sm" weight="medium">{h.field}</Text>
                   {h.restoredFrom && <Badge icon="undo-2">{t("history.restored")}</Badge>}
                   {stampedAt.has(h.at) && <Badge icon="stamp">{t("history.stamped", { label: stampedAt.get(h.at) ?? "" })}</Badge>}
+                  {h.proposal && <Badge icon="git-pull-request">{t("history.fromProposal", { title: h.proposal.title, by: proposerText(t, h.proposal.proposer) })}</Badge>}
                 </Pane>
                 <Text size="xs" mono truncate>{`${clip(h.before)} → ${clip(h.after)}`}</Text>
-                {!readOnly && (
-                  <Pane direction="row">
+                <Pane direction="row" gap="xs">
+                  {h.rev !== undefined && client.resource.at && (
+                    <Button size="sm" variant="ghost" icon="git-compare" onClick={() => setCompare(h)}>
+                      {t("history.compare")}
+                    </Button>
+                  )}
+                  {!readOnly && (
                     <Button
                       size="sm"
                       variant="ghost"
@@ -56,12 +116,13 @@ function HistorySection({ resourceId, readOnly, stampLog }: { resourceId: string
                     >
                       {t("history.restore")}
                     </Button>
-                  </Pane>
-                )}
+                  )}
+                </Pane>
               </Pane>
             ))
           ))}
       </Pane>
+      <CompareDialog resourceId={resourceId} entry={compare} onClose={() => setCompare(null)} />
     </InfoField>
   );
 }
@@ -326,7 +387,7 @@ export function InfoPanelPart({ resourceId, side }: { resourceId: string; side?:
       </InfoField>
       {res.kind === "core:tree" && <TreeIconField icon={res.icon} disabled={res.readOnly} onPick={(icon) => void update({ "body.icon": icon })} />}
       {inResourceTree(res.tree) && <DefaultEnvField value={res.defaultEnv} inherited={res.inheritedEnv} disabled={res.readOnly || res.deleted} onChange={(env) => void update({ defaultEnv: env })} />}
-      {res.kind !== "core:env" && res.kind !== "core:config" && <AiVisibleSection id={resourceId} visible={Boolean(res.aiVisible)} group={res.kind === "core:group" || res.kind === "core:tree"} disabled={res.readOnly || res.deleted} />}
+      {res.kind !== "core:env" && res.kind !== "core:config" && res.kind !== "core:proposal" && <AiVisibleSection id={resourceId} visible={Boolean(res.aiVisible)} group={res.kind === "core:group" || res.kind === "core:tree"} disabled={res.readOnly || res.deleted} />}
       {res.origin !== "original" && (
         <InfoField label={t("info.origin")}>
           <Text size="sm">
@@ -361,6 +422,7 @@ export function InfoPanelPart({ resourceId, side }: { resourceId: string; side?:
       <InfoField label={t("info.revision")}>
         <Text size="sm" tabular>{String(res.rev)}</Text>
       </InfoField>
+      <ProposalsField resourceId={resourceId} />
       <RefsSection resourceId={resourceId} />
       <HistorySection resourceId={resourceId} readOnly={res.readOnly} stampLog={res.stampLog} />
     </>

@@ -190,6 +190,9 @@
   /* D487 §13: a sequence (a book read through) — the list of titles beside it, the room an item takes before it is
      loaded, and the widest a line of reading gets. */
   --sequence-toc-width: 240px;
+  /* D487 §29.3: the columns of a comparison: line numbers and the +/− sign. */
+  --diff-number-width: 40px;
+  --diff-sign-width: 20px;
   /* D487 §23: an input control inside a line of text. */
   --flow-control-width: 160px;
   --sequence-placeholder-height: 160px;
@@ -493,12 +496,14 @@ code,
 kbd,
 pre,
 samp,
-.od-mono {
+.od-mono,
+.od-diff__table {
   font-family: var(--font-mono);
 }
 
-/* Key caps use the UI font: SF Mono draws ⌘ ⌥ ⇧ noticeably smaller than the letters. */
-.od-kbd {
+/* Key caps use the UI font: SF Mono draws ⌘ ⌥ ⇧ noticeably smaller than the letters. A comparison's column heads too. */
+.od-kbd,
+.od-diff__table th {
   font-family: var(--font-sans);
 }
 

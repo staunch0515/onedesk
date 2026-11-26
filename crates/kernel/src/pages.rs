@@ -479,6 +479,12 @@ impl Inner {
             d.uses_env = true;
             return Ok(d);
         }
+        if r.kind == store::KIND_PROPOSAL {
+            // D487 §29: drawn by the shell from `proposal.get`.
+            d.page = PageKind::Proposal;
+            d.read_only = true;
+            return Ok(d);
+        }
         if r.kind == store::KIND_CONFIG {
             let (view, values) = param_form(r, &|id| self.ref_param_options(id));
             d.view = view;

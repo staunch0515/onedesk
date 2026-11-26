@@ -127,6 +127,7 @@ export function createMixedClient(kernel: KernelClient, mock: ProtocolClient): P
     search: kernel.search,
     audit: kernel.audit,
     mcp: kernel.mcp,
+    proposal: kernel.proposal,
     tree: {
       list: listTrees,
       children: (tree, parent, offset, locale) => (isDemoTree(tree) ? mock.tree.children(toMock({ tree }).tree, parent, offset, locale).then(fromMock) : kernel.tree.children(tree, parent, offset, locale)),
@@ -139,6 +140,7 @@ export function createMixedClient(kernel: KernelClient, mock: ProtocolClient): P
       async history(id) {
         return (await ownerOf(id)) === "kernel" ? kernel.resource.history(id) : mock.resource.history(id);
       },
+      at: (id, rev) => kernel.resource.at(id, rev),
       async restore(id, entryId) {
         return (await ownerOf(id)) === "kernel" ? kernel.resource.restore(id, entryId) : mock.resource.restore(id, entryId);
       },

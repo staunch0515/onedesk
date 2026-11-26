@@ -54,7 +54,7 @@ export function AiSettingsPage({ tab }: { tab: TabState }) {
   const status = useQuery((c) => c.mcp.status(), [], topics);
   const raw = useQuery(
     async (c) => {
-      const names = ["mcp.enabled", "mcp.rate_per_minute", "mcp.max_rows", "mcp.allow_free_query", "mcp.env"];
+      const names = ["mcp.enabled", "mcp.rate_per_minute", "mcp.max_rows", "mcp.allow_free_query", "mcp.allow_proposals", "mcp.env"];
       const values = await Promise.all(names.map((n) => c.workspace.getConfig(n)));
       return Object.fromEntries(names.map((n, i) => [n, values[i] ?? ""])) as Record<string, string>;
     },
@@ -80,6 +80,7 @@ export function AiSettingsPage({ tab }: { tab: TabState }) {
           <NumberSetting label={t("ai.rate")} description={t("ai.rateHint")} name="mcp.rate_per_minute" stored={String(status.data.ratePerMinute)} min={1} max={600} />
           <NumberSetting label={t("ai.rows")} description={t("ai.rowsHint")} name="mcp.max_rows" stored={String(status.data.maxRows)} min={1} max={2000} />
           <Switch checked={raw.data["mcp.allow_free_query"] === "true"} label={t("ai.freeQuery")} description={t("ai.freeQueryHint")} onCheckedChange={(on) => set("mcp.allow_free_query", String(on))} />
+          <Switch checked={raw.data["mcp.allow_proposals"] === "true"} label={t("ai.proposals")} description={t("ai.proposalsHint")} onCheckedChange={(on) => set("mcp.allow_proposals", String(on))} />
           <FormField label={t("ai.env")} description={t("ai.envHint")}>
             <Select
               aria-label={t("ai.env")}

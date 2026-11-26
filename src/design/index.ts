@@ -108,3 +108,5 @@ export {
   type StripFieldProps,
   type FactItem,
 } from "./components/page-frame";
+export { DiffView, valueText, type DiffViewProps, type DiffColumn, type DiffLayout } from "./components/diff-view";
+export { lineDiff, charDiff, diffCounts, type DiffLine, type DiffPart } from "./components/diff";

@@ -350,16 +350,19 @@ impl Inner {
         if row.tree.as_deref() == Some(TREE_PLUGIN_STATE) {
             return Err(not_found("resource"));
         }
-        let revs: Vec<(i64, i64, String, String, String, Option<String>)> = self.read(|c| {
+        type Rev = (i64, i64, String, String, String, Option<String>, Option<String>);
+        let revs: Vec<Rev> = self.read(|c| {
             let mut st = c.prepare_cached(
-                "SELECT rev, at, actor, op, snapshot, restored_from FROM revisions WHERE resource_id = ?1 ORDER BY rev",
+                "SELECT rev, at, actor, op, snapshot, restored_from, commit_ref FROM revisions WHERE resource_id = ?1 ORDER BY rev",
             )?;
-            let rows = st.query_map([id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?)))?;
+            let rows = st.query_map([id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?)))?;
             rows.collect()
         })?;
         let mut out = Vec::new();
         let mut prev: BTreeMap<String, String> = BTreeMap::new();
-        for (rev, at, actor, op, snap, restored_from) in revs {
+        for (rev, at, actor, op, snap, restored_from, commit_ref) in revs {
+            // D487 §29: an accepted item of a proposal.
+            let proposal = self.history_proposal(commit_ref.as_deref());
             let cur = fields_of(&serde_json::from_str(&snap).unwrap_or(Value::Null));
             let keys: BTreeSet<&String> = prev.keys().chain(cur.keys()).collect();
             let mut changed: Vec<(String, String, String)> = keys
@@ -383,6 +386,8 @@ impl Inner {
                     before,
                     after,
                     restored_from: restored_from.clone(),
+                    proposal: proposal.clone(),
+                    rev: Some(rev),
                 });
             }
             prev = cur;

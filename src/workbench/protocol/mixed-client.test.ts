@@ -17,7 +17,8 @@ function fakeKernel(): KernelClient {
     app: { inspectPlugin: async () => ({ valid: true }) as never, installPlugin: async () => ({ plugin: "p", version: "1" }), removePlugin: async () => undefined },
     secrets: { list: async () => [{ name: "token", updatedAt: 1, usedBy: [] }], set: async () => undefined, delete: async () => undefined },
     search: { query: async () => [{ target: "resource:k1", title: "kernel hit", icon: "file", subtitle: "", state: "ok" }] },
-    mcp: { status: async () => ({ enabled: false, ratePerMinute: 30, maxRows: 200, allowFreeQuery: false, tools: 4 }) },
+    mcp: { status: async () => ({ enabled: false, ratePerMinute: 30, maxRows: 200, allowFreeQuery: false, allowProposals: false, tools: 4 }) },
+    proposal: { get: async () => ({}) as never, review: async () => ({}) as never, withdraw: async () => ({}) as never, count: async () => ({ pending: 0, ids: [] }), create: async () => ({ id: "p" }) },
     audit: { list: async () => [], facets: async () => ({ actors: [], operations: [] }) },
     tree: {
       list: async () => trees,
@@ -38,6 +39,9 @@ function fakeKernel(): KernelClient {
       undelete: async () => undefined,
       purge: async () => undefined,
       setFavorite: async () => undefined,
+      at: async () => {
+        throw new Error("unused");
+      },
       setAiVisible: async () => ({ changed: 1 }),
     },
     page: {

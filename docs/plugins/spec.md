@@ -330,6 +330,7 @@
 - `params` 最多 32 个；`name` 以字母或 `_` 开头、只含字母数字 `_`、≤ 64、不重复；`type` 是 `text`、`number`、`boolean`，或带非空 `options` 的 `enum`；可选 `required`、`description`、`options`、`default`（字符串）。
 - `describe`：本插件另一个动作的 id（不能是自己，那个动作的 `ai` 也不能再有 `describe`），用来说明某个资源的参数。
 - `contributes.aiTools[]`：`{ name, description, inputSchema, action, freeQuery? }`。`name` 小写字母开头、只含小写字母数字 `_`、≤ 40、不含 `__`、不重复；`inputSchema` 顶层必须是 `type: "object"`，只能用 `type`、`properties`、`items`、`required`、`additionalProperties`（布尔）、`enum`、`minimum`、`maximum`、`minLength`、`maxLength`、`description`、`default`、`title`；`action` 必须是自己的、带 `ai`、不带 `kinds` 的动作。违反 `badAiTools`。
+- 内核给 AI 的通用工具是 `search`（可加 `within`：只在一个资源下面找）、`describe`、`run`、`get_run`、`tree`（一个资源下面的子树）、`read`（一个资源页面上的各字段和引用，哪些能提修改）、`propose`（提出修订提案，D487 §29；工作区配置 `mcp.allow_proposals` 打开才行，默认关）。插件的 `aiTools` 排在后面，名字前加插件前缀（如 `org_onedesk_book__book_contents`）。
 - 内核在 AI 运行里只允许读：写资源、写文件、改设置、`plugins.*`、`ui.*`、明文密钥、非 GET 请求、传输都被拒（`denied`，`reason: "aiRun"`）；只返回用户标记“AI 可见”的资源。详见 `docs/redesign/ai-interface.md`。
 
 ---
@@ -573,6 +574,8 @@ export default {
 | `kinds()` | → `[{ kind, label, icon }]` | 需 `requires.resources`；资源树里能有的所有类型（已启用的插件，`kind` 是全名，`label` 是 Label），供“按类型”的条件让用户勾选，不要让用户手写类型全名（D477） |
 
 插件拿到的资源还带 `externalKey` 和 `missing`。
+
+**`host.proposals.create({ title, comment?, items })`** → `{ id }`（D487 §29，K16）：提出一份修订提案，交给用户在“待审的修改”里逐项接受或拒绝；不写任何别的资源。`items` 每项是 `{ op: "update", id, rev?, changes }`、`{ op: "create", kind, parent?, before?, name, values? }` 或 `{ op: "delete", id, rev? }`；只能改名字、说明、标签和页面上可编辑的文字字段（不能碰密钥、保留字段，不能改签了章的、只读副本里的）；最多 50 项。需 `requires.resources`；只在用户的操作里（页面事件、命令、运行），不能在事件处理函数、纯计算、AI 的运行里。比如 AI 工作台把一次回答里的多页修改变成一份提案。
 
 **files**（需 `requires.files`，或相对路径 = 自己的 `plugin-data/<id>/`）
 

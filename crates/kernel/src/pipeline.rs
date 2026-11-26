@@ -299,11 +299,25 @@ pub enum Command {
     SyncRefDecls,
     /// Round 12 (D394): one drop's writes — `Update`s and `Audit` rows only — in one transaction.
     Batch(Vec<Command>),
+    /// D487 §29 (K16): a proposal written (its checks were made before); the one write an AI client may make.
+    Propose(NewResource),
+    /// D487 §29 (K16): the accepted items of a proposal written as the user, each revision marked with the
+    /// proposal, and the proposal's new body — all in one transaction.
+    Review { proposal: String, steps: Vec<ReviewStep>, body: JsonMap, summary: Value },
     /// Round 16: resources of one kind by external key, in one transaction; `others_missing`
     /// marks the kind's keyed resources not in `items` as missing (§3.3 `state`).
     Upsert { kind: String, items: Vec<UpsertItem>, others_missing: bool },
     /// Round 13 (D400): a new workspace's `init-settings.json`.
     InitSettings(Box<onedesk_protocol::WorkspaceSettingsSnapshot>),
+}
+
+/// D487 §29: one accepted item: `Create` (then put before `before`, its AI visibility that of its parent),
+/// `Update` or `Delete`; `index` is the item's place in the proposal.
+#[derive(Debug, Clone)]
+pub struct ReviewStep {
+    pub index: usize,
+    pub cmd: Command,
+    pub before: Option<String>,
 }
 
 /// What the kernel needs to know about a kind to validate writes.
@@ -509,12 +523,12 @@ impl Writer {
         let rules = self.rules.read().unwrap().clone();
         // Round 19 (D448): an AI client writes nothing. Not a method list: whatever reaches the
         // writer for it is refused here; only the audit rows about its own calls pass.
-        if matches!(actor, Actor::Ai { .. }) && !matches!(cmd, Command::Stopped { .. } | Command::Refused { .. }) {
+        if matches!(actor, Actor::Ai { .. }) && !matches!(cmd, Command::Stopped { .. } | Command::Refused { .. } | Command::Propose(_)) {
             return Err(err_p(ErrorCode::Denied, &[("reason", "aiReadOnly")]));
         }
         let tx = self.conn.transaction().map_err(db_err)?;
         let mut out = {
-            let mut cx = Tx { tx: &tx, actor, rules: &rules, at: now_ms(), touched: Default::default(), indexed: Default::default() };
+            let mut cx = Tx { tx: &tx, actor, rules: &rules, at: now_ms(), touched: Default::default(), indexed: Default::default(), source: Default::default() };
             // D327: `protection.readonly` of the workspace configuration refuses every content write.
             if blocked_by_readonly(&cmd) {
                 crate::policy::check(&tx, crate::policy::READONLY, None)?;
@@ -523,6 +537,8 @@ impl Writer {
             crate::packages::guard_copy(&tx, &cmd)?;
             // D487 §23 (K6): a stamped resource's content stays as it is.
             crate::stamps::guard(&tx, &cmd)?;
+            // D487 §29 (K16): a proposal is written only as one, and changed only by its review.
+            crate::proposals::guard(&tx, &cmd)?;
             let out = match cmd {
                 Command::Create(n) => cx.create(n)?,
                 Command::Update { id, changes, basis, overwrite } => cx.update(&id, &changes, basis, &overwrite)?,
@@ -707,6 +723,8 @@ impl Writer {
                     all
                 }
                 Command::Upsert { kind, items, others_missing } => cx.upsert(&kind, items, others_missing)?,
+                Command::Propose(n) => cx.propose(n)?,
+                Command::Review { proposal, steps, body, summary } => cx.review(&proposal, steps, body, &summary)?,
                 Command::UiSet { .. } => unreachable!("handled above"),
             };
             let touched = std::mem::take(&mut *cx.touched.borrow_mut());
@@ -767,6 +785,8 @@ fn describe(cmd: &Command) -> (String, String) {
         Command::ImportPackage(plan) => ("package.import".into(), plan.pkg.root.clone()),
         Command::Stamp { id, .. } => ("resource.stamp".into(), id.clone()),
         Command::Unstamp { id, .. } => ("resource.unstamp".into(), id.clone()),
+        Command::Propose(_) => ("proposal.create".into(), String::new()),
+        Command::Review { proposal, .. } => ("proposal.review".into(), proposal.clone()),
         Command::RebuildRefs => ("refs.rebuild".into(), String::new()),
         Command::SyncRefDecls => ("refs.sync".into(), String::new()),
         Command::Batch(cmds) => cmds
@@ -813,6 +833,8 @@ pub(crate) struct Tx<'a> {
     pub touched: std::cell::RefCell<BTreeSet<String>>,
     /// Search rows rewritten in this transaction (see `index`).
     pub indexed: std::cell::Cell<usize>,
+    /// D487 §29: what the revisions written now come from (`proposal:<id>`), kept in `revisions.commit_ref`.
+    pub source: std::cell::RefCell<Option<String>>,
 }
 
 /// Search rows rewritten in one transaction after which old entries are no longer scrubbed one by
@@ -984,8 +1006,8 @@ impl Tx<'_> {
     }
 
     pub(crate) fn revision_from(&self, r: &Row, op: &str, fields: &[String], restored_from: Option<&str>) -> KResult<()> {
-        self.tx.prepare_cached("INSERT INTO revisions (resource_id, rev, at, actor, op, fields, snapshot, restored_from)
-                 VALUES (?1,?2,?3,?4,?5,?6,?7,?8)").map_err(db_err)?.execute(params![
+        self.tx.prepare_cached("INSERT INTO revisions (resource_id, rev, at, actor, op, fields, snapshot, restored_from, commit_ref)
+                 VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)").map_err(db_err)?.execute(params![
                     r.id,
                     r.rev,
                     self.at,
@@ -993,7 +1015,8 @@ impl Tx<'_> {
                     op,
                     serde_json::to_string(fields).expect("json"),
                     serde_json::to_string(r).expect("json"),
-                    restored_from
+                    restored_from,
+                    self.source.borrow().as_deref()
                 ],
             )
             .map_err(db_err)?;
@@ -2039,6 +2062,104 @@ impl Tx<'_> {
         Ok(all.into_iter().filter(|r| r.id != except).collect())
     }
 
+    /// D487 §29 (K16): a proposal row, top level of its tree, by whoever proposes (checked before).
+    fn propose(&mut self, n: NewResource) -> KResult<Outcome> {
+        if n.kind != store::KIND_PROPOSAL {
+            return Err(internal("propose: not a proposal"));
+        }
+        let tree = Some(store::TREE_PROPOSALS.to_string());
+        let actor = self.actor.as_text();
+        let pos = self.next_pos(tree.as_deref(), None)?;
+        let row = Row {
+            id: new_id(),
+            kind: n.kind,
+            plugin_version: None,
+            pos,
+            tree,
+            parent_id: None,
+            name: n.name,
+            description: n.description,
+            tags: n.tags,
+            body: n.body,
+            origin: "original".into(),
+            origin_ref: None,
+            state: "ok".into(),
+            rev: 1,
+            created_at: self.at,
+            created_by: actor.clone(),
+            updated_at: self.at,
+            updated_by: actor,
+            deleted_at: None,
+            default_env: None,
+        };
+        self.insert(&row)?;
+        self.revision(&row, "create", &["*".to_string()])?;
+        let items = row.body.get("items").and_then(Value::as_array).map(Vec::len).unwrap_or(0);
+        self.audit("proposal.create", &row.id, &json!({ "items": items }))?;
+        Ok(Outcome { id: Some(row.id.clone()), changed: true, rows: vec![row], ..Default::default() })
+    }
+
+    /// D487 §29 (K16): the accepted items, then the proposal's new body (with what each `create` made).
+    fn review(&mut self, proposal: &str, steps: Vec<ReviewStep>, mut body: JsonMap, summary: &Value) -> KResult<Outcome> {
+        let p = self.live(proposal)?;
+        if p.kind != store::KIND_PROPOSAL {
+            return Err(not_found("proposal"));
+        }
+        let mut all = Outcome::default();
+        *self.source.borrow_mut() = Some(format!("proposal:{proposal}"));
+        let res = (|| -> KResult<()> {
+            for step in steps {
+                if blocked_by_readonly(&step.cmd) {
+                    crate::policy::check(self.tx, crate::policy::READONLY, None)?;
+                }
+                crate::packages::guard_copy(self.tx, &step.cmd)?;
+                crate::stamps::guard(self.tx, &step.cmd)?;
+                crate::proposals::guard(self.tx, &step.cmd)?;
+                let o = match step.cmd {
+                    Command::Create(n) => {
+                        let parent = n.parent.clone();
+                        let o = self.create(n)?;
+                        let id = o.id.clone().ok_or_else(|| internal("no id"))?;
+                        if let Some(b) = &step.before {
+                            if store::get(self.tx, b).map_err(db_err)?.is_some_and(|r| r.deleted_at.is_none() && r.parent_id == parent) {
+                                self.move_to(&id, MoveDest::Before(b.clone()))?;
+                            }
+                        }
+                        let visible = match &parent {
+                            Some(p) => store::is_ai_visible(self.tx, p).map_err(db_err)?,
+                            None => false,
+                        };
+                        if visible {
+                            self.tx.execute("UPDATE resources SET ai_visible = 1 WHERE id = ?1", [&id]).map_err(db_err)?;
+                        }
+                        if let Some(Value::Array(items)) = body.get_mut("items") {
+                            if let Some(Value::Object(it)) = items.get_mut(step.index) {
+                                it.insert("created".into(), json!(id));
+                            }
+                        }
+                        o
+                    }
+                    Command::Update { id, changes, basis, overwrite } => self.update(&id, &changes, basis, &overwrite)?,
+                    Command::Delete { id } => self.delete(&id)?,
+                    _ => return Err(internal("review: only create, update and delete")),
+                };
+                all.changed |= o.changed;
+                all.rows.extend(o.rows);
+                all.touched.extend(o.touched);
+            }
+            Ok(())
+        })();
+        *self.source.borrow_mut() = None;
+        res?;
+        let changes = Changes { body: std::mem::take(&mut body), ..Default::default() };
+        let o = self.update(proposal, &changes, None, &[])?;
+        self.audit("proposal.review", proposal, summary)?;
+        all.changed = true;
+        all.id = Some(proposal.to_string());
+        all.rows.extend(o.rows);
+        Ok(all)
+    }
+
     fn delete(&mut self, id: &str) -> KResult<Outcome> {
         let root = self.live(id)?;
         self.permit(&root.kind)?;
@@ -2102,6 +2223,8 @@ pub fn core_rules() -> HashMap<String, KindRule> {
     // D274: environments only under environments, configuration only under configuration.
     m.insert(KIND_ENV.to_string(), KindRule { tree: Some(store::TREE_ENV.into()), accepts: vec![KIND_ENV.into()], protected: vec![], ..Default::default() });
     m.insert(KIND_CONFIG.to_string(), KindRule { tree: Some(store::TREE_CONFIG.into()), accepts: vec![KIND_CONFIG.into()], protected: vec![], ..Default::default() });
+    // D487 §29 (K16): proposals, one level, nothing below them.
+    m.insert(store::KIND_PROPOSAL.to_string(), KindRule { tree: Some(store::TREE_PROPOSALS.into()), accepts: vec![], protected: vec![], ..Default::default() });
     m
 }
 

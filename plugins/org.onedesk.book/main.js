@@ -12,6 +12,7 @@ import { bookOf, contentsOf, contentsOfBook, embedToc, entriesOf, exportBook, re
 import { citeLabels, embedReference, embedReferences, renderReference, renderReferences } from "./references.js";
 import { embedIndex, renderIndex } from "./index.js";
 import { embedFigures, renderFigures } from "./figures.js";
+import { aiContents, aiPage, aiRefs } from "./ai.js";
 import { colophonEvent, embedColophon, printAction, publishAction, renderColophon, reprintAction } from "./colophon.js";
 
 const NONE = { type: "none" };
@@ -93,6 +94,11 @@ export default {
       const r = await citeLabels(ctx, ctx.resource, cites.map((c) => ({ keys: c.keys, notes: Array.isArray(c.notes) ? c.notes : c.keys.map(() => null) })));
       return { output: NONE, data: { labels: r.labels } };
     });
+
+    // D487 §29.4: what an AI reads of a book (tools; read only).
+    host.actions.handle("aiContents", aiContents);
+    host.actions.handle("aiPage", aiPage);
+    host.actions.handle("aiRefs", aiRefs);
 
     host.events.on("resource.changed", onBookCreated);
   },

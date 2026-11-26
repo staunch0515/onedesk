@@ -712,3 +712,76 @@ describe("export by edition (D487 §21)", () => {
     expect(w.files.get("/out/书 2.md")!).toContain("答案");
   });
 });
+
+describe("what an AI reads of a book (D487 §29.4)", () => {
+  const data = (r: any) => JSON.parse(r.output.text);
+  const en = (w: ReturnType<typeof sample>, id: string | null) => ({ ...w.ctx(id), locale: "en-US" });
+
+  it("book_contents: numbers, roles and what they mean, and the pages outside the reading order", async () => {
+    const w = sample();
+    const { actions } = registry(plugin);
+    const d = data(await actions.aiContents(en(w, null), { book: "bk" }));
+    expect(d.book).toEqual({ id: "bk", name: "文集" });
+    const by = (id: string) => d.entries.find((e: any) => e.id === id);
+    expect(by("pf")).toMatchObject({ role: "preface", part: "front" });
+    expect(by("c1")).toMatchObject({ role: "body", number: "Chapter 1", name: "秒的认识", level: 1 });
+    expect(by("g2")).toMatchObject({ role: "group", number: "Chapter 2" });
+    expect(by("p21")).toMatchObject({ role: "body", level: 2 });
+    expect(by("ap")).toMatchObject({ role: "appendix" });
+    expect(d.others.map((o: any) => o.role)).toEqual(expect.arrayContaining(["cover", "toc"]));
+    expect(d.roles.toc).toBe(EN["ai.role.toc"]);
+    expect(d.roles.body).toBe(EN["ai.role.body"]);
+    expect(d.figures[0]).toMatchObject({ type: "figure", page: "c1" });
+    expect(d.how).toBe(EN["ai.how"]);
+    // Any resource in the book finds the book; one outside it is no book.
+    expect(data(await actions.aiContents(en(w, null), { book: "p21" })).book.id).toBe("bk");
+    await expect(actions.aiContents(en(w, null), { book: "nope" })).rejects.toThrow(EN["ai.notABook"]);
+  });
+
+  it("book_page: number, role, outline, text and what readers see", async () => {
+    const w = sample();
+    w.res.get("p21")!.body.text = "## 分针\n\n图：分针\n\n秒[@k1]与 {{分钟}}";
+    const { actions } = registry(plugin);
+    const d = data(await actions.aiPage(en(w, null), { id: "p21" }));
+    expect(d).toMatchObject({ id: "p21", role: "body", book: { id: "bk" }, rev: expect.any(Number) });
+    expect(d.number).toContain("Chapter 2");
+    expect(d.outline.headings).toEqual([{ text: "分针", level: 2 }]);
+    expect(d.outline.figures[0].caption).toBe("分针");
+    expect(d.text).toContain("## 分针");
+    expect(d.shown[0].type).toBe("text");
+    expect(d.roleMeans).toBe(EN["ai.role.body"]);
+    await expect(actions.aiPage(en(w, null), { id: "nope" })).rejects.toThrow(EN["ai.noPage"]);
+  });
+
+  it("book_refs: links, citations and terms, and which are broken", async () => {
+    const w = world(
+      [
+        ["bk", k("book"), "书", null],
+        ["p1", k("page"), "一", "bk", { text: "见 [[二]] 和 [[无]]，引 [@a] [@b]，{{术语}}" }],
+        ["p2", k("page"), "二", "bk", { text: "" }],
+        ["rf", k("references"), "参考文献", "bk"],
+        ["a", k("reference"), "a", "rf", { title: "A" }],
+      ],
+      { refs: { p1: [{ text: "二", to: "p2" }, { text: "无", to: null }] } },
+    );
+    const { actions } = registry(plugin);
+    const d = data(await actions.aiRefs(en(w, null), { book: "bk" }));
+    expect(d.links).toEqual([
+      expect.objectContaining({ page: "p1", text: "二", to: "p2", broken: false }),
+      expect.objectContaining({ page: "p1", text: "无", to: null, broken: true }),
+    ]);
+    expect(d.cites.flatMap((c: any) => c.missing)).toEqual(["b"]);
+    expect(d.broken).toEqual({ links: 1, cites: d.cites.filter((c: any) => c.missing.length > 0).length });
+    expect(d.references).toBe("rf");
+  });
+
+  it("the tools are declared read only, in every language", () => {
+    const names = manifest.contributes.aiTools.map((x: any) => x.name);
+    expect(names).toEqual(["book_contents", "book_page", "book_refs"]);
+    for (const tool of manifest.contributes.aiTools) {
+      const a = manifest.contributes.actions.find((x: any) => x.id === tool.action);
+      expect(a.ai.readOnly).toBe(true);
+      for (const f of ["en-US", "zh-CN", "ja-JP"]) expect(locale(f)[tool.description]).toBeTruthy();
+    }
+  });
+});

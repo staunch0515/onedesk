@@ -23,6 +23,10 @@ pub const P_RATE: &str = "mcp.rate_per_minute";
 pub const P_MAX_ROWS: &str = "mcp.max_rows";
 pub const P_FREE_QUERY: &str = "mcp.allow_free_query";
 pub const P_ENV: &str = "mcp.env";
+/// D487 §29: whether an AI client may propose changes (it never writes them; off until the user turns it on).
+pub const P_PROPOSE: &str = "mcp.allow_proposals";
+/// Most nodes of one `tree` page.
+const TREE_PAGE: usize = 500;
 
 pub const DEFAULT_RATE: u32 = 30;
 /// D479: the client name of the writing help's tool calls (audited like an outside client's).
@@ -79,6 +83,7 @@ pub struct McpPolicy {
     pub max_rows: u32,
     pub free_query: bool,
     pub env: Option<String>,
+    pub propose: bool,
 }
 
 fn truthy(v: &str) -> bool {
@@ -107,7 +112,7 @@ fn label_en(l: &Label) -> String {
     }
 }
 
-fn cut_chars(s: &str, n: usize) -> (String, bool) {
+pub(crate) fn cut_chars(s: &str, n: usize) -> (String, bool) {
     if s.chars().count() <= n {
         return (s.to_string(), false);
     }
@@ -227,6 +232,9 @@ enum Target {
     Describe,
     Run,
     GetRun,
+    Tree,
+    Read,
+    Propose,
     Plugin(&'static Plugin, &'static AiToolDecl),
 }
 
@@ -239,6 +247,7 @@ fn general_tools() -> Vec<McpTool> {
             json!({ "type": "object", "properties": {
                 "query": { "type": "string", "minLength": 1, "maxLength": 200, "description": "Words to look for" },
                 "kinds": { "type": "array", "items": { "type": "string" }, "description": "Only these resource types (full names)" },
+                "within": { "type": "string", "description": "Only below this resource (a book, a group): its id" },
                 "limit": { "type": "integer", "minimum": 1, "maximum": 50, "description": "Most hits (default 20)" } },
                 "required": ["query"], "additionalProperties": false }),
         ),
@@ -265,6 +274,41 @@ fn general_tools() -> Vec<McpTool> {
                 "offset": { "type": "integer", "minimum": 0 },
                 "limit": { "type": "integer", "minimum": 1, "maximum": 2000 } },
                 "required": ["runId"], "additionalProperties": false }),
+        ),
+        // D487 §29: reading a whole structure, a page as it is, and proposing changes (never writing them).
+        t(
+            "tree",
+            "The resources below one resource (a book, a group), in order: id, name, type, depth, revision. Read the structure first; then read pages.",
+            json!({ "type": "object", "properties": {
+                "id": { "type": "string", "description": "Resource id" },
+                "offset": { "type": "integer", "minimum": 0 },
+                "limit": { "type": "integer", "minimum": 1, "maximum": 500 } },
+                "required": ["id"], "additionalProperties": false }),
+        ),
+        t(
+            "read",
+            "Read one resource: name, description, tags, the fields its page shows (texts as written), which of them a proposal may change, and what it refers to. `rev` is what a proposal is made against.",
+            json!({ "type": "object", "properties": { "id": { "type": "string", "description": "Resource id" } },
+                "required": ["id"], "additionalProperties": false }),
+        ),
+        t(
+            "propose",
+            "Propose changes for the user to review: change fields of resources (only those `read` lists as changeable), add resources, delete resources. Nothing is written until the user accepts each item. Say in the title and comment what you changed and why; one proposal per piece of work.",
+            json!({ "type": "object", "properties": {
+                "title": { "type": "string", "minLength": 1, "maxLength": 200 },
+                "comment": { "type": "string", "maxLength": 4000, "description": "What and why" },
+                "items": { "type": "array", "minItems": 1, "maxItems": 50, "items": { "type": "object", "properties": {
+                    "op": { "type": "string", "enum": ["update", "create", "delete"] },
+                    "id": { "type": "string", "description": "update, delete: the resource" },
+                    "rev": { "type": "integer", "description": "update, delete: the revision you read" },
+                    "changes": { "type": "object", "description": "update: field path (name, description, tags, body.<key>) to new value" },
+                    "kind": { "type": "string", "description": "create: the full type name" },
+                    "parent": { "type": "string", "description": "create: where it goes" },
+                    "before": { "type": "string", "description": "create: the sibling it goes before (else last)" },
+                    "name": { "type": "string", "description": "create: its name" },
+                    "values": { "type": "object", "description": "create: field path to value" } },
+                    "required": ["op"] } } },
+                "required": ["title", "items"], "additionalProperties": false }),
         ),
     ]
 }
@@ -403,6 +447,7 @@ impl Inner {
             max_rows: num(P_MAX_ROWS, DEFAULT_MAX_ROWS, 1, MAX_ROWS_LIMIT)?,
             free_query: get(P_FREE_QUERY)?.is_some_and(|v| truthy(&v)),
             env: get(P_ENV)?.map(|v| v.trim().to_string()).filter(|v| !v.is_empty()),
+            propose: get(P_PROPOSE)?.is_some_and(|v| truthy(&v)),
         })
     }
 
@@ -417,6 +462,7 @@ impl Inner {
             rate_per_minute: p.rate,
             max_rows: p.max_rows,
             allow_free_query: p.free_query,
+            allow_proposals: p.propose,
             env_id: p.env.clone(),
             env_name,
             tools: self.mcp_tool_list(&p).len() as u32,
@@ -511,6 +557,9 @@ impl Inner {
             "describe" => Some(Target::Describe),
             "run" => Some(Target::Run),
             "get_run" => Some(Target::GetRun),
+            "tree" => Some(Target::Tree),
+            "read" => Some(Target::Read),
+            "propose" => Some(Target::Propose),
             _ => self.plugin_tools(policy).into_iter().find(|(n, ..)| n == name).map(|(_, pl, t)| Target::Plugin(pl, t)),
         }
     }
@@ -651,6 +700,15 @@ impl Inner {
                 self.tool_run(client, &policy, args, info).await
             }
             Target::GetRun => self.tool_get_run(client, &policy, args, info).await,
+            Target::Tree => {
+                info["resource"] = json!(s("id").map(short));
+                self.tool_tree(args)
+            }
+            Target::Read => {
+                info["resource"] = json!(s("id").map(short));
+                self.tool_read(s("id").unwrap_or_default()).await
+            }
+            Target::Propose => self.tool_propose(client, &policy, args, info).await,
             Target::Plugin(pl, t) => self.tool_plugin(client, &policy, pl, t, args, info).await,
         }
     }
@@ -710,7 +768,16 @@ impl Inner {
         }
         let limit = args.get("limit").and_then(Value::as_u64).unwrap_or(SEARCH_DEFAULT_LIMIT).clamp(1, SEARCH_MAX_LIMIT) as u32;
         let kinds: Option<Vec<String>> = args.get("kinds").and_then(Value::as_array).map(|a| a.iter().filter_map(|k| k.as_str().map(String::from)).collect());
+        // D487 §29: only below one resource it may see.
+        let ids = match args.get("within").and_then(Value::as_str) {
+            Some(w) => {
+                let root = self.ai_row(w)?;
+                Some(self.ai_subtree(&root, usize::MAX).into_iter().map(|(r, _)| r.id).collect::<Vec<_>>())
+            }
+            None => None,
+        };
         let o = SearchOpts {
+            ids,
             text: Some(q),
             mode: Some(SearchMode::Any),
             rank: Some(SearchRank::Relevance),
@@ -735,6 +802,111 @@ impl Inner {
         }
         let n = items.len() as u64;
         Ok(self.result(json!({ "items": items, "total": res.total }), u64::from(res.total) > n, Some(n)))
+    }
+
+    /// What an AI may see below `root`, in tree order with depths (at most `max`, and 20 000).
+    fn ai_subtree(&self, root: &Row, max: usize) -> Vec<(Row, usize)> {
+        let tree = root.tree.clone().unwrap_or_default();
+        let kids = |id: &str| self.read(|c| store::children(c, &tree, Some(id), 0, u32::MAX)).unwrap_or_default();
+        let mut out = Vec::new();
+        let mut stack: Vec<(Row, usize)> = kids(&root.id).into_iter().rev().map(|r| (r, 1)).collect();
+        while let Some((r, depth)) = stack.pop() {
+            if out.len() >= max.min(20_000) {
+                break;
+            }
+            if r.kind == store::KIND_TREE || r.state == store::STATE_MISSING || !self.read(|c| store::is_ai_visible(c, &r.id)).unwrap_or(false) {
+                continue;
+            }
+            stack.extend(kids(&r.id).into_iter().rev().map(|k| (k, depth + 1)));
+            out.push((r, depth));
+        }
+        out
+    }
+
+    /// `tree`: the structure below a resource, page by page.
+    fn tool_tree(&self, args: &Value) -> KResult<McpCallResult> {
+        let root = self.ai_row(args.get("id").and_then(Value::as_str).unwrap_or_default())?;
+        let offset = args.get("offset").and_then(Value::as_u64).unwrap_or(0) as usize;
+        let limit = (args.get("limit").and_then(Value::as_u64).unwrap_or(TREE_PAGE as u64) as usize).clamp(1, TREE_PAGE);
+        let all = self.ai_subtree(&root, offset + limit + 1);
+        let more = all.len() > offset + limit;
+        let nodes: Vec<Value> = all
+            .iter()
+            .skip(offset)
+            .take(limit)
+            .map(|(r, depth)| {
+                json!({ "id": r.id, "name": r.name, "kind": r.kind, "kindLabel": label_en(&self.row_meta(r).label),
+                        "parent": r.parent_id, "depth": depth, "rev": r.rev })
+            })
+            .collect();
+        let n = nodes.len() as u64;
+        Ok(self.result(json!({ "root": { "id": root.id, "name": root.name, "kind": root.kind, "rev": root.rev }, "nodes": nodes,
+                               "next": if more { Some(offset + limit) } else { None } }), more, Some(n)))
+    }
+
+    /// `read`: a resource's fields as its page shows them (never a secret, withheld or parameter field).
+    async fn tool_read(&self, id: &str) -> KResult<McpCallResult> {
+        let row = self.ai_row(id)?;
+        let meta = self.row_meta(&row);
+        let target = format!("resource:{}", row.id);
+        let changeable = self.proposable_fields(&target, &row.kind, row.plugin_version.as_deref()).await;
+        let mut skip: std::collections::BTreeSet<String> = self.secret_fields(&row.kind, row.plugin_version.as_deref()).into_iter().collect();
+        if let Some((_, k)) = self.registry.kind_at(&row.kind, row.plugin_version.as_deref()) {
+            skip.extend(k.fields.iter().filter(|(_, f)| f.withheld).map(|(n, _)| format!("body.{n}")));
+        }
+        let mut fields = Vec::new();
+        let mut cut = false;
+        let mut seen = std::collections::BTreeSet::new();
+        if let Ok(page) = self.resolve(&target, Default::default(), None).await {
+            for node in &page.view {
+                let list = match node {
+                    ViewNode::Form { fields, .. } | ViewNode::Flow { fields, .. } => fields,
+                    _ => continue,
+                };
+                for f in list {
+                    let Some(b) = f.bind.as_ref().filter(|b| b.starts_with("body.") && !skip.contains(*b) && f.param != Some(true)) else { continue };
+                    if !seen.insert(b.clone()) {
+                        continue;
+                    }
+                    let mut value = store::value_at(&row, b).unwrap_or(Value::Null);
+                    if let Value::String(t) = &value {
+                        let (c, was_cut) = cut_chars(t, MAX_TEXT_CHARS);
+                        cut |= was_cut;
+                        value = json!(c);
+                    }
+                    fields.push(json!({ "path": b, "label": label_en(&f.label), "kind": f.kind, "value": value, "changeable": changeable.contains_key(b) }));
+                }
+            }
+        }
+        let refs: Vec<Value> = self
+            .refs_outgoing(&row.id)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|r| {
+                let to = r.target.filter(|t| self.read(|c| store::is_ai_visible(c, &t.id)).unwrap_or(false)).map(|t| json!({ "id": t.id, "name": t.name }));
+                json!({ "text": r.text, "field": r.field, "to": to, "embed": r.embed == Some(true) })
+            })
+            .collect();
+        let location = self.resource(&row).map(|r| r.location).unwrap_or_default();
+        Ok(self.result(
+            json!({ "id": row.id, "kind": row.kind, "kindLabel": label_en(&meta.label), "name": row.name, "description": row.description,
+                    "tags": row.tags, "rev": row.rev, "parent": row.parent_id, "location": location, "fields": fields, "refs": refs,
+                    "stamped": self.stamped(&row.id).unwrap_or(false), "readOnlyCopy": row.origin == crate::packages::ORIGIN_COPY }),
+            cut,
+            None,
+        ))
+    }
+
+    /// `propose`: a proposal for the user to review (behind its own switch).
+    async fn tool_propose(&self, client: &str, policy: &McpPolicy, args: &Value, info: &mut Value) -> KResult<McpCallResult> {
+        if !policy.propose {
+            return Err(denied("aiProposeOff"));
+        }
+        let p: ProposalCreateParams = serde_json::from_value(args.clone()).map_err(|_| bad_args("/items", "type"))?;
+        let n = p.items.len();
+        let id = self.proposal_create(Actor::Ai { client: client.to_string() }, p).await?;
+        info["proposal"] = json!(short(&id));
+        Ok(self.result(json!({ "proposal": id, "items": n, "status": "pending" }), false, None))
     }
 
     /// The AI actions of a resource's kind that can be offered, with their plugin.

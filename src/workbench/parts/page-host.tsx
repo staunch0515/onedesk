@@ -4,6 +4,7 @@ import { useI18n } from "../i18n";
 import { AuditPage } from "../pages/audit-page";
 import { DeletedPage } from "../pages/deleted-page";
 import { EnvPage } from "../pages/env-page";
+import { ProposalPage } from "../pages/proposal-page";
 import { PluginPage } from "../pages/plugin-page";
 import { AI_SETTINGS_TARGET, AiSettingsPage } from "../pages/ai-settings-page";
 import { SECRETS_TARGET, SecretsPage } from "../pages/secrets-page";
@@ -125,6 +126,8 @@ function ResolvedPage({ tab }: { tab: TabState }) {
       return <AuditPage tab={tab} descriptor={d} />;
     case "deleted":
       return <DeletedPage tab={tab} descriptor={d} />;
+    case "proposal":
+      return <ProposalPage tab={tab} descriptor={d} />;
     case "missing":
       return (
         <Frame tab={tab} descriptor={d}>

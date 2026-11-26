@@ -915,6 +915,8 @@ pub enum PageKind {
     Plugin,
     Audit,
     Deleted,
+    /// D487 §29 (K16): a proposal, drawn by the shell from `proposal.get`.
+    Proposal,
     /// The target does not resolve; `found` is false.
     Missing,
 }
@@ -1418,6 +1420,20 @@ pub struct HistoryEntry {
     pub after: String,
     /// Set when this entry is itself a restore: the entry it restored.
     pub restored_from: Option<String>,
+    /// D487 §29 (K16): the revision wrote an accepted item of this proposal.
+    pub proposal: Option<HistoryProposal>,
+    /// The resource's revision number (for `resource.at`).
+    pub rev: Option<i64>,
+}
+
+/// D487 §29 (K16): the proposal a revision came from: its title and who made it (`ai:<client>`, `user`, `plugin:<id>`).
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct HistoryProposal {
+    pub id: String,
+    pub title: String,
+    pub proposer: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -2246,6 +2262,20 @@ pub mod method5 {
     pub const PACKAGE_INSPECT: &str = "package.inspect";
     /// D487 §21 (K9): `PackagePathParams` → `PackageImportResult`: imports (or updates) a read-only copy. The user's only.
     pub const PACKAGE_IMPORT: &str = "package.import";
+    /// D487 §29 (K16): `ProposalCreateParams` → `ProposalCreateResult`: a proposal of changes (the user's; plugins
+    /// through `host.proposals.create`, AI clients through the tool `propose`). Writes no resource but the proposal.
+    pub const PROPOSAL_CREATE: &str = "proposal.create";
+    /// D487 §29 (K16): `ProposalIdParams` → `ProposalView`: a proposal with each item against what is there now.
+    pub const PROPOSAL_GET: &str = "proposal.get";
+    /// D487 §29 (K16): `ProposalReviewParams` → `ProposalView`: items accepted or rejected (the user's only); the
+    /// accepted ones are written in one transaction.
+    pub const PROPOSAL_REVIEW: &str = "proposal.review";
+    /// D487 §29 (K16): `ProposalIdParams` → `ProposalView`: a pending proposal withdrawn.
+    pub const PROPOSAL_WITHDRAW: &str = "proposal.withdraw";
+    /// D487 §29 (K16): `ProposalCountParams` → `ProposalCount`: pending proposals (all, or those about one resource).
+    pub const PROPOSAL_COUNT: &str = "proposal.count";
+    /// D487 §29 (K17): `ResourceAtParams` → `ResourceAt`: a resource as it was at one revision.
+    pub const RESOURCE_AT: &str = "resource.at";
     /// D484 §16: `BlobPutParams` → `BlobInfo`: stores a file (an image) by its content. The user's only (never a plugin).
     pub const BLOB_PUT: &str = "blob.put";
     /// D484 §16: `BlobReadParams` → `BlobData`: a stored file, for a resource that uses it or one this client just put.
@@ -2465,6 +2495,193 @@ pub struct StampLogEntry {
     pub reason: Option<String>,
     pub rev: i64,
     pub at: i64,
+}
+
+/// D487 §29 (K16): one change a proposal makes. `update`: fields (`name`, `description`, `tags`, `body.<key>`) to new
+/// values, against the revision it was read at; `create`: a resource of an installed kind under `parent` (before
+/// `before`); `delete`: to the recycle bin, as the user deletes.
+#[skip_serializing_none]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(tag = "op", rename_all = "camelCase", rename_all_fields = "camelCase")]
+#[ts(export)]
+pub enum ProposalChange {
+    Update {
+        id: String,
+        #[ts(optional)]
+        rev: Option<i64>,
+        changes: JsonMap,
+    },
+    Create {
+        kind: String,
+        #[ts(optional)]
+        parent: Option<String>,
+        #[ts(optional)]
+        before: Option<String>,
+        name: String,
+        #[ts(optional)]
+        values: Option<JsonMap>,
+    },
+    Delete {
+        id: String,
+        #[ts(optional)]
+        rev: Option<i64>,
+    },
+}
+
+#[skip_serializing_none]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, optional_fields)]
+pub struct ProposalCreateParams {
+    pub title: String,
+    pub comment: Option<String>,
+    pub items: Vec<ProposalChange>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ProposalCreateResult {
+    pub id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ProposalIdParams {
+    pub id: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum ProposalDecisionKind {
+    Accept,
+    Reject,
+}
+
+/// One item decided. `values`: what the user changed before accepting (the item's own fields only); `basis`: the
+/// target's revision the user saw (an item whose fields were changed since it was proposed is accepted only against
+/// the revision now there).
+#[skip_serializing_none]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, optional_fields)]
+pub struct ProposalDecision {
+    pub index: u32,
+    pub decision: ProposalDecisionKind,
+    pub values: Option<JsonMap>,
+    pub basis: Option<i64>,
+}
+
+#[skip_serializing_none]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, optional_fields)]
+pub struct ProposalReviewParams {
+    pub id: String,
+    pub items: Vec<ProposalDecision>,
+    pub comment: Option<String>,
+}
+
+#[skip_serializing_none]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, optional_fields)]
+pub struct ProposalCountParams {
+    pub resource_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ProposalCount {
+    pub pending: u32,
+    /// The pending proposals, newest first (at most 50).
+    pub ids: Vec<String>,
+}
+
+/// One field of an item: what it was when proposed, what it is now, what the proposal makes it. `label`/`kind` from
+/// the page (none for `name`, `description`, `tags`, which the shell names).
+#[skip_serializing_none]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, optional_fields)]
+pub struct ProposalFieldView {
+    pub path: String,
+    pub label: Option<Label>,
+    pub kind: Option<FieldKind>,
+    pub before: Value,
+    pub current: Value,
+    pub proposed: Value,
+    /// Changed since it was proposed.
+    pub changed: bool,
+}
+
+/// One item of a proposal as the review shows it. `result`: `accepted`, `rejected`, `void` (its target is gone), none
+/// while pending; `stale`: a field it changes was changed since (to be looked at again); `currentRev`: the revision
+/// to accept against.
+#[skip_serializing_none]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, optional_fields)]
+pub struct ProposalItemView {
+    pub index: u32,
+    pub op: String,
+    pub result: Option<String>,
+    pub resource_id: Option<String>,
+    pub name: String,
+    pub kind: String,
+    pub kind_label: Option<Label>,
+    pub icon: Option<String>,
+    pub location: Vec<String>,
+    pub rev: Option<i64>,
+    pub current_rev: Option<i64>,
+    pub stale: bool,
+    pub gone: bool,
+    pub fields: Vec<ProposalFieldView>,
+    /// The resource an accepted `create` made.
+    pub created: Option<String>,
+}
+
+#[skip_serializing_none]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, optional_fields)]
+pub struct ProposalView {
+    pub id: String,
+    pub title: String,
+    pub comment: String,
+    pub proposer: String,
+    /// `pending`, `partial`, `accepted`, `rejected`, `withdrawn`.
+    pub status: String,
+    pub at: i64,
+    pub items: Vec<ProposalItemView>,
+    pub reviewed_by: Option<String>,
+    pub review_comment: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ResourceAtParams {
+    pub id: String,
+    pub rev: i64,
+}
+
+/// D487 §29 (K17): a resource at one revision (from the revision history; secret fields as references only).
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ResourceAt {
+    pub id: String,
+    pub rev: i64,
+    pub at: i64,
+    pub actor: String,
+    pub name: String,
+    pub description: String,
+    pub tags: Vec<String>,
+    pub body: JsonMap,
 }
 
 /// D487 §21 (K9): where a read-only copy came from.
@@ -3082,6 +3299,8 @@ pub struct McpStatus {
     pub rate_per_minute: u32,
     pub max_rows: u32,
     pub allow_free_query: bool,
+    /// D487 §29: whether AI clients may propose changes.
+    pub allow_proposals: bool,
     pub env_id: Option<String>,
     pub env_name: Option<String>,
     pub tools: u32,

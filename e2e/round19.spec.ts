@@ -194,7 +194,7 @@ test.describe("tools", () => {
       const tools = await c.listTools();
       const names = tools.map((t) => t.name);
       for (const n of ["search", "describe", "run", "get_run", `${PFX}__ping`, "org_onedesk_table__list_tables"]) expect(names, n).toContain(n);
-      expect(names.filter((n) => !n.includes("__")).sort()).toEqual(["describe", "get_run", "run", "search"]); // nothing else without a plugin prefix
+      expect(names.filter((n) => !n.includes("__")).sort()).toEqual(["describe", "get_run", "propose", "read", "run", "search", "tree"]); // nothing else without a plugin prefix (D487 §29: tree, read, propose — propose writes only a proposal the user reviews)
       expect(names).not.toContain(`${PFX}__free`);
       expect(names).not.toContain("org_onedesk_table__run_sql");
       expect(names.join(" ")).not.toMatch(/create|write|delete|remove|install|update|save|set_|secret/i);

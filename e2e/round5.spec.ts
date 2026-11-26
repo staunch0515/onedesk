@@ -426,7 +426,7 @@ test("the workspace configuration is never imported", async ({ page }) => {
 test("the configuration page adds a parameter by typing its name and value under the parameters, no dialog (D470)", async ({ page }) => {
   await openKernel(page, host);
   const known = await call<{ name: string; layers: string[] }[]>(page, "params.known");
-  expect(known.map((k) => k.name).sort()).toEqual(["mcp.allow_free_query", "mcp.enabled", "mcp.env", "mcp.max_rows", "mcp.rate_per_minute", "network.allow", "process.allow", "protection.no_export", "protection.readonly", "ui.language"]); // round 19 added the five mcp.* policy parameters
+  expect(known.map((k) => k.name).sort()).toEqual(["mcp.allow_free_query", "mcp.allow_proposals", "mcp.enabled", "mcp.env", "mcp.max_rows", "mcp.rate_per_minute", "network.allow", "process.allow", "protection.no_export", "protection.readonly", "ui.language"]); // round 19 added the five mcp.* policy parameters
   expect(known.find((k) => k.name === "ui.language")!.layers).toEqual(["config"]);
   expect(known.find((k) => k.name === "protection.readonly")!.layers.sort()).toEqual(["config", "env"]);
 

@@ -88,6 +88,7 @@ pub fn known() -> Vec<KnownParam> {
         p(crate::mcp::P_MAX_ROWS, ParamType::Number, PolicyMerge::Plain, &["config"]),
         p(crate::mcp::P_FREE_QUERY, ParamType::Boolean, PolicyMerge::Plain, &["config"]),
         p(crate::mcp::P_ENV, ParamType::Ref, PolicyMerge::Plain, &["config"]),
+        p(crate::mcp::P_PROPOSE, ParamType::Boolean, PolicyMerge::Plain, &["config"]),
     ]
 }
 

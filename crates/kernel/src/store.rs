@@ -28,6 +28,9 @@ pub const TREE_RUNS: &str = "runs";
 /// Node kinds of those lists (not resource kinds).
 pub const KIND_PLUGIN: &str = "core:plugin";
 pub const KIND_RUN: &str = "core:run";
+/// D487 §29 (K16): a proposal of changes, in the kernel's tree of proposals.
+pub const KIND_PROPOSAL: &str = "core:proposal";
+pub const TREE_PROPOSALS: &str = "proposals";
 
 /// Round 16 (§3.3 `state`): the source of the resource is gone (an indexed file was deleted).
 pub const STATE_MISSING: &str = "missing";

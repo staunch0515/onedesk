@@ -1,4 +1,4 @@
-import type { AssistProvider, PackageImportResult, PackageInfo, BlobInfo, ConnectionState, EmbedActResult, EmbedResult, RefSuggestion, EventMessage, HelloResult, TreePage } from "../generated";
+import type { AssistProvider, PackageImportResult, PackageInfo, ProposalCount, ProposalCreateResult, ProposalView, ResourceAt, BlobInfo, ConnectionState, EmbedActResult, EmbedResult, RefSuggestion, EventMessage, HelloResult, TreePage } from "../generated";
 import type { ProtocolClient } from "../client";
 import type { ExportResult, ImportPreview, ImportResult, KnownParam, RefInfo, RunExportResult, InstallPreview, InstallRequest, PluginVersionParams, SecretInfo, UndoUpgradeResult, UpgradeResult, PageEventResult, PaletteCommand, PluginDetail, Run, ViewNode, TreeMoveResult, AuditFacets, AuditFilter, McpInfo, McpStatus, AuditRow, EnvOption, EnvView, HistoryEntry, ResolvedParam, ResultAction, SearchHit, CommandContext, CommandEffect, NewItem, PageContext, PageDescriptor, PageSaveResult, PluginGrants, Resource, TreeInfo, TreeNode, WorkspaceEntry, WorkspacesResult, WorkspaceInfo, LanguageInfo, ShellTexts } from "../types";
 import { EventBus } from "./event-bus";
@@ -18,8 +18,9 @@ export interface KernelClient {
   search: ProtocolClient["search"];
   audit: ProtocolClient["audit"];
   mcp: ProtocolClient["mcp"];
+  proposal: NonNullable<ProtocolClient["proposal"]>;
   tree: Pick<ProtocolClient["tree"], "list" | "children" | "path" | "move" | "createGroup" | "rename">;
-  resource: Pick<ProtocolClient["resource"], "get" | "delete" | "history" | "restore" | "listDeleted" | "undelete" | "purge" | "setFavorite" | "setAiVisible">;
+  resource: Pick<ProtocolClient["resource"], "get" | "delete" | "history" | "restore" | "listDeleted" | "undelete" | "purge" | "setFavorite" | "setAiVisible"> & { at: NonNullable<ProtocolClient["resource"]["at"]> };
   page: Pick<ProtocolClient["page"], "resolve" | "save" | "event">;
   run: ProtocolClient["run"];
   result: ProtocolClient["result"];
@@ -121,6 +122,13 @@ export async function createKernelClient(transport: Transport, locale?: () => st
     },
     search: { query: (text, limit) => call<SearchHit[]>("search.query", compact({ text, limit })) },
     mcp: { status: () => call<McpStatus>("mcp.status", {}) },
+    proposal: {
+      get: (id) => call<ProposalView>("proposal.get", { id }),
+      review: (params) => call<ProposalView>("proposal.review", params),
+      withdraw: (id) => call<ProposalView>("proposal.withdraw", { id }),
+      count: (resourceId) => call<ProposalCount>("proposal.count", compact({ resourceId })),
+      create: (params) => call<ProposalCreateResult>("proposal.create", params),
+    },
     audit: {
       list: (filter: AuditFilter) => call<AuditRow[]>("audit.list", compact(filter)),
       facets: () => call<AuditFacets>("audit.facets"),
@@ -140,6 +148,7 @@ export async function createKernelClient(transport: Transport, locale?: () => st
       get: (id) => call<Resource | null>("resource.get", { id }),
       delete: async (id) => void (await call("resource.delete", { id })),
       history: (id) => call<HistoryEntry[]>("resource.history", { id }),
+      at: (id, rev) => call<ResourceAt>("resource.at", { id, rev }),
       restore: async (id, entryId) => void (await call("resource.restore", { id, entryId })),
       listDeleted: () => call<Resource[]>("resource.listDeleted"),
       undelete: async (id) => void (await call("resource.undelete", { id })),

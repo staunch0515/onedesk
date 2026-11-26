@@ -162,6 +162,10 @@ impl Inner {
     async fn host_dispatch(&self, plugin: &'static Plugin, info: &CallInfo, cap: &str, op: &str, method: &str, args: &Value) -> KResult<Value> {
         let args = args.clone();
         match cap {
+            // D487 §29: in an AI's run the subtree, embeds and references are those it may see (checked there).
+            "resources" if info.ai && op == "tree" => self.host_tree(plugin, info, &args),
+            "resources" if info.ai && op == "embed" => self.host_embed(plugin, info, &args).await,
+            "resources" if info.ai && op == "refs" => self.host_refs(plugin, info, &args),
             "resources" if info.ai => {
                 // Round 19 (D450): an AI's run sees the resources made visible to AI, no more.
                 let v = self.host_resources(plugin, info, op, &args).await?;
@@ -184,6 +188,19 @@ impl Inner {
             // D487 §21 (K9, K10): a subtree published; withheld fields checked against fingerprints, or opened.
             "packages" => self.host_packages(plugin, info, op, &args).await,
             "sealed" => self.host_sealed(plugin, op, &args),
+            // D487 §29 (K16): a proposal of changes, in the user's act — a run, a command, a page event; never an
+            // event handler or a pure call (the user looks at it before anything is written).
+            "proposals" if op == "create" => {
+                if info.event || info.pure {
+                    return Err(denied("notInRun"));
+                }
+                if !plugin.manifest.requires.resources {
+                    return Err(denied("notRequested"));
+                }
+                let p: ProposalCreateParams = serde_json::from_value(arg(&args, 0)).map_err(|e| invalid_params(e.to_string()))?;
+                let id = self.proposal_create(plugin.actor(), p).await?;
+                Ok(json!({ "id": id }))
+            }
             "resources" => self.host_resources(plugin, info, op, &args).await,
             // D487 §13 (K-g): a stored file written to a granted folder.
             "files" if op == "writeBlob" => self.host_write_blob(plugin, info, &args).await,

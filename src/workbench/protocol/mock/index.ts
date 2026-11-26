@@ -371,7 +371,7 @@ export function createMockClient(options: MockOptions = {}): ProtocolClient {
 
   const stored = options.fresh ? null : (read(DB_KEY) as Db | null);
   /** Round 19: the workspace's `mcp.policy` parameters (the real kernel keeps them in the config node). */
-  const mcpConfig: Record<string, string> = { "mcp.enabled": "false", "mcp.rate_per_minute": "30", "mcp.max_rows": "200", "mcp.allow_free_query": "false", "mcp.env": "" };
+  const mcpConfig: Record<string, string> = { "mcp.enabled": "false", "mcp.rate_per_minute": "30", "mcp.max_rows": "200", "mcp.allow_free_query": "false", "mcp.allow_proposals": "false", "mcp.env": "" };
   const db: Db = stored && stored.rows && stored.runs ? stored : seed();
   // Runs that were in progress when the page closed cannot continue (§8).
   for (const run of db.runs) {
@@ -2156,6 +2156,7 @@ export function createMockClient(options: MockOptions = {}): ProtocolClient {
           ratePerMinute: Number(mcpConfig["mcp.rate_per_minute"]),
           maxRows: Number(mcpConfig["mcp.max_rows"]),
           allowFreeQuery: mcpConfig["mcp.allow_free_query"] === "true",
+          allowProposals: mcpConfig["mcp.allow_proposals"] === "true",
           envId: env?.id,
           envName: env?.name,
           tools: 4,

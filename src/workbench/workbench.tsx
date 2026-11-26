@@ -49,6 +49,8 @@ export function Workbench({ settings, languages, onSetting: storeSetting }: Work
   const tabs = useUi((s) => s.tabs);
   const activeTab = useUi((s) => s.tabs.find((x) => x.id === s.activeTabId) ?? null);
   const running = useQuery((c) => c.run.tasks(), [], ["runs"]);
+  // D487 §29.5: proposals still to be decided.
+  const proposals = useQuery((c) => (c.proposal ? c.proposal.count() : Promise.resolve({ pending: 0, ids: [] as string[] })), [], ["tree:proposals"]);
   const sideResize = useResize("sideWidth", 1);
 
   const tree = trees.data?.find((x) => x.id === activity) ?? trees.data?.[0];
@@ -217,7 +219,7 @@ export function Workbench({ settings, languages, onSetting: storeSetting }: Work
       <ActivityBar
         label={t("activity.label")}
         activeKey={sideOpen ? (tree?.id ?? null) : null}
-        items={(trees.data ?? []).map((x, i) => ({ key: x.id, icon: x.icon, label: tx(x.title), shortcut: i < 9 ? ["⌘", String(i + 1)] : undefined, badge: x.id === "runs" ? runningCount : undefined }))}
+        items={(trees.data ?? []).map((x, i) => ({ key: x.id, icon: x.icon, label: tx(x.title), shortcut: i < 9 ? ["⌘", String(i + 1)] : undefined, badge: x.id === "runs" ? runningCount : x.id === "proposals" && proposals.data?.pending ? proposals.data.pending : undefined }))}
         footer={[
           // D473: a resource tree of the user's own ("XX project"); it opens its page to be named.
           { key: "__newTree", icon: "plus", label: tx("tree.new") },

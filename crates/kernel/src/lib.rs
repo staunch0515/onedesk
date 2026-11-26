@@ -33,6 +33,7 @@ pub mod secrets;
 mod versions;
 pub mod pipeline;
 pub mod policy;
+pub mod proposals;
 pub mod refs;
 pub mod sandbox;
 pub mod store;
