@@ -1,0 +1,69 @@
+/* D487 §27 (K15): a table to fill in. */
+.od-rows {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  width: 100%;
+  overflow-x: auto;
+}
+
+.od-rows__table {
+  width: 100%;
+  table-layout: fixed;
+  border-collapse: collapse;
+  font-size: var(--text-sm);
+}
+
+/* A cell's control takes the cell's width. */
+.od-rows__cell > * {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.od-rows__table th {
+  padding: var(--space-1) var(--space-2);
+  border-bottom: var(--border-width) solid var(--border-default);
+  color: var(--fg-muted);
+  font-weight: var(--weight-medium);
+  text-align: left;
+  white-space: nowrap;
+}
+
+.od-rows__head--sm {
+  width: var(--table-col-sm);
+}
+
+.od-rows__table td {
+  padding: var(--space-1) var(--space-2);
+  border-bottom: var(--border-width) solid var(--border-subtle);
+  vertical-align: middle;
+}
+
+.od-rows__num {
+  width: var(--grid-rownum-width);
+  color: var(--fg-muted);
+  text-align: right;
+}
+
+.od-rows__tools {
+  width: calc(var(--grid-action-width) * 3 + var(--space-2));
+  white-space: nowrap;
+}
+
+td.od-rows__tools {
+  padding-right: 0;
+}
+
+.od-rows__empty {
+  color: var(--fg-muted);
+  text-align: center;
+}
+
+.od-rows__add {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  color: var(--fg-muted);
+  font-size: var(--text-sm);
+}

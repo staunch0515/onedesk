@@ -504,6 +504,9 @@ pub enum FieldKind {
     /// D484 §16: a file (an image) kept by its content; the value is `{ blob, name?, type, size, width?, height? }`
     /// or `null`. The interface lets the user drop, paste or choose one (`blob.put`) and shows it.
     Attachment,
+    /// D487 §27 (K15): a table to fill in: the value is an array of rows, each an object (column name → value); the
+    /// field's `columns` say what each column is. At most 1000 rows and 20 columns.
+    Rows,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -512,6 +515,21 @@ pub enum FieldKind {
 pub struct FieldOption {
     pub value: String,
     pub label: Label,
+}
+
+/// D487 §27 (K15): one column of a `rows` field: `text`, `number`, `date`, `enum`, `ref` or `boolean`; `options` for
+/// `enum` (and `ref`, filled by the kernel from `kinds`); a read-only column is the plugin's (computed when drawn).
+#[skip_serializing_none]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[ts(export, optional_fields)]
+pub struct RowColumn {
+    pub name: String,
+    pub label: Label,
+    pub kind: FieldKind,
+    pub options: Option<Vec<FieldOption>>,
+    pub kinds: Option<Vec<String>>,
+    pub read_only: Option<bool>,
 }
 
 #[skip_serializing_none]
@@ -548,6 +566,9 @@ pub struct ViewField {
     /// Round 15 (D414): for a `ref` field, the kinds it may point at (full `<pluginId>:<kind>`, or
     /// the page's own plugin's short name).
     pub kinds: Option<Vec<String>>,
+    /// D487 §27 (K15): the columns of a `rows` field.
+    #[serde(default)]
+    pub columns: Option<Vec<RowColumn>>,
     /// Round 21 (D462): writing help for this field. Absent = the shell offers it on editable
     /// `text`, `longtext` and `code` fields whenever an assist provider is installed.
     #[serde(default)]
@@ -3126,6 +3147,7 @@ mod tests {
                 required: None,
                 max_length: None,
                 kinds: None,
+                columns: None,
                 assist: None,
                 refs: None,
             }],

@@ -1091,5 +1091,11 @@
   "kernel.permission.runs": "运行其他资源（和你在它的页面上点“运行”一样）",
   "kernel.error.reason.loop": "不能运行自己，或者一层套一层太深了。",
   "kernel.error.invalid.notRunnable": "那个资源没有可以运行的。",
-  "kernel.audit.run.call": "运行其他资源"
+  "kernel.audit.run.call": "运行其他资源",
+  "rows.add": "加一行",
+  "rows.remove": "删除这一行",
+  "rows.up": "上移",
+  "rows.down": "下移",
+  "rows.empty": "还没有明细。",
+  "kernel.error.invalid.tooManyRows": "一张表最多 {max} 行。"
 }

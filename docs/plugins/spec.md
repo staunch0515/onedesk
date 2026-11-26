@@ -448,6 +448,8 @@ export default {
 | `label` | 否 | `Label` |
 | `fields` | 是 | `ViewField[]` |
 
+**表格字段**（D487 §27，K15）：`kind: "rows"` 的字段是一张可以填的表，值是行的数组（每行是 列名 → 值），必须带 `columns: [{ name, label, kind, options?, kinds?, readOnly? }]`（1–20 列；列的种类只能是 `text`、`number`、`date`、`enum`、`ref`、`boolean`；`ref` 列和普通引用字段一样由内核按 `kinds` 填选项）。最多 1000 行（`invalid/tooManyRows`）。外壳负责加行、删行、移动和保存；算出来的值不放进行里，由插件在页面上另外显示。参考 `org.onedesk.ledger` 的单据。
+
 `ViewField`（只能有这些键）：
 
 | 字段 | 说明 |

@@ -1091,5 +1091,11 @@
   "kernel.permission.runs": "ほかのリソースを実行する（そのページで「実行」を押すのと同じ）",
   "kernel.error.reason.loop": "自分自身は実行できません。または入れ子が深すぎます。",
   "kernel.error.invalid.notRunnable": "そのリソースには実行するものがありません。",
-  "kernel.audit.run.call": "ほかのリソースを実行"
+  "kernel.audit.run.call": "ほかのリソースを実行",
+  "rows.add": "行を追加",
+  "rows.remove": "この行を削除",
+  "rows.up": "上へ",
+  "rows.down": "下へ",
+  "rows.empty": "まだ明細がありません。",
+  "kernel.error.invalid.tooManyRows": "表は最大 {max} 行です。"
 }

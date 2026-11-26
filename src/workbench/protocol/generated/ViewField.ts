@@ -3,6 +3,7 @@ import type { FieldAssist } from "./FieldAssist";
 import type { FieldKind } from "./FieldKind";
 import type { FieldOption } from "./FieldOption";
 import type { Label } from "./Label";
+import type { RowColumn } from "./RowColumn";
 
 export type ViewField = { name: string, label: Label, kind: FieldKind, 
 /**
@@ -41,6 +42,10 @@ maxLength?: number,
  * the page's own plugin's short name).
  */
 kinds?: Array<string>, 
+/**
+ * D487 §27 (K15): the columns of a `rows` field.
+ */
+columns?: Array<RowColumn>, 
 /**
  * Round 21 (D462): writing help for this field. Absent = the shell offers it on editable
  * `text`, `longtext` and `code` fields whenever an assist provider is installed.

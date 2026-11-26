@@ -1,10 +1,13 @@
 /** Test helper (not a plugin): mirrors the kernel's strict ViewNode validation. */
 import type { ViewNode } from "../../src/workbench/protocol/generated";
 
-const FIELD_KEYS = new Set(["name", "label", "kind", "bind", "param", "options", "presets", "fill", "language", "hint", "placeholder", "envValue", "envSource", "readOnly", "required", "maxLength", "kinds", "assist"]);
+const FIELD_KEYS = new Set(["name", "label", "kind", "bind", "param", "options", "presets", "fill", "language", "hint", "placeholder", "envValue", "envSource", "readOnly", "required", "maxLength", "kinds", "assist", "columns"]);
+// D487 §27 (K15): a column of a `rows` field.
+const COLUMN_KEYS = new Set(["name", "label", "kind", "options", "kinds", "readOnly"]);
+const COLUMN_KINDS = new Set(["text", "number", "date", "enum", "ref", "boolean"]);
 // D462: `assist` holds only these (FieldAssist in crates/protocol).
 const ASSIST_KEYS = new Set(["off", "hint", "format"]);
-const KINDS = new Set(["text", "longtext", "code", "number", "boolean", "date", "datetime", "enum", "secret", "time", "ref", "multi", "attachment"]);
+const KINDS = new Set(["text", "longtext", "code", "number", "boolean", "date", "datetime", "enum", "secret", "time", "ref", "multi", "attachment", "rows"]);
 const NODE_KEYS: Record<string, string[]> = {
   form: ["type", "id", "layout", "label", "fields"],
   text: ["type", "id", "text", "mono", "language", "tone", "format", "lineTones", "appearance", "refLabels"],
@@ -52,6 +55,13 @@ export function checkView(view: unknown): string[] {
           else for (const k of Object.keys(f.assist)) if (!ASSIST_KEYS.has(k)) errs.push(`unknown assist key ${k}`);
         }
         if (!KINDS.has(String(f.kind))) errs.push(`bad field kind ${String(f.kind)}`);
+        const cols = f.columns as Record<string, unknown>[] | undefined;
+        if (f.kind === "rows" && (!Array.isArray(cols) || cols.length === 0 || cols.length > 20)) errs.push("a rows field needs 1 to 20 columns");
+        if (f.kind !== "rows" && cols !== undefined) errs.push("columns only on a rows field");
+        for (const c of cols ?? []) {
+          for (const k of Object.keys(c)) if (!COLUMN_KEYS.has(k)) errs.push(`unknown column key ${k}`);
+          if (!COLUMN_KINDS.has(String(c.kind))) errs.push(`bad column kind ${String(c.kind)}`);
+        }
         if (typeof f.name !== "string" || !isLabel(f.label)) errs.push("field needs name and label");
       }
     }

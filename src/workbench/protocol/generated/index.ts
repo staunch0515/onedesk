@@ -131,6 +131,7 @@ export type * from "./ResultAction";
 export type * from "./ResultActionsParams";
 export type * from "./ResultTabDecl";
 export type * from "./ResultTabType";
+export type * from "./RowColumn";
 export type * from "./Run";
 export type * from "./RunError";
 export type * from "./RunExportParams";

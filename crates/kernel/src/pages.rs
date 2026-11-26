@@ -134,6 +134,10 @@ pub fn ctx_params(cx: &PageContext) -> Value {
     json!(cx.params.clone().unwrap_or_default())
 }
 
+/// D487 §27 (K15): most rows in a table field, and most columns.
+pub const MAX_ROWS: usize = 1000;
+pub const MAX_COLUMNS: usize = 20;
+
 pub fn bind_paths(view: &[ViewNode]) -> Vec<String> {
     binds(view)
 }
@@ -221,6 +225,7 @@ fn param_form(r: &Row, ref_options: &dyn Fn(&str) -> Option<Vec<FieldOption>>) -
             required: None,
             max_length: None,
             kinds: None,
+            columns: None,
             assist: None,
             refs: None,
         });
@@ -398,8 +403,29 @@ impl Inner {
     fn fill_ref_options(&self, plugin: &Plugin, view: &mut [ViewNode]) -> KResult<()> {
         for node in view.iter_mut() {
             let (ViewNode::Form { fields, .. } | ViewNode::Flow { fields, .. }) = node else { continue };
-            for f in fields.iter_mut().filter(|f| f.kind == FieldKind::Ref && f.options.is_none()) {
+            for f in fields.iter_mut() {
+                // D487 §27 (K15): the reference columns of a table field, the same way.
+                if let Some(cols) = f.columns.as_mut() {
+                    for c in cols.iter_mut().filter(|c| c.kind == FieldKind::Ref && c.options.is_none()) {
+                        if let Some(kinds) = &c.kinds {
+                            c.options = Some(self.ref_choices(plugin, kinds)?);
+                        }
+                    }
+                }
+                if f.kind != FieldKind::Ref || f.options.is_some() {
+                    continue;
+                }
                 let Some(kinds) = &f.kinds else { continue };
+                f.options = Some(self.ref_choices(plugin, kinds)?);
+            }
+        }
+        Ok(())
+    }
+
+    /// The resources of `kinds` the plugin may see, by name, as choices (at most `MAX_REF_OPTIONS`).
+    fn ref_choices(&self, plugin: &Plugin, kinds: &[String]) -> KResult<Vec<FieldOption>> {
+        {
+            {
                 let mut opts: Vec<(String, String)> = Vec::new();
                 // Round 18 (X15): `@implements:<interface>` stands for the connection kinds of its
                 // implementers, which a plugin that `uses` the interface may list.
@@ -417,10 +443,9 @@ impl Inner {
                 }
                 opts.sort();
                 opts.truncate(MAX_REF_OPTIONS);
-                f.options = Some(opts.into_iter().map(|(name, id)| FieldOption { value: id, label: Label::Text(name) }).collect());
+                Ok(opts.into_iter().map(|(name, id)| FieldOption { value: id, label: Label::Text(name) }).collect())
             }
         }
-        Ok(())
     }
 
     async fn resolve_resource(
@@ -808,6 +833,10 @@ impl Inner {
                     .await;
                 return Err(e);
             }
+        }
+        // D487 §27 (K15): a table field holds at most MAX_ROWS rows.
+        if p.changes.values().any(|v| v.as_array().is_some_and(|a| a.len() > MAX_ROWS)) {
+            return Err(err_p(ErrorCode::Invalid, &[("reason", "tooManyRows"), ("max", &MAX_ROWS.to_string())]));
         }
         match parse_target(&p.target) {
             Target::Resource(id) => {

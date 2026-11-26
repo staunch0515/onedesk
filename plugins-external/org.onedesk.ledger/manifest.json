@@ -1,0 +1,408 @@
+{
+  "id": "org.onedesk.ledger",
+  "version": "0.1.0",
+  "apiVersion": "2",
+  "name": "plugin.name",
+  "description": "plugin.description",
+  "icon": "book-text",
+  "main": "main.js",
+  "author": "OneDesk",
+  "license": "MIT",
+  "requires": {
+    "resources": true,
+    "files": true
+  },
+  "uses": [
+    "onedesk.book/1"
+  ],
+  "implements": {
+    "onedesk.book/1": {
+      "actions": [
+        "roles",
+        "outline",
+        "entries"
+      ],
+      "kind": "item",
+      "kinds": [
+        "setup",
+        "catalog",
+        "sheet",
+        "receipt",
+        "issue",
+        "count",
+        "vouchers",
+        "summary"
+      ]
+    }
+  },
+  "exports": {
+    "actions": [
+      "roles",
+      "outline",
+      "entries"
+    ]
+  },
+  "contributes": {
+    "kinds": [
+      {
+        "id": "setup",
+        "label": "kind.setup",
+        "icon": "clipboard-signature",
+        "tree": "resources",
+        "page": "setup",
+        "newName": "kind.setup.new",
+        "defaults": {
+          "unitName": "",
+          "started": "",
+          "method": "moving",
+          "qtyDecimals": 2,
+          "amountDecimals": 2,
+          "keepers": "",
+          "handover": "",
+          "closed": []
+        },
+        "draggable": true,
+        "accepts": []
+      },
+      {
+        "id": "catalog",
+        "label": "kind.catalog",
+        "icon": "list",
+        "tree": "resources",
+        "page": "catalog",
+        "newName": "kind.catalog.new",
+        "defaults": {},
+        "draggable": true,
+        "accepts": []
+      },
+      {
+        "id": "item",
+        "label": "kind.item",
+        "icon": "package",
+        "tree": "resources",
+        "page": "item",
+        "newName": "kind.item.new",
+        "defaults": {
+          "code": "",
+          "spec": "",
+          "unit": "",
+          "category": "",
+          "location": "",
+          "min": null,
+          "max": null,
+          "openQty": 0,
+          "openPrice": 0
+        },
+        "draggable": true,
+        "accepts": [
+          "sheet"
+        ],
+        "embed": true
+      },
+      {
+        "id": "sheet",
+        "label": "kind.sheet",
+        "icon": "file-spreadsheet",
+        "tree": "resources",
+        "page": "sheet",
+        "newName": "kind.sheet.new",
+        "defaults": {
+          "item": null,
+          "page": 1,
+          "lines": []
+        },
+        "draggable": true,
+        "accepts": [],
+        "embed": true
+      },
+      {
+        "id": "receipt",
+        "label": "kind.receipt",
+        "icon": "package-plus",
+        "tree": "resources",
+        "page": "voucher",
+        "newName": "kind.receipt.new",
+        "defaults": {
+          "date": "",
+          "no": "",
+          "handler": "",
+          "party": "",
+          "summary": "",
+          "lines": []
+        },
+        "draggable": true,
+        "accepts": []
+      },
+      {
+        "id": "issue",
+        "label": "kind.issue",
+        "icon": "package-minus",
+        "tree": "resources",
+        "page": "voucher",
+        "newName": "kind.issue.new",
+        "defaults": {
+          "date": "",
+          "no": "",
+          "handler": "",
+          "party": "",
+          "summary": "",
+          "lines": []
+        },
+        "draggable": true,
+        "accepts": []
+      },
+      {
+        "id": "count",
+        "label": "kind.count",
+        "icon": "clipboard-check",
+        "tree": "resources",
+        "page": "voucher",
+        "newName": "kind.count.new",
+        "defaults": {
+          "date": "",
+          "no": "",
+          "handler": "",
+          "summary": "",
+          "lines": []
+        },
+        "draggable": true,
+        "accepts": []
+      },
+      {
+        "id": "vouchers",
+        "label": "kind.vouchers",
+        "icon": "folder-archive",
+        "tree": "resources",
+        "page": "vouchers",
+        "newName": "kind.vouchers.new",
+        "defaults": {},
+        "draggable": true,
+        "accepts": [
+          "receipt",
+          "issue",
+          "count"
+        ]
+      },
+      {
+        "id": "summary",
+        "label": "kind.summary",
+        "icon": "table-2",
+        "tree": "resources",
+        "page": "summary",
+        "newName": "kind.summary.new",
+        "defaults": {
+          "month": ""
+        },
+        "draggable": true,
+        "accepts": []
+      }
+    ],
+    "pages": [
+      {
+        "id": "setup",
+        "actions": [
+          {
+            "id": "save",
+            "role": "save",
+            "label": "action.save",
+            "icon": "save",
+            "primary": true,
+            "shortcut": [
+              "Mod",
+              "S"
+            ]
+          }
+        ]
+      },
+      {
+        "id": "catalog",
+        "recompute": true,
+        "actions": [
+          {
+            "id": "toggle",
+            "role": "event",
+            "label": "action.toggle",
+            "icon": "book-open"
+          }
+        ]
+      },
+      {
+        "id": "item",
+        "recompute": true,
+        "actions": [
+          {
+            "id": "save",
+            "role": "save",
+            "label": "action.save",
+            "icon": "save",
+            "primary": true,
+            "shortcut": [
+              "Mod",
+              "S"
+            ]
+          }
+        ]
+      },
+      {
+        "id": "sheet",
+        "actions": []
+      },
+      {
+        "id": "voucher",
+        "recompute": true,
+        "actions": [
+          {
+            "id": "audit",
+            "role": "event",
+            "label": "action.audit",
+            "icon": "stamp"
+          },
+          {
+            "id": "post",
+            "role": "run",
+            "action": "post",
+            "label": "action.post",
+            "icon": "book-check"
+          },
+          {
+            "id": "reverse",
+            "role": "event",
+            "label": "action.reverse",
+            "icon": "undo-2"
+          },
+          {
+            "id": "revise",
+            "role": "event",
+            "label": "action.revise",
+            "icon": "file-pen"
+          },
+          {
+            "id": "save",
+            "role": "save",
+            "label": "action.save",
+            "icon": "save",
+            "primary": true,
+            "shortcut": [
+              "Mod",
+              "S"
+            ]
+          }
+        ],
+        "resultTabs": [
+          {
+            "id": "out",
+            "type": "output",
+            "label": "tab.post",
+            "icon": "file-text"
+          }
+        ]
+      },
+      {
+        "id": "vouchers",
+        "actions": []
+      },
+      {
+        "id": "summary",
+        "recompute": true,
+        "actions": [
+          {
+            "id": "close",
+            "role": "event",
+            "label": "action.close",
+            "icon": "lock"
+          },
+          {
+            "id": "reopen",
+            "role": "event",
+            "label": "action.reopen",
+            "icon": "lock-open"
+          },
+          {
+            "id": "export",
+            "role": "run",
+            "action": "export",
+            "label": "action.export",
+            "icon": "file-down"
+          },
+          {
+            "id": "save",
+            "role": "save",
+            "label": "action.save",
+            "icon": "save",
+            "primary": true,
+            "shortcut": [
+              "Mod",
+              "S"
+            ]
+          }
+        ],
+        "resultTabs": [
+          {
+            "id": "out",
+            "type": "output",
+            "label": "tab.export",
+            "icon": "file-text"
+          }
+        ]
+      }
+    ],
+    "actions": [
+      {
+        "id": "post",
+        "label": "action.post",
+        "icon": "book-check",
+        "kinds": [
+          "receipt",
+          "issue",
+          "count"
+        ],
+        "output": "text"
+      },
+      {
+        "id": "export",
+        "label": "action.export",
+        "icon": "file-down",
+        "kinds": [
+          "summary"
+        ],
+        "output": "text",
+        "saveFirst": true
+      },
+      {
+        "id": "roles",
+        "label": "action.roles",
+        "output": "none"
+      },
+      {
+        "id": "outline",
+        "label": "action.outline",
+        "output": "none"
+      },
+      {
+        "id": "entries",
+        "label": "action.entries",
+        "output": "none"
+      }
+    ],
+    "events": [
+      "resource.changed"
+    ],
+    "menus": {
+      "new": [
+        "setup",
+        "catalog",
+        "item",
+        "receipt",
+        "issue",
+        "count",
+        "vouchers",
+        "summary"
+      ]
+    },
+    "locales": {
+      "en-US": "locales/en-US.json",
+      "zh-CN": "locales/zh-CN.json",
+      "ja-JP": "locales/ja-JP.json"
+    }
+  }
+}

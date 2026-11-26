@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Banner, Button, CodeEditor, Dialog, DropdownMenu, FieldStrip, FlowText, FormField, IconButton, Input, MultiSelect, Pane, Select, StripField, Switch, Text, Textarea, useToast, type ActionBarItem, type FlowPiece } from "../../design";
+import { Banner, Button, CodeEditor, Dialog, DropdownMenu, FieldStrip, FlowText, FormField, IconButton, Input, MultiSelect, Pane, Select, StripField, Switch, Text, Textarea, useToast, type ActionBarItem, type FlowPiece, RowsEditor, type RowsEditorRow } from "../../design";
 import { useI18n } from "../i18n";
 import type { ActionDecl, PageApply, PageDescriptor, RunStatus, ViewField, ViewNode } from "../protocol";
 import { applyPageParams, runParams, viewParams } from "./run-params";
@@ -55,6 +55,41 @@ function ResourceName({ id }: { id: string }) {
     <Text size="xs" tone="muted" truncate>
       {res.data.name}
     </Text>
+  );
+}
+
+/** D487 §27 (K15): a table field — each cell the control of its column's kind; numbers go out as numbers. */
+function RowsField({ field, rows, readOnly, onChange }: { field: ViewField; rows: RowsEditorRow[] | undefined; readOnly: boolean; onChange: (rows: RowsEditorRow[]) => void }) {
+  const { tx, t } = useI18n();
+  const columns = field.columns ?? [];
+  const list = Array.isArray(rows) ? rows : [];
+  return (
+    <RowsEditor
+      label={tx(field.label)}
+      columns={columns.map((c) => ({ name: c.name, label: tx(c.label), readOnly: c.readOnly, width: c.kind === "number" || c.kind === "boolean" ? "sm" : "md" }))}
+      rows={list}
+      readOnly={readOnly}
+      addLabel={t("rows.add")}
+      removeLabel={t("rows.remove")}
+      upLabel={t("rows.up")}
+      downLabel={t("rows.down")}
+      emptyLabel={t("rows.empty")}
+      onChange={onChange}
+      renderCell={(i, col, value, set) => {
+        const c = columns.find((x) => x.name === col.name)!;
+        const cell: ViewField = { name: `${field.name}.${i}.${c.name}`, label: c.label, kind: c.kind, options: c.options, readOnly: c.readOnly };
+        const text = value === undefined || value === null ? "" : String(value);
+        return (
+          <FieldControl
+            field={cell}
+            size="sm"
+            readOnly={readOnly || Boolean(c.readOnly)}
+            value={text}
+            onChange={(v) => set(c.kind === "number" ? (v.trim() !== "" && Number.isFinite(Number(v)) ? Number(v) : v) : c.kind === "boolean" ? v === "true" : v)}
+          />
+        );
+      }}
+    />
   );
 }
 
@@ -574,7 +609,15 @@ export function ViewPage({ tab, descriptor: initial }: { tab: TabState; descript
           <Pane grow={!fill && !stacked} scroll={!stacked} pad="lg" gap="md" width="form">
             {rest.map((f) => (
               <FormField key={f.name} label={tx(f.label)} required={f.required} requiredMark="*" description={f.hint ? tx(f.hint) : undefined}>
-                {f.kind === "attachment" ? (
+                {f.kind === "rows" ? (
+                  // D487 §27 (K15): the value is an array of lines, not text.
+                  <RowsField
+                    field={f}
+                    rows={(f.bind && f.bind in draft ? draft[f.bind] : values[f.bind ?? f.name]) as RowsEditorRow[] | undefined}
+                    readOnly={readOnly || Boolean(f.readOnly)}
+                    onChange={(v) => actions.setDraft(tab.id, f.bind ?? f.name, v, values[f.bind ?? f.name])}
+                  />
+                ) : f.kind === "attachment" ? (
                   // D484 §16: the value is an object (the stored file), not text.
                   <AttachmentField
                     label={tx(f.label)}

@@ -123,6 +123,21 @@ impl Inner {
                 }
                 continue;
             }
+            // D487 §27 (K15): table fields have 1–20 columns of the simple kinds; other fields none.
+            if let ViewNode::Form { id, fields, .. } | ViewNode::Flow { id, fields, .. } = node {
+                use onedesk_protocol::FieldKind as K;
+                let bad = fields.iter().any(|f| match (&f.kind, &f.columns) {
+                    (K::Rows, Some(c)) => c.is_empty() || c.len() > crate::pages::MAX_COLUMNS || c.iter().any(|c| !matches!(c.kind, K::Text | K::Number | K::Date | K::Enum | K::Ref | K::Boolean)),
+                    (K::Rows, None) => true,
+                    (_, Some(_)) => true,
+                    _ => false,
+                });
+                if bad {
+                    let mut e = err_p(ErrorCode::PluginError, &[("reason", "badOutput"), ("plugin", &plugin.id)]);
+                    e.detail = Some(format!("{id}: a rows field has 1 to {} columns (text, number, date, enum, ref, boolean); other fields none", crate::pages::MAX_COLUMNS));
+                    return Err(e);
+                }
+            }
             // D487 §23 (K4): every field of a flow once in its text, at `{{field:<name>}}`.
             if let ViewNode::Flow { id, text, fields } = node {
                 let mut names = std::collections::HashSet::new();

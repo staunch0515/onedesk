@@ -241,6 +241,7 @@ export const KERNEL_ERRORS: Table = {
   "reason.stamped": "kernel.error.reason.stamped",
   "reason.loop": "kernel.error.reason.loop",
   "invalid.notRunnable": "kernel.error.invalid.notRunnable",
+  "invalid.tooManyRows": "kernel.error.invalid.tooManyRows",
   "invalid.noReason": "kernel.error.invalid.noReason",
   "invalid.tooManyStamps": "kernel.error.invalid.tooManyStamps",
   "reason.noExport|layerName": "kernel.error.reason.noExport|layerName",
