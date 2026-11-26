@@ -1077,5 +1077,15 @@
   "package.updateNote": "副本整体换成这一印次；新印次里没有了的放进废纸篓。你自己引用它的东西不受影响。",
   "package.readOnlyNote": "导入后是只读副本：可以阅读和使用，不能修改。",
   "info.copyFrom": "只读 · 来自 {publisher} · 第 {edition} 版第 {printing} 次印刷（学生版）",
-  "info.copyFromTeacher": "只读 · 来自 {publisher} · 第 {edition} 版第 {printing} 次印刷（教师版）"
+  "info.copyFromTeacher": "只读 · 来自 {publisher} · 第 {edition} 版第 {printing} 次印刷（教师版）",
+  "kernel.error.reason.stamped": "已经签名，不能修改；要改请修订。",
+  "kernel.error.invalid.noReason": "先写理由。",
+  "kernel.error.invalid.tooManyStamps": "签名已经到上限了。",
+  "info.stamps": "签名",
+  "info.stamped": "{label} · {signer} · {at}",
+  "info.unstamped": "修订 · {reason} · {at}",
+  "info.stampedNote": "已签名，不能修改；要改请修订。",
+  "history.stamped": "签名时（{label}）",
+  "kernel.audit.resource.stamp": "签名",
+  "kernel.audit.resource.unstamp": "撤下签名"
 }

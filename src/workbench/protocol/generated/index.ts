@@ -159,6 +159,8 @@ export type * from "./SetAiVisibleResult";
 export type * from "./SetFavoriteParams";
 export type * from "./SettingsSnapshotNode";
 export type * from "./SnapshotParam";
+export type * from "./StampInfo";
+export type * from "./StampLogEntry";
 export type * from "./SwitchFailure";
 export type * from "./TableRowAction";
 export type * from "./TextAppearance";

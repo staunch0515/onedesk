@@ -1,0 +1,219 @@
+{
+  "id": "org.onedesk.document",
+  "version": "0.1.0",
+  "apiVersion": "2",
+  "name": "plugin.name",
+  "description": "plugin.description",
+  "icon": "file-signature",
+  "main": "main.js",
+  "author": "OneDesk",
+  "license": "MIT",
+  "requires": {
+    "resources": true
+  },
+  "implements": {
+    "onedesk.book/1": {
+      "actions": [
+        "roles",
+        "outline"
+      ],
+      "kind": "document",
+      "kinds": [
+        "template",
+        "series"
+      ]
+    }
+  },
+  "exports": {
+    "actions": [
+      "roles",
+      "outline"
+    ]
+  },
+  "contributes": {
+    "kinds": [
+      {
+        "id": "template",
+        "label": "kind.template",
+        "icon": "file-pen-line",
+        "tree": "resources",
+        "page": "template",
+        "newName": "kind.template.new",
+        "defaults": {
+          "text": "",
+          "levels": ""
+        },
+        "draggable": true,
+        "accepts": [],
+        "fields": {
+          "text": {
+            "type": "longtext",
+            "refs": true
+          }
+        }
+      },
+      {
+        "id": "document",
+        "label": "kind.document",
+        "icon": "file-signature",
+        "tree": "resources",
+        "page": "document",
+        "newName": "kind.document.new",
+        "defaults": {
+          "template": null,
+          "text": "",
+          "levels": ""
+        },
+        "draggable": true,
+        "accepts": [],
+        "embed": true,
+        "fields": {
+          "template": {
+            "type": "ref",
+            "label": "field.template"
+          },
+          "text": {
+            "type": "longtext",
+            "refs": true
+          },
+          "signedText": {
+            "type": "longtext",
+            "refs": true
+          }
+        }
+      },
+      {
+        "id": "series",
+        "label": "kind.series",
+        "icon": "files",
+        "tree": "resources",
+        "page": "series",
+        "newName": "kind.series.new",
+        "defaults": {
+          "template": null,
+          "order": ""
+        },
+        "draggable": true,
+        "accepts": [
+          "document"
+        ],
+        "place": true,
+        "fields": {
+          "template": {
+            "type": "ref",
+            "label": "field.template"
+          }
+        }
+      }
+    ],
+    "pages": [
+      {
+        "id": "template",
+        "recompute": true,
+        "actions": [
+          {
+            "id": "save",
+            "role": "save",
+            "label": "action.save",
+            "icon": "save",
+            "primary": true,
+            "shortcut": [
+              "Mod",
+              "S"
+            ]
+          }
+        ]
+      },
+      {
+        "id": "document",
+        "recompute": true,
+        "actions": [
+          {
+            "id": "toggle",
+            "role": "event",
+            "label": "action.toggle",
+            "icon": "pencil"
+          },
+          {
+            "id": "sign",
+            "role": "event",
+            "label": "action.sign",
+            "icon": "pen-line"
+          },
+          {
+            "id": "revise",
+            "role": "event",
+            "label": "action.revise",
+            "icon": "file-pen"
+          },
+          {
+            "id": "void",
+            "role": "event",
+            "label": "action.void",
+            "icon": "ban"
+          },
+          {
+            "id": "save",
+            "role": "save",
+            "label": "action.save",
+            "icon": "save",
+            "primary": true,
+            "shortcut": [
+              "Mod",
+              "S"
+            ]
+          }
+        ]
+      },
+      {
+        "id": "series",
+        "actions": [
+          {
+            "id": "add",
+            "role": "event",
+            "label": "action.add",
+            "icon": "file-plus"
+          },
+          {
+            "id": "save",
+            "role": "save",
+            "label": "action.save",
+            "icon": "save",
+            "primary": true,
+            "shortcut": [
+              "Mod",
+              "S"
+            ]
+          }
+        ]
+      }
+    ],
+    "actions": [
+      {
+        "id": "roles",
+        "label": "action.roles",
+        "output": "none"
+      },
+      {
+        "id": "outline",
+        "label": "action.outline",
+        "output": "none"
+      }
+    ],
+    "events": [
+      "resource.changed"
+    ],
+    "menus": {
+      "new": [
+        "template",
+        "document",
+        "series"
+      ]
+    },
+    "locales": {
+      "en-US": "locales/en-US.json",
+      "zh-CN": "locales/zh-CN.json",
+      "ja-JP": "locales/ja-JP.json"
+    }
+  }
+}

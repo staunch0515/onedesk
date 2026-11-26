@@ -16,6 +16,8 @@ const NODE_KEYS: Record<string, string[]> = {
   conversation: ["type", "id", "turns", "input", "targetTab"],
   // D487 §13
   sequence: ["type", "id", "items", "toc", "mode", "start", "positionEvent"],
+  // D487 §23 (K4)
+  flow: ["type", "id", "text", "fields"],
 };
 const SEQUENCE_ITEM_KEYS = new Set(["key", "title", "level", "resource", "args", "book"]);
 const TURN_KEYS = new Set(["role", "text", "caption", "actions", "steps"]);
@@ -36,8 +38,13 @@ export function checkView(view: unknown): string[] {
     }
     for (const k of Object.keys(n)) if (!keys.includes(k)) errs.push(`unknown node field ${k}`);
     if (typeof n.id !== "string") errs.push("node without id");
-    if (n.type === "form") {
-      if (n.layout !== "strip" && n.layout !== "stack") errs.push("bad layout");
+    // D487 §23 (K4): each field once in the text, at `{{field:<name>}}`.
+    if (n.type === "flow") {
+      if (typeof n.text !== "string" || !Array.isArray(n.fields)) errs.push("flow needs text and fields");
+      for (const f of (n.fields as Record<string, unknown>[]) ?? []) if (String(n.text).split(`{{field:${String(f.name)}}}`).length !== 2) errs.push(`flow field ${String(f.name)} not once in the text`);
+    }
+    if (n.type === "form" || n.type === "flow") {
+      if (n.type === "form" && n.layout !== "strip" && n.layout !== "stack") errs.push("bad layout");
       for (const f of (n.fields as Record<string, unknown>[]) ?? []) {
         for (const k of Object.keys(f)) if (!FIELD_KEYS.has(k)) errs.push(`unknown field key ${k}`);
         if (f.assist !== undefined) {

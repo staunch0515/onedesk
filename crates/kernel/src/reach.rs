@@ -123,6 +123,18 @@ impl Inner {
                 }
                 continue;
             }
+            // D487 §23 (K4): every field of a flow once in its text, at `{{field:<name>}}`.
+            if let ViewNode::Flow { id, text, fields } = node {
+                let mut names = std::collections::HashSet::new();
+                let ok = fields.len() <= crate::stamps::MAX_FLOW_FIELDS
+                    && fields.iter().all(|f| names.insert(f.name.clone()) && text.matches(&format!("{{{{field:{}}}}}", f.name)).count() == 1);
+                if !ok {
+                    let mut e = err_p(ErrorCode::PluginError, &[("reason", "badOutput"), ("plugin", &plugin.id)]);
+                    e.detail = Some(format!("flow {id}: each field (at most {}) once in the text as {{{{field:<name>}}}}", crate::stamps::MAX_FLOW_FIELDS));
+                    return Err(e);
+                }
+                continue;
+            }
             // D487 §15 (K-i): the words references are shown with.
             if let ViewNode::Text { id, ref_labels: Some(labels), .. } = node {
                 let too_many = labels.len() > crate::subtree::MAX_REF_LABELS;

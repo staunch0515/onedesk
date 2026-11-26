@@ -17,4 +17,9 @@ params?: string,
 /**
  * D487 §17 (K3): an inline call (`[[=name | …]]`): the answer is one line of `text`.
  */
-inline?: boolean, };
+inline?: boolean, 
+/**
+ * D487 §23 (K6): the resource this reference is shown in. When it carries a stamp, the answer is what the
+ * reference showed when the first stamp went on.
+ */
+within?: string, };

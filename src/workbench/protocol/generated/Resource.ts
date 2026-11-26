@@ -4,6 +4,8 @@ import type { InheritedEnv } from "./InheritedEnv";
 import type { Label } from "./Label";
 import type { NodeState } from "./NodeState";
 import type { Origin } from "./Origin";
+import type { StampInfo } from "./StampInfo";
+import type { StampLogEntry } from "./StampLogEntry";
 import type { JsonValue } from "./serde_json/JsonValue";
 
 export type Resource = { id: string, 
@@ -19,6 +21,14 @@ location: Array<string>, favorite: boolean, deleted: boolean, readOnly: boolean,
  * D487 §21 (K9): a read-only copy: where it came from.
  */
 copy?: CopyInfo, 
+/**
+ * D487 §23 (K6): the stamps on it, in order (its content is fixed while there is one).
+ */
+stamps?: Array<StampInfo>, 
+/**
+ * D487 §23 (K6): stamps put on and taken off, oldest first.
+ */
+stampLog?: Array<StampLogEntry>, 
 /**
  * Milliseconds since the epoch.
  */

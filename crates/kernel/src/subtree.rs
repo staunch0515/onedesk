@@ -108,7 +108,9 @@ impl Inner {
         // D487 §17: a call's parameters as written, and whether it is inline (exporting a book writes results).
         let params = opts.get("params").and_then(Value::as_str).map(String::from);
         let inline = opts.get("inline").and_then(Value::as_bool);
-        let p = ResourceEmbedParams { id, section, env_id: info.env_id.clone(), locale: None, args: call_args, params, inline };
+        // D487 §23 (K6): the resource the reference is in (a stamped one gives what it showed when stamped).
+        let within = opts.get("within").and_then(Value::as_str).map(String::from);
+        let p = ResourceEmbedParams { id, section, env_id: info.env_id.clone(), locale: None, args: call_args, params, inline, within };
         let out = self.resource_embed(p).await?;
         serde_json::to_value(out).map_err(internal)
     }

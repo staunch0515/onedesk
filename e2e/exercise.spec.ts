@@ -111,7 +111,7 @@ test("a test: a card in the book; answered on its attempt page, handed in, marke
   await expect(page.getByText("Handed in: 0 of 3")).toBeVisible({ timeout: 15_000 });
   await shot(page, "attempt");
   await page.getByRole("row", { name: /Why is 3 \+ 5/ }).getByRole("button", { name: "Right" }).click();
-  await expect(page.getByText("Handed in: 2 of 3")).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByText("Handed in: 2 of 3").first()).toBeVisible({ timeout: 15_000 });
 });
 
 test("learning records: grades and a mistake book; a mistake done again leaves it; a formula is tried in the book", async ({ page }) => {

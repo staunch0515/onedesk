@@ -564,6 +564,12 @@ impl Inner {
     /// declares it and the plugin runs) gives a read-only view — text, table and link nodes only, at most
     /// `MAX_EMBED_BYTES`, in the environment of the tab it is shown on; otherwise only the card's facts come back.
     pub async fn resource_embed(&self, p: ResourceEmbedParams) -> KResult<EmbedResult> {
+        // D487 §23 (K6): in a stamped resource, a reference shows what it showed then.
+        if let Some(w) = p.within.as_deref() {
+            if let Some(frozen) = self.frozen_embed(w, &p)? {
+                return Ok(frozen);
+            }
+        }
         let row = self.visible_row(&p.id)?;
         if row.deleted_at.is_some() || !crate::refs::referenceable(&row) {
             return Err(not_found("resource"));

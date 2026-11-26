@@ -30,16 +30,21 @@ export function useOpenHere(): (target: string) => void {
 }
 
 function MarkdownNode({ source, refLabels }: { source: string; refLabels?: Record<string, string> }) {
+  return (
+    <Pane pad="md">
+      <PageMarkdown source={source} refLabels={refLabels} />
+    </Pane>
+  );
+}
+
+/** Markdown of the active page, its `[[…]]` read against the page resource's references. */
+export function PageMarkdown({ source, refLabels }: { source: string; refLabels?: Record<string, string> }) {
   const target = useUi((s) => s.tabs.find((x) => x.id === s.activeTabId)?.target ?? "");
   const resourceId = target.startsWith("resource:") ? target.slice("resource:".length) : null;
   const refs = useQuery((c) => (resourceId ? c.refs.outgoing(resourceId) : Promise.resolve([])), [resourceId], resourceId ? [`resource:${resourceId}`] : []);
   const envId = useTabEnv();
   // D481: `![[…]]` lines show the other resource's content in place (embeds.tsx).
-  return (
-    <Pane pad="md">
-      <RefMarkdown source={source} refLabels={refLabels} refs={refs.data ?? NO_REFS} envId={envId} depth={0} chain={resourceId ? [resourceId] : []} />
-    </Pane>
-  );
+  return <RefMarkdown source={source} refLabels={refLabels} refs={refs.data ?? NO_REFS} envId={envId} depth={0} chain={resourceId ? [resourceId] : []} />;
 }
 
 const NO_REFS: RefInfo[] = [];

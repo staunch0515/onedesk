@@ -487,6 +487,7 @@ const BOOTSTRAP: &str = r#"
         update: c("resources.update"), move: c("resources.move"), remove: c("resources.remove"),
         search: c("resources.search"), kinds: c("resources.kinds"), upsertByKey: c("resources.upsertByKey"),
         tree: c("resources.tree"), embed: c("resources.embed"), refs: c("resources.refs"),
+        stamp: c("resources.stamp"), unstamp: c("resources.unstamp"),
       }),
       files: Object.freeze({
         roots: c("files.roots"), list: c("files.list"), stat: c("files.stat"),

@@ -22,6 +22,7 @@ mod pages;
 mod reach;
 pub mod packages;
 pub mod params;
+pub mod stamps;
 mod round2;
 pub(crate) mod round18;
 mod runs;

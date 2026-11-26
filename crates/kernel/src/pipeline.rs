@@ -289,6 +289,10 @@ pub enum Command {
     Import(Box<crate::transfer::ImportPlan>),
     /// D487 §21 (K9): a read-only copy made or updated, in one transaction.
     ImportPackage(Box<crate::packages::PackagePlan>),
+    /// D487 §23 (K6): a stamp put on (`frozen`: what its references show, kept with the first one).
+    Stamp { id: String, label: String, signer: String, frozen: Vec<(String, String)> },
+    /// D487 §23 (K6): every stamp taken off, for a reason.
+    Unstamp { id: String, reason: String },
     /// Recomputes the whole `refs` table (§10: it can be rebuilt at any time).
     RebuildRefs,
     /// Review #7: follows changed reference-field declarations after the plugins were read again.
@@ -517,6 +521,8 @@ impl Writer {
             }
             // D487 §21 (K9): a read-only copy is written only by its import.
             crate::packages::guard_copy(&tx, &cmd)?;
+            // D487 §23 (K6): a stamped resource's content stays as it is.
+            crate::stamps::guard(&tx, &cmd)?;
             let out = match cmd {
                 Command::Create(n) => cx.create(n)?,
                 Command::Update { id, changes, basis, overwrite } => cx.update(&id, &changes, basis, &overwrite)?,
@@ -667,6 +673,8 @@ impl Writer {
                 }
                 Command::Import(plan) => cx.import(*plan)?,
                 Command::ImportPackage(plan) => cx.import_package(*plan)?,
+                Command::Stamp { id, label, signer, frozen } => cx.stamp(&id, &label, &signer, &frozen)?,
+                Command::Unstamp { id, reason } => cx.unstamp(&id, &reason)?,
                 Command::RebuildRefs => {
                     crate::refs::rebuild(cx.tx, cx.rules).map_err(db_err)?;
                     crate::refs::store_decls(cx.tx, &crate::refs::decls(cx.rules)).map_err(db_err)?;
@@ -757,6 +765,8 @@ fn describe(cmd: &Command) -> (String, String) {
         Command::CountedAudit { op, object, .. } => (op.clone(), object.clone()),
         Command::Import(plan) => ("workspace.import".into(), plan.source.clone()),
         Command::ImportPackage(plan) => ("package.import".into(), plan.pkg.root.clone()),
+        Command::Stamp { id, .. } => ("resource.stamp".into(), id.clone()),
+        Command::Unstamp { id, .. } => ("resource.unstamp".into(), id.clone()),
         Command::RebuildRefs => ("refs.rebuild".into(), String::new()),
         Command::SyncRefDecls => ("refs.sync".into(), String::new()),
         Command::Batch(cmds) => cmds
@@ -783,7 +793,9 @@ fn blocked_by_readonly(cmd: &Command) -> bool {
         | Command::Storage { .. }
         | Command::Upsert { .. }
         | Command::Import(_)
-        | Command::ImportPackage(_) => true,
+        | Command::ImportPackage(_)
+        | Command::Stamp { .. }
+        | Command::Unstamp { .. } => true,
         Command::Upgrade { items, .. } => !items.is_empty(),
         // Review #9: an empty save writes nothing; an undo that restores nothing is checked in place.
         Command::Update { changes, .. } => !changes.is_empty() && !changes.params_only(),

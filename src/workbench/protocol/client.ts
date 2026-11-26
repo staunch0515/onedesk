@@ -140,7 +140,8 @@ export interface ProtocolClient {
     /** Who refers to this resource (deleted sources are not listed). */
     incoming(id: string): Promise<RefInfo[]>;
     /** D481: what a resource shows where another embeds it (`![[name#section]]`), in the tab's environment. Absent in the demo. */
-    embed?(params: { id: string; section?: string; envId?: string | null; args?: unknown; params?: string; inline?: boolean }): Promise<EmbedResult>;
+    /** `within`: the resource the reference is shown in (a stamped one gives what it showed when stamped, D487 §23). */
+    embed?(params: { id: string; section?: string; envId?: string | null; args?: unknown; params?: string; inline?: boolean; within?: string }): Promise<EmbedResult>;
     /** D487 §19 (K11): a button inside an embedded view was clicked (absent in the demo). */
     embedAct?(params: { id: string; section?: string; envId?: string | null; args?: unknown; params?: string; action: string; values: Record<string, string> }): Promise<EmbedActResult>;
     /** D482: candidates while typing `[[…` (absent in the demo). */

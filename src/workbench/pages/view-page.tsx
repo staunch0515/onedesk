@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Banner, Button, CodeEditor, Dialog, DropdownMenu, FieldStrip, FormField, IconButton, Input, MultiSelect, Pane, Select, StripField, Switch, Text, Textarea, useToast, type ActionBarItem } from "../../design";
+import { Banner, Button, CodeEditor, Dialog, DropdownMenu, FieldStrip, FlowText, FormField, IconButton, Input, MultiSelect, Pane, Select, StripField, Switch, Text, Textarea, useToast, type ActionBarItem, type FlowPiece } from "../../design";
 import { useI18n } from "../i18n";
 import type { ActionDecl, PageApply, PageDescriptor, RunStatus, ViewField, ViewNode } from "../protocol";
 import { applyPageParams, runParams, viewParams } from "./run-params";
@@ -11,7 +11,7 @@ import { NewParamRow } from "./new-param-row";
 import { Frame } from "../parts/frame";
 import { DEFAULT_OUTPUT_TAB, isForeignAction, ResultArea, STATUS_TONE } from "../parts/result-area";
 import { TOKENIZERS } from "../parts/sql-tokens";
-import { ViewNodes } from "../parts/view-nodes";
+import { PageMarkdown, ViewNodes } from "../parts/view-nodes";
 import { Badge, FactRow } from "../../design";
 import { RunKeepBar } from "../parts/run-keep-bar";
 import { clashes, conversationOf, targetInput, useAssistProvider } from "../parts/ai-chat";
@@ -258,7 +258,7 @@ export function ViewPage({ tab, descriptor: initial }: { tab: TabState; descript
   const conversation = conversationOf(descriptor.view);
   // D479: what is typed in a conversation's input box is a run parameter like a `param: true` field.
   const chatField: ViewField[] = conversation?.input ? [{ name: conversation.input.name, label: conversation.input.name, kind: "longtext", param: true }] : [];
-  const paramFields = [...descriptor.view.flatMap((n) => (n.type === "form" ? n.fields.filter((f) => f.param) : [])), ...chatField];
+  const paramFields = [...descriptor.view.flatMap((n) => (n.type === "form" || n.type === "flow" ? n.fields.filter((f) => f.param) : [])), ...chatField];
   const kernelPage = client.demo !== undefined && !client.demo.target(tab.target);
   // Page parameters (D358) go along with every resolve; they live in the tab, so changing one never marks the page unsaved.
   // The page's own render and events also get its view state (D467); a run gets only the parameter fields.
@@ -294,7 +294,7 @@ export function ViewPage({ tab, descriptor: initial }: { tab: TabState; descript
   latest.current = { descriptor, draft, tab };
 
   // Values the kernel types as numbers or booleans go out as such (the controls hold text). Demo pages keep text.
-  const fieldKinds = new Map(descriptor.view.flatMap((n) => (n.type === "form" ? n.fields.filter((f) => f.bind && !f.param).map((f) => [f.bind!, f.kind] as const) : [])));
+  const fieldKinds = new Map(descriptor.view.flatMap((n) => (n.type === "form" || n.type === "flow" ? n.fields.filter((f) => f.bind && !f.param).map((f) => [f.bind!, f.kind] as const) : [])));
   const typed = (bind: string, value: unknown): unknown => {
     if (!kernelPage || typeof value !== "string") return value;
     const kind = fieldKinds.get(bind);
@@ -313,7 +313,7 @@ export function ViewPage({ tab, descriptor: initial }: { tab: TabState; descript
     // A required field left empty stops a save or a run (D414, narrowed by D436); the value may come from the environment or a saved value.
     // D436: an action that declares `ignoreRequired` checks no required field.
     if (!action.ignoreRequired && (action.role === "save" || action.role === "save-run" || action.role === "run")) {
-      const missing = now.descriptor.view.flatMap((n) => (n.type === "form" ? n.fields : [])).filter((f) => {
+      const missing = now.descriptor.view.flatMap((n) => (n.type === "form" || n.type === "flow" ? n.fields : [])).filter((f) => {
         if (!f.required) return false;
         // D436: a page parameter only matters to a run; saving the page does not use it.
         if (f.param && action.role === "save") return false;
@@ -358,7 +358,7 @@ export function ViewPage({ tab, descriptor: initial }: { tab: TabState; descript
       } else if (action.role === "event") {
         const result = await client.page.event(tab.target, action.id, context);
         for (const [bind, value] of Object.entries(result.changes ?? {})) actions.setDraft(tab.id, bind, value, now.descriptor.values[bind]);
-        const merged = applyPageParams(now.descriptor.view.flatMap((n) => (n.type === "form" ? n.fields.filter((f) => f.param) : [])), store.get().tabs.find((x) => x.id === tab.id)?.params ?? now.tab.params, result.params);
+        const merged = applyPageParams(now.descriptor.view.flatMap((n) => (n.type === "form" || n.type === "flow" ? n.fields.filter((f) => f.param) : [])), store.get().tabs.find((x) => x.id === tab.id)?.params ?? now.tab.params, result.params);
         if (merged) actions.updateTab(tab.id, { params: merged });
         if (result.message) toast({ tone: "neutral", title: tx(result.message) });
         if (result.apply) startApply(result.apply);
@@ -489,6 +489,41 @@ export function ViewPage({ tab, descriptor: initial }: { tab: TabState; descript
     });
   }
 
+  // D487 §23 (K4): text with the fields' controls at their places.
+  const renderFlow = (node: Extract<ViewNode, { type: "flow" }>) => {
+    const byName = new Map(node.fields.map((f) => [f.name, f]));
+    const pieces: FlowPiece[] = [];
+    let last = 0;
+    for (const m of node.text.matchAll(/\{\{field:([^{}]+)\}\}/g)) {
+      const f = byName.get(m[1]!);
+      if (!f) continue;
+      pieces.push({ text: node.text.slice(last, m.index) });
+      last = m.index! + m[0].length;
+      const id = `${tab.id}-${node.id}-${f.name}`;
+      pieces.push({
+        key: f.name,
+        block: f.kind === "longtext" || f.kind === "code",
+        control: (
+          <FieldControl
+            id={id}
+            field={f}
+            size="sm"
+            readOnly={readOnly && !f.param}
+            value={f.param ? (tab.params[f.name] ?? "") : fieldValue(f)}
+            secret={secretOf(f)}
+            onChange={(v) => (f.param ? setParam(f.name, v) : setBound(f.bind ?? f.name, v))}
+          />
+        ),
+      });
+    }
+    pieces.push({ text: node.text.slice(last) });
+    return (
+      <Pane key={node.id} pad="md">
+        <FlowText pieces={pieces} renderText={(source) => <PageMarkdown source={source} />} />
+      </Pane>
+    );
+  };
+
   const hasFill = descriptor.view.some((n) => (n.type === "form" && n.fields.some((f) => f.fill)) || (n.type === "text" && n.mono) || n.type === "table");
   const renderForm = (node: Extract<ViewNode, { type: "form" }>) => {
     // Several forms on one page, one of them filling the rest: the others keep their own height instead of being squeezed into each other.
@@ -586,7 +621,7 @@ export function ViewPage({ tab, descriptor: initial }: { tab: TabState; descript
   };
 
   const labelOf = (bind: string) => {
-    for (const n of descriptor.view) if (n.type === "form") for (const f of n.fields) if ((f.bind ?? f.name) === bind) return tx(f.label);
+    for (const n of descriptor.view) if (n.type === "form" || n.type === "flow") for (const f of n.fields) if ((f.bind ?? f.name) === bind) return tx(f.label);
     return bind;
   };
   const conflictBar = pending && pending.conflicts.length > 0 && (
@@ -614,7 +649,7 @@ export function ViewPage({ tab, descriptor: initial }: { tab: TabState; descript
       {conflictBar}
       {descriptor.runId && <RunHeader runId={descriptor.runId} />}
       <Pane grow scroll={!hasFill || descriptor.view.length > 1}>
-        {descriptor.view.map((node) => (node.type === "form" ? renderForm(node) : <ViewNodes key={node.id} nodes={[node]} onRowAction={(event, row) => void rowEvent(event, row)} params={tab.params} onSelectRow={setParam} onParam={setParam} onSend={sendFrom} busy={isRunning} compactTables={Boolean(conversation)} />))}
+        {descriptor.view.map((node) => (node.type === "form" ? renderForm(node) : node.type === "flow" ? renderFlow(node) : <ViewNodes key={node.id} nodes={[node]} onRowAction={(event, row) => void rowEvent(event, row)} params={tab.params} onSelectRow={setParam} onParam={setParam} onSend={sendFrom} busy={isRunning} compactTables={Boolean(conversation)} />))}
         {/* D470: the workspace configuration adds a parameter right here, under its parameters; no dialog. */}
         {isConfig && (
           <Pane pad="md">

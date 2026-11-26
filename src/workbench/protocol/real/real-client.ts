@@ -95,7 +95,7 @@ export async function createKernelClient(transport: Transport, locale?: () => st
       incoming: (id) => call<RefInfo[]>("refs.incoming", { id }),
       suggest: (text, limit) => call<RefSuggestion[]>("refs.suggest", compact({ text, limit })),
       rewrite: (source, field, seq) => call<{ text: string }>("refs.rewrite", { source, field, seq }),
-      embed: (p) => call<EmbedResult>("resource.embed", compact({ id: p.id, section: p.section, envId: p.envId ?? undefined, locale: locale?.(), args: p.args ?? undefined, params: p.params, inline: p.inline })),
+      embed: (p) => call<EmbedResult>("resource.embed", compact({ id: p.id, section: p.section, envId: p.envId ?? undefined, locale: locale?.(), args: p.args ?? undefined, params: p.params, inline: p.inline, within: p.within })),
       embedAct: (p) => call<EmbedActResult>("resource.embedAct", compact({ id: p.id, section: p.section, envId: p.envId ?? undefined, locale: locale?.(), args: p.args ?? undefined, params: p.params, action: p.action, values: p.values })),
     },
     params: {

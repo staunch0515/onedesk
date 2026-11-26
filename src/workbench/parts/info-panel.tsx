@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Badge, Button, IconButton, InfoField, InfoPanel, Input, LoadingState, Pane, Popover, Select, Switch, Text, Textarea, Tooltip, useToast } from "../../design";
 import type { HistoryEntry, InheritedEnv, PageDescriptor, RefInfo } from "../protocol";
+import type { StampLogEntry } from "../protocol/generated";
 import { useI18n } from "../i18n";
 import { useQuery, useUi, useWorkbench } from "../state/context";
 
@@ -8,13 +9,20 @@ const CLIP = 40;
 const clip = (text: string) => (text.length > CLIP ? `${text.slice(0, CLIP)}…` : text);
 
 /** Collapsible change history of a resource, newest first, with restore per entry (§4.2). Read only while open. */
-function HistorySection({ resourceId, readOnly }: { resourceId: string; readOnly: boolean }) {
+function HistorySection({ resourceId, readOnly, stampLog }: { resourceId: string; readOnly: boolean; stampLog?: StampLogEntry[] }) {
   const { client, actions } = useWorkbench();
   const { t, dateTime } = useI18n();
   const { toast } = useToast();
   const [open, setOpen] = useState(false);
   const history = useQuery((c) => (open ? c.resource.history(resourceId) : Promise.resolve([] as HistoryEntry[])), [resourceId, open], [`resource:${resourceId}`]);
   const entries = history.data ?? [];
+  // D487 §23: the change each stamp was put on after (what was signed) is marked.
+  const stampedAt = new Map<number, string>();
+  for (const s of stampLog ?? []) {
+    if (s.action !== "stamp") continue;
+    const at = entries.filter((h) => h.at <= s.at).reduce((m, h) => Math.max(m, h.at), -1);
+    if (at >= 0) stampedAt.set(at, s.label ?? "");
+  }
   return (
     <InfoField label={t("history.title")}>
       <Pane gap="sm">
@@ -35,6 +43,7 @@ function HistorySection({ resourceId, readOnly }: { resourceId: string; readOnly
                 <Pane direction="row" gap="xs" align="center" wrap>
                   <Text size="sm" weight="medium">{h.field}</Text>
                   {h.restoredFrom && <Badge icon="undo-2">{t("history.restored")}</Badge>}
+                  {stampedAt.has(h.at) && <Badge icon="stamp">{t("history.stamped", { label: stampedAt.get(h.at) ?? "" })}</Badge>}
                 </Pane>
                 <Text size="xs" mono truncate>{`${clip(h.before)} → ${clip(h.after)}`}</Text>
                 {!readOnly && (
@@ -329,6 +338,20 @@ export function InfoPanelPart({ resourceId, side }: { resourceId: string; side?:
           </Text>
         </InfoField>
       )}
+      {res.stampLog && res.stampLog.length > 0 && (
+        <InfoField label={t("info.stamps")}>
+          <Pane gap="xs">
+            {res.stampLog.map((s, i) => (
+              <Text key={i} size="sm" tone={s.action === "unstamp" ? "muted" : undefined}>
+                {s.action === "unstamp"
+                  ? t("info.unstamped", { reason: s.reason ?? "", at: dateTime(s.at) })
+                  : t("info.stamped", { label: s.label ?? "", signer: s.signer ?? "", at: dateTime(s.at) })}
+              </Text>
+            ))}
+            {res.stamps && <Text size="xs" tone="muted">{t("info.stampedNote")}</Text>}
+          </Pane>
+        </InfoField>
+      )}
       <InfoField label={t("info.modified")}>
         <Text size="sm" tabular>{`${dateTime(res.updatedAt)} · ${res.updatedBy}`}</Text>
       </InfoField>
@@ -339,7 +362,7 @@ export function InfoPanelPart({ resourceId, side }: { resourceId: string; side?:
         <Text size="sm" tabular>{String(res.rev)}</Text>
       </InfoField>
       <RefsSection resourceId={resourceId} />
-      <HistorySection resourceId={resourceId} readOnly={res.readOnly} />
+      <HistorySection resourceId={resourceId} readOnly={res.readOnly} stampLog={res.stampLog} />
     </>
   );
 

@@ -1071,7 +1071,7 @@ impl Inner {
             .view
             .into_iter()
             .filter_map(|n| match n {
-                onedesk_protocol::ViewNode::Form { fields, .. } => Some(fields),
+                onedesk_protocol::ViewNode::Form { fields, .. } | onedesk_protocol::ViewNode::Flow { fields, .. } => Some(fields),
                 _ => None,
             })
             .flatten()

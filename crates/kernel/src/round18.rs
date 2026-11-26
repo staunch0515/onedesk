@@ -171,7 +171,7 @@ impl Inner {
             .view
             .iter()
             .filter_map(|n| match n {
-                onedesk_protocol::ViewNode::Form { fields, .. } => Some(fields),
+                onedesk_protocol::ViewNode::Form { fields, .. } | onedesk_protocol::ViewNode::Flow { fields, .. } => Some(fields),
                 _ => None,
             })
             .flatten()
@@ -227,7 +227,7 @@ impl Inner {
                 continue;
             }
             let section = crate::refs::parse(inner).section;
-            let p = onedesk_protocol::ResourceEmbedParams { id: target, section: section.clone(), env_id: env.clone(), locale: None, args: None, params: None, inline: None };
+            let p = onedesk_protocol::ResourceEmbedParams { id: target, section: section.clone(), env_id: env.clone(), locale: None, args: None, params: None, inline: None, within: Some(source.to_string()) };
             let Ok(e) = self.resource_embed(p).await else { continue };
             let body: Vec<String> = e
                 .view

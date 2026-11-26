@@ -1,0 +1,30 @@
+/* D487 §23 (K4): text with input controls in it. */
+.od-flow {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.od-flow__line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-2);
+  line-height: var(--leading-prose);
+}
+
+.od-flow__text .od-markdown,
+.od-flow__text .od-markdown p {
+  display: inline;
+  margin: 0;
+}
+
+.od-flow__control {
+  display: inline-flex;
+  align-items: center;
+  width: var(--flow-control-width);
+}
+
+.od-flow__block {
+  width: 100%;
+}

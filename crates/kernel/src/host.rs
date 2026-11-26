@@ -177,6 +177,8 @@ impl Inner {
             "resources" if op == "embed" => self.host_embed(plugin, info, &args).await,
             // D487 §15 (K-h): what a resource refers to.
             "resources" if op == "refs" => self.host_refs(plugin, info, &args),
+            // D487 §23 (K6): stamps.
+            "resources" if op == "stamp" || op == "unstamp" => self.host_stamp(plugin, info, op, &args).await,
             // D487 §15 (K-j): sorting for a language.
             "util" if op == "collate" => self.host_collate(&args),
             // D487 §21 (K9, K10): a subtree published; withheld fields checked against fingerprints, or opened.

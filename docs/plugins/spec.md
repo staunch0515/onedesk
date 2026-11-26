@@ -514,6 +514,10 @@ export default {
 - `targetTab`：从这个页面开始的运行带上那个标签页的当前值（`input["target.draft"]`，不含密钥）和信息面板里写的说明（`input["target.description"]`）；标签页没开着时不带。
 - 同一页面上的表格不再撑满页面，按行数显示。
 
+### 6.4c `flow`（D487 §23，K4）
+
+`{ type: "flow", id, text, fields }`：一段 Markdown，`{{field:<名字>}}` 的地方是字段 `<名字>` 的输入控件（字段和 `form` 的一样，`bind` 或 `param`）。每个字段在文中恰好出现一次（否则 `badOutput`），最多 500 个。外壳把控件排在文字中间；长文字、代码单独成段；没有控件的行照常是 Markdown。像一张印好的、留着空的表。参考 `org.onedesk.document`。
+
 ### 6.5 界面状态
 
 **页面的视图状态（D467）**：不由字段显示、只属于这个标签页的状态（例如笔记的“阅读/编辑”），用名为 `view.<名字>` 的页面参数保存。页面事件可以在返回的 `params` 里设置它（不需要对应的字段），之后 `render` 和 `onEvent` 的 `ctx.params` 里都有它；它**不会**交给运行。值是字符串，最长 1000 个字符。操作栏的切换按钮就用它，页面里不要再放同作用的控件（§0.5）。
@@ -560,7 +564,8 @@ export default {
 | `remove(id)` | → `null` | 进回收站 |
 | `search(opts)` | → 结果 | 需 `requires.resources`；`{ query, kinds?, limit? }` 按相关度返回 `[{ id, kind, name, snippet, score }]`；或基本搜索 `{ text, kinds, tags, … }` |
 | `tree(id, { offset?, limit? })` | → `{ nodes: [{ id, name, kind, icon, depth, parent, rev }], next }` | D487：需 `requires.resources`；按树的顺序（先父后子）列出 `id` 下面的全部节点，`depth` 从 1 开始；每次最多 2000 个，`next` 接着读；不含正文 |
-| `embed(id, { section?, args?, params?, inline? })` | → 和外壳的 `resource.embed` 一样（`view`、`name`、`refs`…；行内调用是 `text`、`error`；参数写错是 `badParams`） | D487：需 `requires.contents`；按调用所在标签页的环境；`params` 是引用里 `\|` 后面的原文 |
+| `embed(id, { section?, args?, params?, inline?, within? })` | → 和外壳的 `resource.embed` 一样（`view`、`name`、`refs`…；行内调用是 `text`、`error`；参数写错是 `badParams`） | D487：需 `requires.contents`；按调用所在标签页的环境；`params` 是引用里 `\|` 后面的原文；`within`（D487 §23）：这个引用写在哪个资源里——有签章的资源给的是签章时的样子 |
+| `stamp(id, { label, signer })` / `unstamp(id, { reason })` | → `{ stamps }` | D487 §23（K6）：只对自己的类型；页面事件、命令或运行里（不能在事件处理函数、纯计算、AI 里）。第一个签章落下时资源变成只读（改、恢复、删除都是 `denied/stamped`，可以移动），它的嵌入和带参数引用取快照；`unstamp` 撤下全部签章，理由必填（`invalid/noReason`）。签章的名称、签名人只存不解释；`ctx.resource.stamps`、`stampLog` 能读到。参考 `org.onedesk.document` |
 | `refs(id)` | → `[{ text, target: { id, name, kind } \| null, section, embed }]` | D487 §15：需 `requires.resources`；这个资源正文里每个 `[[…]]`、`![[…]]` 现在指向谁（`text` 是写下的样子；读者看到的是目标现在的名字） |
 | `kinds()` | → `[{ kind, label, icon }]` | 需 `requires.resources`；资源树里能有的所有类型（已启用的插件，`kind` 是全名，`label` 是 Label），供“按类型”的条件让用户勾选，不要让用户手写类型全名（D477） |
 

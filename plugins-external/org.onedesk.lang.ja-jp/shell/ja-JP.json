@@ -1077,5 +1077,15 @@
   "package.updateNote": "コピーはこの刷に置き換わり、なくなったものはゴミ箱へ移ります。あなたが作った参照元はそのままです。",
   "package.readOnlyNote": "読み取り専用のコピーとして取り込みます。読んで使えますが、変更はできません。",
   "info.copyFrom": "読み取り専用 · {publisher} より · 第 {edition} 版第 {printing} 刷（生徒用）",
-  "info.copyFromTeacher": "読み取り専用 · {publisher} より · 第 {edition} 版第 {printing} 刷（教師用）"
+  "info.copyFromTeacher": "読み取り専用 · {publisher} より · 第 {edition} 版第 {printing} 刷（教師用）",
+  "kernel.error.reason.stamped": "署名済みのため変更できません。変更するには修正してください。",
+  "kernel.error.invalid.noReason": "先に理由を書いてください。",
+  "kernel.error.invalid.tooManyStamps": "署名がすでに上限に達しています。",
+  "info.stamps": "署名",
+  "info.stamped": "{label} · {signer} · {at}",
+  "info.unstamped": "修正 · {reason} · {at}",
+  "info.stampedNote": "署名済み：変更できません。変更するには修正してください。",
+  "history.stamped": "署名時（{label}）",
+  "kernel.audit.resource.stamp": "署名",
+  "kernel.audit.resource.unstamp": "署名の取り消し"
 }

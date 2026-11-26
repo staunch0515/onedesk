@@ -141,7 +141,7 @@ pub fn bind_paths(view: &[ViewNode]) -> Vec<String> {
 fn binds(view: &[ViewNode]) -> Vec<String> {
     view.iter()
         .filter_map(|n| match n {
-            ViewNode::Form { fields, .. } => Some(fields.iter().filter_map(|f| f.bind.clone())),
+            ViewNode::Form { fields, .. } | ViewNode::Flow { fields, .. } => Some(fields.iter().filter_map(|f| f.bind.clone())),
             _ => None,
         })
         .flatten()
@@ -312,7 +312,7 @@ impl Inner {
         };
         let refs: Vec<String> = kind.and_then(|k| self.rules.read().unwrap().get(&k).map(|r| r.text_refs.iter().map(|f| format!("body.{f}")).collect())).unwrap_or_default();
         for n in d.view.iter_mut() {
-            if let ViewNode::Form { fields, .. } = n {
+            if let ViewNode::Form { fields, .. } | ViewNode::Flow { fields, .. } = n {
                 for f in fields.iter_mut() {
                     f.refs = (f.param != Some(true) && f.bind.as_ref().is_some_and(|b| refs.contains(b))).then_some(true);
                 }
@@ -397,7 +397,7 @@ impl Inner {
     /// by name, at most `MAX_REF_OPTIONS`.
     fn fill_ref_options(&self, plugin: &Plugin, view: &mut [ViewNode]) -> KResult<()> {
         for node in view.iter_mut() {
-            let ViewNode::Form { fields, .. } = node else { continue };
+            let (ViewNode::Form { fields, .. } | ViewNode::Flow { fields, .. }) = node else { continue };
             for f in fields.iter_mut().filter(|f| f.kind == FieldKind::Ref && f.options.is_none()) {
                 let Some(kinds) = &f.kinds else { continue };
                 let mut opts: Vec<(String, String)> = Vec::new();

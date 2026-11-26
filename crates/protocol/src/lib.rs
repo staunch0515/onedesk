@@ -436,6 +436,14 @@ pub struct Resource {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub copy: Option<CopyInfo>,
+    /// D487 §23 (K6): the stamps on it, in order (its content is fixed while there is one).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub stamps: Option<Vec<StampInfo>>,
+    /// D487 §23 (K6): stamps put on and taken off, oldest first.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub stamp_log: Option<Vec<StampLogEntry>>,
     /// Milliseconds since the epoch.
     pub created_at: i64,
     /// Actor as text: `user`, `core`, `plugin:<id>@<version>` (§4.1).
@@ -645,6 +653,13 @@ pub enum ViewNode {
         /// D487 §15 (K-i): Markdown `[[…]]` references shown with these words instead of their text (still opening
         /// their target): reference text → words. At most 500, each at most 200 characters.
         ref_labels: Option<std::collections::BTreeMap<String, String>>,
+    },
+    /// D487 §23 (K4): Markdown with input controls in it: `{{field:<name>}}` is where field `<name>` goes (each field
+    /// once). The fields are form fields (bound or parameters).
+    Flow {
+        id: String,
+        text: String,
+        fields: Vec<ViewField>,
     },
     Table {
         id: String,
@@ -2329,6 +2344,9 @@ pub struct ResourceEmbedParams {
     pub params: Option<String>,
     /// D487 §17 (K3): an inline call (`[[=name | …]]`): the answer is one line of `text`.
     pub inline: Option<bool>,
+    /// D487 §23 (K6): the resource this reference is shown in. When it carries a stamp, the answer is what the
+    /// reference showed when the first stamp went on.
+    pub within: Option<String>,
 }
 
 /// D481: an embedded resource. `view` is what its plugin's `embed` gives (read only: text, table and link nodes);
@@ -2401,6 +2419,31 @@ pub struct PackageImportResult {
     pub created: u32,
     pub updated: u32,
     pub removed: u32,
+}
+
+/// D487 §23 (K6): a stamp on a resource: its name and signer as the plugin gave them.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct StampInfo {
+    pub label: String,
+    pub signer: String,
+    pub at: i64,
+}
+
+/// D487 §23 (K6): a stamp put on (`stamp`) or all taken off (`unstamp`, with the reason); `rev` is the resource's
+/// revision then.
+#[skip_serializing_none]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, optional_fields)]
+pub struct StampLogEntry {
+    pub action: String,
+    pub label: Option<String>,
+    pub signer: Option<String>,
+    pub reason: Option<String>,
+    pub rev: i64,
+    pub at: i64,
 }
 
 /// D487 §21 (K9): where a read-only copy came from.

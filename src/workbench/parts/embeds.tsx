@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useContext, useEffect, useState } from "react";
 import { Button, Checkbox, EmbedBlock, FormField, Input, MarkdownText, MultiSelect, Pane, Select, Text, Textarea, useToast, type CallValue, type ReferenceState } from "../../design";
 import { useI18n } from "../i18n";
 import type { EmbedResult, RefInfo, ViewField, ViewNode } from "../protocol";
@@ -63,6 +63,8 @@ export function RefMarkdown({ source, headingShift, refLabels, ...place }: Place
   const renderEmbed = useCallback((text: string) => <Embed text={text} {...place} />, [place]);
   // D487 §17: `[[=name | …]]` shows what the target computes, in the tab's environment.
   const envId = place.envId;
+  // D487 §23: shown inside a stamped resource, a reference shows what it showed then.
+  const within = useContext(BlobScope);
   const callValue = useCallback(
     async (text: string): Promise<CallValue> => {
       const ref = refOf(refs, text);
@@ -70,12 +72,12 @@ export function RefMarkdown({ source, headingShift, refLabels, ...place }: Place
       const params = paramsOf(text);
       if (!target || !client.refs.embed) return { text: text.replace(/^=\s*/, "").split("|")[0]!.trim(), error: true, title: t("embed.missing") };
       const title = params ? `${target.name}（${params}）` : target.name;
-      const e = await client.refs.embed({ id: target.id, params, inline: true, envId });
+      const e = await client.refs.embed({ id: target.id, params, inline: true, envId, within });
       if (e.badParams) return { text: t("call.badParams"), error: true, title };
       if (e.text === undefined || e.text === null) return { text: target.name, error: true, title: t("call.cannot") };
       return { text: e.text, error: e.error ?? undefined, title: e.error ? `${title} — ${e.text}` : title };
     },
-    [refs, client, envId, t],
+    [refs, client, envId, t, within],
   );
   const imageUrl = useBlobUrl();
   const imageLabels = useImageLabels();
@@ -101,6 +103,7 @@ export function RefMarkdown({ source, headingShift, refLabels, ...place }: Place
 export function Embed({ text, refs, envId, depth, chain }: Place & { text: string }) {
   const { t, tx } = useI18n();
   const openHere = useOpenHere();
+  const within = useContext(BlobScope);
   const ref = refOf(refs, text);
   const target = ref?.state === "ok" ? ref.target : undefined;
   const params = paramsOf(text);
@@ -108,8 +111,8 @@ export function Embed({ text, refs, envId, depth, chain }: Place & { text: strin
   const section = ref?.section ?? written;
   const shown = target !== undefined && depth < MAX_EMBED_DEPTH && !chain.includes(target.id);
   const q = useQuery(
-    (c) => (shown && c.refs.embed ? c.refs.embed({ id: target.id, section, envId, params }) : Promise.resolve(null)),
-    [shown, target?.id, section, envId, params],
+    (c) => (shown && c.refs.embed ? c.refs.embed({ id: target.id, section, envId, params, within }) : Promise.resolve(null)),
+    [shown, target?.id, section, envId, params, within],
     target ? [`resource:${target.id}`] : [],
   );
   if (!target) return <EmbedBlock title={text} icon="unlink" broken note={t("embed.missing")} />;
