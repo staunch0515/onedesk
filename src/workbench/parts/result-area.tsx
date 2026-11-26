@@ -280,9 +280,14 @@ export function OutputTab({ tab, run, widthKey }: { tab: TabState; run: Run | nu
   }
   if (run.status === "error" && run.error) {
     // Errors stay here until the next run or "clear" (I.7): never a toast that disappears.
+    const title = runError(run.error);
+    // The plugin's own sentence (“audit first”) is what the user needs to read: under the title, unless it is the title.
+    const said = run.error.message.trim() && run.error.message.trim() !== title ? run.error.message.trim() : null;
     return (
       <Pane grow scroll pad="md" gap="sm">
-        <Banner tone="danger" title={runError(run.error)}>
+        <Banner tone="danger" title={title}>
+          {said}
+          {said && run.error.hint ? " " : null}
           {run.error.hint}
         </Banner>
         {run.error.detail && (

@@ -141,6 +141,11 @@ describe("output of a dependent plugin's action (D351)", () => {
     expect(screen.getByRole("tab", { name: "History" })).toBeTruthy();
   });
 
+  it("shows the plugin's own reason when its run fails, under the general title", async () => {
+    show(run({ status: "error", output: undefined, error: { code: "pluginError", message: "Audit first." } as Run["error"] }), []);
+    expect(await screen.findByText("Audit first.")).toBeTruthy();
+  });
+
   it("leaves a page's own action on the page's own output tab", async () => {
     show(run({ action: "run", actionLabel: "Run" }), [{ id: "out", label: "Output", icon: "play", type: "output" } as never], "out");
     expect(await screen.findByText("4 words, 1 line")).toBeTruthy();
